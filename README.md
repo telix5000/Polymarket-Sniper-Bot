@@ -185,6 +185,29 @@ POLYMARKET_API_PASSPHRASE=your_clob_api_passphrase
 > ✅ **Note:** To actually run the monitor loop you still need `TARGET_ADDRESSES` and `PUBLIC_KEY`. The quick start above is intentionally minimal to highlight presets.
 > ✅ **Note:** `POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, and `POLYMARKET_API_PASSPHRASE` are required for CLOB access.
 
+## CLOB Auth Diagnostics
+
+The bot ships with safe diagnostics to help debug persistent `401 Unauthorized/Invalid api key` errors **without logging secrets**. The diagnostics are logged at startup and during the preflight auth call.
+
+**What you’ll see**
+
+- `[CLOB][Diag]` identity summary: derived signer address, configured public key, match status, chain ID, host, signature type, funder/maker addresses, masked API key ID, and key/secret/passphrase presence booleans.
+- `[CLOB][Diag][Sign]` signing summary: method/path/body flags, message hash (sha256 prefix), secret hash (sha256 prefix of decoded bytes), and the signature/secret encoding modes.
+- `[CLOB][Preflight]` status: runs a one-time auth call to `/auth/api-keys`, backing off on failures to avoid spam.
+- `[CLOB][401]` compact failure line: safe snapshot of address, signature type, funder, decoding/encoding modes, message hash, and key ID suffix.
+
+**How to interpret failures**
+
+If preflight fails with 401, the logs will classify the likely root cause as one of:
+
+- `MISMATCHED_ADDRESS` (PUBLIC_KEY doesn’t match derived signer)
+- `WRONG_SIGNATURE_TYPE` (signature type doesn’t align with the provided signer)
+- `SECRET_ENCODING` (secret looks base64url but decoding mode differs)
+- `MESSAGE_CANONICALIZATION` (path/body mismatch in signature inputs)
+- `SERVER_REJECTED_CREDS` (credentials rejected server-side)
+
+When a 401 occurs, the runtime automatically switches to detect-only mode. Set `CLOB_AUTH_FORCE=true` if you need to override this behavior for debugging.
+
 ## 🧮 Arbitrage Mode (RAM + tmpfs)
 
 The arbitrage engine is a first-class runtime mode designed for **RAM-first state** with optional snapshots and JSONL decision logs stored in a tmpfs-mounted `/data` directory. No database is used.

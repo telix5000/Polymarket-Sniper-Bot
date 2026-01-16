@@ -6,6 +6,14 @@ import { initializeApiCreds } from './clob-auth';
 import type { Logger } from '../utils/logger.util';
 import { formatAuthHeaderPresence, getAuthHeaderPresence } from '../utils/clob-auth-headers.util';
 import { sanitizeErrorMessage } from '../utils/sanitize-axios-error.util';
+import {
+  buildAuthMessageComponents,
+  deriveSignerAddress,
+  formatApiKeyId,
+  logAuthSigningDiagnostics,
+  logClobDiagnostics,
+  setupClobHeaderKeyLogging,
+} from '../clob/diagnostics';
 
 export type CreateClientInput = {
   rpcUrl: string;
@@ -14,6 +22,7 @@ export type CreateClientInput = {
   apiSecret?: string;
   apiPassphrase?: string;
   deriveApiKey?: boolean;
+  publicKey?: string;
   logger?: Logger;
 };
 
@@ -70,12 +79,18 @@ const logAuthHeaderPresence = async (
   try {
     const signer = (client as ClobClient & { signer?: Wallet | providers.JsonRpcSigner }).signer;
     if (!signer) return;
+    const timestamp = Math.floor(Date.now() / 1000);
     const headers = await createL2Headers(signer, creds, {
       method: 'GET',
       requestPath: '/auth/api-keys',
-    });
+    }, timestamp);
     const presence = getAuthHeaderPresence(headers, { secretConfigured: Boolean(creds?.secret) });
     logger.info(`[CLOB] Auth header presence: ${formatAuthHeaderPresence(presence)}`);
+    logAuthSigningDiagnostics({
+      logger,
+      secret: creds.secret,
+      messageComponents: buildAuthMessageComponents(timestamp, 'GET', '/auth/api-keys'),
+    });
   } catch (err) {
     logger.warn(`[CLOB] Failed to inspect auth headers. ${sanitizeErrorMessage(err)}`);
   }
@@ -86,6 +101,7 @@ export async function createPolymarketClient(
 ): Promise<ClobClient & { wallet: Wallet }> {
   const provider = new providers.JsonRpcProvider(input.rpcUrl);
   const wallet = new Wallet(input.privateKey, provider);
+  setupClobHeaderKeyLogging(input.logger);
 
   let creds: ApiKeyCreds | undefined;
   if (input.apiKey && input.apiSecret && input.apiPassphrase) {
@@ -102,7 +118,6 @@ export async function createPolymarketClient(
     wallet,
     creds,
   );
-
   await maybeEnableServerTime(client, input.logger);
 
   if (!creds && input.deriveApiKey) {
@@ -116,6 +131,27 @@ export async function createPolymarketClient(
       input.logger?.warn(`[CLOB] Failed to derive API creds: ${sanitizeErrorMessage(err)}`);
     }
   }
+
+  const signatureType = (client as ClobClient & { orderBuilder?: { signatureType?: number } }).orderBuilder
+    ?.signatureType;
+  const funderAddress = (client as ClobClient & { orderBuilder?: { funderAddress?: string } }).orderBuilder
+    ?.funderAddress;
+  const derivedSignerAddress = deriveSignerAddress(input.privateKey);
+  const makerAddress = derivedSignerAddress ? funderAddress ?? derivedSignerAddress : 'n/a';
+  logClobDiagnostics({
+    logger: input.logger,
+    derivedSignerAddress,
+    configuredPublicKey: input.publicKey,
+    chainId: Chain.POLYGON,
+    clobHost: POLYMARKET_API.BASE_URL,
+    signatureType,
+    funderAddress,
+    makerAddress,
+    ownerId: formatApiKeyId(creds?.key),
+    apiKeyPresent: Boolean(creds?.key),
+    secretPresent: Boolean(creds?.secret),
+    passphrasePresent: Boolean(creds?.passphrase),
+  });
 
   if (creds) {
     await initializeApiCreds(client, creds);
