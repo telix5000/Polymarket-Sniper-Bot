@@ -5,18 +5,18 @@ let loggedDerivation = false;
 
 export async function initializeApiCreds(client: ClobClient, providedCreds?: ApiKeyCreds): Promise<ApiKeyCreds> {
   if (providedCreds) {
-    client.setApiCreds(providedCreds);
+    applyClientCreds(client, providedCreds);
     cachedCreds = providedCreds;
     return providedCreds;
   }
 
   if (cachedCreds) {
-    client.setApiCreds(cachedCreds);
+    applyClientCreds(client, cachedCreds);
     return cachedCreds;
   }
 
-  const derivedCreds = await client.createOrDeriveApiCreds();
-  client.setApiCreds(derivedCreds);
+  const derivedCreds = await client.createOrDeriveApiKey();
+  applyClientCreds(client, derivedCreds);
   cachedCreds = derivedCreds;
 
   if (!loggedDerivation) {
@@ -28,8 +28,8 @@ export async function initializeApiCreds(client: ClobClient, providedCreds?: Api
 }
 
 export async function refreshApiCreds(client: ClobClient): Promise<ApiKeyCreds> {
-  const derivedCreds = await client.createOrDeriveApiCreds();
-  client.setApiCreds(derivedCreds);
+  const derivedCreds = await client.createOrDeriveApiKey();
+  applyClientCreds(client, derivedCreds);
   cachedCreds = derivedCreds;
   return derivedCreds;
 }
@@ -61,4 +61,8 @@ function isAuthError(error: unknown): boolean {
 
   const message = maybeError?.message?.toLowerCase() ?? '';
   return message.includes('api credentials') || message.includes('unauthorized') || message.includes('forbidden');
+}
+
+function applyClientCreds(client: ClobClient, creds: ApiKeyCreds): void {
+  (client as ClobClient & { creds?: ApiKeyCreds }).creds = creds;
 }
