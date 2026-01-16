@@ -68,7 +68,7 @@ const logAuthHeaderPresence = async (
 ): Promise<void> => {
   if (!logger) return;
   try {
-    const signer = (client as ClobClient & { signer?: unknown }).signer as { getAddress: () => Promise<string> } | undefined;
+    const signer = (client as ClobClient & { signer?: Wallet | providers.JsonRpcSigner }).signer;
     if (!signer) return;
     const headers = await createL2Headers(signer, creds, {
       method: 'GET',
