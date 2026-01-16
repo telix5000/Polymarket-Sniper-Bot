@@ -10,8 +10,9 @@ export interface Logger {
 const DEBUG_LEVELS = new Set(['', 'debug', 'trace']);
 
 const shouldLogDebug = (): boolean => {
-  const logLevel = (process.env.LOG_LEVEL ?? '').toLowerCase();
-  if (process.env.DEBUG === '1') {
+  const read = (key: string): string | undefined => process.env[key] ?? process.env[key.toLowerCase()];
+  const logLevel = (read('LOG_LEVEL') ?? '').toLowerCase();
+  if (read('DEBUG') === '1') {
     return true;
   }
   return DEBUG_LEVELS.has(logLevel);

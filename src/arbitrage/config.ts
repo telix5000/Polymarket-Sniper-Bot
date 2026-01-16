@@ -40,7 +40,8 @@ export type ArbConfig = {
 };
 
 export function loadArbConfig(overrides: Record<string, string | undefined> = {}): ArbConfig {
-  const read = (key: string): string | undefined => overrides[key] ?? process.env[key];
+  const read = (key: string): string | undefined =>
+    overrides[key] ?? overrides[key.toLowerCase()] ?? process.env[key] ?? process.env[key.toLowerCase()];
   const readBool = (key: string, fallback: boolean): boolean => {
     const val = read(key);
     if (val === undefined) return fallback;
@@ -60,7 +61,7 @@ export function loadArbConfig(overrides: Record<string, string | undefined> = {}
   const decisionsLogRaw = read('ARB_DECISIONS_LOG');
   const collateralAddressRaw = read('COLLATERAL_TOKEN_ADDRESS') || read('USDC_CONTRACT_ADDRESS');
 
-  const mode = String(read('MODE') || 'arb').toLowerCase();
+  const mode = String(read('MODE') ?? read('mode') ?? 'arb').toLowerCase();
 
   return {
     enabled: mode === 'arb' || mode === 'both',

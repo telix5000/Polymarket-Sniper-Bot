@@ -9,7 +9,7 @@ import { startArbitrageEngine } from '../arbitrage/runtime';
 
 async function main(): Promise<void> {
   const logger = new ConsoleLogger();
-  const mode = String(process.env.MODE ?? 'mempool').toLowerCase();
+  const mode = String(process.env.MODE ?? process.env.mode ?? 'mempool').toLowerCase();
   logger.info(`Starting Polymarket runtime mode=${mode}`);
 
   if (mode === 'arb' || mode === 'both') {

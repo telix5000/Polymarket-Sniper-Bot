@@ -22,6 +22,8 @@ export type RuntimeEnv = {
 };
 
 export function loadEnv(): RuntimeEnv {
+  const read = (key: string): string | undefined => process.env[key] ?? process.env[key.toLowerCase()];
+
   const parseList = (val: string | undefined): string[] => {
     if (!val) return [];
     try {
@@ -41,30 +43,30 @@ export function loadEnv(): RuntimeEnv {
     return v;
   };
 
-  const targetAddresses = parseList(process.env.TARGET_ADDRESSES);
+  const targetAddresses = parseList(read('TARGET_ADDRESSES'));
   if (targetAddresses.length === 0) {
     throw new Error('TARGET_ADDRESSES must contain at least one trader address');
   }
 
   const env: RuntimeEnv = {
     targetAddresses,
-    proxyWallet: required('PUBLIC_KEY', process.env.PUBLIC_KEY),
-    privateKey: required('PRIVATE_KEY', process.env.PRIVATE_KEY),
-    mongoUri: process.env.MONGO_URI,
-    rpcUrl: required('RPC_URL', process.env.RPC_URL),
-    fetchIntervalSeconds: Number(process.env.FETCH_INTERVAL ?? DEFAULT_CONFIG.FETCH_INTERVAL_SECONDS),
-    tradeMultiplier: Number(process.env.TRADE_MULTIPLIER ?? DEFAULT_CONFIG.TRADE_MULTIPLIER),
-    retryLimit: Number(process.env.RETRY_LIMIT ?? DEFAULT_CONFIG.RETRY_LIMIT),
-    aggregationEnabled: String(process.env.TRADE_AGGREGATION_ENABLED ?? 'false') === 'true',
-    aggregationWindowSeconds: Number(process.env.TRADE_AGGREGATION_WINDOW_SECONDS ?? DEFAULT_CONFIG.AGGREGATION_WINDOW_SECONDS),
-    collateralTokenAddress: process.env.COLLATERAL_TOKEN_ADDRESS || process.env.USDC_CONTRACT_ADDRESS || POLYGON_USDC_ADDRESS,
-    collateralTokenDecimals: Number(process.env.COLLATERAL_TOKEN_DECIMALS ?? 6),
-    polymarketApiKey: process.env.POLYMARKET_API_KEY,
-    polymarketApiSecret: process.env.POLYMARKET_API_SECRET,
-    polymarketApiPassphrase: process.env.POLYMARKET_API_PASSPHRASE,
-    minTradeSizeUsd: Number(process.env.MIN_TRADE_SIZE_USD ?? DEFAULT_CONFIG.MIN_TRADE_SIZE_USD),
-    frontrunSizeMultiplier: Number(process.env.FRONTRUN_SIZE_MULTIPLIER ?? DEFAULT_CONFIG.FRONTRUN_SIZE_MULTIPLIER),
-    gasPriceMultiplier: Number(process.env.GAS_PRICE_MULTIPLIER ?? DEFAULT_CONFIG.GAS_PRICE_MULTIPLIER),
+    proxyWallet: required('PUBLIC_KEY', read('PUBLIC_KEY')),
+    privateKey: required('PRIVATE_KEY', read('PRIVATE_KEY')),
+    mongoUri: read('MONGO_URI'),
+    rpcUrl: required('RPC_URL', read('RPC_URL')),
+    fetchIntervalSeconds: Number(read('FETCH_INTERVAL') ?? DEFAULT_CONFIG.FETCH_INTERVAL_SECONDS),
+    tradeMultiplier: Number(read('TRADE_MULTIPLIER') ?? DEFAULT_CONFIG.TRADE_MULTIPLIER),
+    retryLimit: Number(read('RETRY_LIMIT') ?? DEFAULT_CONFIG.RETRY_LIMIT),
+    aggregationEnabled: String(read('TRADE_AGGREGATION_ENABLED') ?? 'false') === 'true',
+    aggregationWindowSeconds: Number(read('TRADE_AGGREGATION_WINDOW_SECONDS') ?? DEFAULT_CONFIG.AGGREGATION_WINDOW_SECONDS),
+    collateralTokenAddress: read('COLLATERAL_TOKEN_ADDRESS') || read('USDC_CONTRACT_ADDRESS') || POLYGON_USDC_ADDRESS,
+    collateralTokenDecimals: Number(read('COLLATERAL_TOKEN_DECIMALS') ?? 6),
+    polymarketApiKey: read('POLYMARKET_API_KEY'),
+    polymarketApiSecret: read('POLYMARKET_API_SECRET'),
+    polymarketApiPassphrase: read('POLYMARKET_API_PASSPHRASE'),
+    minTradeSizeUsd: Number(read('MIN_TRADE_SIZE_USD') ?? DEFAULT_CONFIG.MIN_TRADE_SIZE_USD),
+    frontrunSizeMultiplier: Number(read('FRONTRUN_SIZE_MULTIPLIER') ?? DEFAULT_CONFIG.FRONTRUN_SIZE_MULTIPLIER),
+    gasPriceMultiplier: Number(read('GAS_PRICE_MULTIPLIER') ?? DEFAULT_CONFIG.GAS_PRICE_MULTIPLIER),
   };
 
   return env;
