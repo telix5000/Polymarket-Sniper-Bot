@@ -162,7 +162,8 @@ export class PolymarketMarketDataProvider implements MarketDataProvider {
         });
       }
 
-      const rawNextCursor = (payload as { next_cursor?: string; nextCursor?: string })?.next_cursor ?? payload?.nextCursor;
+      const payloadCursor = payload as { next_cursor?: string; nextCursor?: string } | undefined;
+      const rawNextCursor = payloadCursor?.next_cursor ?? payloadCursor?.nextCursor;
       if (!rawNextCursor || rawNextCursor === END_CURSOR) {
         break;
       }
