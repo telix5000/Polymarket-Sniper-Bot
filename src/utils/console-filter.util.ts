@@ -102,7 +102,7 @@ export const suppressClobOrderbookErrors = (logger?: Logger): void => {
           }
           sanitizedArgs[1] = redactSensitiveValues(JSON.stringify(payload));
         } catch {
-          sanitizedArgs[1] = redactSensitiveValues(sanitizedArgs[1]);
+          sanitizedArgs[1] = redactSensitiveValues(String(sanitizedArgs[1]));
         }
       }
       originalConsoleError?.(...(sanitizedArgs as Parameters<ConsoleError>));
