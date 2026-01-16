@@ -15,6 +15,11 @@ export async function startArbitrageEngine(overrides: Record<string, string | un
   suppressClobOrderbookErrors(logger);
   const config = loadArbConfig(overrides);
 
+  logger.info(
+    `[ARB] Config min_edge_bps=${config.minEdgeBps} min_profit_usd=${config.minProfitUsd} min_liquidity_usd=${config.minLiquidityUsd} max_spread_bps=${config.maxSpreadBps} trade_base_usd=${config.tradeBaseUsd} slippage_bps=${config.slippageBps} fee_bps=${config.feeBps}`,
+  );
+  logger.info(`[ARB] Collateral token address=${config.collateralTokenAddress}`);
+
   const client = await createPolymarketClient({
     rpcUrl: config.rpcUrl,
     privateKey: config.privateKey,
