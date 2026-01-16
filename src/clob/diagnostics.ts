@@ -42,10 +42,18 @@ export const publicKeyMatchesDerived = (configuredPublicKey?: string, derivedSig
   return normalizeAddress(configuredPublicKey) === normalizeAddress(derivedSignerAddress);
 };
 
+const secretLooksBase64Url = (secret: string): boolean => {
+  const base64UrlAlphabet = /^[A-Za-z0-9_-]+$/;
+  const withoutPadding = secret.replace(/=/g, '');
+  return (
+    (secret.includes('-') || secret.includes('_') || !secret.includes('='))
+    && base64UrlAlphabet.test(withoutPadding)
+  );
+};
+
 export const detectSecretDecodingMode = (secret?: string): SecretDecodingMode => {
   if (!secret) return 'raw';
-  const base64UrlAlphabet = /^[A-Za-z0-9_-]+$/;
-  if ((secret.includes('-') || secret.includes('_')) && base64UrlAlphabet.test(secret)) {
+  if (secretLooksBase64Url(secret)) {
     return 'base64url';
   }
   if (secret.includes('+') || secret.includes('/') || secret.endsWith('=')) {
@@ -60,7 +68,11 @@ export const detectSecretDecodingMode = (secret?: string): SecretDecodingMode =>
 
 export const decodeSecretBytes = (secret: string, mode: SecretDecodingMode): Buffer => {
   if (mode === 'base64url') {
-    const normalized = secret.replace(/-/g, '+').replace(/_/g, '/');
+    let normalized = secret.replace(/-/g, '+').replace(/_/g, '/');
+    const paddingNeeded = normalized.length % 4;
+    if (paddingNeeded) {
+      normalized = normalized.padEnd(normalized.length + (4 - paddingNeeded), '=');
+    }
     return Buffer.from(normalized, 'base64');
   }
   if (mode === 'base64') {
@@ -135,7 +147,9 @@ export const logAuthSigningDiagnostics = (params: {
   signatureEncoding: SignatureEncodingMode;
 } => {
   const signatureEncoding = params.signatureEncoding ?? SIGNATURE_ENCODING_USED;
-  const secretDecodingUsed = params.secretDecodingUsed ?? SECRET_DECODING_USED;
+  const secretLooksBase64UrlFlag = params.secret ? secretLooksBase64Url(params.secret) : false;
+  const secretDecodingUsed = params.secretDecodingUsed
+    ?? (secretLooksBase64UrlFlag ? 'base64url' : SECRET_DECODING_USED);
   const messageString = buildAuthMessageString({
     timestamp: params.messageComponents.timestamp,
     method: params.messageComponents.method,
@@ -152,7 +166,7 @@ export const logAuthSigningDiagnostics = (params: {
       `[CLOB][Diag][Sign] messageComponents timestamp=${params.messageComponents.timestamp} method=${params.messageComponents.method} path=${params.messageComponents.path} bodyIncluded=${params.messageComponents.bodyIncluded} bodyLength=${params.messageComponents.bodyLength}`,
     );
     params.logger.info(
-      `[CLOB][Diag][Sign] messageDigest=${messageDigest} secretDigest=${secretDigest} signatureEncoding=${signatureEncoding} secretDecoding=${secretDecodingUsed}`,
+      `[CLOB][Diag][Sign] messageDigest=${messageDigest} secretDigest=${secretDigest} signatureEncoding=${signatureEncoding} secretDecoding=${secretDecodingUsed} secretLooksBase64Url=${secretLooksBase64UrlFlag}`,
     );
   }
 
@@ -266,7 +280,6 @@ export const runClobAuthPreflight = async (params: {
     secret: params.creds.secret,
     messageComponents,
     signatureEncoding: SIGNATURE_ENCODING_USED,
-    secretDecodingUsed: SECRET_DECODING_USED,
   });
 
   try {
