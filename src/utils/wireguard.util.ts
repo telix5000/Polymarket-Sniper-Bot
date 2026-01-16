@@ -47,7 +47,7 @@ const getWireguardEnv = (): WireguardEnv => {
   };
 };
 
-const buildConfig = (env: WireguardEnv): string => {
+const buildConfig = (env: WireguardEnv, includeDns: boolean): string => {
   if (env.config) {
     return env.config.trim();
   }
@@ -74,7 +74,7 @@ const buildConfig = (env: WireguardEnv): string => {
   if (env.mtu) {
     lines.push(`MTU = ${env.mtu}`);
   }
-  if (env.dns) {
+  if (includeDns && env.dns) {
     lines.push(`DNS = ${env.dns}`);
   }
 
@@ -100,6 +100,20 @@ const ensureConfigDir = async (configPath: string): Promise<void> => {
   await fs.mkdir(dir, { recursive: true });
 };
 
+const writeConfig = async (env: WireguardEnv, includeDns: boolean): Promise<void> => {
+  const config = buildConfig(env, includeDns);
+  await ensureConfigDir(env.configPath);
+  await fs.writeFile(env.configPath, `${config}\n`, { mode: 0o600 });
+};
+
+const isResolvconfError = (err: unknown): boolean => {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const message = err.message.toLowerCase();
+  return message.includes('resolvconf') || message.includes('signature mismatch') || message.includes('useable init system');
+};
+
 export async function startWireguard(logger: Logger): Promise<void> {
   const env = getWireguardEnv();
   if (!env.enabled) {
@@ -107,9 +121,7 @@ export async function startWireguard(logger: Logger): Promise<void> {
   }
 
   try {
-    const config = buildConfig(env);
-    await ensureConfigDir(env.configPath);
-    await fs.writeFile(env.configPath, `${config}\n`, { mode: 0o600 });
+    await writeConfig(env, true);
 
     if (env.forceRestart) {
       try {
@@ -119,8 +131,19 @@ export async function startWireguard(logger: Logger): Promise<void> {
       }
     }
 
-    await execFileAsync('wg-quick', ['up', env.interfaceName]);
-    logger.info(`WireGuard interface ${env.interfaceName} is up.`);
+    try {
+      await execFileAsync('wg-quick', ['up', env.interfaceName]);
+      logger.info(`WireGuard interface ${env.interfaceName} is up.`);
+    } catch (err) {
+      if (env.dns && isResolvconfError(err)) {
+        logger.warn('WireGuard DNS setup failed via resolvconf; retrying without DNS.');
+        await writeConfig(env, false);
+        await execFileAsync('wg-quick', ['up', env.interfaceName]);
+        logger.info(`WireGuard interface ${env.interfaceName} is up (DNS disabled).`);
+        return;
+      }
+      throw err;
+    }
   } catch (err) {
     logger.error('Failed to start WireGuard', err as Error);
   }
