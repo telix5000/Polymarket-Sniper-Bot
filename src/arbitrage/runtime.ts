@@ -1,6 +1,7 @@
 import { ConsoleLogger } from '../utils/logger.util';
 import { createPolymarketClient } from '../infrastructure/clob-client.factory';
-import { isAuthError, verifyApiCreds } from '../infrastructure/clob-auth';
+import { isAuthError } from '../infrastructure/clob-auth';
+import { runClobAuthPreflight } from '../clob/diagnostics';
 import { loadArbConfig } from '../config/loadConfig';
 import { ArbitrageEngine } from './engine';
 import { PolymarketMarketDataProvider } from './provider/polymarket.provider';
@@ -44,6 +45,7 @@ export async function startArbitrageEngine(
     apiSecret: config.polymarketApiSecret,
     apiPassphrase: config.polymarketApiPassphrase,
     deriveApiKey: config.clobDeriveEnabled,
+    publicKey: config.proxyWallet,
     logger,
   });
 
@@ -53,16 +55,24 @@ export async function startArbitrageEngine(
   config.detectOnly = !credsComplete;
   if (credsComplete) {
     try {
-      const authOk = await verifyApiCreds(client);
-      if (!authOk) {
+      const preflight = await runClobAuthPreflight({
+        client,
+        logger,
+        creds: clientCreds,
+        derivedSignerAddress: client.wallet.address,
+        configuredPublicKey: config.proxyWallet,
+        privateKeyPresent: Boolean(config.privateKey),
+        force: process.env.CLOB_AUTH_FORCE === 'true',
+      });
+      if (preflight && !preflight.ok && !preflight.forced) {
         config.detectOnly = true;
-        logger.warn('[CLOB] invalid creds');
-        logger.warn('[CLOB] Auth check failed; switching to detect-only.');
+        logger.warn('[CLOB] Auth preflight failed; switching to detect-only.');
+        logger.warn('[CLOB] Set CLOB_AUTH_FORCE=true to override detect-only.');
         logger.warn(formatClobAuthFailureHint(config.clobDeriveEnabled));
       }
     } catch (err) {
       config.detectOnly = true;
-      logger.warn(`[CLOB] Auth check failed; switching to detect-only. ${sanitizeErrorMessage(err)}`);
+      logger.warn(`[CLOB] Auth preflight failed; switching to detect-only. ${sanitizeErrorMessage(err)}`);
       if (isAuthError(err)) {
         logger.warn(formatClobAuthFailureHint(config.clobDeriveEnabled));
       }
