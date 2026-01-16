@@ -5,6 +5,8 @@ import type { MarketDataProvider, MarketSummary, OrderBookTop } from '../types';
 
 const OUTCOME_YES = new Set(['yes', 'y', 'true']);
 const OUTCOME_NO = new Set(['no', 'n', 'false']);
+const END_CURSOR = 'LTE=';
+const MAX_MARKET_PAGES = 20;
 
 function parseOutcome(value?: string): 'YES' | 'NO' | undefined {
   if (!value) return undefined;
@@ -24,6 +26,17 @@ function parseUsd(value?: string | number): number | undefined {
   if (value === undefined || value === null) return undefined;
   const num = typeof value === 'number' ? value : Number(value);
   return Number.isNaN(num) ? undefined : num;
+}
+
+function parseBooleanFlag(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', 't', 'yes', 'y', '1'].includes(normalized)) return true;
+    if (['false', 'f', 'no', 'n', '0'].includes(normalized)) return false;
+  }
+  return undefined;
 }
 
 const INACTIVE_MARKET_STATUSES = new Set([
@@ -56,7 +69,7 @@ function isMarketActive(market: Record<string, unknown>): boolean {
     market.trading ??
     market.is_trading ??
     market.isTrading;
-  if (activityFlag === false) return false;
+  if (parseBooleanFlag(activityFlag) === false) return false;
 
   const closedFlag =
     market.closed ??
@@ -69,7 +82,17 @@ function isMarketActive(market: Record<string, unknown>): boolean {
     market.archived ??
     market.is_archived ??
     market.isArchived;
-  return closedFlag !== true;
+  return parseBooleanFlag(closedFlag) !== true;
+}
+
+function normalizeTokens(value: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(value)) {
+    return value.filter((token) => token && typeof token === 'object') as Array<Record<string, unknown>>;
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value).filter((token) => token && typeof token === 'object') as Array<Record<string, unknown>>;
+  }
+  return [];
 }
 
 export class PolymarketMarketDataProvider implements MarketDataProvider {
@@ -84,39 +107,121 @@ export class PolymarketMarketDataProvider implements MarketDataProvider {
   }
 
   async getActiveMarkets(): Promise<MarketSummary[]> {
-    const payload = await this.client.getSimplifiedMarkets();
-    const data = Array.isArray(payload?.data) ? payload.data : [];
     const markets: MarketSummary[] = [];
+    let nextCursor: string | undefined;
+    let pagesChecked = 0;
 
-    for (const market of data) {
-      if (!isMarketActive(market)) continue;
-      const marketId = market.condition_id || market.conditionId || market.id || market.market_id;
-      const tokens = Array.isArray(market.tokens) ? market.tokens : [];
+    while (pagesChecked < MAX_MARKET_PAGES) {
+      const payload = await this.client.getSimplifiedMarkets(nextCursor);
+      const data = Array.isArray(payload?.data) ? payload.data : [];
+      pagesChecked += 1;
 
-      const yesToken = tokens.find((token: any) => parseOutcome(token.outcome || token.label || token.name) === 'YES');
-      const noToken = tokens.find((token: any) => parseOutcome(token.outcome || token.label || token.name) === 'NO');
+      for (const market of data) {
+        if (!isMarketActive(market)) continue;
+        const marketId =
+          market.condition_id ||
+          market.conditionId ||
+          market.id ||
+          market.market_id ||
+          market.marketId ||
+          market.conditionID;
+        const tokens = normalizeTokens(market.tokens ?? market.outcomes ?? market.outcomeTokens ?? market.tokenSet);
 
-      if (!marketId || !yesToken?.token_id || !noToken?.token_id) continue;
+        const yesToken = tokens.find((token) => {
+          const outcome = parseOutcome(
+            String(token.outcome ?? token.label ?? token.name ?? token.symbol ?? token.title ?? ''),
+          );
+          return outcome === 'YES';
+        });
+        const noToken = tokens.find((token) => {
+          const outcome = parseOutcome(
+            String(token.outcome ?? token.label ?? token.name ?? token.symbol ?? token.title ?? ''),
+          );
+          return outcome === 'NO';
+        });
 
-      const marketKey = String(marketId);
-      const yesTokenId = String(yesToken.token_id);
-      const noTokenId = String(noToken.token_id);
+        const yesTokenId = yesToken?.token_id ?? yesToken?.tokenId ?? yesToken?.id ?? yesToken?.tokenID;
+        const noTokenId = noToken?.token_id ?? noToken?.tokenId ?? noToken?.id ?? noToken?.tokenID;
 
-      this.tokenMarketMap.set(yesTokenId, marketKey);
-      this.tokenMarketMap.set(noTokenId, marketKey);
+        if (!marketId || !yesTokenId || !noTokenId) continue;
 
-      markets.push({
-        marketId: marketKey,
-        yesTokenId,
-        noTokenId,
-        endTime: parseTimestamp(market.end_date || market.end_time || market.endDate),
-        liquidityUsd: parseUsd(market.liquidity || market.liquidity_usd || market.liquidityUsd),
-        volumeUsd: parseUsd(market.volume || market.volume_usd || market.volumeUsd),
-      });
+        const marketKey = String(marketId);
+        const yesTokenKey = String(yesTokenId);
+        const noTokenKey = String(noTokenId);
+
+        this.tokenMarketMap.set(yesTokenKey, marketKey);
+        this.tokenMarketMap.set(noTokenKey, marketKey);
+
+        markets.push({
+          marketId: marketKey,
+          yesTokenId: yesTokenKey,
+          noTokenId: noTokenKey,
+          endTime: parseTimestamp(market.end_date || market.end_time || market.endDate),
+          liquidityUsd: parseUsd(market.liquidity || market.liquidity_usd || market.liquidityUsd),
+          volumeUsd: parseUsd(market.volume || market.volume_usd || market.volumeUsd),
+        });
+      }
+
+      const rawNextCursor = (payload as { next_cursor?: string; nextCursor?: string })?.next_cursor ?? payload?.nextCursor;
+      if (!rawNextCursor || rawNextCursor === END_CURSOR) {
+        break;
+      }
+      nextCursor = rawNextCursor;
     }
 
     if (markets.length === 0) {
-      this.logger.warn('[ARB] No active markets returned from Polymarket API');
+      const fallbackPayload = await this.client.getSamplingSimplifiedMarkets();
+      const sampleData = Array.isArray(fallbackPayload?.data) ? fallbackPayload.data : [];
+      for (const market of sampleData) {
+        if (!isMarketActive(market)) continue;
+        const marketId =
+          market.condition_id ||
+          market.conditionId ||
+          market.id ||
+          market.market_id ||
+          market.marketId ||
+          market.conditionID;
+        const tokens = normalizeTokens(market.tokens ?? market.outcomes ?? market.outcomeTokens ?? market.tokenSet);
+        const yesToken = tokens.find((token) => {
+          const outcome = parseOutcome(
+            String(token.outcome ?? token.label ?? token.name ?? token.symbol ?? token.title ?? ''),
+          );
+          return outcome === 'YES';
+        });
+        const noToken = tokens.find((token) => {
+          const outcome = parseOutcome(
+            String(token.outcome ?? token.label ?? token.name ?? token.symbol ?? token.title ?? ''),
+          );
+          return outcome === 'NO';
+        });
+        const yesTokenId = yesToken?.token_id ?? yesToken?.tokenId ?? yesToken?.id ?? yesToken?.tokenID;
+        const noTokenId = noToken?.token_id ?? noToken?.tokenId ?? noToken?.id ?? noToken?.tokenID;
+        if (!marketId || !yesTokenId || !noTokenId) continue;
+
+        const marketKey = String(marketId);
+        const yesTokenKey = String(yesTokenId);
+        const noTokenKey = String(noTokenId);
+
+        this.tokenMarketMap.set(yesTokenKey, marketKey);
+        this.tokenMarketMap.set(noTokenKey, marketKey);
+
+        markets.push({
+          marketId: marketKey,
+          yesTokenId: yesTokenKey,
+          noTokenId: noTokenKey,
+          endTime: parseTimestamp(market.end_date || market.end_time || market.endDate),
+          liquidityUsd: parseUsd(market.liquidity || market.liquidity_usd || market.liquidityUsd),
+          volumeUsd: parseUsd(market.volume || market.volume_usd || market.volumeUsd),
+        });
+      }
+    }
+
+    if (markets.length === 0) {
+      this.logger.warn(
+        `[ARB] No active markets returned from Polymarket API (checked ${pagesChecked} page${
+          pagesChecked === 1 ? '' : 's'
+        })`,
+      );
     }
 
     return markets;
