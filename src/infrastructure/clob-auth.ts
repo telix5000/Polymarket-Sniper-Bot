@@ -54,7 +54,7 @@ export function resetApiCredsCache(): void {
   cachedCreds = null;
 }
 
-function isAuthError(error: unknown): boolean {
+export function isAuthError(error: unknown): boolean {
   const maybeError = error as { response?: { status?: number }; status?: number; message?: string };
   const status = maybeError?.status ?? maybeError?.response?.status;
   if (status === 401) {

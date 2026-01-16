@@ -1,6 +1,6 @@
 import { ConsoleLogger } from '../utils/logger.util';
 import { createPolymarketClient } from '../infrastructure/clob-client.factory';
-import { verifyApiCreds } from '../infrastructure/clob-auth';
+import { isAuthError, verifyApiCreds } from '../infrastructure/clob-auth';
 import { loadArbConfig } from '../config/loadConfig';
 import { ArbitrageEngine } from './engine';
 import { PolymarketMarketDataProvider } from './provider/polymarket.provider';
@@ -12,6 +12,7 @@ import { DecisionLogger } from './utils/decision-logger';
 import { suppressClobOrderbookErrors } from '../utils/console-filter.util';
 import { sanitizeErrorMessage } from '../utils/sanitize-axios-error.util';
 import { formatClobCredsChecklist } from '../utils/clob-credentials.util';
+import { formatClobAuthFailureHint } from '../utils/clob-auth-hint.util';
 
 export async function startArbitrageEngine(
   overrides: Record<string, string | undefined> = {},
@@ -56,10 +57,14 @@ export async function startArbitrageEngine(
       if (!authOk) {
         config.detectOnly = true;
         logger.warn('[CLOB] Auth check failed; switching to detect-only.');
+        logger.warn(formatClobAuthFailureHint(config.clobDeriveEnabled));
       }
     } catch (err) {
       config.detectOnly = true;
       logger.warn(`[CLOB] Auth check failed; switching to detect-only. ${sanitizeErrorMessage(err)}`);
+      if (isAuthError(err)) {
+        logger.warn(formatClobAuthFailureHint(config.clobDeriveEnabled));
+      }
     }
   }
 

@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { loadMonitorConfig, parseCliOverrides } from '../config/loadConfig';
 import { createPolymarketClient } from '../infrastructure/clob-client.factory';
-import { verifyApiCreds } from '../infrastructure/clob-auth';
+import { isAuthError, verifyApiCreds } from '../infrastructure/clob-auth';
 import { MempoolMonitorService } from '../services/mempool-monitor.service';
 import { TradeExecutorService } from '../services/trade-executor.service';
 import { ConsoleLogger } from '../utils/logger.util';
@@ -12,6 +12,7 @@ import { startWireguard } from '../utils/wireguard.util';
 import { startOpenvpn } from '../utils/openvpn.util';
 import { sanitizeErrorMessage } from '../utils/sanitize-axios-error.util';
 import { formatClobCredsChecklist } from '../utils/clob-credentials.util';
+import { formatClobAuthFailureHint } from '../utils/clob-auth-hint.util';
 
 async function main(): Promise<void> {
   const logger = new ConsoleLogger();
@@ -65,10 +66,14 @@ async function main(): Promise<void> {
       if (!authOk) {
         env.detectOnly = true;
         logger.warn('[CLOB] Auth check failed; switching to detect-only.');
+        logger.warn(formatClobAuthFailureHint(env.clobDeriveEnabled));
       }
     } catch (err) {
       env.detectOnly = true;
       logger.warn(`[CLOB] Auth check failed; switching to detect-only. ${sanitizeErrorMessage(err)}`);
+      if (isAuthError(err)) {
+        logger.warn(formatClobAuthFailureHint(env.clobDeriveEnabled));
+      }
     }
   }
 
