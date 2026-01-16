@@ -47,9 +47,16 @@ const getWireguardEnv = (): WireguardEnv => {
   };
 };
 
+const stripDnsLines = (config: string): string =>
+  config
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*DNS\s*=/i.test(line))
+    .join('\n')
+    .trim();
+
 const buildConfig = (env: WireguardEnv, includeDns: boolean): string => {
   if (env.config) {
-    return env.config.trim();
+    return (includeDns ? env.config : stripDnsLines(env.config)).trim();
   }
 
   const missing = [
@@ -135,7 +142,7 @@ export async function startWireguard(logger: Logger): Promise<void> {
       await execFileAsync('wg-quick', ['up', env.interfaceName]);
       logger.info(`WireGuard interface ${env.interfaceName} is up.`);
     } catch (err) {
-      if (env.dns && isResolvconfError(err)) {
+      if (isResolvconfError(err)) {
         logger.warn('WireGuard DNS setup failed via resolvconf; retrying without DNS.');
         await writeConfig(env, false);
         await execFileAsync('wg-quick', ['up', env.interfaceName]);
