@@ -262,7 +262,9 @@ const readNumber = (key: string, fallback: number, overrides?: Overrides): numbe
 const readFirstEnv = (keys: string[], overrides?: Overrides): string | undefined => {
   for (const key of keys) {
     const raw = readEnv(key, overrides);
-    if (raw) return raw;
+    if (raw === undefined || raw === null) continue;
+    const value = String(raw).trim();
+    if (value.length > 0) return value;
   }
   return undefined;
 };
