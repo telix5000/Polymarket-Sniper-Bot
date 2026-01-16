@@ -12,7 +12,7 @@ import { ArbTradeExecutor } from './executor/trade-executor';
 import { DecisionLogger } from './utils/decision-logger';
 import { suppressClobOrderbookErrors } from '../utils/console-filter.util';
 import { sanitizeErrorMessage } from '../utils/sanitize-axios-error.util';
-import { formatClobCredsChecklist } from '../utils/clob-credentials.util';
+import { formatClobCredsChecklist, isApiKeyCreds } from '../utils/clob-credentials.util';
 import { formatClobAuthFailureHint } from '../utils/clob-auth-hint.util';
 
 export async function startArbitrageEngine(
@@ -49,8 +49,9 @@ export async function startArbitrageEngine(
     logger,
   });
 
-  const clientCreds = (client as { creds?: { key?: string; secret?: string; passphrase?: string } }).creds;
-  const credsComplete = Boolean(clientCreds?.key && clientCreds?.secret && clientCreds?.passphrase);
+  const clientCredsRaw = (client as { creds?: { key?: string; secret?: string; passphrase?: string } }).creds;
+  const clientCreds = isApiKeyCreds(clientCredsRaw) ? clientCredsRaw : undefined;
+  const credsComplete = Boolean(clientCreds);
   config.clobCredsComplete = credsComplete;
   config.detectOnly = !credsComplete;
   if (credsComplete) {
