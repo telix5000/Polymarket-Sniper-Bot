@@ -1,3 +1,4 @@
+import type { ApiKeyCreds } from '@polymarket/clob-client';
 import type { ClobCredsChecklist } from '../config/loadConfig';
 
 const formatChecklistItem = (item: { present: boolean; source?: string }): string => {
@@ -13,3 +14,7 @@ export const formatClobCredsChecklist = (checklist: ClobCredsChecklist): string 
   const derive = checklist.deriveEnabled ? 'enabled' : 'disabled';
   return `[CLOB] Creds checklist: key=${key} secret=${secret} passphrase=${passphrase} derive=${derive}`;
 };
+
+export const isApiKeyCreds = (
+  creds?: { key?: string; secret?: string; passphrase?: string },
+): creds is ApiKeyCreds => Boolean(creds?.key && creds?.secret && creds?.passphrase);

@@ -12,7 +12,7 @@ import { suppressClobOrderbookErrors } from '../utils/console-filter.util';
 import { startWireguard } from '../utils/wireguard.util';
 import { startOpenvpn } from '../utils/openvpn.util';
 import { sanitizeErrorMessage } from '../utils/sanitize-axios-error.util';
-import { formatClobCredsChecklist } from '../utils/clob-credentials.util';
+import { formatClobCredsChecklist, isApiKeyCreds } from '../utils/clob-credentials.util';
 import { formatClobAuthFailureHint } from '../utils/clob-auth-hint.util';
 
 async function main(): Promise<void> {
@@ -57,8 +57,9 @@ async function main(): Promise<void> {
     logger,
   });
 
-  const clientCreds = (client as { creds?: { key?: string; secret?: string; passphrase?: string } }).creds;
-  const credsComplete = Boolean(clientCreds?.key && clientCreds?.secret && clientCreds?.passphrase);
+  const clientCredsRaw = (client as { creds?: { key?: string; secret?: string; passphrase?: string } }).creds;
+  const clientCreds = isApiKeyCreds(clientCredsRaw) ? clientCredsRaw : undefined;
+  const credsComplete = Boolean(clientCreds);
   env.clobCredsComplete = credsComplete;
   env.detectOnly = !credsComplete;
 
