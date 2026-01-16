@@ -29,6 +29,9 @@ export type ArbConfig = {
   killSwitchFile: string;
   snapshotState: boolean;
   maxConcurrentTrades: number;
+  debugTopN: number;
+  unitsAutoFix: boolean;
+  logEveryMarket: boolean;
   rpcUrl: string;
   privateKey: string;
   proxyWallet?: string;
@@ -90,6 +93,9 @@ export function loadArbConfig(overrides: Record<string, string | undefined> = {}
     killSwitchFile: read('ARB_KILL_SWITCH_FILE') || '/data/KILL',
     snapshotState: readBool('ARB_SNAPSHOT_STATE', true),
     maxConcurrentTrades: readNumber('ARB_MAX_CONCURRENT_TRADES', 1),
+    debugTopN: readNumber('ARB_DEBUG_TOP_N', 0),
+    unitsAutoFix: readBool('ARB_UNITS_AUTO_FIX', true),
+    logEveryMarket: readBool('ARB_LOG_EVERY_MARKET', false),
     rpcUrl: required('RPC_URL'),
     privateKey: required('PRIVATE_KEY'),
     proxyWallet: read('PUBLIC_KEY'),

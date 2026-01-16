@@ -4,6 +4,7 @@ import type { DecisionLogger } from './utils/decision-logger';
 import { OrderbookNotFoundError } from '../errors/app.errors';
 import type { MarketDataProvider, Opportunity, RiskManager, Strategy, TradeExecutor } from './types';
 import { Semaphore } from './utils/limiter';
+import type { ArbDiagnostics, CandidateSnapshot } from './strategy/intra-market.strategy';
 
 export class ArbitrageEngine {
   private readonly provider: MarketDataProvider;
@@ -74,17 +75,24 @@ export class ArbitrageEngine {
       );
 
       const opportunities = this.strategy.findOpportunities(snapshots, now);
+      const diagnostics = this.getDiagnostics();
+      const allCandidates = diagnostics?.candidates ?? [];
+      const topCandidates = this.selectTopCandidates(allCandidates);
+      await this.logCandidates(allCandidates, topCandidates, now);
+      const skipSummary = diagnostics ? this.formatSkipCounts(diagnostics.skipCounts) : 'n/a';
       opportunities.sort((a, b) => b.estProfitUsd - a.estProfitUsd);
       if (opportunities.length === 0) {
         this.logger.info(
-          `[ARB] Scan complete: 0 opportunities (markets=${markets.length}, orderbook_failures=${orderbookFailures}, markets_with_missing_orderbooks=${marketsWithOrderbookFailures})`,
+          `[ARB] Scan complete: 0 opportunities (markets=${markets.length}, orderbook_failures=${orderbookFailures}, markets_with_missing_orderbooks=${marketsWithOrderbookFailures}, skips=${skipSummary})`,
         );
       } else {
         const top = opportunities[0];
         this.logger.info(
-          `[ARB] Found ${opportunities.length} opportunity(ies). Top market=${top.marketId} edge=${top.edgeBps.toFixed(1)}bps est=$${top.estProfitUsd.toFixed(2)} size=$${top.sizeUsd.toFixed(2)} (orderbook_failures=${orderbookFailures}, markets_with_missing_orderbooks=${marketsWithOrderbookFailures})`,
+          `[ARB] Found ${opportunities.length} opportunity(ies). Top market=${top.marketId} edge=${top.edgeBps.toFixed(1)}bps est=$${top.estProfitUsd.toFixed(2)} size=$${top.sizeUsd.toFixed(2)} (orderbook_failures=${orderbookFailures}, markets_with_missing_orderbooks=${marketsWithOrderbookFailures}, skips=${skipSummary})`,
         );
       }
+
+      this.logTopCandidates(topCandidates);
 
       for (const opportunity of opportunities) {
         if (this.activeTrades >= this.config.maxConcurrentTrades) break;
@@ -173,6 +181,7 @@ export class ArbitrageEngine {
       market_id: opportunity.marketId,
       yes_ask: opportunity.yesAsk,
       no_ask: opportunity.noAsk,
+      sum: opportunity.yesAsk + opportunity.noAsk,
       edge_bps: opportunity.edgeBps,
       liquidity: opportunity.liquidityUsd,
       spread_bps: opportunity.spreadBps,
@@ -183,5 +192,62 @@ export class ArbitrageEngine {
       tx_hash: txHash,
       status: action === 'trade' ? 'submitted' : 'skipped',
     });
+  }
+
+  private getDiagnostics(): ArbDiagnostics | undefined {
+    if (
+      typeof (this.strategy as { getDiagnostics?: () => ArbDiagnostics }).getDiagnostics === 'function'
+    ) {
+      return (this.strategy as { getDiagnostics: () => ArbDiagnostics }).getDiagnostics();
+    }
+    return undefined;
+  }
+
+  private selectTopCandidates(candidates: CandidateSnapshot[]): CandidateSnapshot[] {
+    if (!this.config.debugTopN || this.config.debugTopN <= 0) return [];
+    return [...candidates].sort((a, b) => b.edgeBps - a.edgeBps).slice(0, this.config.debugTopN);
+  }
+
+  private logTopCandidates(candidates: CandidateSnapshot[]): void {
+    if (!this.config.debugTopN || candidates.length === 0) return;
+    const lines = candidates.map((candidate) => {
+      const liquidity = candidate.liquidityUsd !== undefined ? candidate.liquidityUsd.toFixed(2) : 'n/a';
+      return `market_id=${candidate.marketId} yesAsk=${candidate.yesAsk.toFixed(4)} noAsk=${candidate.noAsk.toFixed(
+        4,
+      )} sum=${candidate.sum.toFixed(4)} edge_bps=${candidate.edgeBps.toFixed(1)} liquidity=${liquidity} spread_bps=${candidate.spreadBps.toFixed(1)}`;
+    });
+    this.logger.info(`[ARB] TopCandidates (pre-filter, top ${this.config.debugTopN}):\n${lines.join('\n')}`);
+  }
+
+  private formatSkipCounts(skipCounts: Record<string, number>): string {
+    return Object.entries(skipCounts)
+      .map(([reason, count]) => `${reason}:${count}`)
+      .join(',');
+  }
+
+  private async logCandidates(
+    allCandidates: CandidateSnapshot[],
+    topCandidates: CandidateSnapshot[],
+    now: number,
+  ): Promise<void> {
+    if (!this.decisionLogger) return;
+    if (topCandidates.length === 0 && !this.config.logEveryMarket) return;
+    const entries = this.config.logEveryMarket ? allCandidates : topCandidates;
+    const ts = new Date(now).toISOString();
+    for (const candidate of entries) {
+      await this.decisionLogger.append({
+        ts,
+        market_id: candidate.marketId,
+        yes_ask: candidate.yesAsk,
+        no_ask: candidate.noAsk,
+        sum: candidate.sum,
+        edge_bps: candidate.edgeBps,
+        liquidity: candidate.liquidityUsd,
+        spread_bps: candidate.spreadBps,
+        est_profit_usd: undefined,
+        action: 'candidate',
+        reason: candidate.reason ?? 'pre_filter',
+      });
+    }
   }
 }

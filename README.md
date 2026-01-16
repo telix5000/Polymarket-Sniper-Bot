@@ -180,6 +180,7 @@ RPC_URL=https://polygon-mainnet...     # Polygon RPC endpoint
 # Optional
 FETCH_INTERVAL=1                       # Polling interval (seconds)
 MIN_TRADE_SIZE_USD=100                 # Minimum trade size to frontrun (USD)
+# Legacy (supported with warning): MIN_TRADE_SIZE, MIN_TRADE_USDC, MIN_TRADE_SIZE_USDC
 FRONTRUN_SIZE_MULTIPLIER=0.5           # Frontrun size as % of target (0.0-1.0)
 GAS_PRICE_MULTIPLIER=1.2               # Gas price multiplier for priority
 COLLATERAL_TOKEN_ADDRESS=0x2791...     # USDC / USDC.e contract
@@ -246,6 +247,9 @@ ARB_STATE_DIR=/data
 ARB_DECISIONS_LOG=/data/arb_decisions.jsonl  # set empty to disable
 ARB_KILL_SWITCH_FILE=/data/KILL
 ARB_SNAPSHOT_STATE=true
+ARB_DEBUG_TOP_N=0                          # set >0 to print top-N candidate markets
+ARB_UNITS_AUTO_FIX=true                   # auto-fix cents -> probability units
+ARB_LOG_EVERY_MARKET=false                # log every market decision to JSONL
 ```
 
 ### How to Find Your Collateral Token (USDC vs USDC.e)
@@ -378,10 +382,16 @@ docker run --env-file .env polymarket-sniper-bot
 |----------|---------|-------------|
 | `FETCH_INTERVAL` | `1` | Polling frequency in seconds |
 | `MIN_TRADE_SIZE_USD` | `100` | Minimum trade size to frontrun (USD) |
+| `MIN_TRADE_SIZE` | (legacy) | Legacy minimum trade size (warns; prefer `MIN_TRADE_SIZE_USD`) |
+| `MIN_TRADE_USDC` | (legacy) | Legacy minimum trade size (warns; prefer `MIN_TRADE_SIZE_USD`) |
+| `MIN_TRADE_SIZE_USDC` | (legacy) | Legacy minimum trade size (warns; prefer `MIN_TRADE_SIZE_USD`) |
 | `FRONTRUN_SIZE_MULTIPLIER` | `0.5` | Frontrun size as % of target (0.0-1.0) |
 | `GAS_PRICE_MULTIPLIER` | `1.2` | Gas price multiplier for priority (e.g., 1.2 = 20% higher) |
 | `RETRY_LIMIT` | `3` | Maximum retry attempts for failed orders |
 | `USDC_CONTRACT_ADDRESS` | `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174` | USDC contract on Polygon |
+| `ARB_DEBUG_TOP_N` | `0` | Log top-N pre-filter arbitrage candidates per scan |
+| `ARB_UNITS_AUTO_FIX` | `true` | Auto-fix cents vs probability unit mismatches |
+| `ARB_LOG_EVERY_MARKET` | `false` | Write decisions for every market to JSONL |
 
 ### Finding Target Wallets
 

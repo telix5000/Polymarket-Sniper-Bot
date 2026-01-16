@@ -6,10 +6,11 @@ export type DecisionLogEntry = {
   market_id: string;
   yes_ask: number;
   no_ask: number;
+  sum?: number;
   edge_bps: number;
   liquidity?: number;
   spread_bps?: number;
-  est_profit_usd: number;
+  est_profit_usd?: number;
   action: string;
   reason?: string;
   planned_size?: number;

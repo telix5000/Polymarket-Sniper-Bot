@@ -46,9 +46,7 @@ export class MempoolMonitorService {
     const { logger, env } = this.deps;
     logger.info('Starting Polymarket Frontrun Bot - Mempool Monitor');
     logger.info(
-      `Monitoring ${env.targetAddresses.length} target address(es) every ${env.fetchIntervalSeconds}s (min trade: ${(
-        env.minTradeSizeUsd ?? DEFAULT_CONFIG.MIN_TRADE_SIZE_USD
-      ).toFixed(2)} USD, window: ${DEFAULT_CONFIG.ACTIVITY_CHECK_WINDOW_SECONDS}s)`,
+      `[Monitor] Config min_trade_usd=${env.minTradeSizeUsd.toFixed(2)} recent_window=${DEFAULT_CONFIG.ACTIVITY_CHECK_WINDOW_SECONDS}s fetch_interval=${env.fetchIntervalSeconds}s targets=${env.targetAddresses.length}`,
     );
     logger.debug(`Target addresses: ${env.targetAddresses.map((addr) => addr.toLowerCase()).join(', ') || 'none'}`);
     
@@ -117,7 +115,10 @@ export class MempoolMonitorService {
       recentTrades: 0,
       eligibleTrades: 0,
       skippedSmallTrades: 0,
-      skippedConfirmedTrades: 0,
+      skippedUnconfirmedTrades: 0,
+      skippedNonTargetTrades: 0,
+      skippedParseErrorTrades: 0,
+      skippedOtherTrades: 0,
     };
     
     // Monitor all addresses from env (these are the addresses we want to frontrun)
@@ -136,7 +137,7 @@ export class MempoolMonitorService {
 
     const durationMs = Date.now() - startTime;
     logger.info(
-      `[Monitor] Checked ${checkedAddresses} address(es) in ${durationMs}ms | trades: ${stats.tradesSeen}, recent: ${stats.recentTrades}, eligible: ${stats.eligibleTrades}, skipped: ${stats.skippedSmallTrades} small / ${stats.skippedConfirmedTrades} confirmed`,
+      `[Monitor] Checked ${checkedAddresses} address(es) in ${durationMs}ms | trades: ${stats.tradesSeen}, recent: ${stats.recentTrades}, eligible: ${stats.eligibleTrades}, skipped_small: ${stats.skippedSmallTrades}, skipped_unconfirmed: ${stats.skippedUnconfirmedTrades}, skipped_non_target: ${stats.skippedNonTargetTrades}, skipped_parse_error: ${stats.skippedParseErrorTrades}, skipped_other: ${stats.skippedOtherTrades}`,
     );
   }
 
@@ -151,27 +152,47 @@ export class MempoolMonitorService {
       const cutoffTime = now - DEFAULT_CONFIG.ACTIVITY_CHECK_WINDOW_SECONDS;
 
       for (const activity of activities) {
-        if (activity.type !== 'TRADE') continue;
+        if (activity.type !== 'TRADE') {
+          stats.skippedOtherTrades += 1;
+          continue;
+        }
         stats.tradesSeen += 1;
 
         const activityTime = typeof activity.timestamp === 'number' 
           ? activity.timestamp 
           : Math.floor(new Date(activity.timestamp).getTime() / 1000);
+
+        if (!activity.transactionHash || !activity.conditionId || activity.outcomeIndex === undefined) {
+          stats.skippedParseErrorTrades += 1;
+          continue;
+        }
         
         // Only process very recent trades (potential frontrun targets)
-        if (activityTime < cutoffTime) continue;
+        if (activityTime < cutoffTime) {
+          stats.skippedOtherTrades += 1;
+          continue;
+        }
         stats.recentTrades += 1;
         
         // Skip if already processed
-        if (this.processedHashes.has(activity.transactionHash)) continue;
+        if (this.processedHashes.has(activity.transactionHash)) {
+          stats.skippedOtherTrades += 1;
+          continue;
+        }
 
         const lastTime = this.lastFetchTime.get(targetAddress) || 0;
-        if (activityTime <= lastTime) continue;
+        if (activityTime <= lastTime) {
+          stats.skippedOtherTrades += 1;
+          continue;
+        }
 
         // Check minimum trade size
         const sizeUsd = activity.usdcSize || activity.size * activity.price;
-        const minTradeSize = env.minTradeSizeUsd || DEFAULT_CONFIG.MIN_TRADE_SIZE_USD;
-        if (sizeUsd < minTradeSize) {
+        if (!Number.isFinite(sizeUsd)) {
+          stats.skippedParseErrorTrades += 1;
+          continue;
+        }
+        if (sizeUsd < env.minTradeSizeUsd) {
           stats.skippedSmallTrades += 1;
           continue;
         }
@@ -181,7 +202,7 @@ export class MempoolMonitorService {
         if (txStatus === 'confirmed') {
           // Too late to frontrun
           this.processedHashes.add(activity.transactionHash);
-          stats.skippedConfirmedTrades += 1;
+          stats.skippedUnconfirmedTrades += 1;
           continue;
         }
 
@@ -231,5 +252,8 @@ type MonitorStats = {
   recentTrades: number;
   eligibleTrades: number;
   skippedSmallTrades: number;
-  skippedConfirmedTrades: number;
+  skippedUnconfirmedTrades: number;
+  skippedNonTargetTrades: number;
+  skippedParseErrorTrades: number;
+  skippedOtherTrades: number;
 };
