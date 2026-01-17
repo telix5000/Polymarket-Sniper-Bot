@@ -190,7 +190,7 @@ export const ensureApprovals = async (params: {
     if (decision.needsErc1155) {
       approvalsToSend.push({
         label: `ERC1155.setApprovalForAll operator=${operator}`,
-        to: contracts.ctfErc1155Address,
+        to: contracts.ctfErc1155Address!,
         data: erc1155Interface.encodeFunctionData('setApprovalForAll', [operator, true]),
         type: 'erc1155',
         spender: operator,
@@ -246,7 +246,7 @@ export const ensureApprovals = async (params: {
         params.logger.info(`[Preflight][Approvals] Tx submitted ${tx.hash}`);
         await tx.wait(params.config.confirmations);
       } else {
-        const tx = await new Contract(contracts.ctfErc1155Address, ERC1155_ABI, params.wallet)
+        const tx = await new Contract(contracts.ctfErc1155Address!, ERC1155_ABI, params.wallet)
           .setApprovalForAll(approval.spender, true, overrides);
         params.logger.info(`[Preflight][Approvals] Tx submitted ${tx.hash}`);
         await tx.wait(params.config.confirmations);

@@ -1,5 +1,5 @@
 import type { ApiKeyCreds, ClobClient } from '@polymarket/clob-client';
-import { utils } from 'ethers';
+import { utils, type BigNumberish } from 'ethers';
 import type { Wallet } from 'ethers';
 import { isAuthError } from '../infrastructure/clob-auth';
 import { runClobAuthMatrixPreflight, runClobAuthPreflight } from '../clob/diagnostics';
@@ -10,6 +10,8 @@ import { publicKeyMatchesDerived, deriveSignerAddress } from '../clob/diagnostic
 import { resolvePolymarketContracts } from './contracts';
 import { ensureApprovals, readApprovalsConfig } from './approvals';
 import { createRelayerContext, deployIfNeeded } from './relayer';
+
+export { readApprovalsConfig };
 
 export type TradingReadyParams = {
   client: ClobClient & { wallet: Wallet; derivedCreds?: ApiKeyCreds };
@@ -32,7 +34,7 @@ const parseBool = (raw: string | undefined, fallback: boolean): boolean => {
 
 const isLiveTradingEnabled = (): boolean => readEnv('ARB_LIVE_TRADING') === 'I_UNDERSTAND_THE_RISKS';
 
-const formatUnits = (value: utils.BigNumberish, decimals: number): string =>
+const formatUnits = (value: BigNumberish, decimals: number): string =>
   Number(utils.formatUnits(value, decimals)).toFixed(2);
 
 export const ensureTradingReady = async (
@@ -52,7 +54,7 @@ export const ensureTradingReady = async (
   let detectOnly = params.detectOnly;
   const liveTradingEnabled = isLiveTradingEnabled();
   const contracts = resolvePolymarketContracts();
-  let relayer = { enabled: false, signerAddress: derivedSignerAddress };
+  let relayer: ReturnType<typeof createRelayerContext> = { enabled: false, signerAddress: derivedSignerAddress };
   try {
     relayer = createRelayerContext({
       privateKey: params.privateKey,
