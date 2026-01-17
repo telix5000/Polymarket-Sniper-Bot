@@ -19,6 +19,7 @@ test('postOrder applies cached API creds before placing orders', async () => {
 
   const client = {
     getOrderBook: async () => baseOrderBook,
+    getBalanceAllowance: async () => ({ balance: '100', allowance: '100' }),
     createMarketOrder: async () => ({ signed: true }),
     postOrder: async () => {
       callOrder.push('post');
@@ -68,6 +69,7 @@ test('postOrder re-applies API creds and retries once on auth failure', async ()
 
   const client = {
     getOrderBook: async () => baseOrderBook,
+    getBalanceAllowance: async () => ({ balance: '100', allowance: '100' }),
     createMarketOrder: async () => ({ signed: true }),
     postOrder: async () => {
       postAttempts += 1;

@@ -137,6 +137,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderSubmissionR
       collateralTokenAddress: input.collateralTokenAddress,
       collateralTokenDecimals: input.collateralTokenDecimals,
       collateralTokenId: input.collateralTokenId,
+      conditionalTokenId: tokenId,
       autoApprove: input.orderConfig?.autoApprove,
       autoApproveMaxUsd: input.orderConfig?.autoApproveMaxUsd,
       logger,
