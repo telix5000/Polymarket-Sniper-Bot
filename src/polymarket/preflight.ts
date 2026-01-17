@@ -7,6 +7,7 @@ import {
   runClobAuthPreflight,
 } from "../clob/diagnostics";
 import { formatClobAuthFailureHint } from "../utils/clob-auth-hint.util";
+import { isGeoblocked } from "../utils/geoblock.util";
 import type { Logger } from "../utils/logger.util";
 import { sanitizeErrorMessage } from "../utils/sanitize-axios-error.util";
 import {
@@ -66,6 +67,29 @@ export const ensureTradingReady = async (
 
   let detectOnly = params.detectOnly;
   const liveTradingEnabled = isLiveTradingEnabled();
+
+  // Check geographic eligibility per Polymarket API requirements
+  // @see https://docs.polymarket.com/developers/CLOB/geoblock
+  const skipGeoblockCheck = parseBool(readEnv("SKIP_GEOBLOCK_CHECK"), false);
+  if (!skipGeoblockCheck) {
+    // isGeoblocked fails closed by default - if API is unreachable, it returns true (blocked)
+    // This ensures compliance with geographic restrictions even during API outages
+    const blocked = await isGeoblocked(params.logger);
+    if (blocked) {
+      params.logger.error(
+        "[Preflight] Geographic restriction: trading not available in your region.",
+      );
+      params.logger.error(
+        "[Preflight] Set SKIP_GEOBLOCK_CHECK=true to bypass (not recommended).",
+      );
+      detectOnly = true;
+    }
+  } else {
+    params.logger.warn(
+      "[Preflight] SKIP_GEOBLOCK_CHECK=true; geographic eligibility check bypassed.",
+    );
+  }
+
   const contracts = resolvePolymarketContracts();
   let relayer: ReturnType<typeof createRelayerContext> = {
     enabled: false,

@@ -1,5 +1,6 @@
 /**
  * Polymarket contract addresses on Polygon
+ * @see https://docs.polymarket.com/developers/CTF/deployment-resources
  */
 export const POLYMARKET_CONTRACTS = [
   "0x4bfb41d5b3570dfe5a4bde6f4f13907e456f2b13", // ConditionalTokens
@@ -8,6 +9,8 @@ export const POLYMARKET_CONTRACTS = [
 
 /**
  * Default configuration values
+ * Rate limits are based on Polymarket API documentation
+ * @see https://docs.polymarket.com/quickstart/introduction/rate-limits
  */
 export const DEFAULT_CONFIG = {
   FETCH_INTERVAL_SECONDS: 1,
@@ -35,6 +38,7 @@ export const POLYGON_USDC_ADDRESS =
 
 /**
  * Polymarket on-chain addresses (Polygon mainnet)
+ * @see https://docs.polymarket.com/developers/CTF/deployment-resources
  */
 export const POLYMARKET_CTF_ADDRESS =
   "0x4d97dcd97ec945f40cf65f87097ace5ea0476045";
@@ -47,10 +51,17 @@ export const POLYMARKET_NEG_RISK_ADAPTER_ADDRESS =
 
 /**
  * Polymarket API endpoints
+ * @see https://docs.polymarket.com/quickstart/reference/endpoints
  */
 export const POLYMARKET_API = {
+  /** CLOB API - Order management, prices, orderbooks */
   BASE_URL: "https://clob.polymarket.com",
+  /** Data API - User positions, activity, history */
   DATA_API_BASE_URL: "https://data-api.polymarket.com",
+  /** Gamma API - Market discovery, metadata, events */
+  GAMMA_API_BASE_URL: "https://gamma-api.polymarket.com",
+  /** Geoblock API - Geographic eligibility check */
+  GEOBLOCK_ENDPOINT: "https://polymarket.com/api/geoblock",
   ACTIVITY_ENDPOINT: (user: string) =>
     `${POLYMARKET_API.DATA_API_BASE_URL}/activity?user=${user}`,
   POSITIONS_ENDPOINT: (user: string) =>
@@ -64,4 +75,43 @@ export const ORDER_EXECUTION = {
   MIN_REMAINING_USD: 0.01,
   MAX_RETRIES: 3,
   PRICE_PROTECTION_THRESHOLD: 0.01,
+} as const;
+
+/**
+ * Polymarket API Rate Limits
+ * All limits are per 10 seconds unless noted otherwise in the comment.
+ * These are informational - actual enforcement is done by Cloudflare throttling.
+ * @see https://docs.polymarket.com/quickstart/introduction/rate-limits
+ */
+export const POLYMARKET_RATE_LIMITS = {
+  /** General rate limiting (per 10 seconds) */
+  GENERAL: 15000,
+  /** CLOB API general (per 10 seconds) */
+  CLOB_GENERAL: 9000,
+  /** CLOB /book endpoint (per 10 seconds) */
+  CLOB_BOOK: 1500,
+  /** CLOB /books endpoint (per 10 seconds) */
+  CLOB_BOOKS: 500,
+  /** CLOB /price endpoint (per 10 seconds) */
+  CLOB_PRICE: 1500,
+  /** CLOB POST /order endpoint - burst (per 10 seconds) */
+  CLOB_ORDER_POST_BURST: 3500,
+  /** CLOB POST /order endpoint - sustained: 36000 requests per 10 MINUTES (~60/s average) */
+  CLOB_ORDER_POST_SUSTAINED: 36000,
+  /** CLOB DELETE /order endpoint - burst (per 10 seconds) */
+  CLOB_ORDER_DELETE_BURST: 3000,
+  /** Data API general (per 10 seconds) */
+  DATA_API_GENERAL: 1000,
+  /** Data API /trades (per 10 seconds) */
+  DATA_API_TRADES: 200,
+  /** Data API /positions (per 10 seconds) */
+  DATA_API_POSITIONS: 150,
+  /** GAMMA API general (per 10 seconds) */
+  GAMMA_GENERAL: 4000,
+  /** GAMMA /events (per 10 seconds) */
+  GAMMA_EVENTS: 500,
+  /** GAMMA /markets (per 10 seconds) */
+  GAMMA_MARKETS: 300,
+  /** Relayer /submit (per 1 MINUTE, not 10 seconds) */
+  RELAYER_SUBMIT: 25,
 } as const;
