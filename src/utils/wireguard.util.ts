@@ -131,8 +131,7 @@ const isResolvconfError = (err: unknown): boolean => {
     message.includes("resolvconf") ||
     message.includes("signature mismatch") ||
     message.includes("useable init system") ||
-    message.includes("unable to set dns") ||
-    message.includes("permission denied")
+    message.includes("unable to set dns")
   );
 };
 
@@ -217,26 +216,35 @@ const applyDnsFallback = async (
     let existingContent = "";
     try {
       existingContent = await fs.readFile(RESOLV_CONF, "utf-8");
-    } catch {
-      // File may not exist, that's ok
+    } catch (readErr) {
+      // File not found is expected; other errors are logged but not fatal
+      const isNotFound =
+        readErr instanceof Error &&
+        "code" in readErr &&
+        readErr.code === "ENOENT";
+      if (!isNotFound) {
+        logger.warn(`Could not read ${RESOLV_CONF}: ${(readErr as Error).message}`);
+      }
     }
 
     // Preserve non-nameserver lines (search, domain, options)
+    // Also filter out any existing WireGuard DNS markers (case-insensitive)
+    const wgMarkerPattern = /^#\s*wireguard\s*dns\s*$/i;
     const preservedLines = existingContent
       .split(/\r?\n/)
       .filter(
         (line) =>
-          !line.trim().startsWith("nameserver") && line.trim().length > 0,
+          !line.trim().startsWith("nameserver") &&
+          !wgMarkerPattern.test(line.trim()) &&
+          line.trim().length > 0,
       );
 
     // Build new content with WireGuard DNS servers at the top
     const wgMarker = "# WireGuard DNS";
     const nameserverLines = dnsServers.map((s) => `nameserver ${s}`);
-    const newContent = [
-      wgMarker,
-      ...nameserverLines,
-      ...preservedLines.filter((l) => l !== wgMarker),
-    ].join("\n");
+    const newContent = [wgMarker, ...nameserverLines, ...preservedLines].join(
+      "\n",
+    );
 
     await fs.writeFile(RESOLV_CONF, `${newContent}\n`);
     logger.info(
