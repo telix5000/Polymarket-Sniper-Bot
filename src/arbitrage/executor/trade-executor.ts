@@ -192,6 +192,7 @@ export class ArbTradeExecutor implements TradeExecutor {
       balanceBufferBps,
       collateralTokenAddress: this.config.collateralTokenAddress,
       collateralTokenDecimals: this.config.collateralTokenDecimals,
+      conditionalTokenId: tokenId,
       autoApprove: this.config.autoApprove,
       autoApproveMaxUsd: this.config.autoApproveMaxUsd,
       logger: this.logger,

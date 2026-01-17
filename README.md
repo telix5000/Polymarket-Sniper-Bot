@@ -193,8 +193,9 @@ The bot ships with safe diagnostics to help debug persistent `401 Unauthorized/I
 **What you’ll see**
 
 - `[CLOB][Diag]` identity summary: derived signer address, configured public key, match status, chain ID, host, signature type, funder/maker addresses, masked API key ID, and key/secret/passphrase presence booleans.
+- `[CLOB][Diag][AuthFunds]` auth+funds summary: derived signer, configured public key match, effective `POLY_ADDRESS`, signature type, funder/proxy address, and credential mode (`explicit` vs `derived`).
 - `[CLOB][Diag][Sign]` signing summary: method/path/body flags, message hash (sha256 prefix), secret hash (sha256 prefix of decoded bytes), and the signature/secret encoding modes.
-- `[CLOB][Preflight]` status: runs a one-time auth call to `/auth/api-keys`, backing off on failures to avoid spam.
+- `[CLOB][Preflight]` status: runs a one-time auth call to `/balance-allowance?asset_type=COLLATERAL`, backing off on failures to avoid spam.
 - `[CLOB][401]` compact failure line: safe snapshot of address, signature type, funder, decoding/encoding modes, message hash, and key ID suffix.
 
 **How to interpret failures**
@@ -208,6 +209,21 @@ If preflight fails with 401, the logs will classify the likely root cause as one
 - `SERVER_REJECTED_CREDS` (credentials rejected server-side)
 
 When a 401 occurs, the runtime automatically switches to detect-only mode.
+
+### Balance/Allowance API params
+
+Polymarket’s `/balance-allowance` endpoint requires the following query parameters:
+
+- `asset_type=COLLATERAL` (no `token_id` required) — for USDC collateral checks.
+- `asset_type=CONDITIONAL&token_id=<tokenId>` — for conditional tokens (YES/NO) checks.
+
+The bot signs **the exact path + querystring** it sends (e.g. `/balance-allowance?asset_type=COLLATERAL`), so mismatched params will fail preflight.
+
+### Common failure modes (and next steps)
+
+- **401 Unauthorized** → Check API key/secret/passphrase, `PUBLIC_KEY`, `signature_type`, and `POLY_ADDRESS` alignment.
+- **400 Invalid asset type** → Ensure `asset_type` is `COLLATERAL` or `CONDITIONAL` and include `token_id` for conditional tokens.
+- **400 Insufficient balance/allowance** → Top up collateral and/or approve spending for the collateral or conditional token.
 
 ## 🧮 Arbitrage Mode (RAM + tmpfs)
 

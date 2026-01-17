@@ -15,6 +15,7 @@ export type FundsAllowanceParams = {
   collateralTokenAddress?: string;
   collateralTokenDecimals?: number;
   collateralTokenId?: string;
+  conditionalTokenId?: string;
   autoApprove?: boolean;
   autoApproveMaxUsd?: number;
   logger: Logger;
@@ -26,6 +27,18 @@ export type FundsAllowanceResult = {
   balanceUsd: number;
   allowanceUsd: number;
   reason?: string;
+};
+
+export type BalanceAllowanceParams = {
+  asset_type: AssetType;
+  token_id?: string;
+};
+
+export type BalanceAllowanceSnapshot = {
+  assetType: AssetType;
+  tokenId?: string;
+  balanceUsd: number;
+  allowanceUsd: number;
 };
 
 export const resolveSignerAddress = (client: ClobClient): string => {
@@ -68,28 +81,94 @@ const submitApproval = async (params: {
   params.logger.info('[CLOB] Approval confirmed.');
 };
 
+export const buildBalanceAllowanceParams = (assetType: AssetType, tokenId?: string): BalanceAllowanceParams => ({
+  asset_type: assetType,
+  ...(assetType === AssetType.CONDITIONAL && tokenId ? { token_id: tokenId } : {}),
+});
+
+const formatAssetLabel = (snapshot: BalanceAllowanceSnapshot): string => {
+  if (snapshot.assetType === AssetType.CONDITIONAL) {
+    return `${snapshot.assetType} token_id=${snapshot.tokenId ?? 'unknown'}`;
+  }
+  return `${snapshot.assetType}`;
+};
+
+const fetchBalanceAllowance = async (
+  client: ClobClient,
+  assetType: AssetType,
+  tokenId?: string,
+): Promise<BalanceAllowanceSnapshot> => {
+  const params = buildBalanceAllowanceParams(assetType, tokenId);
+  const response = await client.getBalanceAllowance(params);
+  return {
+    assetType,
+    tokenId,
+    balanceUsd: parseUsdValue((response as { balance?: string }).balance),
+    allowanceUsd: parseUsdValue((response as { allowance?: string }).allowance),
+  };
+};
+
+const isSnapshotSufficient = (snapshot: BalanceAllowanceSnapshot, requiredUsd: number): boolean =>
+  snapshot.balanceUsd >= requiredUsd && snapshot.allowanceUsd >= requiredUsd;
+
+const getBalanceUpdater = (client: ClobClient): (() => Promise<void>) | null => {
+  const updater = (client as { updateBalanceAllowance?: () => Promise<void> }).updateBalanceAllowance;
+  return typeof updater === 'function' ? updater : null;
+};
+
 export const checkFundsAndAllowance = async (params: FundsAllowanceParams): Promise<FundsAllowanceResult> => {
   const bufferBps = params.balanceBufferBps ?? 0;
   const requiredUsd = params.sizeUsd * (1 + bufferBps / 10000);
   const signerAddress = resolveSignerAddress(params.client);
   const collateralLabel = formatCollateralLabel(params.collateralTokenAddress, params.collateralTokenId);
-  const balanceParams = {
-    asset_type: AssetType.COLLATERAL,
-    ...(params.collateralTokenId ? { token_id: params.collateralTokenId } : {}),
-  };
 
   try {
-    const response = await params.client.getBalanceAllowance(balanceParams);
-    const balanceUsd = parseUsdValue((response as { balance?: string }).balance);
-    const allowanceUsd = parseUsdValue((response as { allowance?: string }).allowance);
+    let refreshed = false;
+    let collateralSnapshot = await fetchBalanceAllowance(params.client, AssetType.COLLATERAL);
+    let conditionalSnapshot = params.conditionalTokenId
+      ? await fetchBalanceAllowance(params.client, AssetType.CONDITIONAL, params.conditionalTokenId)
+      : null;
+    let balanceUsd = collateralSnapshot.balanceUsd;
+    let allowanceUsd = collateralSnapshot.allowanceUsd;
 
-    if (balanceUsd < requiredUsd || allowanceUsd < requiredUsd) {
+    const refreshAndRetry = async (): Promise<void> => {
+      const updater = getBalanceUpdater(params.client);
+      if (!updater || refreshed) return;
+      refreshed = true;
+      params.logger.info('[CLOB] Refreshing balance/allowance cache before skipping order.');
+      await updater();
+      collateralSnapshot = await fetchBalanceAllowance(params.client, AssetType.COLLATERAL);
+      conditionalSnapshot = params.conditionalTokenId
+        ? await fetchBalanceAllowance(params.client, AssetType.CONDITIONAL, params.conditionalTokenId)
+        : null;
+      balanceUsd = collateralSnapshot.balanceUsd;
+      allowanceUsd = collateralSnapshot.allowanceUsd;
+    };
+
+    const firstInsufficient = !isSnapshotSufficient(collateralSnapshot, requiredUsd)
+      ? collateralSnapshot
+      : conditionalSnapshot && !isSnapshotSufficient(conditionalSnapshot, requiredUsd)
+        ? conditionalSnapshot
+        : null;
+
+    if (firstInsufficient) {
+      await refreshAndRetry();
+    }
+
+    const insufficientSnapshot = !isSnapshotSufficient(collateralSnapshot, requiredUsd)
+      ? collateralSnapshot
+      : conditionalSnapshot && !isSnapshotSufficient(conditionalSnapshot, requiredUsd)
+        ? conditionalSnapshot
+        : null;
+
+    if (insufficientSnapshot) {
       const reason = 'INSUFFICIENT_BALANCE_OR_ALLOWANCE';
+      const assetLabel = formatAssetLabel(insufficientSnapshot);
       params.logger.warn(
-        `[CLOB] Order skipped (${reason}): need=${formatUsd(requiredUsd)} have=${formatUsd(balanceUsd)} allowance=${formatUsd(allowanceUsd)} signer=${signerAddress} collateral=${collateralLabel}`,
+        `[CLOB] Order skipped (${reason}): need=${formatUsd(requiredUsd)} have=${formatUsd(insufficientSnapshot.balanceUsd)} allowance=${formatUsd(insufficientSnapshot.allowanceUsd)} asset=${assetLabel} signer=${signerAddress} collateral=${collateralLabel}`,
       );
 
-      if (allowanceUsd < requiredUsd) {
+      if (insufficientSnapshot.allowanceUsd < requiredUsd && insufficientSnapshot.assetType === AssetType.COLLATERAL) {
         if (params.autoApprove && params.collateralTokenAddress) {
           const wallet = (params.client as { wallet?: Wallet }).wallet;
           if (!wallet) {
@@ -121,8 +200,8 @@ export const checkFundsAndAllowance = async (params: FundsAllowanceParams): Prom
       return {
         ok: false,
         requiredUsd,
-        balanceUsd,
-        allowanceUsd,
+        balanceUsd: insufficientSnapshot.balanceUsd,
+        allowanceUsd: insufficientSnapshot.allowanceUsd,
         reason,
       };
     }

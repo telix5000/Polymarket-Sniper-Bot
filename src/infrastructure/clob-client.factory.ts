@@ -1,5 +1,5 @@
 import { Wallet, providers } from 'ethers';
-import { ClobClient, Chain, createL2Headers } from '@polymarket/clob-client';
+import { AssetType, ClobClient, Chain, createL2Headers } from '@polymarket/clob-client';
 import type { ApiKeyCreds } from '@polymarket/clob-client';
 import { SignatureType } from '@polymarket/order-utils';
 import { POLYMARKET_API } from '../constants/polymarket.constants';
@@ -13,6 +13,7 @@ import {
   getApiKeyDiagnostics,
   logAuthSigningDiagnostics,
   logClobDiagnostics,
+  logAuthFundsDiagnostics,
   setupClobHeaderKeyLogging,
 } from '../clob/diagnostics';
 import {
@@ -113,9 +114,7 @@ const logAuthHeaderPresence = async (
   try {
     const signer = (client as ClobClient & { signer?: Wallet | providers.JsonRpcSigner }).signer;
     if (!signer) return;
-    const orderBuilder = (client as ClobClient & { orderBuilder?: { signatureType?: number } }).orderBuilder;
-    const signatureType = orderBuilder?.signatureType;
-    const params = signatureType !== undefined ? { signature_type: signatureType } : undefined;
+    const params = { asset_type: AssetType.COLLATERAL };
     const { signedPath, paramsKeys } = buildSignedPath('/balance-allowance', params);
     const timestamp = Math.floor(Date.now() / 1000);
     const headers = await createL2Headers(signer, creds, {
@@ -301,6 +300,11 @@ export async function createPolymarketClient(
   const resolvedFunderAddress = (client as ClobClient & { orderBuilder?: { funderAddress?: string } }).orderBuilder
     ?.funderAddress;
   const makerAddress = effectiveAddressResult.effectivePolyAddress ?? derivedSignerAddress ?? 'n/a';
+  const credentialMode: 'explicit' | 'derived' | 'none' = creds
+    ? deriveEnabled
+      ? 'derived'
+      : 'explicit'
+    : 'none';
   logClobDiagnostics({
     logger: input.logger,
     derivedSignerAddress,
@@ -314,6 +318,15 @@ export async function createPolymarketClient(
     apiKeyPresent: Boolean(creds?.key),
     secretPresent: Boolean(creds?.secret),
     passphrasePresent: Boolean(creds?.passphrase),
+  });
+  logAuthFundsDiagnostics({
+    logger: input.logger,
+    derivedSignerAddress,
+    configuredPublicKey,
+    effectivePolyAddress: effectiveAddressResult.effectivePolyAddress,
+    signatureType: resolvedSignatureType ?? signatureType,
+    funderAddress: resolvedFunderAddress ?? funderAddress,
+    credentialMode,
   });
 
   if (creds) {

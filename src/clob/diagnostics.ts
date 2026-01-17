@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import axios from 'axios';
 import type { ApiKeyCreds, ClobClient } from '@polymarket/clob-client';
+import { AssetType } from '@polymarket/clob-client';
 import * as clobSigning from '@polymarket/clob-client/dist/signing';
 import { SignatureType } from '@polymarket/order-utils';
 import { Wallet } from 'ethers';
@@ -27,6 +28,8 @@ export type AuthFailureReason =
   | 'MESSAGE_CANONICALIZATION'
   | 'SERVER_REJECTED_CREDS';
 
+export type PreflightIssue = 'AUTH' | 'PARAM' | 'FUNDS' | 'NETWORK' | 'UNKNOWN';
+
 const SIGNATURE_ENCODING_USED: SignatureEncodingMode = 'base64url';
 const SECRET_DECODING_USED: SecretDecodingMode = 'base64';
 const PREFLIGHT_BACKOFF_BASE_MS = 1000;
@@ -40,6 +43,9 @@ const PREFLIGHT_DATA_TRUNCATE = 200;
 const PREFLIGHT_CONNECTIVITY_MAX_TRIES = 5;
 const PREFLIGHT_CONNECTIVITY_BACKOFF_BASE_MS = 500;
 const PREFLIGHT_TRANSIENT_CODES = new Set(['ECONNRESET', 'ETIMEDOUT']);
+const PREFLIGHT_INVALID_ASSET_TYPE = /invalid asset type/i;
+const PREFLIGHT_INSUFFICIENT_FUNDS = /not enough balance|insufficient balance|allowance/i;
+const PREFLIGHT_NETWORK_HINT = /timeout|timed out|econnreset|network/i;
 
 let headerKeysLogged = false;
 let preflightBackoffMs = PREFLIGHT_BACKOFF_BASE_MS;
@@ -72,10 +78,13 @@ export const publicKeyMatchesDerived = (configuredPublicKey?: string, derivedSig
 const secretLooksBase64Url = (secret: string): boolean => {
   const base64UrlAlphabet = /^[A-Za-z0-9_-]+$/;
   const withoutPadding = secret.replace(/=/g, '');
-  return (
-    (secret.includes('-') || secret.includes('_') || !secret.includes('='))
-    && base64UrlAlphabet.test(withoutPadding)
-  );
+  if (!base64UrlAlphabet.test(withoutPadding)) {
+    return false;
+  }
+  if (secret.includes('-') || secret.includes('_')) {
+    return true;
+  }
+  return withoutPadding.length % 4 !== 0;
 };
 
 export const detectSecretDecodingMode = (secret?: string): SecretDecodingMode => {
@@ -300,6 +309,21 @@ export const logClobDiagnostics = (params: {
   );
 };
 
+export const logAuthFundsDiagnostics = (params: {
+  logger?: Logger;
+  derivedSignerAddress?: string;
+  configuredPublicKey?: string;
+  effectivePolyAddress?: string;
+  signatureType?: number;
+  funderAddress?: string;
+  credentialMode: 'explicit' | 'derived' | 'none';
+}): void => {
+  if (!params.logger) return;
+  params.logger.info(
+    `[CLOB][Diag][AuthFunds] signer=${params.derivedSignerAddress ?? 'n/a'} configuredPublicKey=${params.configuredPublicKey ?? 'none'} publicKeyMatchesDerived=${publicKeyMatchesDerived(params.configuredPublicKey, params.derivedSignerAddress)} effectivePolyAddress=${params.effectivePolyAddress ?? 'n/a'} signatureType=${params.signatureType ?? 'n/a'} (${signatureTypeLabel(params.signatureType)}) funderAddress=${params.funderAddress ?? 'none'} credentialMode=${params.credentialMode}`,
+  );
+};
+
 export const classifyAuthFailure = (params: {
   configuredPublicKey?: string;
   derivedSignerAddress?: string;
@@ -332,6 +356,48 @@ export const classifyAuthFailure = (params: {
     return 'MESSAGE_CANONICALIZATION';
   }
   return 'SERVER_REJECTED_CREDS';
+};
+
+export const classifyPreflightIssue = (params: {
+  status?: number;
+  code?: string | null;
+  message?: string;
+  data?: unknown;
+}): PreflightIssue => {
+  if (params.status === 401 || params.status === 403) {
+    return 'AUTH';
+  }
+  const dataText = typeof params.data === 'string' ? params.data : params.data ? JSON.stringify(params.data) : '';
+  const combined = `${params.message ?? ''} ${dataText}`.trim();
+  if (params.status === 400 && PREFLIGHT_INVALID_ASSET_TYPE.test(combined)) {
+    return 'PARAM';
+  }
+  if (params.status === 400 && PREFLIGHT_INSUFFICIENT_FUNDS.test(combined)) {
+    return 'FUNDS';
+  }
+  if ((params.code && PREFLIGHT_TRANSIENT_CODES.has(params.code)) || PREFLIGHT_NETWORK_HINT.test(combined)) {
+    return 'NETWORK';
+  }
+  return 'UNKNOWN';
+};
+
+const logPreflightHint = (logger: Logger, issue: PreflightIssue): void => {
+  switch (issue) {
+    case 'AUTH':
+      logger.warn('[CLOB][Preflight][Hint] Auth failed: verify API key/secret/passphrase, signature_type, and POLY_ADDRESS.');
+      break;
+    case 'PARAM':
+      logger.warn('[CLOB][Preflight][Hint] Invalid params: use asset_type=COLLATERAL or asset_type=CONDITIONAL&token_id=...');
+      break;
+    case 'FUNDS':
+      logger.warn('[CLOB][Preflight][Hint] Insufficient balance/allowance: top up collateral or approve spending.');
+      break;
+    case 'NETWORK':
+      logger.warn('[CLOB][Preflight][Hint] Network issue: retry or check connectivity/Cloudflare.');
+      break;
+    default:
+      break;
+  }
 };
 
 const extractStatus = (error: unknown): number | undefined => {
@@ -489,7 +555,7 @@ export const runClobAuthPreflight = async (params: {
   const timestamp = Math.floor(Date.now() / 1000);
   const endpoint = '/balance-allowance';
   params.logger.info(`[CLOB][Preflight] endpoint=${endpoint}`);
-  const requestParams = { signature_type: signatureType };
+  const requestParams = { asset_type: AssetType.COLLATERAL };
   const { signedPath, paramsKeys } = buildSignedPath(endpoint, requestParams);
   params.logger.info(
     `[CLOB][Diag][Sign] pathSigned=${signedPath} paramsKeys=${paramsKeys.length ? paramsKeys.join(',') : 'none'}`,
@@ -503,7 +569,7 @@ export const runClobAuthPreflight = async (params: {
   });
 
   try {
-    const response = await params.client.getBalanceAllowance();
+    const response = await params.client.getBalanceAllowance(requestParams);
     const status = (response as { status?: number })?.status;
     const responseErrorMessage = extractPreflightResponseErrorMessage(response);
     if (status === 200) {
@@ -519,6 +585,14 @@ export const runClobAuthPreflight = async (params: {
         message: responseErrorMessage || 'unauthorized',
         data: (response as { data?: unknown })?.data,
       });
+      logPreflightHint(
+        params.logger,
+        classifyPreflightIssue({
+          status,
+          message: responseErrorMessage,
+          data: (response as { data?: unknown })?.data,
+        }),
+      );
       const secretFormat = detectSecretDecodingMode(params.creds.secret);
       const reason = classifyAuthFailure({
         configuredPublicKey: params.configuredPublicKey,
@@ -561,6 +635,14 @@ export const runClobAuthPreflight = async (params: {
         message: responseErrorMessage || 'bad_request',
         data: (response as { data?: unknown })?.data,
       });
+      logPreflightHint(
+        params.logger,
+        classifyPreflightIssue({
+          status,
+          message: responseErrorMessage || 'bad_request',
+          data: (response as { data?: unknown })?.data,
+        }),
+      );
       params.logger.warn(`[CLOB][Preflight] AUTH_OK_BUT_BAD_PARAMS endpoint=${endpoint}`);
       preflightBackoffMs = PREFLIGHT_BACKOFF_BASE_MS;
       return { ok: true, status, forced: Boolean(params.force) };
@@ -572,6 +654,14 @@ export const runClobAuthPreflight = async (params: {
       message: responseErrorMessage || 'unknown_error',
       data: (response as { data?: unknown })?.data,
     });
+    logPreflightHint(
+      params.logger,
+      classifyPreflightIssue({
+        status,
+        message: responseErrorMessage || 'unknown_error',
+        data: (response as { data?: unknown })?.data,
+      }),
+    );
     preflightBackoffMs = Math.min(preflightBackoffMs * 2, PREFLIGHT_BACKOFF_MAX_MS);
     return { ok: false, status, forced: Boolean(params.force) };
   } catch (error) {
@@ -585,6 +675,15 @@ export const runClobAuthPreflight = async (params: {
       message: details.message,
       data: details.data,
     });
+    logPreflightHint(
+      params.logger,
+      classifyPreflightIssue({
+        status: details.status,
+        code: details.code,
+        message: details.message,
+        data: details.data,
+      }),
+    );
     if (details.code && PREFLIGHT_TRANSIENT_CODES.has(details.code)) {
       preflightBackoffMs = Math.min(preflightBackoffMs * 2, PREFLIGHT_BACKOFF_MAX_MS);
       return null;
@@ -748,7 +847,7 @@ export const runClobAuthMatrixPreflight = async (params: {
           }
 
           const timestamp = Math.floor(Date.now() / 1000);
-          const requestParams = { signature_type: signatureType };
+          const requestParams = { asset_type: AssetType.COLLATERAL };
           const { signedPath } = buildSignedPath(endpoint, requestParams);
           const signature = buildHmacSignature({
             secret: credsToUse.secret,
