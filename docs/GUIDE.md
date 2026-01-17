@@ -124,7 +124,7 @@ There are TWO different credential systems in Polymarket:
 | `RETRY_LIMIT` | `3` | Maximum retry attempts for failed orders |
 | `TRADE_AGGREGATION_ENABLED` | `false` | Enable trade aggregation |
 | `TRADE_AGGREGATION_WINDOW_SECONDS` | `300` | Time window for aggregating trades (seconds) |
-| `USDC_CONTRACT_ADDRESS` | `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174` | USDC contract on Polygon |
+| `COLLATERAL_TOKEN_ADDRESS` | `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174` | USDC/USDC.e contract on Polygon |
 | `MONGO_URI` | - | MongoDB connection string (optional) |
 | `OPENVPN_ENABLED` | `false` | Enable OpenVPN setup on startup |
 | `OPENVPN_CONFIG` | - | Full OpenVPN config contents (optional if file mounted) |
