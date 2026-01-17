@@ -337,9 +337,10 @@ const deriveApiCreds = async (
   if (createApiKeyBlocked && createApiKeyBlockedUntil > now) {
     const remainingSeconds = Math.ceil((createApiKeyBlockedUntil - now) / 1000);
     logger?.info(
-      `[CLOB] API key creation blocked; retry in ${remainingSeconds}s.`,
+      `[CLOB] API key creation blocked (server rejected); retry in ${remainingSeconds}s. Local derive skipped (would produce unregistered credentials).`,
     );
-    return attemptLocalDerive();
+    // Do NOT call attemptLocalDerive() - server rejection means credentials cannot be registered
+    return undefined;
   } else if (createApiKeyBlocked && createApiKeyBlockedUntil <= now) {
     // Retry period expired, reset block
     logger?.info(
@@ -350,7 +351,11 @@ const deriveApiCreds = async (
   }
 
   if (createApiKeyBlocked) {
-    return attemptLocalDerive();
+    // This case shouldn't be reached due to the logic above, but handle it safely
+    logger?.info(
+      "[CLOB] API key creation still blocked; skipping local derive.",
+    );
+    return undefined;
   }
 
   try {
@@ -369,7 +374,9 @@ const deriveApiCreds = async (
       logger?.error(
         `[CLOB] Response: key=${Boolean(derived?.key)} secret=${Boolean(derived?.secret)} passphrase=${Boolean(derived?.passphrase)}`,
       );
-      return attemptLocalDerive();
+      // Do NOT call attemptLocalDerive() - incomplete server response means credentials
+      // were not properly registered, so local derive would produce unregistered credentials
+      return undefined;
     }
 
     // Valid credentials received, save and return
@@ -406,9 +413,15 @@ const deriveApiCreds = async (
         ); // Default 10 minutes
         createApiKeyBlockedUntil = Date.now() + retrySeconds * 1000;
         logger?.warn(
-          `[CLOB] Failed to create API key (400 error); falling back to local derive. Will retry in ${retrySeconds}s.`,
+          `[CLOB] Server rejected API key creation (400 error); local derive would produce unregistered credentials. Will retry server in ${retrySeconds}s.`,
         );
+        // Do NOT call attemptLocalDerive() here - local derivation produces credentials
+        // that are not registered with the server, causing 401 errors on subsequent calls.
+        // The server must successfully register the credentials first.
+        return undefined;
       }
+      // For other 400/401 errors (not "could not create api key"), try local derive
+      // as the credentials may already be registered on the server
       return attemptLocalDerive();
     }
 
