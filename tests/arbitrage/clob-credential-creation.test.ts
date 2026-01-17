@@ -229,17 +229,18 @@ test("verifyCredsWithClient handles clob-client error objects (not thrown except
     "utf-8",
   );
 
+  // Check that we have a type for error responses
+  assert.ok(
+    factoryCode.includes("type ClobErrorResponse = {"),
+    "Factory should define ClobErrorResponse type",
+  );
   // Check that we examine response status from returned error objects
   assert.ok(
-    factoryCode.includes("const responseStatus = (response as { status?: number })?.status"),
-    "Verification should check status from returned error objects",
+    factoryCode.includes("const errorResponse = response as ClobErrorResponse"),
+    "Verification should cast response to ClobErrorResponse",
   );
   assert.ok(
-    factoryCode.includes("const responseError = (response as { error?: string })?.error"),
-    "Verification should check error field from returned error objects",
-  );
-  assert.ok(
-    factoryCode.includes("if (responseStatus === 401 || responseStatus === 403)"),
+    factoryCode.includes("if (errorResponse.status === 401 || errorResponse.status === 403)"),
     "Verification should detect 401/403 from response objects",
   );
 });

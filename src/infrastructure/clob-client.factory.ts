@@ -51,6 +51,14 @@ export type CreateClientInput = {
   logger?: Logger;
 };
 
+/**
+ * Type for error responses returned by clob-client (instead of thrown exceptions)
+ */
+type ClobErrorResponse = {
+  status?: number;
+  error?: string;
+};
+
 const SERVER_TIME_SKEW_THRESHOLD_SECONDS = 30;
 let polyAddressDiagLogged = false;
 let cachedDerivedCreds: ApiKeyCreds | null = null;
@@ -241,21 +249,20 @@ const verifyCredsWithClient = async (
     });
     // The clob-client returns error objects instead of throwing on HTTP errors
     // Check if response indicates an error
-    const responseStatus = (response as { status?: number })?.status;
-    const responseError = (response as { error?: string })?.error;
-    if (responseStatus === 401 || responseStatus === 403) {
+    const errorResponse = response as ClobErrorResponse;
+    if (errorResponse.status === 401 || errorResponse.status === 403) {
       logger?.warn(
-        `[CLOB] Credential verification failed: ${responseStatus} ${responseError ?? "Unauthorized/Invalid api key"}`,
+        `[CLOB] Credential verification failed: ${errorResponse.status} ${errorResponse.error ?? "Unauthorized/Invalid api key"}`,
       );
       return false;
     }
-    if (responseError) {
+    if (errorResponse.error) {
       // Some other error returned from server
       logger?.warn(
-        `[CLOB] Credential verification returned error: ${responseError}`,
+        `[CLOB] Credential verification returned error: ${errorResponse.error}`,
       );
       // Treat non-auth errors as transient, re-throw to trigger fallback
-      throw new Error(responseError);
+      throw new Error(errorResponse.error);
     }
     return true;
   } catch (error) {
