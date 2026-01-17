@@ -25,8 +25,10 @@ const resolveCredsPath = (): string => {
   try {
     ensureDataDir(CREDS_FILE_PATH);
     return CREDS_FILE_PATH;
-  } catch {
+  } catch (error) {
     // Fallback to local data dir if /data not writable
+    // Log the issue but continue with fallback
+    console.warn(`[CredStorage] /data not accessible (${error}), using fallback: ${CREDS_FILE_PATH_FALLBACK}`);
     ensureDataDir(CREDS_FILE_PATH_FALLBACK);
     return CREDS_FILE_PATH_FALLBACK;
   }
