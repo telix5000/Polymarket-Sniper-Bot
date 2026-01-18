@@ -36,7 +36,8 @@
     "manual-sell": "ts-node src/cli/manual-sell.command.ts",
     "simulate": "ts-node src/cli/run-simulations.command.ts",
     "test": "node --test -r ts-node/register/transpile-only tests/**/*.test.ts",
-    "preflight": "node dist/tools/preflight.js"
+    "preflight": "node dist/tools/preflight.js",
+    "test-auth": "node test-auth-harness.js"
   },
   "keywords": [
     "polymarket",

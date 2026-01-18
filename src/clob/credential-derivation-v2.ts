@@ -1,6 +1,6 @@
 /**
  * CLOB Credential Derivation with Fallback System v2
- * 
+ *
  * This module implements credential derivation with a hard-coded fallback ladder.
  * It tries different combinations of signature types and L1 auth addresses until
  * one works, then caches the successful configuration.
@@ -250,7 +250,7 @@ async function attemptDerive(params: {
 
 /**
  * Derive credentials with fallback ladder
- * 
+ *
  * This function:
  * 1. Checks for cached credentials first
  * 2. If no cache, tries each fallback combination in order
@@ -301,7 +301,8 @@ export async function deriveCredentialsWithFallback(
     const isValid = await verifyCredentials({
       creds: cachedCreds,
       wallet,
-      signatureType: params.signatureType ?? orderIdentity.signatureTypeForOrders,
+      signatureType:
+        params.signatureType ?? orderIdentity.signatureTypeForOrders,
       logger: params.logger,
     });
 
@@ -312,7 +313,8 @@ export async function deriveCredentialsWithFallback(
       return {
         success: true,
         creds: cachedCreds,
-        signatureType: params.signatureType ?? orderIdentity.signatureTypeForOrders,
+        signatureType:
+          params.signatureType ?? orderIdentity.signatureTypeForOrders,
         orderIdentity,
         l1AuthIdentity,
       };
@@ -372,9 +374,7 @@ export async function deriveCredentialsWithFallback(
 
     if (result.success && result.creds) {
       // Success! Save to cache and return
-      params.logger?.info(
-        "[CredDerive] ✅ Credential derivation successful!",
-      );
+      params.logger?.info("[CredDerive] ✅ Credential derivation successful!");
 
       saveCachedCreds({
         creds: result.creds,
@@ -441,9 +441,7 @@ export async function deriveCredentialsWithFallback(
       });
 
       if (swappedResult.success && swappedResult.creds) {
-        params.logger?.info(
-          "[CredDerive] ✅ Swapped attempt successful!",
-        );
+        params.logger?.info("[CredDerive] ✅ Swapped attempt successful!");
 
         saveCachedCreds({
           creds: swappedResult.creds,

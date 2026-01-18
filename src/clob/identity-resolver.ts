@@ -1,6 +1,6 @@
 /**
  * Identity Resolution for CLOB Authentication
- * 
+ *
  * This module handles auto-detection and resolution of wallet identities
  * for both order signing and L1 authentication endpoints.
  */
@@ -111,7 +111,7 @@ export function detectWalletMode(params: {
 
 /**
  * Resolve order identity (for order signing and submission)
- * 
+ *
  * This determines:
  * - signatureTypeForOrders: Which signature type to use for orders
  * - makerAddress: Who is placing the order
@@ -174,12 +174,12 @@ export function resolveOrderIdentity(
 
 /**
  * Resolve L1 authentication identity (for /auth/derive-api-key and /auth/api-key)
- * 
+ *
  * This determines:
  * - signatureTypeForAuth: Which signature type to use for L1 auth
  * - l1AuthAddress: Which address to use in L1 auth headers
  * - signingAddress: Which address actually signs (EOA from private key)
- * 
+ *
  * Note: L1 auth address may differ from order maker/effective address.
  * This is intentional and allows the fallback system to try different combinations.
  */
@@ -196,14 +196,10 @@ export function resolveL1AuthIdentity(
   let useEffective = preferEffective;
   if (params.forceL1Auth === "signer") {
     useEffective = false;
-    params.logger?.debug(
-      "[Identity] L1 auth forced to use signer address",
-    );
+    params.logger?.debug("[Identity] L1 auth forced to use signer address");
   } else if (params.forceL1Auth === "effective") {
     useEffective = true;
-    params.logger?.debug(
-      "[Identity] L1 auth forced to use effective address",
-    );
+    params.logger?.debug("[Identity] L1 auth forced to use effective address");
   }
 
   // For L1 auth, we can try either signer or effective address

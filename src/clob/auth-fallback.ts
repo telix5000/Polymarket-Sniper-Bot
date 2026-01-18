@@ -1,6 +1,6 @@
 /**
  * CLOB Authentication Fallback Ladder
- * 
+ *
  * This module implements a hard-coded fallback ladder for credential derivation
  * and verification. It tries different combinations of signature types and
  * L1 auth addresses until one works.
@@ -44,7 +44,7 @@ export type CredentialAttemptResult = {
 
 /**
  * Hard-coded fallback ladder for L1 authentication
- * 
+ *
  * Order rationale:
  * A) sigType=0, l1Auth=signer - Most common: EOA wallet
  * B) sigType=2, l1Auth=signer - Browser wallet (Safe) with signer auth
@@ -95,12 +95,12 @@ export function isInvalidL1HeadersError(error: unknown): boolean {
   }
 
   const message = errObj?.message?.toLowerCase() ?? "";
-  
+
   // Cache the stringified data for efficiency
-  const dataStr = errObj?.response?.data 
-    ? (typeof errObj.response.data === 'string' 
-        ? errObj.response.data.toLowerCase() 
-        : JSON.stringify(errObj.response.data).toLowerCase())
+  const dataStr = errObj?.response?.data
+    ? typeof errObj.response.data === "string"
+      ? errObj.response.data.toLowerCase()
+      : JSON.stringify(errObj.response.data).toLowerCase()
     : "";
 
   return (
@@ -124,12 +124,12 @@ export function isCouldNotCreateKeyError(error: unknown): boolean {
   }
 
   const message = errObj?.message?.toLowerCase() ?? "";
-  
+
   // Cache the stringified data for efficiency
-  const dataStr = errObj?.response?.data 
-    ? (typeof errObj.response.data === 'string' 
-        ? errObj.response.data.toLowerCase() 
-        : JSON.stringify(errObj.response.data).toLowerCase())
+  const dataStr = errObj?.response?.data
+    ? typeof errObj.response.data === "string"
+      ? errObj.response.data.toLowerCase()
+      : JSON.stringify(errObj.response.data).toLowerCase()
     : "";
 
   return (
@@ -227,9 +227,7 @@ export function logFallbackResult(params: {
   if (!params.logger) return;
 
   if (params.result.success) {
-    params.logger.info(
-      `[AuthFallback] ✅ Success: ${params.attempt.label}`,
-    );
+    params.logger.info(`[AuthFallback] ✅ Success: ${params.attempt.label}`);
   } else {
     const statusPart = params.result.statusCode
       ? ` (${params.result.statusCode})`
@@ -252,9 +250,7 @@ export function generateFailureSummary(
   logger.error(
     "[AuthFallback] ========================================================",
   );
-  logger.error(
-    "[AuthFallback] ALL CREDENTIAL DERIVATION ATTEMPTS FAILED",
-  );
+  logger.error("[AuthFallback] ALL CREDENTIAL DERIVATION ATTEMPTS FAILED");
   logger.error(
     "[AuthFallback] ========================================================",
   );
@@ -272,39 +268,25 @@ export function generateFailureSummary(
   logger.error(
     "[AuthFallback] ========================================================",
   );
-  logger.error(
-    "[AuthFallback] POSSIBLE CAUSES:",
-  );
-  logger.error(
-    "[AuthFallback]   1. Wallet has never traded on Polymarket",
-  );
+  logger.error("[AuthFallback] POSSIBLE CAUSES:");
+  logger.error("[AuthFallback]   1. Wallet has never traded on Polymarket");
   logger.error(
     "[AuthFallback]   2. Incorrect funder/proxy address for Safe/Proxy mode",
   );
-  logger.error(
-    "[AuthFallback]   3. Private key doesn't match expected wallet",
-  );
-  logger.error(
-    "[AuthFallback]   4. Network connectivity issues",
-  );
+  logger.error("[AuthFallback]   3. Private key doesn't match expected wallet");
+  logger.error("[AuthFallback]   4. Network connectivity issues");
   logger.error(
     "[AuthFallback] ========================================================",
   );
-  logger.error(
-    "[AuthFallback] TO FIX:",
-  );
+  logger.error("[AuthFallback] TO FIX:");
   logger.error(
     "[AuthFallback]   1. Visit https://polymarket.com and connect wallet",
   );
-  logger.error(
-    "[AuthFallback]   2. Make at least one small trade ($1+)",
-  );
+  logger.error("[AuthFallback]   2. Make at least one small trade ($1+)");
   logger.error(
     "[AuthFallback]   3. Wait for transaction confirmation (1-2 min)",
   );
-  logger.error(
-    "[AuthFallback]   4. Restart bot",
-  );
+  logger.error("[AuthFallback]   4. Restart bot");
   logger.error(
     "[AuthFallback] ========================================================",
   );

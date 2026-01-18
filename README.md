@@ -353,7 +353,26 @@ If you see this error, follow these steps:
    - Check which fallback attempts were tried
    - The bot will generate a comprehensive failure summary if all attempts fail
 
-7. **Check the preflight summary:**
+7. **Use the authentication test harness:**
+   ```bash
+   # Basic test
+   npm run test-auth
+   
+   # Test with specific wallet type
+   npm run test-auth -- --signature-type 2 --funder 0xYourSafeAddress
+   
+   # Test with verbose logging and trade history check
+   npm run test-auth -- --verbose --check-history
+   ```
+   The test harness will:
+   - Test L1 authentication (derive/create API keys)
+   - Test L2 authentication (balance-allowance verification)
+   - Show exactly which stage fails (L1 or L2)
+   - Provide actionable troubleshooting steps
+   - Optionally verify on-chain trade history
+   - See [test-auth-harness.js](./test-auth-harness.js) for full documentation
+
+8. **Check the preflight summary:**
    ```
    [Preflight][Summary] ... auth_ok=false ready_to_trade=false
    ```
