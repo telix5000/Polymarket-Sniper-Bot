@@ -476,7 +476,7 @@ const buildClobCredsChecklist = (
   const hasPassphrase = Boolean(passphraseEntry.value);
   const hasCompleteCreds = hasKey && hasSecret && hasPassphrase;
 
-  // When derive is enabled but credentials are provided, they will be used (derive disabled by client)
+  // When derive is enabled but credentials are provided, explicit credentials take precedence
   // Only show "(ignored)" when derive is enabled AND no credentials are provided
   const showIgnored = deriveEnabled && !hasCompleteCreds;
 
