@@ -12,7 +12,7 @@ The `createOrDeriveApiKey()` method in `@polymarket/clob-client` has a bug where
 
 ### Affected Methods
 - JavaScript: `ClobClient.createOrDeriveApiKey()`
-- Python: `ClobClient.create_or_derive_api_creds()`
+- Python: `ClobClient.create_or_derive_api_creds()` (Note: This repository patches the JavaScript library; Python reference is for context only)
 
 ## Root Cause
 
@@ -56,7 +56,7 @@ async createOrDeriveApiKey(nonce) {
 The fix is applied via `patches/@polymarket+clob-client+5.2.1.patch` using `patch-package`. This patches the installed `@polymarket/clob-client` library to use the correct implementation.
 
 ### 2. Credential Derivation Module
-The `src/clob/credential-derivation-v2.ts` module already implements the correct pattern when calling the API directly:
+The `src/clob/credential-derivation-v2.ts` module already implements the correct pattern when calling the API directly (abbreviated for brevity):
 
 ```typescript
 // Try deriveApiKey first (for existing wallets)
@@ -64,7 +64,12 @@ if (deriveFn.deriveApiKey) {
   try {
     creds = await deriveFn.deriveApiKey();
   } catch (deriveError) {
-    // Handle error...
+    // If it's an "Invalid L1 Request headers" error, don't try createApiKey
+    // because the issue is with the auth configuration, not whether the key exists
+    if (isInvalidL1HeadersError(deriveError)) {
+      return { success: false, error: "Invalid L1 Request headers", statusCode: 401 };
+    }
+    // Otherwise, continue to try createApiKey
   }
 }
 
@@ -73,7 +78,7 @@ if (!creds && deriveFn.createApiKey) {
   try {
     creds = await deriveFn.createApiKey();
   } catch (createError) {
-    // Handle error...
+    // Handle various error cases (wallet not activated, auth config issues, etc.)
   }
 }
 ```
