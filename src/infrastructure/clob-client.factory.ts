@@ -716,9 +716,11 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
     detectedSignatureType === SignatureType.EOA
   ) {
     effectiveFunderAddress = undefined;
+    // Only log if there's an actual mismatch (funder was configured for Safe but we're using EOA)
+    // If funderAddress equals derivedSignerAddress, it's already correct for EOA mode
     if (funderAddress && funderAddress !== derivedSignerAddress) {
       input.logger?.info(
-        `[CLOB] Clearing funderAddress for auto-detected EOA mode (was ${funderAddress})`,
+        `[CLOB] Clearing funderAddress for auto-detected EOA mode (was set to Safe address ${funderAddress}, but EOA mode uses signer address)`,
       );
     }
   }
