@@ -6,6 +6,7 @@ export type AuthFailureCause =
   | "WRONG_WALLET_BINDING" // Keys bound to different wallet
   | "WRONG_ENVIRONMENT" // Using test keys on prod or vice versa
   | "EXPIRED_CREDENTIALS" // Keys are expired or revoked
+  | "DERIVED_KEYS_REJECTED" // Derived credentials rejected by L2 auth
   | "DERIVE_FAILED" // Derive API key failed
   | "NETWORK_ERROR" // Network/connectivity issue
   | "UNKNOWN"; // Could not determine cause
@@ -139,7 +140,30 @@ export function diagnoseAuthFailure(params: {
     };
   }
 
-  // Case 4: Derive enabled but derived creds fail verification
+  // Case 4: Derived credentials were created but L2 auth rejected them
+  if (
+    !userProvidedKeys &&
+    deriveEnabled &&
+    !deriveFailed &&
+    verificationFailed &&
+    status === 401
+  ) {
+    return {
+      cause: "DERIVED_KEYS_REJECTED",
+      confidence: "medium",
+      message:
+        "Derived API credentials were created but rejected during L2 authentication. This usually means the wallet has not completed an on-chain trade yet, or cached credentials are stale.",
+      recommendations: [
+        "Visit https://polymarket.com and connect this wallet",
+        "Make at least ONE small trade (even $1) and wait for confirmation",
+        "Clear cached credentials: rm -f /data/clob-creds.json",
+        "Restart the bot to re-derive fresh credentials",
+        "Verify PUBLIC_KEY (if set) matches the derived address from PRIVATE_KEY",
+      ],
+    };
+  }
+
+  // Case 5: Derive enabled but derived creds fail verification
   if (deriveEnabled && deriveFailed && verificationFailed) {
     return {
       cause: "DERIVE_FAILED",
@@ -157,7 +181,7 @@ export function diagnoseAuthFailure(params: {
     };
   }
 
-  // Case 5: Network/connectivity errors
+  // Case 6: Network/connectivity errors
   const errorText = verificationError ?? "";
   if (NETWORK_ERROR_PATTERNS.some((pattern) => pattern.test(errorText))) {
     return {
