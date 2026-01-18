@@ -328,6 +328,9 @@ export const ensureTradingReady = async (
 
   // Run comprehensive auth diagnostics if auth failed
   if (!authOk && authFailureContext.verificationFailed) {
+    params.logger.error(
+      `[AuthDiag] userProvidedKeys=${authFailureContext.userProvidedKeys} deriveEnabled=${authFailureContext.deriveEnabled} deriveFailed=${authFailureContext.deriveFailed} verificationFailed=${authFailureContext.verificationFailed} status=${authFailureContext.status} deriveError=${authFailureContext.deriveError ?? "none"}`,
+    );
     const diagnostic = diagnoseAuthFailure({
       userProvidedKeys: authFailureContext.userProvidedKeys,
       deriveEnabled: authFailureContext.deriveEnabled,
