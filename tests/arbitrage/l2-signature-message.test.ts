@@ -131,17 +131,18 @@ test("buildSignedPath handles empty params", () => {
   assert.deepEqual(paramsKeys, []);
 });
 
-test("buildSignedPath filters out undefined values", () => {
+test("buildSignedPath filters out undefined values (null becomes string)", () => {
   const endpoint = "/endpoint";
   const params = {
     defined: "value",
     undefined: undefined,
-    null: null, // null is converted to string "null"
+    null: null, // INTENTIONAL: null is converted to string "null" by current implementation
   };
 
   const { signedPath, paramsKeys } = buildSignedPath(endpoint, params);
 
   // Verify undefined is filtered out but null is included (as "null" string)
+  // NOTE: This documents intentional behavior where null → "null" string
   assert.ok(signedPath.includes("defined=value"));
   assert.ok(!signedPath.includes("undefined="));
   assert.ok(signedPath.includes("null=null"));

@@ -5,6 +5,7 @@ import { buildL1Headers } from "../../src/utils/l1-auth-headers.util";
 import { createL2Headers } from "@polymarket/clob-client";
 import type { ApiKeyCreds } from "@polymarket/clob-client";
 
+// NOTE: This is a test-only private key, NOT a real private key with any funds
 const TEST_PRIVATE_KEY =
   "0x1234567890123456789012345678901234567890123456789012345678901234";
 
