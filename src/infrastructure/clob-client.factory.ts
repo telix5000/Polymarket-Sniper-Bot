@@ -707,6 +707,22 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
   const effectiveSignatureType =
     detectedSignatureType ?? signatureType ?? SignatureType.EOA;
 
+  // Adjust funderAddress based on detected signature type
+  // For EOA mode (signatureType=0), funder should be undefined (signer is the funder)
+  // For Safe/Proxy modes (signatureType=1 or 2), use the configured funderAddress
+  let effectiveFunderAddress = funderAddress;
+  if (
+    detectedSignatureType !== undefined &&
+    detectedSignatureType === SignatureType.EOA
+  ) {
+    effectiveFunderAddress = undefined;
+    if (funderAddress && funderAddress !== derivedSignerAddress) {
+      input.logger?.info(
+        `[CLOB] Clearing funderAddress for auto-detected EOA mode (was ${funderAddress})`,
+      );
+    }
+  }
+
   // Log if signature type was auto-detected
   if (
     detectedSignatureType !== undefined &&
@@ -724,7 +740,7 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
     asClobSigner(signer),
     creds,
     effectiveSignatureType,
-    funderAddress,
+    effectiveFunderAddress,
   );
 
   const resolvedSignatureType = (
@@ -749,7 +765,7 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
     chainId: Chain.POLYGON,
     clobHost: POLYMARKET_API.BASE_URL,
     signatureType: resolvedSignatureType ?? effectiveSignatureType,
-    funderAddress: resolvedFunderAddress ?? funderAddress,
+    funderAddress: resolvedFunderAddress ?? effectiveFunderAddress,
     makerAddress,
     ownerId: formatApiKeyId(creds?.key),
     apiKeyPresent: Boolean(creds?.key),
@@ -762,7 +778,7 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
     configuredPublicKey,
     effectivePolyAddress: effectiveAddressResult.effectivePolyAddress,
     signatureType: resolvedSignatureType ?? effectiveSignatureType,
-    funderAddress: resolvedFunderAddress ?? funderAddress,
+    funderAddress: resolvedFunderAddress ?? effectiveFunderAddress,
     credentialMode,
   });
 
