@@ -60,6 +60,20 @@ type ClobErrorResponse = {
 };
 
 /**
+ * Type guard to check if a response is a CLOB error response
+ */
+function isClobErrorResponse(response: unknown): response is ClobErrorResponse {
+  if (!response || typeof response !== "object") {
+    return false;
+  }
+  const obj = response as Record<string, unknown>;
+  return (
+    (typeof obj.status === "number" && obj.status >= 400) ||
+    (typeof obj.error === "string" && obj.error.length > 0)
+  );
+}
+
+/**
  * Result of credential verification with signature type auto-detection
  */
 type VerifyCredsResult = {
@@ -70,16 +84,16 @@ type VerifyCredsResult = {
 /**
  * All signature types to try in order when auto-detecting.
  * The bot will try each one until it finds one that works.
- * 
+ *
  * Order rationale (by likelihood for typical users):
  * 1. EOA (0): Most common - standard externally owned account wallet
  * 2. POLY_GNOSIS_SAFE (2): Second most common - created when users log in via browser
  * 3. POLY_PROXY (1): Least common - older Polymarket proxy wallet format
  */
 const ALL_SIGNATURE_TYPES = [
-  SignatureType.EOA,              // 0 - Standard EOA wallet (most common)
+  SignatureType.EOA, // 0 - Standard EOA wallet (most common)
   SignatureType.POLY_GNOSIS_SAFE, // 2 - Gnosis Safe (browser login creates this)
-  SignatureType.POLY_PROXY,       // 1 - Polymarket proxy wallet (legacy)
+  SignatureType.POLY_PROXY, // 1 - Polymarket proxy wallet (legacy)
 ];
 
 const SERVER_TIME_SKEW_THRESHOLD_SECONDS = 30;
@@ -329,27 +343,42 @@ const verifyCredsWithAutoSignatureType = async (
   preferredSignatureType?: number,
 ): Promise<VerifyCredsResult | undefined> => {
   // Build list of signature types to try, with preferred type first if specified
-  const typesToTry = preferredSignatureType !== undefined
-    ? [preferredSignatureType, ...ALL_SIGNATURE_TYPES.filter(t => t !== preferredSignatureType)]
-    : ALL_SIGNATURE_TYPES;
+  const typesToTry =
+    preferredSignatureType !== undefined
+      ? [
+          preferredSignatureType,
+          ...ALL_SIGNATURE_TYPES.filter((t) => t !== preferredSignatureType),
+        ]
+      : ALL_SIGNATURE_TYPES;
 
   const signatureTypeLabel = (sigType: number): string => {
     switch (sigType) {
-      case SignatureType.EOA: return "EOA";
-      case SignatureType.POLY_PROXY: return "Proxy";
-      case SignatureType.POLY_GNOSIS_SAFE: return "Gnosis Safe";
-      default: return `Unknown(${sigType})`;
+      case SignatureType.EOA:
+        return "EOA";
+      case SignatureType.POLY_PROXY:
+        return "Proxy";
+      case SignatureType.POLY_GNOSIS_SAFE:
+        return "Gnosis Safe";
+      default:
+        return `Unknown(${sigType})`;
     }
   };
 
   logger?.info(
-    `[CLOB] Auto-detecting signature type (trying: ${typesToTry.map(t => `${t}=${signatureTypeLabel(t)}`).join(", ")})...`,
+    `[CLOB] Auto-detecting signature type (trying: ${typesToTry.map((t) => `${t}=${signatureTypeLabel(t)}`).join(", ")})...`,
   );
 
   for (const sigType of typesToTry) {
     try {
-      logger?.debug(`[CLOB] Trying signature type ${sigType} (${signatureTypeLabel(sigType)})...`);
-      const isValid = await verifyCredsWithClient(creds, wallet, logger, sigType);
+      logger?.debug(
+        `[CLOB] Trying signature type ${sigType} (${signatureTypeLabel(sigType)})...`,
+      );
+      const isValid = await verifyCredsWithClient(
+        creds,
+        wallet,
+        logger,
+        sigType,
+      );
       if (isValid) {
         logger?.info(
           `[CLOB] ✅ Auto-detected signature type: ${sigType} (${signatureTypeLabel(sigType)})`,
@@ -366,7 +395,7 @@ const verifyCredsWithAutoSignatureType = async (
 
   // None of the signature types worked
   logger?.error(
-    `[CLOB] ❌ Credential verification failed with ALL signature types (tried: ${typesToTry.map(t => `${t}=${signatureTypeLabel(t)}`).join(", ")})`,
+    `[CLOB] ❌ Credential verification failed with ALL signature types (tried: ${typesToTry.map((t) => `${t}=${signatureTypeLabel(t)}`).join(", ")})`,
   );
   logger?.error(
     `[CLOB] This usually means the wallet has never traded on Polymarket. Visit ${POLYMARKET_API.WEBSITE_URL}, connect your wallet, and make at least one trade.`,
@@ -396,9 +425,9 @@ const deriveApiCreds = async (
     if (!credDerivationAttempted) {
       logger?.info("[CLOB] Using in-memory cached derived credentials.");
     }
-    return { 
-      creds: cachedDerivedCreds, 
-      signatureType: cachedSignatureType ?? SignatureType.EOA 
+    return {
+      creds: cachedDerivedCreds,
+      signatureType: cachedSignatureType ?? SignatureType.EOA,
     };
   }
 
@@ -413,7 +442,11 @@ const deriveApiCreds = async (
     // Verify cached credentials before using them - try all signature types
     logger?.info("[CLOB] Verifying disk-cached credentials...");
     try {
-      const verifyResult = await verifyCredsWithAutoSignatureType(diskCached, wallet, logger);
+      const verifyResult = await verifyCredsWithAutoSignatureType(
+        diskCached,
+        wallet,
+        logger,
+      );
       if (verifyResult?.valid) {
         cachedDerivedCreds = diskCached;
         cachedSignatureType = verifyResult.signatureType;
@@ -433,13 +466,16 @@ const deriveApiCreds = async (
         cachedSignatureType = undefined;
         // Fall through to derive new credentials
       }
-    } catch (error) {
+    } catch {
       // Verification error (not 401/403), treat as transient and use cached creds
       logger?.warn(
         "[CLOB] Credential verification error; using cached credentials anyway.",
       );
       cachedDerivedCreds = diskCached;
-      return { creds: diskCached, signatureType: cachedSignatureType ?? SignatureType.EOA };
+      return {
+        creds: diskCached,
+        signatureType: cachedSignatureType ?? SignatureType.EOA,
+      };
     }
   }
 
@@ -462,6 +498,14 @@ const deriveApiCreds = async (
     derived: ApiKeyCreds,
     source: string,
   ): Promise<DeriveCredsResult | undefined> => {
+    // Check if response is actually an error response from the API
+    if (isClobErrorResponse(derived)) {
+      logger?.error(
+        `[CLOB] ${source} returned error response: status=${derived.status ?? "unknown"} error=${derived.error ?? "unknown"}`,
+      );
+      return undefined;
+    }
+
     // Validate response contains valid credentials before marking success
     if (!derived || !derived.key || !derived.secret || !derived.passphrase) {
       logger?.error(
@@ -471,9 +515,15 @@ const deriveApiCreds = async (
     }
 
     // Verify derived credentials work before caching them - try ALL signature types
-    logger?.info(`[CLOB] Verifying newly derived credentials from ${source}...`);
+    logger?.info(
+      `[CLOB] Verifying newly derived credentials from ${source}...`,
+    );
     try {
-      const verifyResult = await verifyCredsWithAutoSignatureType(derived, wallet, logger);
+      const verifyResult = await verifyCredsWithAutoSignatureType(
+        derived,
+        wallet,
+        logger,
+      );
       if (!verifyResult?.valid) {
         logger?.warn(
           `[CLOB] Derived credentials failed verification (401/403). The wallet has never traded on Polymarket or there's an account issue.`,
@@ -481,12 +531,14 @@ const deriveApiCreds = async (
         return undefined;
       }
       logger?.info(`[CLOB] Derived credentials verified successfully.`);
-      
+
       // Valid credentials received and verified, save and return
       cachedDerivedCreds = derived;
       cachedSignatureType = verifyResult.signatureType;
       saveCachedCreds({ creds: derived, signerAddress, logger });
-      logger?.info(`[CLOB] Successfully created/derived API credentials via ${source}.`);
+      logger?.info(
+        `[CLOB] Successfully created/derived API credentials via ${source}.`,
+      );
       return { creds: derived, signatureType: verifyResult.signatureType };
     } catch (verifyError) {
       // Verification encountered a transient error (network, etc.)
@@ -497,7 +549,9 @@ const deriveApiCreds = async (
       );
       cachedDerivedCreds = derived;
       saveCachedCreds({ creds: derived, signerAddress, logger });
-      logger?.info(`[CLOB] Successfully created/derived API credentials via ${source}.`);
+      logger?.info(
+        `[CLOB] Successfully created/derived API credentials via ${source}.`,
+      );
       return { creds: derived, signatureType: SignatureType.EOA };
     }
   };
@@ -523,9 +577,8 @@ const deriveApiCreds = async (
         "[CLOB] deriveApiKey credentials didn't verify; trying createApiKey...",
       );
     } catch (deriveError) {
-      const deriveStatus = (
-        deriveError as { response?: { status?: number } }
-      )?.response?.status;
+      const deriveStatus = (deriveError as { response?: { status?: number } })
+        ?.response?.status;
       const deriveMsg = extractDeriveErrorMessage(deriveError);
       logger?.info(
         `[CLOB] deriveApiKey failed (status=${deriveStatus ?? "unknown"}): ${deriveMsg || "unknown error"}`,
@@ -545,11 +598,12 @@ const deriveApiCreds = async (
       }
     }
   } catch (createError) {
-    const status = (createError as { response?: { status?: number } })
-      ?.response?.status;
+    const status = (createError as { response?: { status?: number } })?.response
+      ?.status;
     const responseData = (createError as { response?: { data?: unknown } })
       ?.response?.data;
-    const errorDetails = extractDeriveErrorMessage(createError) || "unknown error";
+    const errorDetails =
+      extractDeriveErrorMessage(createError) || "unknown error";
     logger?.info(
       `[CLOB] createApiKey failed (status=${status ?? "unknown"}): error=${errorDetails} - credentials NOT saved`,
     );
@@ -598,14 +652,15 @@ const deriveApiCreds = async (
 
   // Step 3: As last resort, try the combined createOrDeriveApiKey
   try {
-    logger?.info(
-      "[CLOB] Attempting createOrDeriveApiKey as final fallback...",
-    );
+    logger?.info("[CLOB] Attempting createOrDeriveApiKey as final fallback...");
     const combined = deriveFn.createOrDeriveApiKey
       ? await deriveFn.createOrDeriveApiKey()
       : undefined;
     if (combined) {
-      const result = await verifyAndCacheCreds(combined, "createOrDeriveApiKey");
+      const result = await verifyAndCacheCreds(
+        combined,
+        "createOrDeriveApiKey",
+      );
       if (result) {
         return result;
       }
@@ -684,9 +739,8 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
 
   let creds: ApiKeyCreds | undefined = buildInputCreds();
   const providedCreds = creds; // Store original user-provided credentials for diagnostics
-  let providedCredsValid = false;
   let detectedSignatureType: number | undefined;
-  
+
   if (creds) {
     // Verify provided credentials before accepting them - try ALL signature types
     input.logger?.info(
@@ -700,7 +754,6 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
         signatureType, // Try user-configured signature type first if provided
       );
       if (verifyResult?.valid) {
-        providedCredsValid = true;
         detectedSignatureType = verifyResult.signatureType;
         input.logger?.info(
           "[CLOB] User-provided API credentials verified successfully.",
@@ -733,7 +786,6 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
       input.logger?.warn(
         `[CLOB] Credential verification encountered transient error; using provided credentials. ${sanitizeErrorMessage(verifyErr)}`,
       );
-      providedCredsValid = true;
     }
   }
   // Derive if user credentials are missing OR if they failed verification
@@ -776,11 +828,17 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
   if (deriveEnabled) {
     try {
       const deriveResult = await deriveApiCreds(wallet, input.logger);
-      if (deriveResult?.creds?.key && deriveResult?.creds?.secret && deriveResult?.creds?.passphrase) {
+      if (
+        deriveResult?.creds?.key &&
+        deriveResult?.creds?.secret &&
+        deriveResult?.creds?.passphrase
+      ) {
         creds = deriveResult.creds;
         derivedCreds = deriveResult.creds;
         detectedSignatureType = deriveResult.signatureType;
-        const { apiKeyDigest, keyIdSuffix } = getApiKeyDiagnostics(deriveResult.creds.key);
+        const { apiKeyDigest, keyIdSuffix } = getApiKeyDiagnostics(
+          deriveResult.creds.key,
+        );
         input.logger?.info(
           `[CLOB] derived creds derivedKeyDigest=${apiKeyDigest} derivedKeySuffix=${keyIdSuffix} signatureType=${deriveResult.signatureType}`,
         );
@@ -791,17 +849,19 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
     } catch (err) {
       deriveFailed = true;
       deriveError = sanitizeErrorMessage(err);
-      input.logger?.warn(
-        `[CLOB] Failed to derive API creds: ${deriveError}`,
-      );
+      input.logger?.warn(`[CLOB] Failed to derive API creds: ${deriveError}`);
     }
   }
 
   // Use detected signature type if available, otherwise use configured/default
-  const effectiveSignatureType = detectedSignatureType ?? signatureType ?? SignatureType.EOA;
-  
+  const effectiveSignatureType =
+    detectedSignatureType ?? signatureType ?? SignatureType.EOA;
+
   // Log if signature type was auto-detected
-  if (detectedSignatureType !== undefined && detectedSignatureType !== signatureType) {
+  if (
+    detectedSignatureType !== undefined &&
+    detectedSignatureType !== signatureType
+  ) {
     input.logger?.info(
       `[CLOB] Using auto-detected signature type ${effectiveSignatureType} instead of configured ${signatureType ?? 0}`,
     );
