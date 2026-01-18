@@ -14,7 +14,8 @@ import { SignatureType } from "@polymarket/order-utils";
 // Test private key (not a real wallet)
 const TEST_PRIVATE_KEY =
   "0x1234567890123456789012345678901234567890123456789012345678901234";
-const TEST_SIGNER_ADDRESS = "0x..." // Address derived from TEST_PRIVATE_KEY
+// Note: TEST_SIGNER_ADDRESS would be derived from TEST_PRIVATE_KEY in actual usage
+// For these tests, we're testing the logic flow, not actual address derivation
 const TEST_FUNDER_ADDRESS = "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1";
 
 test("detectWalletMode - EOA with no config", () => {
