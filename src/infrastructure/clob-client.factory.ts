@@ -489,9 +489,7 @@ const deriveApiCreds = async (
         logger?.error(
           "[CLOB]   1. Visit https://polymarket.com and connect this wallet",
         );
-        logger?.error(
-          "[CLOB]   2. Make a small test trade on any market",
-        );
+        logger?.error("[CLOB]   2. Make a small test trade on any market");
         logger?.error(
           "[CLOB]   3. Wait a few minutes for the transaction to confirm",
         );
@@ -569,23 +567,63 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
     effectiveAddressResult.effectivePolyAddress,
   );
 
-  let creds: ApiKeyCreds | undefined;
-  if (input.apiKey && input.apiSecret && input.apiPassphrase) {
-    creds = {
-      key: input.apiKey,
-      secret: input.apiSecret,
-      passphrase: input.apiPassphrase,
-    };
-  }
-  const providedCreds = creds;
-  // Use provided credentials as primary auth mode if available
-  // Only derive if user credentials are missing
-  const deriveEnabled = Boolean(input.deriveApiKey) && !creds;
-  if (input.deriveApiKey && creds) {
+  // Build credentials object from input if all fields are provided
+  const buildInputCreds = (): ApiKeyCreds | undefined => {
+    if (input.apiKey && input.apiSecret && input.apiPassphrase) {
+      return {
+        key: input.apiKey,
+        secret: input.apiSecret,
+        passphrase: input.apiPassphrase,
+      };
+    }
+    return undefined;
+  };
+
+  let creds: ApiKeyCreds | undefined = buildInputCreds();
+  const providedCreds = creds; // Store original user-provided credentials for diagnostics
+  let providedCredsValid = false;
+  if (creds) {
+    // Verify provided credentials before accepting them
     input.logger?.info(
-      "[CLOB] User-provided API credentials detected; using them instead of derive mode.",
+      "[CLOB] User-provided API credentials detected; verifying before use...",
     );
+    try {
+      providedCredsValid = await verifyCredsWithClient(
+        creds,
+        wallet,
+        input.logger,
+      );
+      if (providedCredsValid) {
+        input.logger?.info(
+          "[CLOB] User-provided API credentials verified successfully.",
+        );
+      } else {
+        input.logger?.warn(
+          "[CLOB] User-provided API credentials failed verification (401/403).",
+        );
+        if (input.deriveApiKey) {
+          input.logger?.info(
+            "[CLOB] Will attempt to derive new credentials as fallback.",
+          );
+          creds = undefined; // Clear invalid credentials to trigger derive
+        } else {
+          input.logger?.warn(
+            "[CLOB] Derive mode disabled; continuing with provided credentials (may fail).",
+          );
+        }
+      }
+    } catch (verifyErr) {
+      // Transient error during verification (e.g., network timeout, ECONNRESET)
+      // Since this is not a definitive 401/403, optimistically use provided credentials.
+      // The preflight check will validate them again and switch to detect-only if they fail.
+      input.logger?.warn(
+        `[CLOB] Credential verification encountered transient error; using provided credentials. ${sanitizeErrorMessage(verifyErr)}`,
+      );
+      providedCredsValid = true;
+    }
   }
+  // Derive if user credentials are missing OR if they failed verification
+  const deriveEnabled = Boolean(input.deriveApiKey) && !creds;
 
   if (input.logger && !polyAddressDiagLogged) {
     // Determine auth mode for logging
