@@ -1,8 +1,8 @@
 diff --git a/node_modules/@polymarket/clob-client/dist/client.js b/node_modules/@polymarket/clob-client/dist/client.js
-index a2d1a1b..f99f812 100644
+index a2d1a1b..06a4a7a 100644
 --- a/node_modules/@polymarket/clob-client/dist/client.js
 +++ b/node_modules/@polymarket/clob-client/dist/client.js
-@@ -9,6 +9,25 @@ import { OrderBuilder } from "./order-builder/builder.js";
+@@ -9,6 +9,33 @@ import { OrderBuilder } from "./order-builder/builder.js";
  import { END_CURSOR, INITIAL_CURSOR } from "./constants.js";
  import { calculateBuyMarketPrice, calculateSellMarketPrice } from "./order-builder/helpers.js";
  import { RfqClient } from "./rfq-client.js";
@@ -25,10 +25,18 @@ index a2d1a1b..f99f812 100644
 +    return queryString;
 +}
 +
++// Helper function to override POLY_ADDRESS for Safe/Proxy wallets
++function applyFunderAddressToL2Headers(headers, orderBuilder) {
++    if (orderBuilder && orderBuilder.funderAddress) {
++        headers.POLY_ADDRESS = orderBuilder.funderAddress;
++    }
++    return headers;
++}
++
  export class ClobClient {
      host;
      chainId;
-@@ -224,12 +243,14 @@ export class ClobClient {
+@@ -224,12 +251,14 @@ export class ClobClient {
          });
      }
      async createOrDeriveApiKey(nonce) {
@@ -49,7 +57,95 @@ index a2d1a1b..f99f812 100644
      }
      async getApiKeys() {
          this.canL2Auth();
-@@ -411,16 +432,19 @@ export class ClobClient {
+@@ -239,6 +268,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.get(`${this.host}${endpoint}`, { headers });
+     }
+     async getClosedOnlyMode() {
+@@ -249,6 +279,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.get(`${this.host}${endpoint}`, { headers });
+     }
+     async deleteApiKey() {
+@@ -259,6 +290,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.del(`${this.host}${endpoint}`, { headers });
+     }
+     /**
+@@ -273,6 +305,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.post(`${this.host}${endpoint}`, { headers });
+     }
+     async getReadonlyApiKeys() {
+@@ -283,6 +316,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.get(`${this.host}${endpoint}`, { headers });
+     }
+     /**
+@@ -300,6 +334,7 @@ export class ClobClient {
+             body: JSON.stringify(payload),
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.del(`${this.host}${endpoint}`, { headers, data: payload });
+     }
+     /**
+@@ -321,6 +356,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.get(`${this.host}${endpoint}`, { headers });
+     }
+     async getTrades(params, only_first_page = false, next_cursor) {
+@@ -331,6 +367,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         let results = [];
+         next_cursor = next_cursor || INITIAL_CURSOR;
+         while (next_cursor != END_CURSOR && (next_cursor === INITIAL_CURSOR || !only_first_page)) {
+@@ -355,6 +392,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         next_cursor = next_cursor || INITIAL_CURSOR;
+         const _params = { ...params, next_cursor };
+         const { data, ...rest } = await this.get(`${this.host}${endpoint}`, {
+@@ -390,6 +428,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.get(`${this.host}${endpoint}`, {
+             headers,
+             params: { signature_type: this.orderBuilder.signatureType },
+@@ -403,6 +442,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, l2HeaderArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.del(`${this.host}${endpoint}`, {
+             headers,
+             params: parseDropNotificationParams(params),
+@@ -411,16 +451,20 @@ export class ClobClient {
      async getBalanceAllowance(params) {
          this.canL2Auth();
          const endpoint = GET_BALANCE_ALLOWANCE;
@@ -70,11 +166,148 @@ index a2d1a1b..f99f812 100644
 +            requestPath: requestPath,
 +        };
 +        const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
 +        const fullUrl = queryString ? `${this.host}${endpoint}?${queryString}` : `${this.host}${endpoint}`;
 +        return this.get(fullUrl, { headers });
      }
      async updateBalanceAllowance(params) {
          this.canL2Auth();
+@@ -430,6 +474,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         const _params = {
+             ...params,
+             signature_type: this.orderBuilder.signatureType,
+@@ -485,6 +530,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, l2HeaderArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         let results = [];
+         next_cursor = next_cursor || INITIAL_CURSOR;
+         while (next_cursor != END_CURSOR && (next_cursor === INITIAL_CURSOR || !only_first_page)) {
+@@ -511,6 +557,7 @@ export class ClobClient {
+             body: JSON.stringify(orderPayload),
+         };
+         const headers = await createL2Headers(this.signer, this.creds, l2HeaderArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         // builders flow
+         if (this.canBuilderAuth()) {
+             const builderHeaders = await this._generateBuilderHeaders(headers, l2HeaderArgs);
+@@ -534,6 +581,7 @@ export class ClobClient {
+             body: JSON.stringify(ordersPayload),
+         };
+         const headers = await createL2Headers(this.signer, this.creds, l2HeaderArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         // builders flow
+         if (this.canBuilderAuth()) {
+             const builderHeaders = await this._generateBuilderHeaders(headers, l2HeaderArgs);
+@@ -552,6 +600,7 @@ export class ClobClient {
+             body: JSON.stringify(payload),
+         };
+         const headers = await createL2Headers(this.signer, this.creds, l2HeaderArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.del(`${this.host}${endpoint}`, { headers, data: payload });
+     }
+     async cancelOrders(ordersHashes) {
+@@ -563,6 +612,7 @@ export class ClobClient {
+             body: JSON.stringify(ordersHashes),
+         };
+         const headers = await createL2Headers(this.signer, this.creds, l2HeaderArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.del(`${this.host}${endpoint}`, { headers, data: ordersHashes });
+     }
+     async cancelAll() {
+@@ -573,6 +623,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, l2HeaderArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.del(`${this.host}${endpoint}`, { headers });
+     }
+     /**
+@@ -595,6 +646,7 @@ export class ClobClient {
+             body: serialized,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, l2HeaderArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.post(`${this.host}${endpoint}`, { headers, data: serialized });
+     }
+     async cancelMarketOrders(payload) {
+@@ -606,6 +658,7 @@ export class ClobClient {
+             body: JSON.stringify(payload),
+         };
+         const headers = await createL2Headers(this.signer, this.creds, l2HeaderArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.del(`${this.host}${endpoint}`, { headers, data: payload });
+     }
+     async isOrderScoring(params) {
+@@ -616,6 +669,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.get(`${this.host}${endpoint}`, { headers, params });
+     }
+     async areOrdersScoring(params) {
+@@ -628,6 +682,7 @@ export class ClobClient {
+             body: payload,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.post(`${this.host}${endpoint}`, {
+             headers,
+             data: payload,
+@@ -642,6 +697,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         let results = [];
+         let next_cursor = INITIAL_CURSOR;
+         while (next_cursor != END_CURSOR) {
+@@ -667,6 +723,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         const params = {
+             date,
+             signature_type: this.orderBuilder.signatureType,
+@@ -684,6 +741,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         let results = [];
+         let next_cursor = INITIAL_CURSOR;
+         while (next_cursor != END_CURSOR) {
+@@ -712,6 +770,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         const _params = {
+             signature_type: this.orderBuilder.signatureType,
+         };
+@@ -770,6 +829,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.post(`${this.host}${endpoint}`, { headers });
+     }
+     async getBuilderApiKeys() {
+@@ -780,6 +840,7 @@ export class ClobClient {
+             requestPath: endpoint,
+         };
+         const headers = await createL2Headers(this.signer, this.creds, headerArgs, this.useServerTime ? await this.getServerTime() : undefined);
++        applyFunderAddressToL2Headers(headers, this.orderBuilder);
+         return this.get(`${this.host}${endpoint}`, { headers });
+     }
+     async revokeBuilderApiKey() {
 diff --git a/node_modules/@polymarket/clob-client/dist/client.js.orig b/node_modules/@polymarket/clob-client/dist/client.js.orig
 new file mode 100644
 index 0000000..a2d1a1b
