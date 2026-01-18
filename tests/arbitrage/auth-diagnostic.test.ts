@@ -81,6 +81,31 @@ test("diagnoseAuthFailure identifies derive failed", () => {
   );
 });
 
+test("diagnoseAuthFailure identifies derived keys rejected", () => {
+  const result = diagnoseAuthFailure({
+    userProvidedKeys: false,
+    deriveEnabled: true,
+    deriveFailed: false,
+    verificationFailed: true,
+    status: 401,
+  });
+
+  assert.equal(result.cause, "DERIVED_KEYS_REJECTED");
+  assert.equal(result.confidence, "medium");
+  assert.ok(
+    result.message.includes("rejected during L2 authentication"),
+    "Should mention L2 authentication rejection",
+  );
+  assert.ok(
+    result.recommendations.some((r) => r.includes("polymarket.com")),
+    "Should recommend visiting Polymarket",
+  );
+  assert.ok(
+    result.recommendations.some((r) => r.includes("clob-creds.json")),
+    "Should recommend clearing cached credentials",
+  );
+});
+
 test("diagnoseAuthFailure identifies wrong wallet binding", () => {
   const result = diagnoseAuthFailure({
     userProvidedKeys: true,
