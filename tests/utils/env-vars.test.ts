@@ -58,8 +58,15 @@ const testEnvResolution = (
       `Funder address mismatch: expected ${expectedFunderAddress}, got ${actualFunderAddress}`,
     );
   } finally {
-    // Restore original env
-    process.env = originalEnv;
+    // Restore original env properly
+    // Clear all keys that were added during the test
+    Object.keys(process.env).forEach((key) => {
+      if (!(key in originalEnv)) {
+        delete process.env[key];
+      }
+    });
+    // Restore original values
+    Object.assign(process.env, originalEnv);
   }
 };
 

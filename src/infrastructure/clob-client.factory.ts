@@ -870,14 +870,17 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
     input.logger.info(
       `[CLOB][Auth] mode=${authMode} signatureType=${signatureType ?? "default(0)/auto-detect"} walletMode="${walletMode}" signerAddress=${derivedSignerAddress} funderAddress=${funderAddress ?? "none"} effectivePolyAddress=${effectiveAddressResult.effectivePolyAddress}`,
     );
-    
+
     // Add clarity log for proxy/safe mode
-    if (signatureType === SignatureType.POLY_PROXY || signatureType === SignatureType.POLY_GNOSIS_SAFE) {
+    if (
+      signatureType === SignatureType.POLY_PROXY ||
+      signatureType === SignatureType.POLY_GNOSIS_SAFE
+    ) {
       input.logger.info(
         `[CLOB][Auth] Using ${walletMode}: signer=${derivedSignerAddress} (EOA for signing), maker/funder=${funderAddress} (proxy for orders)`,
       );
     }
-    
+
     polyAddressDiagLogged = true;
   }
 

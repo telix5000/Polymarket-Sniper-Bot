@@ -78,7 +78,10 @@ export const loadCachedCreds = (params: {
     }
 
     // Validate signature type and funder address match (if stored)
-    if (stored.signatureType !== undefined && params.signatureType !== undefined) {
+    if (
+      stored.signatureType !== undefined &&
+      params.signatureType !== undefined
+    ) {
       if (stored.signatureType !== params.signatureType) {
         params.logger?.warn(
           `[CredStorage] Cached credentials for different signature type (cached=${stored.signatureType} current=${params.signatureType}); ignoring and will re-derive.`,
@@ -88,7 +91,10 @@ export const loadCachedCreds = (params: {
     }
 
     if (stored.funderAddress && params.funderAddress) {
-      if (stored.funderAddress.toLowerCase() !== params.funderAddress.toLowerCase()) {
+      if (
+        stored.funderAddress.toLowerCase() !==
+        params.funderAddress.toLowerCase()
+      ) {
         params.logger?.warn(
           `[CredStorage] Cached credentials for different funder address (cached=${stored.funderAddress} current=${params.funderAddress}); ignoring and will re-derive.`,
         );
