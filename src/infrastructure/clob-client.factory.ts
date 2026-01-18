@@ -39,6 +39,12 @@ import {
   loadL1AuthConfig,
   logL1AuthDiagnostics,
 } from "../utils/l1-auth-headers.util";
+import {
+  deriveCredentialsWithFallback,
+} from "../clob/credential-derivation-v2";
+import {
+  logAuthIdentity,
+} from "../clob/identity-resolver";
 
 export type CreateClientInput = {
   rpcUrl: string;
@@ -423,301 +429,6 @@ const verifyCredsWithAutoSignatureType = async (
   return undefined;
 };
 
-/**
- * Result of credential derivation including auto-detected signature type
- */
-type DeriveCredsResult = {
-  creds: ApiKeyCreds;
-  signatureType: number;
-};
-
-// Cache for detected signature type
-let cachedSignatureType: number | undefined;
-
-const deriveApiCreds = async (
-  wallet: Wallet,
-  signatureType?: number,
-  funderAddress?: string,
-  logger?: Logger,
-): Promise<DeriveCredsResult | undefined> => {
-  const signerAddress = await wallet.getAddress();
-
-  // Return cached credentials if we already have them
-  if (cachedDerivedCreds) {
-    if (!credDerivationAttempted) {
-      logger?.info("[CLOB] Using in-memory cached derived credentials.");
-    }
-    return {
-      creds: cachedDerivedCreds,
-      signatureType: cachedSignatureType ?? SignatureType.EOA,
-    };
-  }
-
-  // Skip if we've already tried and failed
-  if (credDerivationAttempted) {
-    return undefined;
-  }
-  credDerivationAttempted = true;
-
-  const diskCached = loadCachedCreds({
-    signerAddress,
-    signatureType,
-    funderAddress,
-    logger,
-  });
-  if (diskCached) {
-    // Verify cached credentials before using them - try all signature types
-    logger?.info("[CLOB] Verifying disk-cached credentials...");
-    try {
-      const verifyResult = await verifyCredsWithAutoSignatureType(
-        diskCached,
-        wallet,
-        logger,
-      );
-      if (verifyResult?.valid) {
-        cachedDerivedCreds = diskCached;
-        cachedSignatureType = verifyResult.signatureType;
-        logger?.info(
-          "[CLOB] Using disk-cached derived credentials (verified).",
-        );
-        return { creds: diskCached, signatureType: verifyResult.signatureType };
-      } else {
-        // Cached credentials are invalid with all signature types, clear cache and retry
-        logger?.warn(
-          "[CLOB] Cached credentials invalid; clearing cache and retrying derive.",
-        );
-        const { clearCachedCreds } =
-          await import("../utils/credential-storage.util");
-        clearCachedCreds(logger);
-        cachedDerivedCreds = null;
-        cachedSignatureType = undefined;
-        // Fall through to derive new credentials
-      }
-    } catch {
-      // Verification error (not 401/403), treat as transient and use cached creds
-      logger?.warn(
-        "[CLOB] Credential verification error; using cached credentials anyway.",
-      );
-      cachedDerivedCreds = diskCached;
-      return {
-        creds: diskCached,
-        signatureType: cachedSignatureType ?? SignatureType.EOA,
-      };
-    }
-  }
-
-  const deriveClient = new ClobClient(
-    POLYMARKET_API.BASE_URL,
-    Chain.POLYGON,
-    wallet,
-    undefined,
-    signatureType ?? SignatureType.EOA,
-    funderAddress,
-  );
-  const deriveFn = deriveClient as ClobClient & {
-    create_or_derive_api_creds?: () => Promise<ApiKeyCreds>;
-    createOrDeriveApiKey?: () => Promise<ApiKeyCreds>;
-    deriveApiKey?: () => Promise<ApiKeyCreds>;
-    createApiKey?: () => Promise<ApiKeyCreds>;
-  };
-
-  // Helper to verify and cache credentials - tries all signature types
-  const verifyAndCacheCreds = async (
-    derived: ApiKeyCreds,
-    source: string,
-  ): Promise<DeriveCredsResult | undefined> => {
-    // Check if response is actually an error response from the API
-    if (isClobErrorResponse(derived)) {
-      logger?.error(
-        `[CLOB] ${source} returned error response: status=${derived.status ?? "unknown"} error=${derived.error ?? "unknown"}`,
-      );
-      return undefined;
-    }
-
-    // Validate response contains valid credentials before marking success
-    if (!derived || !derived.key || !derived.secret || !derived.passphrase) {
-      logger?.error(
-        `[CLOB] ${source} API key creation returned incomplete credentials (missing key/secret/passphrase) - credentials NOT saved`,
-      );
-      return undefined;
-    }
-
-    // Verify derived credentials work before caching them - try ALL signature types
-    logger?.info(
-      `[CLOB] Verifying newly derived credentials from ${source}...`,
-    );
-    try {
-      const verifyResult = await verifyCredsWithAutoSignatureType(
-        derived,
-        wallet,
-        logger,
-      );
-      if (!verifyResult?.valid) {
-        logger?.warn(
-          `[CLOB] Derived credentials failed verification (401/403). The wallet has never traded on Polymarket or there's an account issue.`,
-        );
-        return undefined;
-      }
-      logger?.info(`[CLOB] Derived credentials verified successfully.`);
-
-      // Valid credentials received and verified, save and return
-      cachedDerivedCreds = derived;
-      cachedSignatureType = verifyResult.signatureType;
-      saveCachedCreds({
-        creds: derived,
-        signerAddress,
-        signatureType,
-        funderAddress,
-        logger,
-      });
-      logger?.info(
-        `[CLOB] Successfully created/derived API credentials via ${source}.`,
-      );
-      return { creds: derived, signatureType: verifyResult.signatureType };
-    } catch (verifyError) {
-      // Verification encountered a transient error (network, etc.)
-      // In this case, we'll optimistically cache the credentials and let
-      // the preflight check handle verification later
-      logger?.warn(
-        `[CLOB] Credential verification encountered transient error; caching anyway. ${sanitizeErrorMessage(verifyError)}`,
-      );
-      cachedDerivedCreds = derived;
-      saveCachedCreds({
-        creds: derived,
-        signerAddress,
-        signatureType,
-        funderAddress,
-        logger,
-      });
-      logger?.info(
-        `[CLOB] Successfully created/derived API credentials via ${source}.`,
-      );
-      return { creds: derived, signatureType: SignatureType.EOA };
-    }
-  };
-
-  // Strategy: Try deriveApiKey first (for existing wallets), then createApiKey
-  // This is the opposite of what createOrDeriveApiKey does, but it's more reliable
-  // because deriveApiKey works for wallets that have already traded on Polymarket
-  // See: https://github.com/Polymarket/py-clob-client/issues/187
-
-  // Step 1: Try deriveApiKey first (works for wallets with existing API keys)
-  if (deriveFn.deriveApiKey) {
-    try {
-      logger?.info(
-        "[CLOB] Attempting to derive existing API credentials from server...",
-      );
-      const derived = await deriveFn.deriveApiKey();
-      const result = await verifyAndCacheCreds(derived, "deriveApiKey");
-      if (result) {
-        return result;
-      }
-      // If verification failed, continue to try createApiKey
-      logger?.info(
-        "[CLOB] deriveApiKey credentials didn't verify; trying createApiKey...",
-      );
-    } catch (deriveError) {
-      const deriveStatus = (deriveError as { response?: { status?: number } })
-        ?.response?.status;
-      const deriveMsg = extractDeriveErrorMessage(deriveError);
-      logger?.info(
-        `[CLOB] deriveApiKey failed (status=${deriveStatus ?? "unknown"}): ${deriveMsg || "unknown error"}`,
-      );
-      // Continue to try createApiKey
-    }
-  }
-
-  // Step 2: Try createApiKey (for new wallets or if derive failed)
-  try {
-    logger?.info("[CLOB] Attempting to create new API credentials...");
-    if (deriveFn.createApiKey) {
-      const created = await deriveFn.createApiKey();
-      const result = await verifyAndCacheCreds(created, "createApiKey");
-      if (result) {
-        return result;
-      }
-    }
-  } catch (createError) {
-    const status = (createError as { response?: { status?: number } })?.response
-      ?.status;
-    const responseData = (createError as { response?: { data?: unknown } })
-      ?.response?.data;
-    const errorDetails =
-      extractDeriveErrorMessage(createError) || "unknown error";
-    logger?.info(
-      `[CLOB] createApiKey failed (status=${status ?? "unknown"}): error=${errorDetails} - credentials NOT saved`,
-    );
-    if (responseData) {
-      logger?.debug(`[CLOB] Response data: ${JSON.stringify(responseData)}`);
-    }
-
-    // If createApiKey failed with "Could not create api key", the wallet may need
-    // to interact with Polymarket first
-    if (canDetectCreateApiKeyFailure(createError)) {
-      logger?.error(
-        "[CLOB] =====================================================================",
-      );
-      logger?.error(
-        "[CLOB] API KEY CREATION FAILED: Server cannot create credentials for this wallet",
-      );
-      logger?.error(
-        "[CLOB] =====================================================================",
-      );
-      logger?.error(
-        "[CLOB] Both deriveApiKey and createApiKey failed. Possible causes:",
-      );
-      logger?.error(
-        "[CLOB]   - The wallet has never interacted with Polymarket",
-      );
-      logger?.error(
-        "[CLOB]   - The wallet needs to enable trading on polymarket.com first",
-      );
-      logger?.error("[CLOB] ");
-      logger?.error("[CLOB] TO FIX THIS:");
-      logger?.error(
-        "[CLOB]   1. Visit https://polymarket.com and connect this wallet",
-      );
-      logger?.error(
-        "[CLOB]   2. Enable trading and make a small test trade on any market",
-      );
-      logger?.error(
-        "[CLOB]   3. Wait a few minutes for the transaction to confirm",
-      );
-      logger?.error("[CLOB]   4. Restart this bot");
-      logger?.error(
-        "[CLOB] =====================================================================",
-      );
-    }
-  }
-
-  // Step 3: As last resort, try the combined createOrDeriveApiKey
-  try {
-    logger?.info("[CLOB] Attempting createOrDeriveApiKey as final fallback...");
-    const combined = deriveFn.createOrDeriveApiKey
-      ? await deriveFn.createOrDeriveApiKey()
-      : undefined;
-    if (combined) {
-      const result = await verifyAndCacheCreds(
-        combined,
-        "createOrDeriveApiKey",
-      );
-      if (result) {
-        return result;
-      }
-    }
-  } catch (combinedError) {
-    const combinedMsg = extractDeriveErrorMessage(combinedError);
-    logger?.warn(
-      `[CLOB] createOrDeriveApiKey fallback failed: ${combinedMsg || "unknown error"}`,
-    );
-  }
-
-  logger?.error(
-    "[CLOB] All credential derivation methods failed. Bot will run in detect-only mode.",
-  );
-  return undefined;
-};
-
 export async function createPolymarketClient(input: CreateClientInput): Promise<
   ClobClient & {
     wallet: Wallet;
@@ -913,31 +624,75 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
   let derivedCreds: ApiKeyCreds | undefined;
   let deriveFailed = false;
   let deriveError: string | undefined;
+  let derivationResult: Awaited<
+    ReturnType<typeof deriveCredentialsWithFallback>
+  > | null = null;
+
   if (deriveEnabled) {
     try {
-      const deriveResult = await deriveApiCreds(
-        signer,
+      // Read and validate optional overrides from environment
+      const forceWalletModeRaw = process.env.CLOB_FORCE_WALLET_MODE;
+      const forceL1AuthRaw = process.env.CLOB_FORCE_L1_AUTH;
+      
+      // Validate CLOB_FORCE_WALLET_MODE
+      let forceWalletMode: "auto" | "eoa" | "safe" | "proxy" | undefined;
+      if (forceWalletModeRaw) {
+        const validModes = ["auto", "eoa", "safe", "proxy"];
+        if (validModes.includes(forceWalletModeRaw)) {
+          forceWalletMode = forceWalletModeRaw as "auto" | "eoa" | "safe" | "proxy";
+        } else {
+          input.logger?.warn(
+            `[CLOB] Invalid CLOB_FORCE_WALLET_MODE="${forceWalletModeRaw}". Must be one of: ${validModes.join(", ")}. Ignoring.`,
+          );
+        }
+      }
+      
+      // Validate CLOB_FORCE_L1_AUTH
+      let forceL1Auth: "auto" | "signer" | "effective" | undefined;
+      if (forceL1AuthRaw) {
+        const validAuth = ["auto", "signer", "effective"];
+        if (validAuth.includes(forceL1AuthRaw)) {
+          forceL1Auth = forceL1AuthRaw as "auto" | "signer" | "effective";
+        } else {
+          input.logger?.warn(
+            `[CLOB] Invalid CLOB_FORCE_L1_AUTH="${forceL1AuthRaw}". Must be one of: ${validAuth.join(", ")}. Ignoring.`,
+          );
+        }
+      }
+
+      derivationResult = await deriveCredentialsWithFallback({
+        privateKey: input.privateKey,
         signatureType,
         funderAddress,
-        input.logger,
-      );
-      if (
-        deriveResult?.creds?.key &&
-        deriveResult?.creds?.secret &&
-        deriveResult?.creds?.passphrase
-      ) {
-        creds = deriveResult.creds;
-        derivedCreds = deriveResult.creds;
-        detectedSignatureType = deriveResult.signatureType;
+        forceWalletMode,
+        forceL1Auth,
+        logger: input.logger,
+      });
+
+      if (derivationResult.success && derivationResult.creds) {
+        creds = derivationResult.creds;
+        derivedCreds = derivationResult.creds;
+        detectedSignatureType = derivationResult.signatureType;
+
         const { apiKeyDigest, keyIdSuffix } = getApiKeyDiagnostics(
-          deriveResult.creds.key,
+          derivationResult.creds.key,
         );
         input.logger?.info(
-          `[CLOB] derived creds derivedKeyDigest=${apiKeyDigest} derivedKeySuffix=${keyIdSuffix} signatureType=${deriveResult.signatureType}`,
+          `[CLOB] derived creds derivedKeyDigest=${apiKeyDigest} derivedKeySuffix=${keyIdSuffix} signatureType=${derivationResult.signatureType}`,
         );
+
+        // Log the auth identity that worked
+        if (derivationResult.orderIdentity && derivationResult.l1AuthIdentity) {
+          logAuthIdentity({
+            orderIdentity: derivationResult.orderIdentity,
+            l1AuthIdentity: derivationResult.l1AuthIdentity,
+            signerAddress: derivedSignerAddress,
+            logger: input.logger,
+          });
+        }
       } else {
         deriveFailed = true;
-        deriveError = "Derived credentials incomplete or missing";
+        deriveError = derivationResult.error ?? "Derived credentials incomplete or missing";
       }
     } catch (err) {
       deriveFailed = true;
