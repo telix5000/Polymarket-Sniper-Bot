@@ -1,5 +1,5 @@
 diff --git a/node_modules/@polymarket/clob-client/dist/client.js b/node_modules/@polymarket/clob-client/dist/client.js
-index 8e24347..42e8409 100644
+index 8e24347..e748480 100644
 --- a/node_modules/@polymarket/clob-client/dist/client.js
 +++ b/node_modules/@polymarket/clob-client/dist/client.js
 @@ -11,6 +11,26 @@ const endpoints_1 = require("./endpoints");
@@ -29,6 +29,24 @@ index 8e24347..42e8409 100644
  class ClobClient {
      // eslint-disable-next-line max-params
      constructor(host, chainId, signer, creds, signatureType, funderAddress, geoBlockToken, useServerTime, builderConfig, getSigner) {
+@@ -208,7 +228,7 @@ class ClobClient {
+             this.canL1Auth();
+             const endpoint = `${this.host}${endpoints_1.CREATE_API_KEY}`;
+             const headers = yield (0, headers_1.createL1Headers)(this.signer, this.chainId, nonce, this.useServerTime ? yield this.getServerTime() : undefined);
+-            return yield this.post(endpoint, { headers }).then((apiKeyRaw) => {
++            return yield this.post(endpoint, { params: {}, headers }).then((apiKeyRaw) => {
+                 const apiKey = {
+                     key: apiKeyRaw.apiKey,
+                     secret: apiKeyRaw.secret,
+@@ -228,7 +248,7 @@ class ClobClient {
+             this.canL1Auth();
+             const endpoint = `${this.host}${endpoints_1.DERIVE_API_KEY}`;
+             const headers = yield (0, headers_1.createL1Headers)(this.signer, this.chainId, nonce, this.useServerTime ? yield this.getServerTime() : undefined);
+-            return yield this.get(endpoint, { headers }).then((apiKeyRaw) => {
++            return yield this.get(endpoint, { params: {}, headers }).then((apiKeyRaw) => {
+                 const apiKey = {
+                     key: apiKeyRaw.apiKey,
+                     secret: apiKeyRaw.secret,
 @@ -300,18 +320,18 @@ class ClobClient {
          return tslib_1.__awaiter(this, void 0, void 0, function* () {
              this.canL2Auth();
