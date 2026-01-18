@@ -132,3 +132,65 @@ test("print-effective-config includes preset and key subset", () => {
   assert.match(output, /"preset":\s*"classic"/);
   assert.match(output, /scanIntervalMs/);
 });
+
+test("API credentials are used even when CLOB_DERIVE_CREDS=true (arb)", () => {
+  resetEnv();
+  Object.assign(process.env, baseArbEnv, {
+    ARB_PRESET: "micro",
+    CLOB_DERIVE_CREDS: "true",
+  });
+
+  const config = loadArbConfig();
+  // Credentials should be loaded and marked as complete
+  assert.equal(config.polymarketApiKey, "key");
+  assert.equal(config.polymarketApiSecret, "secret");
+  assert.equal(config.polymarketApiPassphrase, "passphrase");
+  assert.equal(config.clobCredsComplete, true);
+  assert.equal(config.clobDeriveEnabled, true);
+  // With credentials provided, clobCredsChecklist should show them as present
+  assert.equal(config.clobCredsChecklist.key.present, true);
+  assert.equal(config.clobCredsChecklist.secret.present, true);
+  assert.equal(config.clobCredsChecklist.passphrase.present, true);
+});
+
+test("API credentials are used even when CLOB_DERIVE_CREDS=true (monitor)", () => {
+  resetEnv();
+  Object.assign(process.env, baseMonitorEnv, {
+    MONITOR_PRESET: "active",
+    CLOB_DERIVE_CREDS: "true",
+  });
+
+  const config = loadMonitorConfig();
+  // Credentials should be loaded and marked as complete
+  assert.equal(config.polymarketApiKey, "key");
+  assert.equal(config.polymarketApiSecret, "secret");
+  assert.equal(config.polymarketApiPassphrase, "passphrase");
+  assert.equal(config.clobCredsComplete, true);
+  assert.equal(config.clobDeriveEnabled, true);
+  // With credentials provided, clobCredsChecklist should show them as present
+  assert.equal(config.clobCredsChecklist.key.present, true);
+  assert.equal(config.clobCredsChecklist.secret.present, true);
+  assert.equal(config.clobCredsChecklist.passphrase.present, true);
+});
+
+test("credentials marked as ignored only when derive=true AND no credentials provided", () => {
+  resetEnv();
+  Object.assign(process.env, {
+    RPC_URL: "http://localhost:8545",
+    PRIVATE_KEY: "0x" + "11".repeat(32),
+    MODE: "arb",
+    ARB_PRESET: "micro",
+    CLOB_DERIVE_CREDS: "true",
+    // No API credentials provided
+  });
+
+  const config = loadArbConfig();
+  // Without credentials, clobCredsComplete should be false
+  assert.equal(config.clobCredsComplete, false);
+  // And checklist should show not present
+  assert.equal(config.clobCredsChecklist.key.present, false);
+  assert.equal(config.clobCredsChecklist.secret.present, false);
+  assert.equal(config.clobCredsChecklist.passphrase.present, false);
+  // deriveEnabled should be true
+  assert.equal(config.clobCredsChecklist.deriveEnabled, true);
+});

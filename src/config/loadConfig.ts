@@ -441,11 +441,9 @@ const CLOB_DERIVE_KEYS = [
 
 const readClobCreds = (
   overrides?: Overrides,
-  options?: { deriveEnabled?: boolean },
 ): { key?: string; secret?: string; passphrase?: string } => {
-  if (options?.deriveEnabled) {
-    return {};
-  }
+  // Always read credentials from environment - deriveEnabled should not prevent
+  // using explicitly provided API credentials
   const keyEntry = readFirstEnvWithSource(CLOB_CRED_KEYS.key, overrides);
   const secretEntry = readFirstEnvWithSource(CLOB_CRED_KEYS.secret, overrides);
   const passphraseEntry = readFirstEnvWithSource(
@@ -472,7 +470,17 @@ const buildClobCredsChecklist = (
     CLOB_CRED_KEYS.passphrase,
     overrides,
   );
-  if (deriveEnabled) {
+  // Check if credentials are actually present - they should be used even if deriveEnabled=true
+  const hasKey = Boolean(keyEntry.value);
+  const hasSecret = Boolean(secretEntry.value);
+  const hasPassphrase = Boolean(passphraseEntry.value);
+  const hasCompleteCreds = hasKey && hasSecret && hasPassphrase;
+
+  // When derive is enabled but credentials are provided, explicit credentials take precedence
+  // Only show "(ignored)" when derive is enabled AND no credentials are provided
+  const showIgnored = deriveEnabled && !hasCompleteCreds;
+
+  if (showIgnored) {
     return {
       key: {
         present: false,
@@ -494,13 +502,13 @@ const buildClobCredsChecklist = (
     };
   }
   return {
-    key: { present: Boolean(keyEntry.value), source: keyEntry.source },
-    secret: { present: Boolean(secretEntry.value), source: secretEntry.source },
+    key: { present: hasKey, source: keyEntry.source },
+    secret: { present: hasSecret, source: secretEntry.source },
     passphrase: {
-      present: Boolean(passphraseEntry.value),
+      present: hasPassphrase,
       source: passphraseEntry.source,
     },
-    deriveEnabled: readClobDeriveEnabled(overrides),
+    deriveEnabled: deriveEnabled ?? readClobDeriveEnabled(overrides),
   };
 };
 
@@ -655,9 +663,7 @@ export function loadArbConfig(overrides: Overrides = {}): ArbRuntimeConfig {
   let presetName = presetLookup.presetName;
   const { legacyKeysDetected } = presetLookup;
   const clobDeriveEnabled = readClobDeriveEnabled(overrides);
-  const clobCreds = readClobCreds(overrides, {
-    deriveEnabled: clobDeriveEnabled,
-  });
+  const clobCreds = readClobCreds(overrides);
   const clobCredsComplete = Boolean(
     clobCreds.key && clobCreds.secret && clobCreds.passphrase,
   );
@@ -809,9 +815,7 @@ export function loadMonitorConfig(
   let presetName = monitorPresetLookup.presetName;
   const { legacyKeysDetected } = monitorPresetLookup;
   const clobDeriveEnabled = readClobDeriveEnabled(overrides);
-  const clobCreds = readClobCreds(overrides, {
-    deriveEnabled: clobDeriveEnabled,
-  });
+  const clobCreds = readClobCreds(overrides);
   const clobCredsComplete = Boolean(
     clobCreds.key && clobCreds.secret && clobCreds.passphrase,
   );
