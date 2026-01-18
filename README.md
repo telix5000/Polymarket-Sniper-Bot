@@ -380,6 +380,113 @@ If you see this error, follow these steps:
    - `relayer_enabled=false` means Builder credentials are missing (this is OK for basic trading)
    - **See [Authentication Troubleshooting Guide](docs/AUTH_TROUBLESHOOTING.md) for detailed diagnostics and solutions**
 
+### Debugging CLOB Authentication
+
+When experiencing persistent 401 Unauthorized errors or identity contamination issues, use the **CLOB Authentication Probe** for deterministic, instrumented diagnostics:
+
+#### CLOB Auth Probe Tool
+
+The probe tool performs a minimal, controlled authentication test with detailed diagnostics:
+
+**Basic Usage:**
+```bash
+# Run the authentication probe
+npm run clob:probe
+
+# Or with explicit environment variables
+PRIVATE_KEY=0x... DEBUG_AUTH_PROBE=true npm run clob:probe
+```
+
+**What it does:**
+1. Derives CLOB credentials from `PRIVATE_KEY` (if `CLOB_DERIVE_CREDS=true`)
+2. Forces EOA identity (signatureType=0, no Safe/proxy contamination)
+3. Makes a single GET `/balance-allowance` call
+4. Prints a redacted debug bundle with:
+   - Identity details (signer, wallet, maker, funder addresses)
+   - Request details (URL, signed path, headers)
+   - Credential details (API key prefix/suffix, secret encoding)
+   - Signing details (timestamp, message digest, signature encoding)
+   - Self-check validation results
+5. Exits with code 0 (success) or 1 (failure)
+
+**Environment Variables:**
+- `PRIVATE_KEY` (required) - Your wallet private key
+- `CLOB_HOST` (optional) - CLOB API host (default: https://clob.polymarket.com)
+- `CHAIN_ID` (optional) - Chain ID (default: 137 for Polygon)
+- `SIGNATURE_TYPE_FORCE` (optional) - Force signature type (default: 0 for EOA)
+- `POLY_ADDRESS_FORCE` (optional) - Force specific wallet address
+- `DEBUG_AUTH_PROBE` (optional) - Enable debug output (default: true)
+
+**Identity Matrix Testing:**
+
+Test multiple identity configurations in one run:
+```bash
+# Run identity matrix test
+npm run clob:matrix
+
+# Or with Safe/Proxy addresses
+SAFE_ADDRESS=0x... PROXY_ADDRESS=0x... npm run clob:matrix
+```
+
+The matrix mode tests:
+1. **EOA mode**: sigType=0, wallet=signer, maker=signer, funder=null
+2. **Safe mode** (if `SAFE_ADDRESS` provided): sigType=2, wallet=signer, maker=safe, funder=safe
+3. **Proxy mode** (if `PROXY_ADDRESS` provided): sigType=1, wallet=signer, maker=proxy, funder=proxy
+
+**Interpreting Results:**
+
+**Success (200 OK):**
+```
+✅ AUTH_PROBE_OK
+  Status: 200
+  Response: {"balance":"1000.000000","allowance":"1000.000000"}
+
+[Interpretation] Authentication successful - credentials and identity are correct
+```
+- Your configuration is correct
+- The bot should be able to authenticate successfully
+- Check other potential issues (funds, allowances, etc.)
+
+**Failure (401 Unauthorized):**
+```
+❌ AUTH_PROBE_FAIL
+  Status: 401
+  Error: {"error":"Unauthorized/Invalid api key"}
+
+[Interpretation]
+  401 Unauthorized - Most likely causes:
+    1. HMAC signature mismatch (check secret encoding, message format)
+    2. Invalid API credentials (regenerate with deriveApiKey)
+    3. Wallet address mismatch (POLY_ADDRESS header != actual wallet)
+    4. Timestamp skew (check system clock)
+```
+
+**Common Issues Detected:**
+- **funderAddress not null**: Indicates Safe/proxy contamination in EOA mode
+- **Query string not in signed path**: Missing parameters in HMAC signature
+- **Secret encoding mismatch**: Using base64 instead of base64url (or vice versa)
+- **Timestamp skew**: System clock differs significantly from server time
+
+**Debug Bundle Example:**
+```
+[Identity - EOA Hard Lock]
+  signerAddress:  0x1234...5678
+  walletAddress:  0x1234...5678
+  makerAddress:   0x1234...5678
+  funderAddress:  undefined (MUST be undefined)
+
+[Credentials - Redacted]
+  apiKey:         abcd1234...wxyz (len=36)
+  secret:         ABCD1234...WXYZ (len=88, encoding=base64)
+  passphrase:     pass...word
+
+[Self-Check]
+  queryInPath:    ✅
+  funderIsNull:   ✅
+  sigTypeIsZero:  ✅
+  OVERALL:        ✅ PASS
+```
+
 ### Quickstart (AirVPN/WireGuard already handled), enable builder relayer + approvals
 
 Live trading is locked behind an explicit opt-in and on-chain approvals. The bot now supports **gasless relayer approvals** via a separate signer container that holds builder API credentials.
