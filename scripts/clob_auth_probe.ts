@@ -27,7 +27,12 @@
  *   PROXY_ADDRESS            - Optional: Proxy address for matrix mode
  */
 
-import { ClobClient, Chain, AssetType, createL2Headers } from "@polymarket/clob-client";
+import {
+  ClobClient,
+  Chain,
+  AssetType,
+  createL2Headers,
+} from "@polymarket/clob-client";
 import type { ApiKeyCreds } from "@polymarket/clob-client";
 import { Wallet } from "ethers";
 import axios from "axios";
@@ -94,7 +99,10 @@ interface EOAIdentity {
   signatureType: 0;
 }
 
-function deriveEOAIdentity(privateKey: string, polyAddressForce?: string): EOAIdentity {
+function deriveEOAIdentity(
+  privateKey: string,
+  polyAddressForce?: string,
+): EOAIdentity {
   const wallet = new Wallet(privateKey);
   const signerAddress = wallet.address;
   const walletAddress = polyAddressForce || signerAddress;
@@ -154,7 +162,10 @@ async function deriveCredentials(
       return { success: false, error: "Invalid L1 Request headers (401)" };
     }
 
-    if (status === 400 && message.toLowerCase().includes("could not create api key")) {
+    if (
+      status === 400 &&
+      message.toLowerCase().includes("could not create api key")
+    ) {
       return {
         success: false,
         error: "Wallet has not traded on Polymarket yet (400)",
@@ -318,8 +329,10 @@ function buildDebugBundle(
   selfCheck: SelfCheckResult,
 ): DebugBundle {
   // Detect secret encoding
-  const hasBase64Chars = creds.secret.includes("+") || creds.secret.includes("/");
-  const hasBase64UrlChars = creds.secret.includes("-") || creds.secret.includes("_");
+  const hasBase64Chars =
+    creds.secret.includes("+") || creds.secret.includes("/");
+  const hasBase64UrlChars =
+    creds.secret.includes("-") || creds.secret.includes("_");
   const secretEncoding = hasBase64Chars
     ? "base64"
     : hasBase64UrlChars
@@ -378,7 +391,9 @@ function printDebugBundle(bundle: DebugBundle, debugEnabled: boolean): void {
   console.log(`  signerAddress:  ${bundle.identity.signerAddress}`);
   console.log(`  walletAddress:  ${bundle.identity.walletAddress}`);
   console.log(`  makerAddress:   ${bundle.identity.makerAddress}`);
-  console.log(`  funderAddress:  ${bundle.identity.funderAddress} (MUST be undefined)`);
+  console.log(
+    `  funderAddress:  ${bundle.identity.funderAddress} (MUST be undefined)`,
+  );
 
   console.log("\n[Request]");
   console.log(`  url:            ${bundle.request.url}`);
@@ -386,9 +401,15 @@ function printDebugBundle(bundle: DebugBundle, debugEnabled: boolean): void {
   console.log(`  headerNames:    ${bundle.request.headerNames.join(", ")}`);
 
   console.log("\n[Credentials - Redacted]");
-  console.log(`  apiKey:         ${bundle.credentials.apiKeyPrefix}...${bundle.credentials.apiKeySuffix}`);
-  console.log(`  secret:         ${bundle.credentials.secretPrefix}...${bundle.credentials.secretSuffix} (len=${bundle.credentials.secretLength}, encoding=${bundle.credentials.secretEncoding})`);
-  console.log(`  passphrase:     ${bundle.credentials.passphrasePrefix}...${bundle.credentials.passphraseSuffix}`);
+  console.log(
+    `  apiKey:         ${bundle.credentials.apiKeyPrefix}...${bundle.credentials.apiKeySuffix}`,
+  );
+  console.log(
+    `  secret:         ${bundle.credentials.secretPrefix}...${bundle.credentials.secretSuffix} (len=${bundle.credentials.secretLength}, encoding=${bundle.credentials.secretEncoding})`,
+  );
+  console.log(
+    `  passphrase:     ${bundle.credentials.passphrasePrefix}...${bundle.credentials.passphraseSuffix}`,
+  );
 
   console.log("\n[Signing]");
   console.log(`  timestamp:      ${bundle.signing.timestamp}`);
@@ -397,10 +418,18 @@ function printDebugBundle(bundle: DebugBundle, debugEnabled: boolean): void {
   console.log(`  sigEncoding:    ${bundle.signing.signatureEncoding}`);
 
   console.log("\n[Self-Check]");
-  console.log(`  queryInPath:    ${bundle.selfCheck.checks.queryStringInPath ? "✅" : "❌"}`);
-  console.log(`  funderIsNull:   ${bundle.selfCheck.checks.funderIsNull ? "✅" : "❌"}`);
-  console.log(`  sigTypeIsZero:  ${bundle.selfCheck.checks.signatureTypeIsZero ? "✅" : "❌"}`);
-  console.log(`  OVERALL:        ${bundle.selfCheck.passed ? "✅ PASS" : "❌ FAIL"}`);
+  console.log(
+    `  queryInPath:    ${bundle.selfCheck.checks.queryStringInPath ? "✅" : "❌"}`,
+  );
+  console.log(
+    `  funderIsNull:   ${bundle.selfCheck.checks.funderIsNull ? "✅" : "❌"}`,
+  );
+  console.log(
+    `  sigTypeIsZero:  ${bundle.selfCheck.checks.signatureTypeIsZero ? "✅" : "❌"}`,
+  );
+  console.log(
+    `  OVERALL:        ${bundle.selfCheck.passed ? "✅ PASS" : "❌ FAIL"}`,
+  );
 
   console.log("\n" + "=".repeat(70));
 }
@@ -462,7 +491,9 @@ async function runPreflightMatrix(
   console.log(`\nTesting ${cases.length} identity configurations...\n`);
 
   for (const testCase of cases) {
-    console.log(`[${testCase.label}] sigType=${testCase.signatureType} wallet=${testCase.walletAddress} maker=${testCase.makerAddress} funder=${testCase.funderAddress || "null"}`);
+    console.log(
+      `[${testCase.label}] sigType=${testCase.signatureType} wallet=${testCase.walletAddress} maker=${testCase.makerAddress} funder=${testCase.funderAddress || "null"}`,
+    );
 
     try {
       const client = new ClobClient(
@@ -497,7 +528,9 @@ async function runPreflightMatrix(
 
       const errorResponse = response as { status?: number; error?: string };
       if (errorResponse.status === 401 || errorResponse.status === 403) {
-        console.log(`  ❌ AUTH FAIL: ${errorResponse.status} ${errorResponse.error || "Unauthorized"}`);
+        console.log(
+          `  ❌ AUTH FAIL: ${errorResponse.status} ${errorResponse.error || "Unauthorized"}`,
+        );
       } else if (errorResponse.error) {
         console.log(`  ❌ ERROR: ${errorResponse.error}`);
       } else {
@@ -526,7 +559,10 @@ async function runProbe(config: ProbeConfig): Promise<number> {
 
   // Step 1: Derive EOA identity
   console.log("\n[Step 1] Deriving EOA identity...");
-  const identity = deriveEOAIdentity(config.privateKey, config.polyAddressForce);
+  const identity = deriveEOAIdentity(
+    config.privateKey,
+    config.polyAddressForce,
+  );
   console.log(`  signerAddress:  ${identity.signerAddress}`);
   console.log(`  walletAddress:  ${identity.walletAddress}`);
   console.log(`  makerAddress:   ${identity.makerAddress}`);
@@ -537,10 +573,16 @@ async function runProbe(config: ProbeConfig): Promise<number> {
 
   // Step 2: Derive credentials
   console.log("\n[Step 2] Deriving CLOB credentials...");
-  const derivationResult = await deriveCredentials(wallet, config.clobHost, identity);
+  const derivationResult = await deriveCredentials(
+    wallet,
+    config.clobHost,
+    identity,
+  );
 
   if (!derivationResult.success || !derivationResult.creds) {
-    console.error(`\n❌ Credential derivation failed: ${derivationResult.error}`);
+    console.error(
+      `\n❌ Credential derivation failed: ${derivationResult.error}`,
+    );
     console.error("\n[Result] AUTH_PROBE_FAIL - Derivation failed");
     return 1;
   }
@@ -549,7 +591,12 @@ async function runProbe(config: ProbeConfig): Promise<number> {
 
   // Step 3: Build auth request
   console.log("\n[Step 3] Building authentication request...");
-  const request = await buildAuthRequest(config.clobHost, wallet, creds, identity);
+  const request = await buildAuthRequest(
+    config.clobHost,
+    wallet,
+    creds,
+    identity,
+  );
 
   // Step 4: Run self-check
   console.log("\n[Step 4] Running self-check validation...");
@@ -557,9 +604,15 @@ async function runProbe(config: ProbeConfig): Promise<number> {
 
   if (!selfCheck.passed) {
     console.error(`\n❌ Self-check failed!`);
-    console.error(`  queryInPath:    ${selfCheck.checks.queryStringInPath ? "✅" : "❌"}`);
-    console.error(`  funderIsNull:   ${selfCheck.checks.funderIsNull ? "✅" : "❌"}`);
-    console.error(`  sigTypeIsZero:  ${selfCheck.checks.signatureTypeIsZero ? "✅" : "❌"}`);
+    console.error(
+      `  queryInPath:    ${selfCheck.checks.queryStringInPath ? "✅" : "❌"}`,
+    );
+    console.error(
+      `  funderIsNull:   ${selfCheck.checks.funderIsNull ? "✅" : "❌"}`,
+    );
+    console.error(
+      `  sigTypeIsZero:  ${selfCheck.checks.signatureTypeIsZero ? "✅" : "❌"}`,
+    );
     console.error("\n[Result] AUTH_PROBE_FAIL - Self-check failed");
     return 1;
   }
@@ -584,9 +637,13 @@ async function runProbe(config: ProbeConfig): Promise<number> {
     console.log(`  Status: ${result.status}`);
     if (result.data) {
       const dataStr = JSON.stringify(result.data);
-      console.log(`  Response: ${dataStr.slice(0, 200)}${dataStr.length > 200 ? "..." : ""}`);
+      console.log(
+        `  Response: ${dataStr.slice(0, 200)}${dataStr.length > 200 ? "..." : ""}`,
+      );
     }
-    console.log("\n[Interpretation] Authentication successful - credentials and identity are correct");
+    console.log(
+      "\n[Interpretation] Authentication successful - credentials and identity are correct",
+    );
     return 0;
   } else {
     console.error(`\n❌ AUTH_PROBE_FAIL`);
@@ -596,16 +653,24 @@ async function runProbe(config: ProbeConfig): Promise<number> {
 
     if (result.status === 401) {
       console.error("  401 Unauthorized - Most likely causes:");
-      console.error("    1. HMAC signature mismatch (check secret encoding, message format)");
-      console.error("    2. Invalid API credentials (regenerate with deriveApiKey)");
-      console.error("    3. Wallet address mismatch (POLY_ADDRESS header != actual wallet)");
+      console.error(
+        "    1. HMAC signature mismatch (check secret encoding, message format)",
+      );
+      console.error(
+        "    2. Invalid API credentials (regenerate with deriveApiKey)",
+      );
+      console.error(
+        "    3. Wallet address mismatch (POLY_ADDRESS header != actual wallet)",
+      );
       console.error("    4. Timestamp skew (check system clock)");
     } else if (result.status === 403) {
       console.error("  403 Forbidden - Possible causes:");
       console.error("    1. Account restricted or banned");
       console.error("    2. Geographic restrictions (geoblock)");
     } else {
-      console.error(`  ${result.status || "Network error"} - Check network connectivity and CLOB_HOST`);
+      console.error(
+        `  ${result.status || "Network error"} - Check network connectivity and CLOB_HOST`,
+      );
     }
 
     return 1;
