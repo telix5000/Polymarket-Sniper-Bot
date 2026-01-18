@@ -24,15 +24,15 @@ Thank you for your interest in contributing to Polymarket Sniper Bot! This docum
    # Click the "Fork" button on GitHub
    ```
 
-2. **Clone your fork**
+2. **Clone your fork** (replace `<your-github-username>` with your actual GitHub username)
    ```bash
-   git clone https://github.com/your-username/polymarket-sniper-bot.git
-   cd polymarket-sniper-bot
+   git clone https://github.com/<your-github-username>/Polymarket-Sniper-Bot.git
+   cd Polymarket-Sniper-Bot
    ```
 
 3. **Add upstream remote**
    ```bash
-   git remote add upstream https://github.com/original-org/polymarket-sniper-bot.git
+   git remote add upstream https://github.com/telix5000/Polymarket-Sniper-Bot.git
    ```
 
 4. **Install dependencies**

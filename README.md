@@ -156,8 +156,8 @@ polymarket-sniper-bot/
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/polymarket-sniper-bot.git
-cd polymarket-sniper-bot
+git clone https://github.com/telix5000/Polymarket-Sniper-Bot.git
+cd Polymarket-Sniper-Bot
 
 # Install dependencies
 npm install
@@ -825,8 +825,9 @@ To identify successful traders to track:
 ## 📚 Documentation
 
 - **[Complete Guide](./docs/GUIDE.md)**: Detailed setup, configuration, and troubleshooting
+- **[Authentication Troubleshooting](./docs/AUTH_TROUBLESHOOTING.md)**: Fixing authentication issues
+- **[Credentials Explained](./docs/CREDENTIALS_EXPLAINED.md)**: Understanding CLOB vs Builder credentials
 - **[Architecture Overview](#-architecture)**: System design and component overview
-- **[API Reference](./docs/API.md)**: (Coming soon) Detailed API documentation
 
 ## 🤝 Contributing
 

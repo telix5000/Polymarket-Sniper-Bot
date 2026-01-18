@@ -63,8 +63,8 @@ To identify successful traders to track, you can use these resources:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/rjykgafi/polymarket-sniper-bot.git
-cd polymarket-sniper-bot
+git clone https://github.com/telix5000/Polymarket-Sniper-Bot.git
+cd Polymarket-Sniper-Bot
 ```
 
 2. Install dependencies:
