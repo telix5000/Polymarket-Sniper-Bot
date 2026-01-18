@@ -119,8 +119,10 @@ export const suppressClobOrderbookErrors = (logger?: Logger): void => {
             if (logger) {
               // Don't warn about missing apiKey/passphrase for credential creation requests
               // (POST /auth/api-key) - it's expected not to have these headers when creating them
+              const url = payload.config?.url ?? "";
               const isCredentialCreationRequest =
-                payload.config?.url?.includes("/auth/api-key") &&
+                (url.endsWith("/auth/api-key") ||
+                  url.includes("/auth/api-key?")) &&
                 payload.config?.method?.toLowerCase() === "post";
 
               if (!isCredentialCreationRequest) {
