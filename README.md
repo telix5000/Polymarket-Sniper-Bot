@@ -202,9 +202,31 @@ These credentials are used to place and manage orders on the Polymarket CLOB (Ce
 - `POLYMARKET_API_PASSPHRASE`
 
 **How to get them:**
-- **ONLY METHOD:** Set `CLOB_DERIVE_CREDS=true` to automatically derive credentials from your private key
+- **RECOMMENDED METHOD:** Set `CLOB_DERIVE_CREDS=true` to automatically derive credentials from your private key
+- The bot uses an intelligent **auto-detection and fallback system** to find the correct authentication method
 - This is the official Polymarket recommendation per their docs: https://docs.polymarket.com/developers/CLOB/authentication
 - **Note:** There is NO web UI to manually generate CLOB API keys - they must be created/derived programmatically using L1 authentication
+
+**Auto-Detection & Fallback System (v2):**
+The bot automatically detects your wallet type and tries multiple authentication combinations:
+1. Auto-detects wallet mode: EOA (standard wallet) vs Safe (Gnosis Safe) vs Proxy (legacy)
+2. Tries hard-coded fallback ladder in order until one works:
+   - A) EOA + signer auth
+   - B) Safe + signer auth  
+   - C) Safe + effective auth
+   - D) Proxy + signer auth
+   - E) Proxy + effective auth
+3. Caches the first working combination to `/data/clob-creds.json`
+4. Loads cached credentials first on next startup (verified before use)
+5. If server returns 401 "Invalid L1 Request headers", immediately retries with swapped L1 auth address
+6. Only caches credentials that pass verification via `/balance-allowance`
+
+**Minimal Optional Overrides:**
+Only needed in rare cases - auto-detection is recommended:
+- `CLOB_FORCE_WALLET_MODE=auto|eoa|safe|proxy` - Force specific wallet mode (default: auto)
+- `CLOB_FORCE_L1_AUTH=auto|signer|effective` - Force specific L1 auth address (default: auto)
+
+> ✅ **Safe Mode Support:** In Safe/proxy mode where `signer != effective`, the bot handles this automatically and derives/verifies credentials with the correct combination. No complex configuration required!
 
 > ⚠️ **CRITICAL:** Builder API credentials CANNOT be used as CLOB credentials. They authenticate completely different systems.
 
@@ -273,7 +295,33 @@ If you see this error, follow these steps:
    - **Builder keys cannot authenticate trading requests** - they're only for leaderboard attribution
    - The 401 error from `/balance-allowance` means your **CLOB credentials** are invalid or missing
 
-2. **If you're using Builder keys as CLOB keys:**
+2. **Try auto-derived credentials (recommended):**
+   ```env
+   # ✅ CORRECT - Auto-derive CLOB credentials with smart fallback:
+   CLOB_DERIVE_CREDS=true
+   PRIVATE_KEY=your_private_key
+   # Remove or comment out POLYMARKET_API_* variables
+   
+   # Builder keys are optional and separate:
+   POLY_BUILDER_API_KEY=<your_builder_api_key>
+   POLY_BUILDER_API_SECRET=<your_builder_secret>
+   POLY_BUILDER_API_PASSPHRASE=<your_builder_passphrase>
+   ```
+
+3. **For Safe/Proxy wallets:**
+   The bot auto-detects wallet mode, but you can force it if needed:
+   ```env
+   # For Gnosis Safe (browser wallet):
+   POLYMARKET_SIGNATURE_TYPE=2
+   POLYMARKET_PROXY_ADDRESS=0x... # Your Safe/proxy address
+   # The bot will automatically try both signer and effective addresses for L1 auth
+   
+   # Optional overrides (rarely needed):
+   # CLOB_FORCE_WALLET_MODE=safe
+   # CLOB_FORCE_L1_AUTH=auto
+   ```
+
+4. **If you're using Builder keys as CLOB keys:**
    ```env
    # ❌ WRONG - This will NOT work:
    POLYMARKET_API_KEY=<your_builder_api_key>
@@ -290,17 +338,22 @@ If you see this error, follow these steps:
    POLY_BUILDER_API_PASSPHRASE=<your_builder_passphrase>
    ```
 
-3. **Try derived credentials (recommended):**
-   ```env
-   CLOB_DERIVE_CREDS=true
-   # Comment out or remove any POLYMARKET_API_* variables
-   ```
-
-4. **Verify your wallet has traded on Polymarket:**
+5. **Verify your wallet has traded on Polymarket:**
    - The CLOB may reject credentials if the wallet has never interacted with Polymarket
    - Try making a small trade via the Polymarket website first
+   - The bot's fallback system will try all combinations and tell you which failed
 
-5. **Check the preflight summary:**
+6. **Check the logs for detailed diagnostics:**
+   ```
+   [Auth Identity] signerAddress=0x... effectiveAddress=0x... makerAddress=0x... funderAddress=0x...
+   [AuthFallback] Attempt 1/5: A) EOA + signer auth
+   [AuthFallback] ✅ Success: A) EOA + signer auth
+   ```
+   - Look for the "Auth Identity" line showing all addresses
+   - Check which fallback attempts were tried
+   - The bot will generate a comprehensive failure summary if all attempts fail
+
+7. **Check the preflight summary:**
    ```
    [Preflight][Summary] ... auth_ok=false ready_to_trade=false
    ```
