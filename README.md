@@ -398,7 +398,7 @@ PRIVATE_KEY=0x... DEBUG_AUTH_PROBE=true npm run clob:probe
 ```
 
 **What it does:**
-1. Derives CLOB credentials from `PRIVATE_KEY` (if `CLOB_DERIVE_CREDS=true`)
+1. Derives CLOB credentials from `PRIVATE_KEY`
 2. Forces EOA identity (signatureType=0, no Safe/proxy contamination)
 3. Makes a single GET `/balance-allowance` call
 4. Prints a redacted debug bundle with:

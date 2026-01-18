@@ -4,7 +4,7 @@
  * CLOB Authentication Probe - Deterministic Auth Diagnostics Tool
  *
  * This tool performs a minimal, instrumented CLOB authentication test:
- * 1. Derives CLOB credentials from PRIVATE_KEY (if CLOB_DERIVE_CREDS=true)
+ * 1. Derives CLOB credentials from PRIVATE_KEY
  * 2. Forces EOA identity (signatureType=0, no Safe/proxy contamination)
  * 3. Makes a single GET /balance-allowance call
  * 4. Prints redacted debug bundle
@@ -328,16 +328,27 @@ function buildDebugBundle(
   request: AuthRequest,
   selfCheck: SelfCheckResult,
 ): DebugBundle {
-  // Detect secret encoding
+  // Detect secret encoding - check for base64-specific chars first
   const hasBase64Chars =
     creds.secret.includes("+") || creds.secret.includes("/");
   const hasBase64UrlChars =
     creds.secret.includes("-") || creds.secret.includes("_");
-  const secretEncoding = hasBase64Chars
-    ? "base64"
-    : hasBase64UrlChars
-      ? "base64url"
-      : "unknown";
+
+  // If has base64 chars and no base64url chars, it's base64
+  // If has base64url chars and no base64 chars, it's base64url
+  // If has both or neither, it's unclear
+  let secretEncoding = "unknown";
+  if (hasBase64Chars && !hasBase64UrlChars) {
+    secretEncoding = "base64";
+  } else if (hasBase64UrlChars && !hasBase64Chars) {
+    secretEncoding = "base64url";
+  } else if (hasBase64Chars && hasBase64UrlChars) {
+    // Has both types of chars - check which is more common
+    const base64CharCount = (creds.secret.match(/[+/]/g) || []).length;
+    const base64UrlCharCount = (creds.secret.match(/[-_]/g) || []).length;
+    secretEncoding =
+      base64CharCount > base64UrlCharCount ? "base64" : "base64url";
+  }
 
   // Create message digest for debugging
   const messageHash = crypto
