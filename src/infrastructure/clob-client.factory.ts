@@ -60,6 +60,20 @@ type ClobErrorResponse = {
 };
 
 /**
+ * Type guard to check if a response is a CLOB error response
+ */
+function isClobErrorResponse(response: unknown): response is ClobErrorResponse {
+  if (!response || typeof response !== "object") {
+    return false;
+  }
+  const obj = response as Record<string, unknown>;
+  return (
+    (typeof obj.status === "number" && obj.status >= 400) ||
+    typeof obj.error === "string"
+  );
+}
+
+/**
  * Result of credential verification with signature type auto-detection
  */
 type VerifyCredsResult = {
@@ -485,13 +499,9 @@ const deriveApiCreds = async (
     source: string,
   ): Promise<DeriveCredsResult | undefined> => {
     // Check if response is actually an error response from the API
-    const maybeErrorResponse = derived as unknown as ClobErrorResponse;
-    if (
-      maybeErrorResponse &&
-      (maybeErrorResponse.status || maybeErrorResponse.error)
-    ) {
+    if (isClobErrorResponse(derived)) {
       logger?.error(
-        `[CLOB] ${source} returned error response: status=${maybeErrorResponse.status ?? "unknown"} error=${maybeErrorResponse.error ?? "unknown"}`,
+        `[CLOB] ${source} returned error response: status=${derived.status ?? "unknown"} error=${derived.error ?? "unknown"}`,
       );
       return undefined;
     }
