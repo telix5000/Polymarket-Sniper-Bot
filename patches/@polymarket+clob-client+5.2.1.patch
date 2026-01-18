@@ -1,5 +1,5 @@
 diff --git a/node_modules/@polymarket/clob-client/dist/client.js b/node_modules/@polymarket/clob-client/dist/client.js
-index a2d1a1b..2e1971a 100644
+index a2d1a1b..f99f812 100644
 --- a/node_modules/@polymarket/clob-client/dist/client.js
 +++ b/node_modules/@polymarket/clob-client/dist/client.js
 @@ -9,6 +9,25 @@ import { OrderBuilder } from "./order-builder/builder.js";
@@ -28,7 +28,28 @@ index a2d1a1b..2e1971a 100644
  export class ClobClient {
      host;
      chainId;
-@@ -411,16 +430,19 @@ export class ClobClient {
+@@ -224,12 +243,14 @@ export class ClobClient {
+         });
+     }
+     async createOrDeriveApiKey(nonce) {
+-        return this.createApiKey(nonce).then(response => {
+-            if (!response.key) {
+-                return this.deriveApiKey(nonce);
+-            }
+-            return response;
+-        });
++        // Attempt to derive first, then create as fallback
++        // There is an issue with createOrDeriveApiKey() where createApiKey fails if key exists
++        // See: https://github.com/Polymarket/clob-client/issues/202
++        try {
++            return await this.deriveApiKey(nonce);
++        } catch (e) {
++            return await this.createApiKey(nonce);
++        }
+     }
+     async getApiKeys() {
+         this.canL2Auth();
+@@ -411,16 +432,19 @@ export class ClobClient {
      async getBalanceAllowance(params) {
          this.canL2Auth();
          const endpoint = GET_BALANCE_ALLOWANCE;

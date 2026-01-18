@@ -4,6 +4,10 @@
 
 ### @polymarket/clob-client@5.2.1
 
+This patch includes two critical fixes:
+
+#### Fix 1: Request Canonicalization for CLOB Authentication
+
 **Purpose**: Fix request canonicalization for CLOB authentication
 
 **Problem**: The ClobClient library was creating HMAC signatures using only the endpoint path, but passing query parameters separately to axios. This caused a signature mismatch because:
@@ -20,5 +24,23 @@
   
 **Result**: The signed path now exactly matches the actual HTTP request URL, ensuring signature validation succeeds.
 
+#### Fix 2: createOrDeriveApiKey() Workaround
+
+**Purpose**: Fix API key derivation order to prevent failures when keys already exist
+
+**Problem**: The `createOrDeriveApiKey()` method tries to create a new API key first, then falls back to deriving. When an API key already exists, `createApiKey()` fails, causing the entire method to fail before attempting `deriveApiKey()`.
+
+**Solution**: 
+- Changed `createOrDeriveApiKey()` to try `deriveApiKey()` first (for existing keys)
+- Only falls back to `createApiKey()` if derivation fails (for new wallets)
+- Uses try-catch pattern for proper error handling
+
+**Result**: Existing wallets can successfully derive their API keys without errors.
+
+**References**: 
+- [Polymarket/clob-client#202](https://github.com/Polymarket/clob-client/issues/202)
+- [Polymarket/clob-client#209](https://github.com/Polymarket/clob-client/issues/209)
+- [IQAIcom/mcp-polymarket#37](https://github.com/IQAIcom/mcp-polymarket/pull/37)
+
 **Files modified**:
-- `dist/client.js`: Added helper function and patched `getBalanceAllowance()` method
+- `dist/client.js`: Added `buildCanonicalQueryString()` helper, patched `getBalanceAllowance()` and `createOrDeriveApiKey()` methods
