@@ -6,6 +6,9 @@
  * This CLI script provides comprehensive authentication testing for Polymarket CLOB.
  * It tests the complete authentication flow with deterministic staging and detailed diagnostics.
  * 
+ * NOTE: This is intentionally a single-file script for ease of deployment and use.
+ * It can be run standalone without building the TypeScript codebase.
+ * 
  * Features:
  * - Deterministic wallet mode selection (EOA vs Safe/Proxy)
  * - Separate L1 and L2 authentication testing
@@ -25,10 +28,12 @@
  *   --verbose              Enable verbose debug logging
  */
 
+// Load environment variables FIRST before any other imports
+require("dotenv").config();
+
 const { ClobClient, Chain, AssetType } = require("@polymarket/clob-client");
 const { Wallet, providers } = require("ethers");
 const { SignatureType } = require("@polymarket/order-utils");
-require("dotenv").config();
 
 const POLYMARKET_API_URL = "https://clob.polymarket.com";
 const POLYMARKET_WEBSITE_URL = "https://polymarket.com";
@@ -197,7 +202,11 @@ async function testL1Authentication(wallet, walletMode, options) {
 
       if (creds && creds.key && creds.secret && creds.passphrase) {
         log("  ✅ L1 AUTH OK - deriveApiKey succeeded", "green");
-        log(`     API Key: ${creds.key.slice(0, 8)}...${creds.key.slice(-8)}`, "green");
+        if (options.verbose) {
+          log(`     API Key: ${creds.key.slice(0, 8)}...${creds.key.slice(-8)}`, "green");
+        } else {
+          log("     API Key: [REDACTED - use --verbose to show]", "green");
+        }
         return { success: true, creds, method: "derive" };
       } else {
         log("  ❌ L1 AUTH FAIL - deriveApiKey returned incomplete credentials", "red");
@@ -228,7 +237,11 @@ async function testL1Authentication(wallet, walletMode, options) {
 
         if (creds && creds.key && creds.secret && creds.passphrase) {
           log("  ✅ L1 AUTH OK - createApiKey succeeded", "green");
-          log(`     API Key: ${creds.key.slice(0, 8)}...${creds.key.slice(-8)}`, "green");
+          if (options.verbose) {
+            log(`     API Key: ${creds.key.slice(0, 8)}...${creds.key.slice(-8)}`, "green");
+          } else {
+            log("     API Key: [REDACTED - use --verbose to show]", "green");
+          }
           return { success: true, creds, method: "create" };
         } else {
           log("  ❌ L1 AUTH FAIL - createApiKey returned incomplete credentials", "red");

@@ -10,8 +10,8 @@ afterEach(() => {
     if (fs.existsSync(TEST_CREDS_PATH)) {
       fs.unlinkSync(TEST_CREDS_PATH);
     }
-  } catch {
-    // Ignore cleanup errors
+  } catch (_cleanupError) {
+    // Ignore cleanup errors - file may not exist or may not have permissions
   }
 });
 
