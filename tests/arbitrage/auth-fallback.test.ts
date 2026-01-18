@@ -16,23 +16,29 @@ import { SignatureType } from "@polymarket/order-utils";
 
 test("FALLBACK_LADDER has correct order", () => {
   assert.equal(FALLBACK_LADDER.length, 5);
-  
+
   // A) EOA + signer
   assert.equal(FALLBACK_LADDER[0]?.signatureType, SignatureType.EOA);
   assert.equal(FALLBACK_LADDER[0]?.useEffectiveForL1, false);
-  
+
   // B) Safe + signer
-  assert.equal(FALLBACK_LADDER[1]?.signatureType, SignatureType.POLY_GNOSIS_SAFE);
+  assert.equal(
+    FALLBACK_LADDER[1]?.signatureType,
+    SignatureType.POLY_GNOSIS_SAFE,
+  );
   assert.equal(FALLBACK_LADDER[1]?.useEffectiveForL1, false);
-  
+
   // C) Safe + effective
-  assert.equal(FALLBACK_LADDER[2]?.signatureType, SignatureType.POLY_GNOSIS_SAFE);
+  assert.equal(
+    FALLBACK_LADDER[2]?.signatureType,
+    SignatureType.POLY_GNOSIS_SAFE,
+  );
   assert.equal(FALLBACK_LADDER[2]?.useEffectiveForL1, true);
-  
+
   // D) Proxy + signer
   assert.equal(FALLBACK_LADDER[3]?.signatureType, SignatureType.POLY_PROXY);
   assert.equal(FALLBACK_LADDER[3]?.useEffectiveForL1, false);
-  
+
   // E) Proxy + effective
   assert.equal(FALLBACK_LADDER[4]?.signatureType, SignatureType.POLY_PROXY);
   assert.equal(FALLBACK_LADDER[4]?.useEffectiveForL1, true);
@@ -46,7 +52,7 @@ test("isInvalidL1HeadersError - detects 401 with message", () => {
     },
     message: "Request failed",
   };
-  
+
   assert.equal(isInvalidL1HeadersError(error), true);
 });
 
@@ -55,7 +61,7 @@ test("isInvalidL1HeadersError - detects 401 in message field", () => {
     response: { status: 401 },
     message: "Invalid L1 Request headers",
   };
-  
+
   assert.equal(isInvalidL1HeadersError(error), true);
 });
 
@@ -66,7 +72,7 @@ test("isInvalidL1HeadersError - returns false for non-401", () => {
       data: { message: "Invalid L1 Request headers" },
     },
   };
-  
+
   assert.equal(isInvalidL1HeadersError(error), false);
 });
 
@@ -75,7 +81,7 @@ test("isInvalidL1HeadersError - returns false without message", () => {
     response: { status: 401 },
     message: "Unauthorized",
   };
-  
+
   assert.equal(isInvalidL1HeadersError(error), false);
 });
 
@@ -86,7 +92,7 @@ test("isCouldNotCreateKeyError - detects 400 with message", () => {
       data: { message: "Could not create api key" },
     },
   };
-  
+
   assert.equal(isCouldNotCreateKeyError(error), true);
 });
 
@@ -97,7 +103,7 @@ test("isCouldNotCreateKeyError - returns false for non-400", () => {
       data: { message: "Could not create api key" },
     },
   };
-  
+
   assert.equal(isCouldNotCreateKeyError(error), false);
 });
 

@@ -42,10 +42,10 @@ const redactHeaderValue = (value: string): string => {
 
 /**
  * Build L1 authentication headers for CLOB API requests
- * 
+ *
  * This function creates the headers required for L1 (signer-based) authentication
  * when calling endpoints like /auth/derive-api-key and /auth/api-key.
- * 
+ *
  * @param signer - Ethers wallet/signer to use for signing
  * @param chainId - Chain ID (137 for Polygon mainnet)
  * @param request - Request details (method, path, optional body)
@@ -93,7 +93,10 @@ export async function buildL1Headers(
 
   // Sign the typed data - use proper type checking
   let signature: string;
-  if ("_signTypedData" in signer && typeof signer._signTypedData === "function") {
+  if (
+    "_signTypedData" in signer &&
+    typeof signer._signTypedData === "function"
+  ) {
     // Wallet instance with _signTypedData method
     signature = await signer._signTypedData(domain, types, value);
   } else {
@@ -122,7 +125,9 @@ export async function buildL1Headers(
     }
     logger.debug("[L1Auth] HTTP Headers (redacted):");
     logger.debug(`  POLY_ADDRESS: ${headers.POLY_ADDRESS}`);
-    logger.debug(`  POLY_SIGNATURE: ${redactHeaderValue(headers.POLY_SIGNATURE)}`);
+    logger.debug(
+      `  POLY_SIGNATURE: ${redactHeaderValue(headers.POLY_SIGNATURE)}`,
+    );
     logger.debug(`  POLY_TIMESTAMP: ${headers.POLY_TIMESTAMP}`);
     logger.debug(`  POLY_NONCE: ${headers.POLY_NONCE}`);
   }
@@ -164,7 +169,9 @@ export function logL1AuthDiagnostics(
   if (!logger) return;
 
   logger.info("[L1Auth] Configuration:");
-  logger.info(`  forceSignatureType: ${config.forceSignatureType ?? "auto-detect"}`);
+  logger.info(
+    `  forceSignatureType: ${config.forceSignatureType ?? "auto-detect"}`,
+  );
   logger.info(`  debugHttpHeaders: ${config.debugHttpHeaders ?? false}`);
   logger.info(`  signerAddress: ${signerAddress}`);
   logger.info(`  effectiveAddress: ${effectiveAddress}`);
