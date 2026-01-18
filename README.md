@@ -274,6 +274,7 @@ If you see this error, check the following:
    ```
    - `auth_ok=false` means CLOB authentication failed
    - `relayer_enabled=false` means Builder credentials are missing (this is OK for basic trading)
+   - **See [Authentication Troubleshooting Guide](docs/AUTH_TROUBLESHOOTING.md) for detailed diagnostics and solutions**
 
 ### Quickstart (AirVPN/WireGuard already handled), enable builder relayer + approvals
 
