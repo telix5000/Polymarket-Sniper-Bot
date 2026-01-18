@@ -65,6 +65,7 @@ async function verifyCredentials(params: {
   creds: ApiKeyCreds;
   wallet: Wallet;
   signatureType: number;
+  funderAddress?: string;
   logger?: Logger;
 }): Promise<boolean> {
   try {
@@ -74,6 +75,7 @@ async function verifyCredentials(params: {
       asClobSigner(params.wallet),
       params.creds,
       params.signatureType,
+      params.funderAddress,
     );
 
     const response = await client.getBalanceAllowance({
@@ -264,6 +266,7 @@ async function attemptDerive(params: {
       creds,
       wallet: params.wallet,
       signatureType: params.attempt.signatureType,
+      funderAddress: params.funderAddress,
       logger: params.logger,
     });
 
@@ -345,6 +348,7 @@ export async function deriveCredentialsWithFallback(
       wallet,
       signatureType:
         params.signatureType ?? orderIdentity.signatureTypeForOrders,
+      funderAddress: params.funderAddress,
       logger: params.logger,
     });
 
