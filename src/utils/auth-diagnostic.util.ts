@@ -17,6 +17,21 @@ export type AuthDiagnosticResult = {
   recommendations: string[];
 };
 
+// Compile regex patterns once for efficiency
+const DERIVE_CREATE_ERROR_PATTERN = /could not create|cannot create/i;
+const NETWORK_ERROR_PATTERNS = [
+  /network/i,
+  /timeout/i,
+  /timed out/i,
+  /connection/i,
+  /econnrefused/i,
+  /enotfound/i,
+  /econnreset/i,
+  /etimedout/i,
+  /unreachable/i,
+  /dns/i,
+];
+
 /**
  * Diagnose auth failure based on error messages and context
  */
@@ -80,7 +95,7 @@ export function diagnoseAuthFailure(params: {
   if (
     deriveEnabled &&
     deriveFailed &&
-    (deriveError ?? "").toLowerCase().match(/could not create|cannot create/i)
+    DERIVE_CREATE_ERROR_PATTERN.test(deriveError ?? "")
   ) {
     return {
       cause: "WALLET_NOT_ACTIVATED",
@@ -131,20 +146,8 @@ export function diagnoseAuthFailure(params: {
   }
 
   // Case 5: Network/connectivity errors
-  const errorText = (verificationError ?? "").toLowerCase();
-  const networkPatterns = [
-    /network/i,
-    /timeout/i,
-    /timed out/i,
-    /connection/i,
-    /econnrefused/i,
-    /enotfound/i,
-    /econnreset/i,
-    /etimedout/i,
-    /unreachable/i,
-    /dns/i,
-  ];
-  if (networkPatterns.some((pattern) => pattern.test(errorText))) {
+  const errorText = verificationError ?? "";
+  if (NETWORK_ERROR_PATTERNS.some((pattern) => pattern.test(errorText))) {
     return {
       cause: "NETWORK_ERROR",
       confidence: "high",
