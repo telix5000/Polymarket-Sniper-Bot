@@ -5,8 +5,8 @@
   "description": "Automated trading bot for Polymarket with mempool monitoring and priority execution. Monitors Polygon mempool and Polymarket API for pending trades, then executes orders with higher priority gas pricing.",
   "license": "Apache-2.0",
   "author": {
-    "name": "Your Name",
-    "url": "https://github.com/your-username"
+    "name": "telix5000",
+    "url": "https://github.com/telix5000"
   },
   "type": "commonjs",
   "main": "dist/app/main.js",
@@ -53,12 +53,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-org/polymarket-sniper-bot.git"
+    "url": "git+https://github.com/telix5000/Polymarket-Sniper-Bot.git"
   },
   "bugs": {
-    "url": "https://github.com/your-org/polymarket-sniper-bot/issues"
+    "url": "https://github.com/telix5000/Polymarket-Sniper-Bot/issues"
   },
-  "homepage": "https://github.com/your-org/polymarket-sniper-bot#readme",
+  "homepage": "https://github.com/telix5000/Polymarket-Sniper-Bot#readme",
   "dependencies": {
     "@polymarket/builder-relayer-client": "^0.0.8",
     "@polymarket/builder-signing-sdk": "^0.0.8",
