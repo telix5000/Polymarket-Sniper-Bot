@@ -15,7 +15,12 @@ import { buildSignedPath } from "../utils/query-string.util";
 type AnyLogger = Logger | StructuredLogger;
 
 const isStructuredLogger = (logger: AnyLogger): logger is StructuredLogger => {
-  return "log" in logger && typeof (logger as StructuredLogger).log === "function";
+  return (
+    "log" in logger &&
+    typeof (logger as StructuredLogger).log === "function" &&
+    typeof (logger as StructuredLogger).debug === "function" &&
+    typeof (logger as StructuredLogger).child === "function"
+  );
 };
 
 export type SecretDecodingMode = "raw" | "base64" | "base64url";
