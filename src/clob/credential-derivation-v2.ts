@@ -198,8 +198,19 @@ async function verifyCredentials(params: {
   }
 }
 
+// Track which credential fingerprints have already been logged to prevent duplicate diagnostics
+const loggedCredentialFingerprints = new Set<string>();
+
+/**
+ * Reset the logged credential fingerprints (for testing)
+ */
+export function resetLoggedCredentialFingerprints(): void {
+  loggedCredentialFingerprints.clear();
+}
+
 /**
  * Log authentication diagnostics when verification fails
+ * Only logs once per unique credential set to prevent spam
  */
 function logAuthDiagnostics(params: {
   creds: ApiKeyCreds;
@@ -210,6 +221,14 @@ function logAuthDiagnostics(params: {
   attemptId?: string;
 }): void {
   if (!params.logger && !params.structuredLogger) return;
+
+  // Create a fingerprint to deduplicate repeated diagnostics for same credentials
+  const fingerprint = `${params.creds.key?.slice(-8) ?? "no-key"}-${params.creds.secret?.length ?? 0}-${params.signatureType}`;
+  if (loggedCredentialFingerprints.has(fingerprint)) {
+    // Already logged diagnostics for these credentials, skip
+    return;
+  }
+  loggedCredentialFingerprints.add(fingerprint);
 
   // Detect secret encoding
   const secret = params.creds.secret;
