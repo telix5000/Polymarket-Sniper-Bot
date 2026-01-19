@@ -16,13 +16,12 @@ use std::str::FromStr;
 use std::env;
 use std::io::{self, BufRead, Write};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use polymarket_client_sdk::clob::{Client, Config};
-use polymarket_client_sdk::clob::types::{SignatureType, Side, OrderType, Amount};
-use polymarket_client_sdk::auth::LocalSigner;
-use polymarket_client_sdk::types::{Address, Decimal, address};
+use polymarket_client_sdk::clob::types::{SignatureType, Side, OrderType, Amount, BalanceAllowanceRequest};
+use polymarket_client_sdk::auth::{LocalSigner, Signer};
+use polymarket_client_sdk::types::{Address, Decimal, U256};
 use polymarket_client_sdk::POLYGON;
-use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 use tracing::{info, error, debug, warn};
 
@@ -123,6 +122,7 @@ fn signature_type_name(st: SignatureType) -> &'static str {
         SignatureType::Eoa => "EOA",
         SignatureType::Proxy => "Proxy",
         SignatureType::GnosisSafe => "GnosisSafe",
+        _ => "Unknown",
     }
 }
 
@@ -245,14 +245,14 @@ async fn main() -> Result<()> {
                         auth_story.auth_status = "SUCCESS".to_string();
 
                         // Try to get balance to verify credentials work
-                        match client.balance_allowance().await {
+                        match client.balance_allowance(BalanceAllowanceRequest::default()).await {
                             Ok(balance) => {
                                 let balance_str = format!("{}", balance.balance);
                                 auth_story.balance_usdc = Some(balance_str.clone());
                                 emit_response(&auth_response(auth_story, Some(serde_json::json!({
                                     "authenticated": true,
                                     "balance": balance_str,
-                                    "allowance": format!("{}", balance.allowance),
+                                    "allowances": format!("{:?}", balance.allowances),
                                 }))));
                             }
                             Err(e) => {
@@ -305,7 +305,7 @@ async fn main() -> Result<()> {
                         }
 
                         let client = auth_builder.authenticate().await?;
-                        let balance = client.balance_allowance().await?;
+                        let balance = client.balance_allowance(BalanceAllowanceRequest::default()).await?;
                         Ok::<_, anyhow::Error>((client, balance))
                     }.await;
 
@@ -332,7 +332,7 @@ async fn main() -> Result<()> {
                                         "funder_address": funder_str,
                                     },
                                     "balance": format!("{}", balance.balance),
-                                    "allowance": format!("{}", balance.allowance),
+                                    "allowances": format!("{:?}", balance.allowances),
                                     "probe_results": results,
                                 })),
                                 error: None,
@@ -385,7 +385,7 @@ async fn main() -> Result<()> {
                     }
 
                     let client = auth_builder.authenticate().await?;
-                    let balance = client.balance_allowance().await?;
+                    let balance = client.balance_allowance(BalanceAllowanceRequest::default()).await?;
                     Ok::<_, anyhow::Error>(balance)
                 }.await;
 
@@ -393,7 +393,7 @@ async fn main() -> Result<()> {
                     Ok(balance) => {
                         emit_response(&success_response(serde_json::json!({
                             "balance": format!("{}", balance.balance),
-                            "allowance": format!("{}", balance.allowance),
+                            "allowances": format!("{:?}", balance.allowances),
                         })));
                     }
                     Err(e) => {
@@ -452,10 +452,13 @@ async fn main() -> Result<()> {
                         // Limit order
                         let price_decimal = Decimal::from_str(&format!("{}", limit_price))
                             .context("Invalid price")?;
+                        // Convert token_id to U256
+                        let token_id_u256: U256 = token_id.parse()
+                            .context("Invalid token_id - must be a valid U256")?;
                         
                         let order = client
                             .limit_order()
-                            .token_id(&token_id)
+                            .token_id(token_id_u256)
                             .size(amount_decimal)
                             .price(price_decimal)
                             .side(side)
@@ -472,9 +475,13 @@ async fn main() -> Result<()> {
                         // Market order
                         let amount_usdc = Amount::usdc(amount_decimal)?;
                         
+                        // Convert token_id to U256
+                        let token_id_u256: U256 = token_id.parse()
+                            .context("Invalid token_id - must be a valid U256")?;
+                        
                         let order = client
                             .market_order()
-                            .token_id(&token_id)
+                            .token_id(token_id_u256)
                             .amount(amount_usdc)
                             .side(side)
                             .order_type(OrderType::FOK)
@@ -549,15 +556,15 @@ async fn main() -> Result<()> {
                 // Get markets (unauthenticated)
                 let result = async {
                     let client = Client::default();
-                    let markets = client.markets().await?;
+                    let markets = client.markets(None).await?;
                     Ok::<_, anyhow::Error>(markets)
                 }.await;
 
                 match result {
                     Ok(markets) => {
                         emit_response(&success_response(serde_json::json!({
-                            "count": markets.len(),
-                            "markets": markets.iter().take(10).collect::<Vec<_>>(),
+                            "count": markets.data.len(),
+                            "markets": markets.data.iter().take(10).collect::<Vec<_>>(),
                         })));
                     }
                     Err(e) => {
