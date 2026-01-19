@@ -42,6 +42,9 @@ import {
 import { deriveCredentialsWithFallback } from "../clob/credential-derivation-v2";
 import { logAuthIdentity } from "../clob/identity-resolver";
 import { asClobSigner } from "../utils/clob-signer.util";
+import { installHmacSignatureOverride } from "../utils/hmac-signature-override";
+import { installHmacDiagnosticInterceptor } from "../utils/hmac-diagnostic-interceptor";
+import axios from "axios";
 
 export type CreateClientInput = {
   rpcUrl: string;
@@ -441,6 +444,13 @@ export async function createPolymarketClient(input: CreateClientInput): Promise<
   const provider = new JsonRpcProvider(input.rpcUrl);
   const wallet = new Wallet(input.privateKey, provider);
   setupClobHeaderKeyLogging(input.logger);
+
+  // Install HMAC diagnostics if enabled
+  if (process.env.ENABLE_HMAC_DIAGNOSTICS === "true") {
+    installHmacSignatureOverride(input.logger);
+    installHmacDiagnosticInterceptor(axios, input.logger);
+    input.logger?.info("[CLOB] HMAC diagnostic instrumentation enabled");
+  }
 
   const derivedSignerAddress = resolveDerivedSignerAddress(input.privateKey);
   const signatureType = parseSignatureType(

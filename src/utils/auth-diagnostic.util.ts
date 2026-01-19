@@ -141,6 +141,7 @@ export function diagnoseAuthFailure(params: {
   }
 
   // Case 4: Derived credentials were created but L2 auth rejected them
+  // This is the MOST COMMON scenario when credentials are derived but 401 is returned
   if (
     !userProvidedKeys &&
     deriveEnabled &&
@@ -150,15 +151,42 @@ export function diagnoseAuthFailure(params: {
   ) {
     return {
       cause: "DERIVED_KEYS_REJECTED",
-      confidence: "medium",
+      confidence: "high", // Changed to high - this is the most common scenario
       message:
-        "Derived API credentials were created but rejected during L2 authentication. This usually means the wallet has not completed an on-chain trade yet, or cached credentials are stale.",
+        "API credentials were derived successfully, but verification with Polymarket CLOB failed (401 Unauthorized). " +
+        "This almost always means the wallet has NEVER TRADED on Polymarket yet. " +
+        "Polymarket requires at least one on-chain trade to register a wallet before API credentials can work.",
       recommendations: [
-        "Visit https://polymarket.com and connect this wallet",
-        "Make at least ONE small trade (even $1) and wait for confirmation",
+        "⚠️  REQUIRED: Visit https://polymarket.com and connect this wallet",
+        "⚠️  REQUIRED: Make at least ONE trade on any market (even $1 is sufficient)",
+        "Wait 1-2 minutes for the trade to confirm on-chain",
         "Clear cached credentials: rm -f /data/clob-creds.json",
-        "Restart the bot to re-derive fresh credentials",
-        "Verify PUBLIC_KEY (if set) matches the derived address from PRIVATE_KEY",
+        "Restart the bot - credentials will be derived and should work",
+        "Note: There is no way to bypass this requirement - the wallet MUST trade first",
+      ],
+    };
+  }
+
+  // Case 4b: Derived credentials failed verification with specific error message
+  if (
+    deriveEnabled &&
+    verificationFailed &&
+    status === 401 &&
+    (verificationError?.includes("never traded") ||
+      verificationError?.includes("wallet has never"))
+  ) {
+    return {
+      cause: "WALLET_NOT_ACTIVATED",
+      confidence: "high",
+      message:
+        "The wallet has never traded on Polymarket. API credentials cannot work until " +
+        "the wallet is registered through at least one on-chain trade.",
+      recommendations: [
+        "⚠️  REQUIRED: Visit https://polymarket.com and connect your wallet",
+        "⚠️  REQUIRED: Make at least ONE small trade (even $1) on any market",
+        "Wait for the transaction to confirm (1-2 minutes)",
+        "Clear credential cache: rm -f /data/clob-creds.json",
+        "Restart the bot - it will automatically create working API credentials",
       ],
     };
   }

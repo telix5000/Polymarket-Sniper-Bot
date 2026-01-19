@@ -533,9 +533,14 @@ async function attemptDerive(params: {
     });
 
     if (!isValid) {
+      // Provide more actionable error message
+      // This scenario typically means the wallet has never traded on Polymarket
+      // The API returns "credentials" but they don't work because the wallet isn't registered
       return {
         success: false,
-        error: "Credentials failed verification",
+        error:
+          "Credentials derived but failed verification (401). This usually means the wallet has never traded on Polymarket. " +
+          "Visit https://polymarket.com, connect your wallet, and make at least one small trade to register it.",
         statusCode: 401,
       };
     }
