@@ -1196,12 +1196,45 @@ This will:
 **Still Having Issues?**
 See [Authentication Fix Documentation](./AUTHENTICATION_FIX.md) for detailed technical information about the recent authentication fix.
 
+## 🔧 Advanced Troubleshooting: 401 Errors
+
+If you're getting **401 "Unauthorized/Invalid api key"** errors despite having valid credentials and having traded on Polymarket, use the **HMAC Diagnostic Tool**:
+
+### Quick Diagnostic
+
+```bash
+# Enable diagnostic tracing
+ENABLE_HMAC_DIAGNOSTICS=true \
+DEBUG_HMAC_SIGNING=true \
+node scripts/test-hmac-diagnostic.js
+```
+
+This will show you the **exact mismatch** between what we sign vs what we send to the API.
+
+**Common Issues & Fixes:**
+
+1. **Query Parameter Order Mismatch**
+   - **Symptom**: Diagnostic shows different param order in signed vs actual path
+   - **Fix**: Already patched in `patches/@polymarket+clob-client+5.2.1.patch`
+   - **Action**: Run `npm install` to apply patch
+
+2. **Wrong Signature Type**
+   - **Symptom**: You created your wallet via Polymarket website (not MetaMask directly)
+   - **Fix**: Set `POLYMARKET_SIGNATURE_TYPE=2` and `POLYMARKET_PROXY_ADDRESS=<your-proxy-address>`
+   - **How to find proxy address**: Go to polymarket.com → Connect wallet → Profile → Deposit address
+
+3. **Detailed Diagnostic Output**
+   - See **[HMAC Diagnostic Fix](./HMAC_DIAGNOSTIC_FIX.md)** for complete documentation
+   - See **[Next Steps](./NEXT_STEPS_401_FIX.md)** for step-by-step guidance
+
 ## 📚 Documentation
 
 - **[Complete Guide](./docs/GUIDE.md)**: Detailed setup, configuration, and troubleshooting
 - **[Authentication Troubleshooting](./docs/AUTH_TROUBLESHOOTING.md)**: Fixing authentication issues
 - **[Credentials Explained](./docs/CREDENTIALS_EXPLAINED.md)**: Understanding CLOB vs Builder credentials
 - **[Authentication Fix](./AUTHENTICATION_FIX.md)**: Technical details about the authentication fix
+- **[HMAC Diagnostic Fix](./HMAC_DIAGNOSTIC_FIX.md)**: Advanced 401 error diagnostics
+- **[Next Steps for 401 Errors](./NEXT_STEPS_401_FIX.md)**: Step-by-step troubleshooting guide
 - **[Architecture Overview](#-architecture)**: System design and component overview
 
 ## 🤝 Contributing
