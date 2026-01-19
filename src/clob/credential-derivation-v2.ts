@@ -123,16 +123,20 @@ async function verifyCredentials(params: {
     // Check for error response
     const errorResponse = response as { status?: number; error?: string };
     if (errorResponse.status === 401 || errorResponse.status === 403) {
-      log("debug", `Verification failed: ${errorResponse.status} ${errorResponse.error ?? "Unauthorized"}`, {
-        logger: params.logger,
-        structuredLogger: params.structuredLogger,
-        context: {
-          category: "CRED_DERIVE",
-          attemptId: params.attemptId,
-          status: errorResponse.status,
-          error: errorResponse.error ?? "Unauthorized",
+      log(
+        "debug",
+        `Verification failed: ${errorResponse.status} ${errorResponse.error ?? "Unauthorized"}`,
+        {
+          logger: params.logger,
+          structuredLogger: params.structuredLogger,
+          context: {
+            category: "CRED_DERIVE",
+            attemptId: params.attemptId,
+            status: errorResponse.status,
+            error: errorResponse.error ?? "Unauthorized",
+          },
         },
-      });
+      );
       logAuthDiagnostics(params);
       return false;
     }
@@ -177,15 +181,19 @@ async function verifyCredentials(params: {
     }
 
     // Other errors might be transient (network issues, etc.)
-    log("warn", `Verification error (treating as invalid): ${extractErrorMessage(error)}`, {
-      logger: params.logger,
-      structuredLogger: params.structuredLogger,
-      context: {
-        category: "CRED_DERIVE",
-        attemptId: params.attemptId,
-        error: extractErrorMessage(error),
+    log(
+      "warn",
+      `Verification error (treating as invalid): ${extractErrorMessage(error)}`,
+      {
+        logger: params.logger,
+        structuredLogger: params.structuredLogger,
+        context: {
+          category: "CRED_DERIVE",
+          attemptId: params.attemptId,
+          error: extractErrorMessage(error),
+        },
       },
-    });
+    );
     return false;
   }
 }
@@ -306,16 +314,20 @@ async function attemptDerive(params: {
         creds = await deriveFn.deriveApiKey();
       } catch (deriveError) {
         const status = extractStatusCode(deriveError);
-        log("debug", `deriveApiKey failed: ${status ?? "unknown"} - ${extractErrorMessage(deriveError)}`, {
-          logger: params.logger,
-          structuredLogger: params.structuredLogger,
-          context: {
-            category: "CRED_DERIVE",
-            attemptId: params.attemptId,
-            status: status ?? "unknown",
-            error: extractErrorMessage(deriveError),
+        log(
+          "debug",
+          `deriveApiKey failed: ${status ?? "unknown"} - ${extractErrorMessage(deriveError)}`,
+          {
+            logger: params.logger,
+            structuredLogger: params.structuredLogger,
+            context: {
+              category: "CRED_DERIVE",
+              attemptId: params.attemptId,
+              status: status ?? "unknown",
+              error: extractErrorMessage(deriveError),
+            },
           },
-        });
+        );
 
         // If it's an "Invalid L1 Request headers" error, don't try createApiKey
         // because the issue is with the auth configuration, not whether the key exists
@@ -463,25 +475,14 @@ export async function deriveCredentialsWithFallback(
   const orderIdentity = resolveOrderIdentity(params);
   const l1AuthIdentity = resolveL1AuthIdentity(params, false);
 
-  // Log auth identity once
-  if (sLogger) {
-    sLogger.info("Identity resolved", {
-      category: "IDENTITY",
-      signerAddress,
-      makerAddress: orderIdentity.makerAddress,
-      funderAddress: orderIdentity.funderAddress,
-      effectiveAddress: orderIdentity.effectiveAddress,
-      signatureType: orderIdentity.signatureTypeForOrders,
-      l1AuthAddress: l1AuthIdentity.l1AuthAddress,
-    });
-  } else {
-    logAuthIdentity({
-      orderIdentity,
-      l1AuthIdentity,
-      signerAddress,
-      logger: params.logger,
-    });
-  }
+  // Log auth identity once (deduplication happens in logAuthIdentity)
+  logAuthIdentity({
+    orderIdentity,
+    l1AuthIdentity,
+    signerAddress,
+    logger: params.logger,
+    structuredLogger: sLogger,
+  });
 
   // Update auth story builder if available
   if (params.authStoryBuilder) {
@@ -542,12 +543,9 @@ export async function deriveCredentialsWithFallback(
       };
     } else {
       if (sLogger) {
-        sLogger.warn(
-          "Cached credentials failed verification; will re-derive",
-          {
-            category: "CRED_DERIVE",
-          },
-        );
+        sLogger.warn("Cached credentials failed verification; will re-derive", {
+          category: "CRED_DERIVE",
+        });
       } else {
         params.logger?.warn(
           "[CredDerive] Cached credentials failed verification; will re-derive",
@@ -631,7 +629,7 @@ export async function deriveCredentialsWithFallback(
     });
 
     results.push(result);
-    
+
     if (sLogger) {
       if (result.success) {
         sLogger.info("✅ Attempt succeeded", {
@@ -660,7 +658,9 @@ export async function deriveCredentialsWithFallback(
           attemptId,
         });
       } else {
-        params.logger?.info("[CredDerive] ✅ Credential derivation successful!");
+        params.logger?.info(
+          "[CredDerive] ✅ Credential derivation successful!",
+        );
       }
 
       saveCachedCreds({
