@@ -136,7 +136,7 @@ const ARB_LEGACY_DEFAULTS: ArbConfig = {
   approveUnlimited: false,
   detectOnly: false,
   clobCredsComplete: false,
-  clobDeriveEnabled: false,
+  clobDeriveEnabled: true, // Default to true (pmxt-style: just need private key)
   stateDir: "/data",
   decisionsLog: "/data/arb_decisions.jsonl",
   killSwitchFile: "/data/KILL",
@@ -457,8 +457,33 @@ const readClobCreds = (
   };
 };
 
-const readClobDeriveEnabled = (overrides?: Overrides): boolean =>
-  readBoolFromKeys(CLOB_DERIVE_KEYS, overrides);
+/**
+ * Check if credential derivation is enabled.
+ *
+ * Following pmxt's approach: just provide PRIVATE_KEY and credentials are
+ * automatically derived. This returns true by default unless explicitly
+ * disabled with CLOB_DERIVE_CREDS=false.
+ *
+ * Key precedence (first one found wins):
+ * 1. CLOB_DERIVE_CREDS
+ * 2. CLOB_DERIVE_API_KEY
+ * 3. POLYMARKET_DERIVE_API_KEY
+ * 4. POLY_DERIVE_API_KEY
+ *
+ * If none are set, defaults to true (enabled).
+ */
+const readClobDeriveEnabled = (overrides?: Overrides): boolean => {
+  // Check if any CLOB_DERIVE_* key is explicitly set (first one wins)
+  for (const key of CLOB_DERIVE_KEYS) {
+    const raw = readEnv(key, overrides);
+    if (raw !== undefined) {
+      // Explicitly set - use the value
+      return String(raw).toLowerCase() === "true";
+    }
+  }
+  // Not explicitly set - default to true (pmxt-style: just need private key)
+  return true;
+};
 
 const buildClobCredsChecklist = (
   overrides?: Overrides,
