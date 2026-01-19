@@ -84,7 +84,7 @@ export class AuthLogger {
         // Outside window - emit suppression count and reset
         if (existing.count > 1) {
           this.logger.info(`(suppressed ${existing.count - 1} repeats)`, {
-            category: category ?? "AUTH",
+            category: (category as LogCategory | undefined) ?? "CRED_DERIVE",
             suppressedMessage: message,
           });
         }

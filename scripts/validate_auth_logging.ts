@@ -175,9 +175,7 @@ async function main(): Promise<number> {
 
   console.log("💡 Fix these issues:");
   console.log("   1. Replace console.log with structured logger:");
-  console.log(
-    "      import { getLogger } from '../utils/structured-logger';",
-  );
+  console.log("      import { getLogger } from '../utils/structured-logger';");
   console.log("      const logger = getLogger();");
   console.log("      logger.info('message', { context });");
   console.log("");

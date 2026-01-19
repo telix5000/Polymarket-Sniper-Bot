@@ -138,11 +138,9 @@ export async function authenticateMinimal(
 ): Promise<MinimalAuthResult> {
   const runId = generateRunId();
   const startTime = Date.now();
-  
+
   // Create or reuse logger (if provided, ensure runId matches)
-  const logger = config.logger 
-    ? config.logger 
-    : new AuthLogger(runId);
+  const logger = config.logger ? config.logger : new AuthLogger(runId);
 
   // Initialize story
   const story: AuthStory = {
@@ -192,17 +190,24 @@ export async function authenticateMinimal(
     );
 
     // Step 2: Call createOrDeriveApiKey() - just like Python agents
-    logger.info("Calling createOrDeriveApiKey()...", { category: "CRED_DERIVE" });
-    
+    logger.info("Calling createOrDeriveApiKey()...", {
+      category: "CRED_DERIVE",
+    });
+
     // Add attempt record
     const attemptId = "A";
     story.attempts.push({
       attemptId,
-      mode: config.signatureType === 2 ? "SAFE" : config.signatureType === 1 ? "PROXY" : "EOA",
+      mode:
+        config.signatureType === 2
+          ? "SAFE"
+          : config.signatureType === 1
+            ? "PROXY"
+            : "EOA",
       sigType: config.signatureType ?? 0,
       success: false,
     });
-    
+
     let creds: ApiKeyCreds;
     try {
       creds = await client.createOrDeriveApiKey();
@@ -238,7 +243,9 @@ export async function authenticateMinimal(
     if (!creds || !creds.key || !creds.secret || !creds.passphrase) {
       story.errorMessage = "Credentials incomplete";
       story.attempts[0].errorTextShort = "Credentials missing required fields";
-      logger.error("Credentials missing required fields", { category: "CRED_DERIVE" });
+      logger.error("Credentials missing required fields", {
+        category: "CRED_DERIVE",
+      });
       return { success: false, story: updateStoryDuration(story, startTime) };
     }
 
@@ -246,7 +253,7 @@ export async function authenticateMinimal(
     const fingerprint = createCredentialFingerprint(creds);
     story.credentialsObtained = true;
     story.derivedCredFingerprint = fingerprint;
-    
+
     logger.info(`Credentials obtained (key: ***${fingerprint.apiKeySuffix})`, {
       category: "CRED_DERIVE",
       ...fingerprint,
@@ -271,7 +278,8 @@ export async function authenticateMinimal(
       if (errorResponse.status === 401 || errorResponse.status === 403) {
         story.errorMessage = `Verification failed: ${errorResponse.status} ${errorResponse.error ?? "Unauthorized"}`;
         story.attempts[0].httpStatus = errorResponse.status;
-        story.attempts[0].errorTextShort = errorResponse.error ?? "Unauthorized";
+        story.attempts[0].errorTextShort =
+          errorResponse.error ?? "Unauthorized";
         logger.error(story.errorMessage, {
           category: "PREFLIGHT",
           status: errorResponse.status,
@@ -343,7 +351,10 @@ export async function authenticateMinimal(
 /**
  * Print Auth Story in JSON format (single structured output)
  */
-export function printAuthStory(story: AuthStory, format: "json" | "pretty" = "json"): void {
+export function printAuthStory(
+  story: AuthStory,
+  format: "json" | "pretty" = "json",
+): void {
   if (format === "json") {
     // Pure JSON output - single line for easy parsing
     console.log(JSON.stringify(story));
