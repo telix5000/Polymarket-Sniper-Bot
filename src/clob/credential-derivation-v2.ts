@@ -44,6 +44,27 @@ import {
 import { asClobSigner } from "../utils/clob-signer.util";
 
 /**
+ * Helper to log with either structured or legacy logger
+ */
+function log(
+  level: "debug" | "info" | "warn" | "error",
+  message: string,
+  params: {
+    logger?: Logger;
+    structuredLogger?: StructuredLogger;
+    context?: Record<string, unknown>;
+    legacyPrefix?: string;
+  },
+): void {
+  if (params.structuredLogger) {
+    params.structuredLogger[level](message, params.context ?? {});
+  } else if (params.logger) {
+    const prefix = params.legacyPrefix ?? "[CredDerive]";
+    params.logger[level](`${prefix} ${message}`);
+  }
+}
+
+/**
  * Extended parameters with structured logger support
  */
 export type ExtendedIdentityResolverParams = IdentityResolverParams & {
@@ -102,92 +123,69 @@ async function verifyCredentials(params: {
     // Check for error response
     const errorResponse = response as { status?: number; error?: string };
     if (errorResponse.status === 401 || errorResponse.status === 403) {
-      if (params.structuredLogger) {
-        params.structuredLogger.debug("Verification failed: unauthorized", {
+      log("debug", `Verification failed: ${errorResponse.status} ${errorResponse.error ?? "Unauthorized"}`, {
+        logger: params.logger,
+        structuredLogger: params.structuredLogger,
+        context: {
           category: "CRED_DERIVE",
           attemptId: params.attemptId,
           status: errorResponse.status,
           error: errorResponse.error ?? "Unauthorized",
-        });
-        logAuthDiagnostics({
-          ...params,
-          structuredLogger: params.structuredLogger,
-        });
-      } else {
-        params.logger?.debug(
-          `[CredDerive] Verification failed: ${errorResponse.status} ${errorResponse.error ?? "Unauthorized"}`,
-        );
-        logAuthDiagnostics(params);
-      }
+        },
+      });
+      logAuthDiagnostics(params);
       return false;
     }
 
     if (errorResponse.error) {
-      if (params.structuredLogger) {
-        params.structuredLogger.debug("Verification returned error", {
+      log("debug", `Verification returned error: ${errorResponse.error}`, {
+        logger: params.logger,
+        structuredLogger: params.structuredLogger,
+        context: {
           category: "CRED_DERIVE",
           attemptId: params.attemptId,
           error: errorResponse.error,
-        });
-        logAuthDiagnostics({
-          ...params,
-          structuredLogger: params.structuredLogger,
-        });
-      } else {
-        params.logger?.debug(
-          `[CredDerive] Verification returned error: ${errorResponse.error}`,
-        );
-        logAuthDiagnostics(params);
-      }
+        },
+      });
+      logAuthDiagnostics(params);
       return false;
     }
 
-    if (params.structuredLogger) {
-      params.structuredLogger.debug("Verification successful", {
+    log("debug", "Verification successful", {
+      logger: params.logger,
+      structuredLogger: params.structuredLogger,
+      context: {
         category: "CRED_DERIVE",
         attemptId: params.attemptId,
-      });
-    } else {
-      params.logger?.debug("[CredDerive] Verification successful");
-    }
+      },
+    });
     return true;
   } catch (error) {
     const status = extractStatusCode(error);
     if (status === 401 || status === 403) {
-      if (params.structuredLogger) {
-        params.structuredLogger.debug("Verification failed: unauthorized", {
+      log("debug", `Verification failed: ${status} Unauthorized`, {
+        logger: params.logger,
+        structuredLogger: params.structuredLogger,
+        context: {
           category: "CRED_DERIVE",
           attemptId: params.attemptId,
           status,
-        });
-        logAuthDiagnostics({
-          ...params,
-          structuredLogger: params.structuredLogger,
-        });
-      } else {
-        params.logger?.debug(
-          `[CredDerive] Verification failed: ${status} Unauthorized`,
-        );
-        logAuthDiagnostics(params);
-      }
+        },
+      });
+      logAuthDiagnostics(params);
       return false;
     }
 
     // Other errors might be transient (network issues, etc.)
-    if (params.structuredLogger) {
-      params.structuredLogger.warn(
-        "Verification error (treating as invalid)",
-        {
-          category: "CRED_DERIVE",
-          attemptId: params.attemptId,
-          error: extractErrorMessage(error),
-        },
-      );
-    } else {
-      params.logger?.warn(
-        `[CredDerive] Verification error (treating as invalid): ${extractErrorMessage(error)}`,
-      );
-    }
+    log("warn", `Verification error (treating as invalid): ${extractErrorMessage(error)}`, {
+      logger: params.logger,
+      structuredLogger: params.structuredLogger,
+      context: {
+        category: "CRED_DERIVE",
+        attemptId: params.attemptId,
+        error: extractErrorMessage(error),
+      },
+    });
     return false;
   }
 }
@@ -296,30 +294,28 @@ async function attemptDerive(params: {
 
     if (deriveFn.deriveApiKey) {
       try {
-        if (params.structuredLogger) {
-          params.structuredLogger.debug("Trying deriveApiKey", {
+        log("debug", "Trying deriveApiKey", {
+          logger: params.logger,
+          structuredLogger: params.structuredLogger,
+          context: {
             category: "CRED_DERIVE",
             attemptId: params.attemptId,
-          });
-        } else {
-          params.logger?.debug("[CredDerive] Trying deriveApiKey...");
-        }
+          },
+        });
         method = "deriveApiKey";
         creds = await deriveFn.deriveApiKey();
       } catch (deriveError) {
         const status = extractStatusCode(deriveError);
-        if (params.structuredLogger) {
-          params.structuredLogger.debug("deriveApiKey failed", {
+        log("debug", `deriveApiKey failed: ${status ?? "unknown"} - ${extractErrorMessage(deriveError)}`, {
+          logger: params.logger,
+          structuredLogger: params.structuredLogger,
+          context: {
             category: "CRED_DERIVE",
             attemptId: params.attemptId,
             status: status ?? "unknown",
             error: extractErrorMessage(deriveError),
-          });
-        } else {
-          params.logger?.debug(
-            `[CredDerive] deriveApiKey failed: ${status ?? "unknown"} - ${extractErrorMessage(deriveError)}`,
-          );
-        }
+          },
+        });
 
         // If it's an "Invalid L1 Request headers" error, don't try createApiKey
         // because the issue is with the auth configuration, not whether the key exists
@@ -338,14 +334,14 @@ async function attemptDerive(params: {
     // If deriveApiKey didn't work, try createApiKey
     if (!creds && deriveFn.createApiKey) {
       try {
-        if (params.structuredLogger) {
-          params.structuredLogger.debug("Trying createApiKey", {
+        log("debug", "Trying createApiKey", {
+          logger: params.logger,
+          structuredLogger: params.structuredLogger,
+          context: {
             category: "CRED_DERIVE",
             attemptId: params.attemptId,
-          });
-        } else {
-          params.logger?.debug("[CredDerive] Trying createApiKey...");
-        }
+          },
+        });
         method = "createApiKey";
         creds = await deriveFn.createApiKey();
       } catch (createError) {
@@ -387,17 +383,15 @@ async function attemptDerive(params: {
     }
 
     // Verify credentials work
-    if (params.structuredLogger) {
-      params.structuredLogger.debug("Verifying credentials", {
+    log("debug", `Verifying credentials from ${method}`, {
+      logger: params.logger,
+      structuredLogger: params.structuredLogger,
+      context: {
         category: "CRED_DERIVE",
         attemptId: params.attemptId,
         method,
-      });
-    } else {
-      params.logger?.debug(
-        `[CredDerive] Verifying credentials from ${method}...`,
-      );
-    }
+      },
+    });
     const isValid = await verifyCredentials({
       creds,
       wallet: params.wallet,
