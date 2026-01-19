@@ -48,8 +48,11 @@ async function findPolymarketWalletAddress(
     if (response.data?.safeWallet) {
       result.safeAddress = response.data.safeWallet;
     }
-  } catch {
-    // API might not return data for all wallets
+  } catch (error) {
+    // API might not return data for all wallets - this is expected
+    // The Gamma API only returns data for wallets that have interacted with Polymarket
+    // Silently continue to other detection methods
+    void error; // Acknowledge the error variable to satisfy linter
   }
 
   // Method 2: Try to compute the deterministic Safe address

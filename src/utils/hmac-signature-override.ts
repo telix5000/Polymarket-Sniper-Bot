@@ -59,16 +59,20 @@ export function installHmacSignatureOverride(logger?: {
     // Track inputs for diagnostic correlation
     trackHmacSigningInputs(secret, timestamp, method, requestPath, body);
 
-    // Log if enabled
+    // Log if enabled (secret is hashed for security)
     if (process.env.DEBUG_HMAC_SIGNING === "true" && logger) {
+      const crypto = await import("crypto");
+      const secretHash = crypto
+        .createHash("sha256")
+        .update(secret)
+        .digest("hex")
+        .slice(0, 16);
       logger.debug("[HmacOverride] Signing inputs:");
       logger.debug(`  timestamp: ${timestamp}`);
       logger.debug(`  method: ${method}`);
       logger.debug(`  requestPath: ${requestPath}`);
       logger.debug(`  body: ${body ? `<${body.length} bytes>` : "undefined"}`);
-      logger.debug(
-        `  secret: ${secret.slice(0, 8)}...${secret.slice(-4)} (len=${secret.length})`,
-      );
+      logger.debug(`  secret: [HASH:${secretHash}] (len=${secret.length})`);
     }
 
     // Call original

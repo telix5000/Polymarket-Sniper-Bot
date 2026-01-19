@@ -289,7 +289,7 @@ export function generateFailureSummary(
   if (has401Verification) {
     // 401 during verification is almost always a signature type mismatch
     logger.warn(
-      "[AuthFallback]   1. ⚠️  WRONG SIGNATURE TYPE - If you logged in via browser",
+      "[AuthFallback]   1. ⚠️  WRONG SIGNATURE TYPE - If you logged in via web browser",
     );
     logger.warn(
       "[AuthFallback]      to Polymarket, you need POLYMARKET_SIGNATURE_TYPE=2",

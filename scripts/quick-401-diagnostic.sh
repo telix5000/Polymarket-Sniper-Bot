@@ -52,12 +52,12 @@ fi
 echo "✓ Environment variables configured"
 echo ""
 
-# Show configuration (redacted)
+# Show configuration (heavily redacted for security)
 echo "Configuration:"
-echo "  PRIVATE_KEY: ${PRIVATE_KEY:0:8}...${PRIVATE_KEY: -4}"
-echo "  POLYMARKET_API_KEY: ${POLYMARKET_API_KEY:0:8}...${POLYMARKET_API_KEY: -4}"
-echo "  POLYMARKET_API_SECRET: ${POLYMARKET_API_SECRET:0:8}...${POLYMARKET_API_SECRET: -4}"
-echo "  POLYMARKET_API_PASSPHRASE: ${POLYMARKET_API_PASSPHRASE:0:4}...${POLYMARKET_API_PASSPHRASE: -4}"
+echo "  PRIVATE_KEY: [REDACTED - ${#PRIVATE_KEY} chars]"
+echo "  POLYMARKET_API_KEY: [REDACTED - ${#POLYMARKET_API_KEY} chars]"
+echo "  POLYMARKET_API_SECRET: [REDACTED - ${#POLYMARKET_API_SECRET} chars]"
+echo "  POLYMARKET_API_PASSPHRASE: [REDACTED - ${#POLYMARKET_API_PASSPHRASE} chars]"
 
 if [ -n "$POLYMARKET_SIGNATURE_TYPE" ]; then
   echo "  POLYMARKET_SIGNATURE_TYPE: $POLYMARKET_SIGNATURE_TYPE"

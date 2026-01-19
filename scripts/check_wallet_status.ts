@@ -94,7 +94,9 @@ async function checkWalletOnChain(
     // Get MATIC balance
     const maticBalance = await provider.getBalance(walletAddress);
 
-    // Get USDC balance (Polygon USDC.e)
+    // Get USDC balance
+    // This is USDC.e (bridged USDC) on Polygon - the token used by Polymarket
+    // See: https://polygonscan.com/token/0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
     const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
     const ERC20_ABI = [
       "function balanceOf(address owner) view returns (uint256)",

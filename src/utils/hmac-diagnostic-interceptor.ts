@@ -36,12 +36,14 @@ type HmacDiagnosticResult = {
 
 const ENABLE_HMAC_DIAGNOSTICS = process.env.ENABLE_HMAC_DIAGNOSTICS === "true";
 const hmacSigningCache = new Map<string, HmacSigningInputs>();
+const MAX_CACHE_SIZE = 100;
 
 /**
  * Hash a value for safe logging (no secrets exposed)
+ * Using 32 chars (128 bits) to avoid collision risks
  */
 function hashValue(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 16);
+  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 32);
 }
 
 /**
@@ -104,10 +106,15 @@ export function trackHmacSigningInputs(
     secret,
   });
 
-  // Cleanup old entries (keep last 100)
-  if (hmacSigningCache.size > 100) {
+  // Cleanup old entries using FIFO when exceeding max size
+  // Remove oldest entries to prevent unbounded growth
+  while (hmacSigningCache.size > MAX_CACHE_SIZE) {
     const firstKey = hmacSigningCache.keys().next().value;
-    if (firstKey) hmacSigningCache.delete(firstKey);
+    if (firstKey) {
+      hmacSigningCache.delete(firstKey);
+    } else {
+      break;
+    }
   }
 }
 
