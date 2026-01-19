@@ -380,13 +380,16 @@ If you see this error, follow these steps:
    ```env
    # For Gnosis Safe (browser wallet):
    POLYMARKET_SIGNATURE_TYPE=2
-   POLYMARKET_PROXY_ADDRESS=0x... # Your Safe/proxy address
+   POLYMARKET_PROXY_ADDRESS=0x... # Your Safe/proxy address (REQUIRED for Safe/Proxy modes)
    # The bot will automatically try both signer and effective addresses for L1 auth
    
    # Optional overrides (rarely needed):
    # CLOB_FORCE_WALLET_MODE=safe
    # CLOB_FORCE_L1_AUTH=auto
    ```
+   
+   > **⚠️ IMPORTANT:** Safe/Proxy modes (signature_type=1 or 2) **REQUIRE** `POLYMARKET_PROXY_ADDRESS` to be set.
+   > Without it, the bot will skip Safe/Proxy authentication attempts and only try EOA mode.
 
 4. **If you're using Builder keys as CLOB keys:**
    ```env

@@ -751,6 +751,31 @@ async function deriveCredentialsWithFallbackInternal(
     const attempt = FALLBACK_LADDER[i]!;
     const attemptId = generateAttemptId(i);
 
+    // Skip Safe/Proxy attempts when no funderAddress is configured
+    // These signature types REQUIRE a funder address to work correctly
+    const requiresFunder =
+      attempt.signatureType === SignatureType.POLY_PROXY ||
+      attempt.signatureType === SignatureType.POLY_GNOSIS_SAFE;
+
+    if (requiresFunder && !params.funderAddress) {
+      log("debug", `Skipping ${attempt.label}: no funderAddress configured`, {
+        logger: params.logger,
+        structuredLogger: sLogger,
+        context: {
+          category: "CRED_DERIVE",
+          attemptId,
+          signatureType: attempt.signatureType,
+          reason: "missing_funder_address",
+        },
+      });
+      results.push({
+        success: false,
+        error: "Skipped: Safe/Proxy requires funderAddress",
+        signatureType: attempt.signatureType,
+      });
+      continue;
+    }
+
     // Resolve L1 auth identity for this attempt
     const attemptL1Identity = resolveL1AuthIdentity(
       params,
