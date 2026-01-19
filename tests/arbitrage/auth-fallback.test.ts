@@ -11,6 +11,7 @@ import {
   extractStatusCode,
   extractErrorMessage,
   signatureTypeLabel,
+  generateFailureSummary,
 } from "../../src/clob/auth-fallback";
 import { SignatureType } from "@polymarket/order-utils";
 
@@ -161,4 +162,75 @@ test("signatureTypeLabel - Safe", () => {
 
 test("signatureTypeLabel - Unknown", () => {
   assert.equal(signatureTypeLabel(99), "Unknown(99)");
+});
+
+// Test generateFailureSummary log-level gating
+test("generateFailureSummary - outputs compact summary without debug level", () => {
+  const originalLogLevel = process.env.LOG_LEVEL;
+  const originalDebug = process.env.DEBUG;
+
+  try {
+    process.env.LOG_LEVEL = "info";
+    delete process.env.DEBUG;
+
+    const messages: string[] = [];
+    const mockLogger = {
+      info: () => {},
+      warn: () => {},
+      error: (msg: string) => messages.push(msg),
+      debug: (msg: string) => messages.push(`DEBUG: ${msg}`),
+    };
+
+    const results = [
+      { success: false, error: "Error A", statusCode: 401 },
+      { success: false, error: "Error B", statusCode: 401 },
+    ];
+
+    generateFailureSummary(results, mockLogger);
+
+    // Should have only 1 compact error message, no debug output
+    assert.equal(messages.length, 1);
+    assert.ok(
+      messages[0]?.includes("All 2 credential derivation attempts failed"),
+    );
+    assert.ok(messages[0]?.includes("Error B")); // Last error
+    assert.ok(!messages.some((m) => m.includes("DEBUG:"))); // No debug messages
+  } finally {
+    // Restore environment variables even if test fails
+    if (originalLogLevel) process.env.LOG_LEVEL = originalLogLevel;
+    else delete process.env.LOG_LEVEL;
+    if (originalDebug) process.env.DEBUG = originalDebug;
+  }
+});
+
+test("generateFailureSummary - outputs verbose details at debug level", () => {
+  const originalLogLevel = process.env.LOG_LEVEL;
+
+  try {
+    process.env.LOG_LEVEL = "debug";
+
+    const messages: string[] = [];
+    const mockLogger = {
+      info: () => {},
+      warn: () => {},
+      error: (msg: string) => messages.push(`ERROR: ${msg}`),
+      debug: (msg: string) => messages.push(`DEBUG: ${msg}`),
+    };
+
+    const results = [
+      { success: false, error: "Error A", statusCode: 401 },
+      { success: false, error: "Error B", statusCode: 400 },
+    ];
+
+    generateFailureSummary(results, mockLogger);
+
+    // Should have both error and debug messages
+    assert.ok(messages.some((m) => m.includes("ERROR:")));
+    assert.ok(messages.some((m) => m.includes("DEBUG:")));
+    assert.ok(messages.some((m) => m.includes("POSSIBLE CAUSES")));
+  } finally {
+    // Restore environment variables even if test fails
+    if (originalLogLevel) process.env.LOG_LEVEL = originalLogLevel;
+    else delete process.env.LOG_LEVEL;
+  }
 });
