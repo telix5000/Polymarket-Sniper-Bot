@@ -239,7 +239,25 @@ export function logFallbackResult(params: {
 }
 
 /**
+ * Check if debug logging is enabled
+ */
+function isDebugEnabled(): boolean {
+  const logLevel = (
+    process.env.LOG_LEVEL ??
+    process.env.log_level ??
+    ""
+  ).toLowerCase();
+  return (
+    logLevel === "debug" || logLevel === "trace" || process.env.DEBUG === "1"
+  );
+}
+
+/**
  * Generate a summary of all failed attempts
+ *
+ * This function is now log-level aware:
+ * - At LOG_LEVEL=debug: outputs full verbose failure summary
+ * - Otherwise: outputs a single-line compact summary for the Auth Story
  */
 export function generateFailureSummary(
   results: CredentialAttemptResult[],
@@ -247,11 +265,23 @@ export function generateFailureSummary(
 ): void {
   if (!logger) return;
 
+  // Always log a single compact summary line (consumed by Auth Story)
+  const failedCount = results.filter((r) => !r.success).length;
+  const lastError = results[results.length - 1]?.error ?? "unknown";
   logger.error(
+    `[AuthFallback] All ${failedCount} credential derivation attempts failed. Last error: ${lastError}`,
+  );
+
+  // Verbose details only at debug level to prevent spam
+  if (!isDebugEnabled()) {
+    return;
+  }
+
+  logger.debug(
     "[AuthFallback] ========================================================",
   );
-  logger.error("[AuthFallback] ALL CREDENTIAL DERIVATION ATTEMPTS FAILED");
-  logger.error(
+  logger.debug("[AuthFallback] CREDENTIAL DERIVATION ATTEMPT DETAILS");
+  logger.debug(
     "[AuthFallback] ========================================================",
   );
 
@@ -260,34 +290,34 @@ export function generateFailureSummary(
     if (!attempt) return;
 
     const statusPart = result.statusCode ? ` [${result.statusCode}]` : "";
-    logger.error(
+    logger.debug(
       `[AuthFallback] ${attempt.label}${statusPart}: ${result.error ?? "unknown"}`,
     );
   });
 
-  logger.error(
+  logger.debug(
     "[AuthFallback] ========================================================",
   );
-  logger.error("[AuthFallback] POSSIBLE CAUSES:");
-  logger.error("[AuthFallback]   1. Wallet has never traded on Polymarket");
-  logger.error(
+  logger.debug("[AuthFallback] POSSIBLE CAUSES:");
+  logger.debug("[AuthFallback]   1. Wallet has never traded on Polymarket");
+  logger.debug(
     "[AuthFallback]   2. Incorrect funder/proxy address for Safe/Proxy mode",
   );
-  logger.error("[AuthFallback]   3. Private key doesn't match expected wallet");
-  logger.error("[AuthFallback]   4. Network connectivity issues");
-  logger.error(
+  logger.debug("[AuthFallback]   3. Private key doesn't match expected wallet");
+  logger.debug("[AuthFallback]   4. Network connectivity issues");
+  logger.debug(
     "[AuthFallback] ========================================================",
   );
-  logger.error("[AuthFallback] TO FIX:");
-  logger.error(
+  logger.debug("[AuthFallback] TO FIX:");
+  logger.debug(
     "[AuthFallback]   1. Visit https://polymarket.com and connect wallet",
   );
-  logger.error("[AuthFallback]   2. Make at least one small trade ($1+)");
-  logger.error(
+  logger.debug("[AuthFallback]   2. Make at least one small trade ($1+)");
+  logger.debug(
     "[AuthFallback]   3. Wait for transaction confirmation (1-2 min)",
   );
-  logger.error("[AuthFallback]   4. Restart bot");
-  logger.error(
+  logger.debug("[AuthFallback]   4. Restart bot");
+  logger.debug(
     "[AuthFallback] ========================================================",
   );
 }

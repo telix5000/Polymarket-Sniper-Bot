@@ -16,7 +16,7 @@ import {
   type StructuredLogger,
   generateAttemptId,
 } from "../utils/structured-logger";
-import type { AuthStoryBuilder } from "./auth-story";
+import type { AuthStoryBuilder, AuthAttempt } from "./auth-story";
 import {
   resolveOrderIdentity,
   resolveL1AuthIdentity,
@@ -63,6 +63,41 @@ function log(
     const prefix = params.legacyPrefix ?? "[CredDerive]";
     params.logger[level](`${prefix} ${message}`);
   }
+}
+
+/**
+ * Convert a fallback attempt result to an AuthAttempt for the auth story
+ */
+function createAuthAttemptFromResult(
+  attemptId: string,
+  attempt: FallbackAttempt,
+  result: CredentialAttemptResult,
+  orderIdentity: OrderIdentity,
+  l1AuthIdentity: L1AuthIdentity,
+): AuthAttempt {
+  const modeMap: { [key: number]: "EOA" | "SAFE" | "PROXY" } = {
+    0: "EOA",
+    1: "PROXY",
+    2: "SAFE",
+  };
+  const l1Auth = attempt.useEffectiveForL1
+    ? orderIdentity.effectiveAddress
+    : l1AuthIdentity.signingAddress;
+
+  return {
+    attemptId,
+    mode: modeMap[attempt.signatureType] ?? "EOA",
+    sigType: attempt.signatureType,
+    l1Auth,
+    maker: orderIdentity.makerAddress,
+    funder: orderIdentity.funderAddress ?? orderIdentity.effectiveAddress,
+    verifyEndpoint: "/balance-allowance",
+    signedPath: "/balance-allowance",
+    usedAxiosParams: false,
+    httpStatus: result.statusCode,
+    errorTextShort: result.error?.slice(0, 100),
+    success: result.success,
+  };
 }
 
 /**
@@ -675,6 +710,18 @@ export async function deriveCredentialsWithFallback(
 
     results.push(result);
 
+    // Record this attempt in the auth story
+    if (params.authStoryBuilder) {
+      const authAttempt = createAuthAttemptFromResult(
+        attemptId,
+        attempt,
+        result,
+        attemptOrderIdentity,
+        attemptL1Identity,
+      );
+      params.authStoryBuilder.addAttempt(authAttempt);
+    }
+
     if (sLogger) {
       if (result.success) {
         sLogger.info("✅ Attempt succeeded", {
@@ -788,6 +835,18 @@ export async function deriveCredentialsWithFallback(
         structuredLogger: sLogger,
         attemptId: `${attemptId}-swap`,
       });
+
+      // Record the swapped attempt in the auth story
+      if (params.authStoryBuilder) {
+        const swappedAuthAttempt = createAuthAttemptFromResult(
+          `${attemptId}-swap`,
+          swappedAttempt,
+          swappedResult,
+          attemptOrderIdentity,
+          swappedL1Identity,
+        );
+        params.authStoryBuilder.addAttempt(swappedAuthAttempt);
+      }
 
       if (sLogger) {
         if (swappedResult.success) {
