@@ -4,6 +4,11 @@
  * This module implements credential derivation with a hard-coded fallback ladder.
  * It tries different combinations of signature types and L1 auth addresses until
  * one works, then caches the successful configuration.
+ *
+ * Features:
+ * - Single-flight derivation (prevents concurrent derivation attempts)
+ * - Exponential backoff on failures (30s, 60s, 2m, 5m, 10m max)
+ * - Rate-limited auth failure logging (prevents log spam)
  */
 
 import { ClobClient, Chain, AssetType } from "@polymarket/clob-client";
@@ -44,6 +49,14 @@ import {
   clearCachedCreds,
 } from "../utils/credential-storage.util";
 import { asClobSigner } from "../utils/clob-signer.util";
+import {
+  getAuthFailureRateLimiter,
+  type AuthFailureKey,
+} from "../utils/auth-failure-rate-limiter";
+import {
+  getSingleFlightDerivation,
+  type DerivationResult as SingleFlightResult,
+} from "../utils/single-flight-derivation";
 
 /**
  * Helper to log with either structured or legacy logger
@@ -134,6 +147,7 @@ export type DerivationResult = {
 
 /**
  * Verify credentials by calling /balance-allowance
+ * Uses rate limiter to prevent log spam on repeated failures
  */
 async function verifyCredentials(params: {
   creds: ApiKeyCreds;
@@ -144,6 +158,57 @@ async function verifyCredentials(params: {
   structuredLogger?: StructuredLogger;
   attemptId?: string;
 }): Promise<boolean> {
+  const rateLimiter = getAuthFailureRateLimiter();
+
+  /**
+   * Helper to log auth failure with rate limiting
+   */
+  const logAuthFailure = (status: number, errorMsg: string): void => {
+    const failureKey: AuthFailureKey = {
+      endpoint: "/balance-allowance",
+      status,
+      signerAddress: params.wallet.address,
+      signatureType: params.signatureType,
+    };
+
+    const { shouldLogFull, shouldLogSummary, suppressedCount, nextFullLogMinutes } =
+      rateLimiter.shouldLog(failureKey);
+
+    if (shouldLogFull) {
+      log(
+        "debug",
+        `Verification failed: ${status} ${errorMsg}`,
+        {
+          logger: params.logger,
+          structuredLogger: params.structuredLogger,
+          context: {
+            category: "CRED_DERIVE",
+            attemptId: params.attemptId,
+            status,
+            error: errorMsg,
+          },
+        },
+      );
+      logAuthDiagnostics(params);
+    } else if (shouldLogSummary) {
+      // Emit a single-line summary instead of full details
+      log(
+        "debug",
+        `Auth still failing (${status} ${errorMsg}) — suppressed ${suppressedCount} repeats (next full log in ${Math.ceil(nextFullLogMinutes)}m)`,
+        {
+          logger: params.logger,
+          structuredLogger: params.structuredLogger,
+          context: {
+            category: "CRED_DERIVE",
+            attemptId: params.attemptId,
+            status,
+            suppressedCount,
+          },
+        },
+      );
+    }
+  };
+
   try {
     const client = new ClobClient(
       POLYMARKET_API.BASE_URL,
@@ -161,21 +226,7 @@ async function verifyCredentials(params: {
     // Check for error response
     const errorResponse = response as { status?: number; error?: string };
     if (errorResponse.status === 401 || errorResponse.status === 403) {
-      log(
-        "debug",
-        `Verification failed: ${errorResponse.status} ${errorResponse.error ?? "Unauthorized"}`,
-        {
-          logger: params.logger,
-          structuredLogger: params.structuredLogger,
-          context: {
-            category: "CRED_DERIVE",
-            attemptId: params.attemptId,
-            status: errorResponse.status,
-            error: errorResponse.error ?? "Unauthorized",
-          },
-        },
-      );
-      logAuthDiagnostics(params);
+      logAuthFailure(errorResponse.status, errorResponse.error ?? "Unauthorized");
       return false;
     }
 
@@ -205,16 +256,7 @@ async function verifyCredentials(params: {
   } catch (error) {
     const status = extractStatusCode(error);
     if (status === 401 || status === 403) {
-      log("debug", `Verification failed: ${status} Unauthorized`, {
-        logger: params.logger,
-        structuredLogger: params.structuredLogger,
-        context: {
-          category: "CRED_DERIVE",
-          attemptId: params.attemptId,
-          status,
-        },
-      });
-      logAuthDiagnostics(params);
+      logAuthFailure(status, "Unauthorized");
       return false;
     }
 
@@ -523,13 +565,58 @@ async function attemptDerive(params: {
  * Derive credentials with fallback ladder
  *
  * This function:
- * 1. Checks for cached credentials first
- * 2. If no cache, tries each fallback combination in order
- * 3. Verifies credentials with /balance-allowance
- * 4. Caches the first working combination
- * 5. Returns the working credentials or undefined if all attempts fail
+ * 1. Uses single-flight to prevent concurrent derivation attempts
+ * 2. Implements exponential backoff on failures
+ * 3. Checks for cached credentials first
+ * 4. If no cache, tries each fallback combination in order
+ * 5. Verifies credentials with /balance-allowance
+ * 6. Caches the first working combination
+ * 7. Returns the working credentials or undefined if all attempts fail
  */
 export async function deriveCredentialsWithFallback(
+  params: ExtendedIdentityResolverParams,
+): Promise<DerivationResult> {
+  const singleFlight = getSingleFlightDerivation(
+    params.logger,
+    params.structuredLogger,
+  );
+
+  // Check single-flight status before proceeding
+  const { canRetry, reason } = singleFlight.shouldRetry();
+  if (!canRetry && reason) {
+    const sLogger = params.structuredLogger;
+    if (sLogger) {
+      sLogger.warn(`Derivation blocked: ${reason}`, {
+        category: "CRED_DERIVE",
+      });
+    } else {
+      params.logger?.warn(`[CredDerive] Derivation blocked: ${reason}`);
+    }
+
+    // Return cached result if available from single-flight
+    const state = singleFlight.getState();
+    if (state.hasCachedResult) {
+      // Return the cached successful result
+      return singleFlight.derive(async () => ({
+        success: false,
+        error: reason,
+      }));
+    }
+
+    return {
+      success: false,
+      error: `Derivation blocked: ${reason}`,
+    };
+  }
+
+  // Use single-flight to coordinate derivation
+  return singleFlight.derive(() => deriveCredentialsWithFallbackInternal(params));
+}
+
+/**
+ * Internal derivation function (called by single-flight coordinator)
+ */
+async function deriveCredentialsWithFallbackInternal(
   params: ExtendedIdentityResolverParams,
 ): Promise<DerivationResult> {
   const wallet = new Wallet(params.privateKey);
