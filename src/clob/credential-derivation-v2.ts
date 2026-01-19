@@ -58,10 +58,7 @@ import {
   getAuthFailureRateLimiter,
   type AuthFailureKey,
 } from "../utils/auth-failure-rate-limiter";
-import {
-  getSingleFlightDerivation,
-  type DerivationResult as SingleFlightResult,
-} from "../utils/single-flight-derivation";
+import { getSingleFlightDerivation } from "../utils/single-flight-derivation";
 
 /**
  * Helper to log with either structured or legacy logger
@@ -176,24 +173,24 @@ async function verifyCredentials(params: {
       signatureType: params.signatureType,
     };
 
-    const { shouldLogFull, shouldLogSummary, suppressedCount, nextFullLogMinutes } =
-      rateLimiter.shouldLog(failureKey);
+    const {
+      shouldLogFull,
+      shouldLogSummary,
+      suppressedCount,
+      nextFullLogMinutes,
+    } = rateLimiter.shouldLog(failureKey);
 
     if (shouldLogFull) {
-      log(
-        "debug",
-        `Verification failed: ${status} ${errorMsg}`,
-        {
-          logger: params.logger,
-          structuredLogger: params.structuredLogger,
-          context: {
-            category: "CRED_DERIVE",
-            attemptId: params.attemptId,
-            status,
-            error: errorMsg,
-          },
+      log("debug", `Verification failed: ${status} ${errorMsg}`, {
+        logger: params.logger,
+        structuredLogger: params.structuredLogger,
+        context: {
+          category: "CRED_DERIVE",
+          attemptId: params.attemptId,
+          status,
+          error: errorMsg,
         },
-      );
+      });
       logAuthDiagnostics(params);
     } else if (shouldLogSummary) {
       // Emit a single-line summary instead of full details
@@ -231,7 +228,10 @@ async function verifyCredentials(params: {
     // Check for error response
     const errorResponse = response as { status?: number; error?: string };
     if (errorResponse.status === 401 || errorResponse.status === 403) {
-      logAuthFailure(errorResponse.status, errorResponse.error ?? "Unauthorized");
+      logAuthFailure(
+        errorResponse.status,
+        errorResponse.error ?? "Unauthorized",
+      );
       return false;
     }
 
@@ -581,7 +581,9 @@ export async function deriveCredentialsWithFallback(
   }
 
   // Use single-flight to coordinate derivation
-  return singleFlight.derive(() => deriveCredentialsWithFallbackInternal(params));
+  return singleFlight.derive(() =>
+    deriveCredentialsWithFallbackInternal(params),
+  );
 }
 
 /**
