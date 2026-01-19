@@ -206,6 +206,8 @@ const MAX_FINGERPRINT_CACHE_SIZE = 100; // Prevent unbounded memory growth
 
 /**
  * Create a hash-based fingerprint for credentials (safe to store, doesn't expose key data)
+ * Uses SHA-256 truncated to 16 hex chars (64 bits) - acceptable collision probability
+ * for deduplication within a single run (~1 in 2^64 for random inputs)
  */
 function createCredentialFingerprint(
   key: string | undefined,
