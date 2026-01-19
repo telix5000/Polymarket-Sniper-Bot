@@ -241,7 +241,7 @@ export function logFallbackResult(params: {
 /**
  * Check if debug logging is enabled
  */
-function isDebugEnabled(): boolean {
+export function isDebugEnabled(): boolean {
   const logLevel = (
     process.env.LOG_LEVEL ??
     process.env.log_level ??

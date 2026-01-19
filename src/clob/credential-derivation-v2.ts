@@ -8,6 +8,7 @@
 
 import { ClobClient, Chain, AssetType } from "@polymarket/clob-client";
 import type { ApiKeyCreds } from "@polymarket/clob-client";
+import { SignatureType } from "@polymarket/order-utils";
 import crypto from "node:crypto";
 import { Wallet } from "ethers";
 import { POLYMARKET_API } from "../constants/polymarket.constants";
@@ -75,10 +76,11 @@ function createAuthAttemptFromResult(
   orderIdentity: OrderIdentity,
   l1AuthIdentity: L1AuthIdentity,
 ): AuthAttempt {
+  // Map SignatureType enum values to mode names
   const modeMap: { [key: number]: "EOA" | "SAFE" | "PROXY" } = {
-    0: "EOA",
-    1: "PROXY",
-    2: "SAFE",
+    [SignatureType.EOA]: "EOA",
+    [SignatureType.POLY_PROXY]: "PROXY",
+    [SignatureType.POLY_GNOSIS_SAFE]: "SAFE",
   };
   const l1Auth = attempt.useEffectiveForL1
     ? orderIdentity.effectiveAddress
