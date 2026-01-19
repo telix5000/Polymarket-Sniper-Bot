@@ -31,6 +31,16 @@ const CLOB_HOST = POLYMARKET_API.BASE_URL;
 const CHAIN_ID = Chain.POLYGON;
 
 /**
+ * Credential fingerprint type (safe to log)
+ */
+export interface CredentialFingerprint {
+  apiKeySuffix: string;
+  secretLen: number;
+  passphraseLen?: number;
+  secretEncodingGuess: string;
+}
+
+/**
  * Auth Story - single structured summary per run
  */
 export interface AuthStory {
@@ -43,12 +53,7 @@ export interface AuthStory {
   clobHost: string;
   chainId: number;
   credentialsObtained: boolean;
-  derivedCredFingerprint?: {
-    apiKeySuffix: string;
-    secretLen: number;
-    passphraseLen?: number;
-    secretEncodingGuess: string;
-  };
+  derivedCredFingerprint?: CredentialFingerprint;
   verificationPassed: boolean;
   attempts: Array<{
     attemptId: string;

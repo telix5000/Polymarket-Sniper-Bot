@@ -55,14 +55,8 @@ async function main(): Promise<number> {
     // Run minimal auth (Python agents approach)
     const result = await authenticateMinimal(config);
 
-    // Print Auth Story
-    if (format === "json") {
-      // Pure JSON to stdout for parsing
-      console.log(JSON.stringify(result.story));
-    } else {
-      // Pretty format to stdout for human readability
-      printAuthStory(result.story, "pretty");
-    }
+    // Print Auth Story using printAuthStory function
+    printAuthStory(result.story, format);
 
     // Return appropriate exit code
     return result.success ? 0 : 1;

@@ -115,7 +115,7 @@ export class AuthLogger {
     for (const [_key, entry] of this.deduplicationMap.entries()) {
       if (entry.count > 1) {
         this.logger.info(`(suppressed ${entry.count - 1} repeats)`, {
-          category: "IDENTITY" as LogCategory,
+          category: "IDENTITY",
           suppressedMessage: entry.message,
         });
       }
@@ -133,7 +133,7 @@ export class AuthLogger {
 
     this.logger.info(message, {
       ...context,
-      category: (context?.category ?? "IDENTITY") as LogCategory,
+      category: context?.category ?? "IDENTITY",
     });
   }
 
@@ -147,7 +147,7 @@ export class AuthLogger {
 
     this.logger.debug(message, {
       ...context,
-      category: (context?.category ?? "IDENTITY") as LogCategory,
+      category: context?.category ?? "IDENTITY",
     });
   }
 
@@ -158,7 +158,7 @@ export class AuthLogger {
     // Don't deduplicate warnings - they're important
     this.logger.warn(message, {
       ...context,
-      category: (context?.category ?? "IDENTITY") as LogCategory,
+      category: context?.category ?? "IDENTITY",
     });
   }
 
@@ -169,7 +169,7 @@ export class AuthLogger {
     // Don't deduplicate errors - they're critical
     this.logger.error(message, {
       ...context,
-      category: (context?.category ?? "IDENTITY") as LogCategory,
+      category: context?.category ?? "IDENTITY",
     });
   }
 
