@@ -60,8 +60,7 @@ export interface CompactAxiosError {
  */
 function isHttpDebugEnabled(): boolean {
   return (
-    process.env.LOG_HTTP_DEBUG === "true" ||
-    process.env.LOG_HTTP_DEBUG === "1"
+    process.env.LOG_HTTP_DEBUG === "true" || process.env.LOG_HTTP_DEBUG === "1"
   );
 }
 
@@ -106,7 +105,9 @@ export function extractCompactAxiosError(error: unknown): CompactAxiosError {
       const data = responseData as { error?: string; message?: string };
       const errorText = data.error ?? data.message;
       if (errorText) {
-        compact.errorMessage = redactSensitiveValues(String(errorText).slice(0, 200));
+        compact.errorMessage = redactSensitiveValues(
+          String(errorText).slice(0, 200),
+        );
       }
     }
   }

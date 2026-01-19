@@ -655,7 +655,13 @@ node dist/tools/preflight.js
 The preflight process now outputs a comprehensive summary at the end:
 
 ```
-[Preflight][Summary] signer=0x... effective_trading_address=0x... relayer_enabled=true approvals_ok=true auth_ok=true ready_to_trade=true
+[Preflight][Summary] ========================================
+[Preflight][Summary] ✅ Auth: PASSED
+[Preflight][Summary] ✅ Approvals: PASSED
+[Preflight][Summary] ⚪ Relayer: DISABLED
+[Preflight][Summary] ✅ Ready to Trade: YES
+[Preflight][Summary] ========================================
+[Preflight][Summary] signer=0x... effective_trading_address=0x... relayer_enabled=false approvals_ok=true auth_ok=true ready_to_trade=true
 ```
 
 Where:
@@ -665,6 +671,91 @@ Where:
 - `approvals_ok`: Whether all required token approvals are in place
 - `auth_ok`: Whether CLOB API credentials are available (explicit or derived)
 - `ready_to_trade`: Overall readiness status (true = can execute trades)
+
+### Understanding Startup Blockers
+
+The bot checks multiple conditions at startup. When `ready_to_trade=false`, the `PRIMARY_BLOCKER` indicates the root cause:
+
+**Common Blockers (in priority order):**
+
+1. **`PRIMARY_BLOCKER=AUTH_FAILED`** ❌
+   ```
+   [Preflight] ❌ READY_TO_TRADE=false PRIMARY_BLOCKER=AUTH_FAILED
+   [Preflight] ⚠️  PRIMARY STARTUP BLOCKER: Authentication failed
+   [Preflight] ⚠️  Note: Approvals may show as OK, but trading is blocked by auth failure
+   [Preflight] ⚠️  Run 'npm run auth:diag' for detailed authentication diagnostics
+   ```
+   - **What it means:** CLOB API credentials are invalid, missing, or failed verification
+   - **Why approvals show OK:** Approvals check your on-chain token permissions, which are independent of CLOB auth
+   - **Next steps:**
+     - Run `npm run auth:diag` for detailed diagnostics
+     - Check if your wallet has traded on Polymarket (required for credential derivation)
+     - Verify `PRIVATE_KEY` is correct
+     - Clear cached credentials: `rm -f /data/clob-creds.json`
+     - Review [Authentication Troubleshooting Guide](#troubleshooting-401-unauthorizedinvalid-api-key-errors)
+
+2. **`PRIMARY_BLOCKER=APPROVALS_FAILED`** ❌
+   ```
+   [Preflight] ❌ READY_TO_TRADE=false PRIMARY_BLOCKER=APPROVALS_FAILED
+   ```
+   - **What it means:** Your wallet lacks required token approvals or insufficient balance
+   - **Next steps:**
+     - Check USDC balance with `npm run check-allowance`
+     - Set approvals with `npm run set-token-allowance`
+     - Ensure you have sufficient USDC for trading
+
+3. **`PRIMARY_BLOCKER=GEOBLOCKED`** ❌
+   ```
+   [Preflight] ❌ READY_TO_TRADE=false PRIMARY_BLOCKER=GEOBLOCKED
+   ```
+   - **What it means:** Your IP address is in a restricted region per Polymarket's geo-restrictions
+   - **Next steps:**
+     - Use a VPN or proxy from an allowed region
+     - Set `SKIP_GEOBLOCK_CHECK=true` (not recommended, may violate ToS)
+
+4. **`PRIMARY_BLOCKER=LIVE_TRADING_DISABLED`** ⚪
+   ```
+   [Preflight] ⚪ READY_TO_TRADE=false PRIMARY_BLOCKER=LIVE_TRADING_DISABLED
+   ```
+   - **What it means:** Safety flag is not set (intentional)
+   - **Next steps:**
+     - Set `ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS` to enable live trading
+     - This is a safety measure to prevent accidental real-money trading
+
+**Important:** The bot will show `approvals_ok=true` even when `auth_ok=false` because these are **independent checks**:
+- **Auth check** = Can I communicate with CLOB API?
+- **Approvals check** = Do I have on-chain token permissions?
+
+Both must pass for `ready_to_trade=true`, but the auth failure is the **primary blocker** if it fails first.
+
+### Auth Story Summary
+
+Every startup produces a single "Auth Story" JSON summary showing all authentication attempts:
+
+```json
+{
+  "runId": "run_1234567890_abc123",
+  "selectedMode": "EOA",
+  "signerAddress": "0x...",
+  "clobHost": "https://clob.polymarket.com",
+  "attempts": [
+    {
+      "attemptId": "A",
+      "mode": "EOA",
+      "httpStatus": 401,
+      "success": false,
+      "errorTextShort": "Unauthorized/Invalid api key"
+    }
+  ],
+  "finalResult": {
+    "authOk": false,
+    "readyToTrade": false,
+    "reason": "AUTH_FAILED"
+  }
+}
+```
+
+This summary is printed once per startup and includes all relevant diagnostic information without exposing secrets.
 
 ## CLOB Auth Diagnostics
 

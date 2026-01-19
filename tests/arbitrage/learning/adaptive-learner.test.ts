@@ -87,7 +87,9 @@ describe("AdaptiveTradeLearner", () => {
       assert.strictEqual(stats.global.losses, 1);
       assert.strictEqual(stats.global.winRate, 0);
 
-      const marketStats = stats.markets.find((m) => m.marketId === "market-123");
+      const marketStats = stats.markets.find(
+        (m) => m.marketId === "market-123",
+      );
       assert.ok(marketStats);
       assert.strictEqual(marketStats.consecutiveLosses, 1);
     });
@@ -156,7 +158,9 @@ describe("AdaptiveTradeLearner", () => {
       learner.updateTradeOutcome(winId, "win", 0.52, 2.0, 5000);
 
       const stats = learner.getStats();
-      const marketStats = stats.markets.find((m) => m.marketId === "market-123");
+      const marketStats = stats.markets.find(
+        (m) => m.marketId === "market-123",
+      );
       assert.strictEqual(marketStats?.consecutiveLosses, 0);
     });
   });

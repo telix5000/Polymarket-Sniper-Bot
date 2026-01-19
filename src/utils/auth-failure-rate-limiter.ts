@@ -104,9 +104,7 @@ export class AuthFailureRateLimiter {
 
     // Check if still in suppression window
     if (now < entry.suppressUntil) {
-      const nextFullLogMinutes = Math.ceil(
-        (entry.suppressUntil - now) / 60000,
-      );
+      const nextFullLogMinutes = Math.ceil((entry.suppressUntil - now) / 60000);
       const cooldownMinutes = Math.ceil(
         (entry.suppressUntil - entry.lastLoggedAt) / 60000,
       );

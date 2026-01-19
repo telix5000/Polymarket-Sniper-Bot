@@ -79,7 +79,7 @@ export async function createMinimalPolymarketClient(
   // For Proxy/Safe modes (signatureType=1 or 2), effective = funderAddress
   const effectivePolyAddress =
     input.signatureType === 1 || input.signatureType === 2
-      ? input.funderAddress ?? derivedSignerAddress
+      ? (input.funderAddress ?? derivedSignerAddress)
       : derivedSignerAddress;
 
   let creds: ApiKeyCreds | undefined;

@@ -101,36 +101,80 @@ export class MempoolMonitorService {
     }
 
     // Check if RPC supports eth_newPendingTransactionFilter
+    // Note: If this check fails, provider.on('pending') won't work either,
+    // as it uses the same underlying mechanism (WebSocket eth_subscribe or
+    // HTTP filter polling). We only set up the subscription if this succeeds.
     try {
       const filterId = await this.provider.send(
         "eth_newPendingTransactionFilter",
         [],
       );
       await this.provider.send("eth_uninstallFilter", [filterId]);
+
+      logger.info(
+        "[Monitor] ✅ RPC endpoint supports real-time mempool monitoring via eth_newPendingTransactionFilter",
+      );
+      logger.info(
+        "[Monitor] Subscribing to pending transactions for real-time detection...",
+      );
+
+      // Subscribe to pending transactions
+      // This will work because we've confirmed the RPC supports mempool filters
+      this.provider.on("pending", (txHash: string) => {
+        if (this.isRunning) {
+          void this.handlePendingTransaction(txHash).catch(() => {
+            // Silently handle errors for mempool monitoring
+          });
+        }
+      });
     } catch (err) {
       logger.info(
-        "[Monitor] RPC endpoint does not support eth_newPendingTransactionFilter method. This is expected for some RPC providers.",
+        "[Monitor] ===================================================================",
       );
       logger.info(
-        "[Monitor] Mempool monitoring via pending transaction subscription is disabled.",
+        "[Monitor] ℹ️  RPC Capability: eth_newPendingTransactionFilter NOT supported",
       );
       logger.info(
-        "[Monitor] The bot will continue to operate using Polymarket API polling for trade detection.",
+        "[Monitor] ===================================================================",
+      );
+      logger.info(
+        "[Monitor] This RPC endpoint does not support real-time mempool monitoring.",
+      );
+      logger.info(
+        "[Monitor] This is expected and NORMAL for many RPC providers, including:",
+      );
+      logger.info("[Monitor]   • Alchemy Free Tier");
+      logger.info("[Monitor]   • Infura Free Tier");
+      logger.info("[Monitor]   • QuickNode (some plans)");
+      logger.info("[Monitor]   • Most public RPC endpoints");
+      logger.info("[Monitor] ");
+      logger.info(
+        "[Monitor] ✅ FALLBACK MODE: The bot will use Polymarket API polling instead.",
+      );
+      logger.info(
+        "[Monitor] This provides reliable trade detection via the Polymarket API,",
+      );
+      logger.info(
+        "[Monitor] checking for recent activity at regular intervals.",
+      );
+      logger.info("[Monitor] ");
+      logger.info(
+        "[Monitor] ℹ️  For real-time mempool monitoring, you can upgrade to:",
+      );
+      logger.info(
+        "[Monitor]   • Alchemy Growth or Scale plan with eth_subscribe",
+      );
+      logger.info("[Monitor]   • Infura with WebSocket support");
+      logger.info("[Monitor]   • QuickNode with stream add-on");
+      logger.info("[Monitor]   • Your own Polygon node");
+      logger.info(
+        "[Monitor] ===================================================================",
       );
       logger.debug(
         `[Monitor] RPC capability check details: ${sanitizeErrorMessage(err)}`,
       );
       return;
     }
-
-    // Subscribe to pending transactions
-    this.provider.on("pending", (txHash: string) => {
-      if (this.isRunning) {
-        void this.handlePendingTransaction(txHash).catch(() => {
-          // Silently handle errors for mempool monitoring
-        });
-      }
-    });
   }
 
   private async handlePendingTransaction(txHash: string): Promise<void> {

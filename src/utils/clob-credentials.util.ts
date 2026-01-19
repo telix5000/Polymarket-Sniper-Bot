@@ -45,4 +45,3 @@ export const isApiKeyCreds = (creds?: {
   passphrase?: string;
 }): creds is ApiKeyCreds =>
   Boolean(creds?.key && creds?.secret && creds?.passphrase);
-

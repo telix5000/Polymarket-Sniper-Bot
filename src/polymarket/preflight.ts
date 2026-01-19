@@ -519,6 +519,26 @@ export const ensureTradingReady = async (
 
   const readyToTrade = !detectOnly && approvalsOk && authOk;
 
+  // Determine the primary blocking reason for startup
+  // Priority order: technical blockers first (actionable), then policy blockers
+  let blockingReason = "OK";
+  if (!authOk) {
+    // Auth failure is the most critical technical blocker
+    blockingReason = "AUTH_FAILED";
+  } else if (!approvalsOk) {
+    // Approvals failure is secondary technical blocker
+    blockingReason = "APPROVALS_FAILED";
+  } else if (!geoblockPassed) {
+    // Geoblock is a compliance/policy issue
+    blockingReason = "GEOBLOCKED";
+  } else if (!liveTradingEnabled) {
+    // Live trading flag is an intentional safety mechanism
+    blockingReason = "LIVE_TRADING_DISABLED";
+  } else if (detectOnly) {
+    // Other checks failed
+    blockingReason = "CHECKS_FAILED";
+  }
+
   // Run comprehensive auth diagnostics if auth failed
   if (!authOk && authFailureContext.verificationFailed) {
     // Log diagnostic parameters for debugging
@@ -549,9 +569,24 @@ export const ensureTradingReady = async (
     logAuthDiagnostic(diagnostic, params.logger, derivedSignerAddress);
   }
 
+  // Log the PRIMARY blocker clearly
+  const readyIcon = readyToTrade ? "✅" : "❌";
   params.logger.info(
-    `[Preflight] READY_TO_TRADE=${readyToTrade} reason=${detectOnly ? "CHECKS_FAILED" : "OK"}`,
+    `[Preflight] ${readyIcon} READY_TO_TRADE=${readyToTrade} PRIMARY_BLOCKER=${blockingReason}`,
   );
+
+  // If auth failed, make it crystal clear that this is THE issue
+  if (!authOk && blockingReason === "AUTH_FAILED") {
+    params.logger.error(
+      "[Preflight] ⚠️  PRIMARY STARTUP BLOCKER: Authentication failed",
+    );
+    params.logger.error(
+      "[Preflight] ⚠️  Note: Approvals may show as OK, but trading is blocked by auth failure",
+    );
+    params.logger.error(
+      "[Preflight] ⚠️  Run 'npm run auth:diag' for detailed authentication diagnostics",
+    );
+  }
 
   logPreflightSummary({
     logger: params.logger,
@@ -567,7 +602,7 @@ export const ensureTradingReady = async (
   authStory.setFinalResult({
     authOk,
     readyToTrade,
-    reason: detectOnly ? "CHECKS_FAILED" : "OK",
+    reason: blockingReason,
   });
   authStory.printSummary();
 
@@ -589,6 +624,29 @@ const logPreflightSummary = (params: {
   authOk: boolean;
   readyToTrade: boolean;
 }): void => {
+  const authIcon = params.authOk ? "✅" : "❌";
+  const approvalsIcon = params.approvalsOk ? "✅" : "❌";
+  const relayerIcon = params.relayerEnabled ? "✅" : "⚪";
+  const readyIcon = params.readyToTrade ? "✅" : "❌";
+
+  params.logger.info(
+    "[Preflight][Summary] ========================================",
+  );
+  params.logger.info(
+    `[Preflight][Summary] ${authIcon} Auth: ${params.authOk ? "PASSED" : "FAILED"}`,
+  );
+  params.logger.info(
+    `[Preflight][Summary] ${approvalsIcon} Approvals: ${params.approvalsOk ? "PASSED" : "FAILED"}`,
+  );
+  params.logger.info(
+    `[Preflight][Summary] ${relayerIcon} Relayer: ${params.relayerEnabled ? "ENABLED" : "DISABLED"}`,
+  );
+  params.logger.info(
+    `[Preflight][Summary] ${readyIcon} Ready to Trade: ${params.readyToTrade ? "YES" : "NO"}`,
+  );
+  params.logger.info(
+    "[Preflight][Summary] ========================================",
+  );
   params.logger.info(
     `[Preflight][Summary] signer=${params.signer} effective_trading_address=${params.effectiveTradingAddress} relayer_enabled=${params.relayerEnabled} approvals_ok=${params.approvalsOk} auth_ok=${params.authOk} ready_to_trade=${params.readyToTrade}`,
   );

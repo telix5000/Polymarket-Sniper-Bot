@@ -111,8 +111,7 @@ function log(
   const levelPriority = { debug: 0, info: 1, error: 2 };
 
   if (levelPriority[level] >= levelPriority[logLevel]) {
-    const prefix =
-      level === "error" ? "❌" : level === "info" ? "ℹ️" : "🔍";
+    const prefix = level === "error" ? "❌" : level === "info" ? "ℹ️" : "🔍";
     console.log(`${prefix} [MinimalAuth] ${message}`);
   }
 }
@@ -197,7 +196,10 @@ export async function authenticateMinimal(
       const message = error instanceof Error ? error.message : String(error);
       const status = extractErrorStatus(error);
 
-      if (status === 400 && message.toLowerCase().includes("could not create")) {
+      if (
+        status === 400 &&
+        message.toLowerCase().includes("could not create")
+      ) {
         story.errorMessage = "Wallet must trade on Polymarket first";
         log("error", "Wallet has never traded on Polymarket", config);
         log("info", "Visit https://polymarket.com and make a trade", config);
@@ -323,8 +325,7 @@ export function createMinimalAuthConfigFromEnv(): MinimalAuthConfig {
   // Parse signature type if provided
   let signatureType: number | undefined;
   const sigTypeStr =
-    process.env.POLYMARKET_SIGNATURE_TYPE ??
-    process.env.CLOB_SIGNATURE_TYPE;
+    process.env.POLYMARKET_SIGNATURE_TYPE ?? process.env.CLOB_SIGNATURE_TYPE;
   if (sigTypeStr) {
     const parsed = Number.parseInt(sigTypeStr, 10);
     if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 2) {
@@ -339,15 +340,12 @@ export function createMinimalAuthConfigFromEnv(): MinimalAuthConfig {
 
   // Get funder address if provided
   const funderAddress =
-    process.env.POLYMARKET_PROXY_ADDRESS ??
-    process.env.CLOB_FUNDER_ADDRESS;
+    process.env.POLYMARKET_PROXY_ADDRESS ?? process.env.CLOB_FUNDER_ADDRESS;
 
   // Get log level
   const logLevelStr = process.env.LOG_LEVEL?.toLowerCase();
   const logLevel: "debug" | "info" | "error" =
-    logLevelStr === "debug" || logLevelStr === "error"
-      ? logLevelStr
-      : "info";
+    logLevelStr === "debug" || logLevelStr === "error" ? logLevelStr : "info";
 
   return {
     privateKey,

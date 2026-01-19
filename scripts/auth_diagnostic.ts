@@ -28,7 +28,10 @@ import { Wallet } from "ethers";
 import { SignatureType } from "@polymarket/order-utils";
 import { POLYMARKET_API } from "../src/constants/polymarket.constants";
 import { getLogger, generateRunId } from "../src/utils/structured-logger";
-import { initAuthStory, createCredentialFingerprint } from "../src/clob/auth-story";
+import {
+  initAuthStory,
+  createCredentialFingerprint,
+} from "../src/clob/auth-story";
 import type { AuthAttempt } from "../src/clob/auth-story";
 import { asClobSigner } from "../src/utils/clob-signer.util";
 
@@ -109,7 +112,8 @@ function checkClobEndpoint(): ConfigCheck {
   const actualUrl = POLYMARKET_API.BASE_URL;
   const envOverride = process.env.CLOB_HOST;
 
-  const isCorrectUrl = actualUrl === expectedUrl && (!envOverride || envOverride === expectedUrl);
+  const isCorrectUrl =
+    actualUrl === expectedUrl && (!envOverride || envOverride === expectedUrl);
   const constantsMatch = actualUrl === expectedUrl;
 
   logger.info("Checking CLOB endpoint configuration", {
@@ -197,7 +201,10 @@ async function deriveCredentials(
     let errorType: string | undefined;
     if (status === 401 && message.includes("Invalid L1 Request headers")) {
       errorType = "INVALID_L1_HEADERS";
-    } else if (status === 400 && message.toLowerCase().includes("could not create api key")) {
+    } else if (
+      status === 400 &&
+      message.toLowerCase().includes("could not create api key")
+    ) {
       errorType = "WALLET_NOT_TRADED";
     }
 
@@ -244,7 +251,13 @@ async function verifyCredentials(
     fullUrl,
     signedPath,
     hasQueryParams: true,
-    headerNames: ["POLY_ADDRESS", "POLY_SIGNATURE", "POLY_TIMESTAMP", "POLY_API_KEY", "POLY_PASSPHRASE"],
+    headerNames: [
+      "POLY_ADDRESS",
+      "POLY_SIGNATURE",
+      "POLY_TIMESTAMP",
+      "POLY_API_KEY",
+      "POLY_PASSPHRASE",
+    ],
     timestamp: Math.floor(Date.now() / 1000),
   };
 
@@ -257,10 +270,17 @@ async function verifyCredentials(
     // ClobClient may return error objects instead of throwing
     type ErrorResponse = { status?: number; error?: string };
     const isErrorResponse = (obj: any): obj is ErrorResponse => {
-      return typeof obj === "object" && obj !== null && ("status" in obj || "error" in obj);
+      return (
+        typeof obj === "object" &&
+        obj !== null &&
+        ("status" in obj || "error" in obj)
+      );
     };
 
-    if (isErrorResponse(result) && (result.status === 401 || result.status === 403)) {
+    if (
+      isErrorResponse(result) &&
+      (result.status === 401 || result.status === 403)
+    ) {
       logger.error("Verification failed", {
         category: "HTTP",
         status: result.status,
@@ -325,7 +345,12 @@ async function verifyCredentials(
         status: status || 500,
         statusText: error?.response?.statusText || "Error",
         errorMessage: message.slice(0, 200),
-        errorType: status === 401 ? "AUTH_FAILED" : status === 403 ? "FORBIDDEN" : "NETWORK_ERROR",
+        errorType:
+          status === 401
+            ? "AUTH_FAILED"
+            : status === 403
+              ? "FORBIDDEN"
+              : "NETWORK_ERROR",
         success: false,
       },
     };
@@ -341,7 +366,7 @@ function generateRootCauseHypotheses(result: DiagnosticResult): string[] {
   // Check 1: Incorrect CLOB endpoint
   if (!result.config.isCorrectUrl) {
     hypotheses.push(
-      `CLOB endpoint mismatch: Using '${result.config.actualClobUrl}' instead of '${result.config.expectedClobUrl}'`
+      `CLOB endpoint mismatch: Using '${result.config.actualClobUrl}' instead of '${result.config.expectedClobUrl}'`,
     );
   }
 
@@ -349,15 +374,15 @@ function generateRootCauseHypotheses(result: DiagnosticResult): string[] {
   if (!result.derivation.success) {
     if (result.derivation.statusCode === 401) {
       hypotheses.push(
-        "401 during credential derivation: Invalid L1 auth headers or signature mismatch"
+        "401 during credential derivation: Invalid L1 auth headers or signature mismatch",
       );
     } else if (result.derivation.statusCode === 400) {
       hypotheses.push(
-        "400 during credential derivation: Wallet has never traded on Polymarket (must make at least 1 trade at https://polymarket.com)"
+        "400 during credential derivation: Wallet has never traded on Polymarket (must make at least 1 trade at https://polymarket.com)",
       );
     } else {
       hypotheses.push(
-        `Credential derivation failed: ${result.derivation.error || "Unknown error"}`
+        `Credential derivation failed: ${result.derivation.error || "Unknown error"}`,
       );
     }
   }
@@ -366,35 +391,45 @@ function generateRootCauseHypotheses(result: DiagnosticResult): string[] {
   if (result.response && !result.response.success) {
     if (result.response.status === 401) {
       hypotheses.push(
-        "401 during verification: HMAC signature mismatch, invalid credentials, or wallet address mismatch"
+        "401 during verification: HMAC signature mismatch, invalid credentials, or wallet address mismatch",
       );
       hypotheses.push(
-        "Possible causes: Secret encoding wrong, message format incorrect, or credentials expired"
+        "Possible causes: Secret encoding wrong, message format incorrect, or credentials expired",
       );
     } else if (result.response.status === 403) {
       hypotheses.push(
-        "403 Forbidden: Account may be restricted, banned, or geoblocked"
+        "403 Forbidden: Account may be restricted, banned, or geoblocked",
       );
     }
   }
 
   // Check 4: Query parameter issues
-  if (result.request && result.request.hasQueryParams && result.response?.status === 401) {
+  if (
+    result.request &&
+    result.request.hasQueryParams &&
+    result.response?.status === 401
+  ) {
     hypotheses.push(
-      "Query parameters present in signed path - verify they match exactly in HTTP request"
+      "Query parameters present in signed path - verify they match exactly in HTTP request",
     );
   }
 
   // If no specific issues found but still failing
   if (hypotheses.length === 0 && result.response && !result.response.success) {
     hypotheses.push(
-      "Authentication failed with no obvious configuration issues - check network connectivity and API status"
+      "Authentication failed with no obvious configuration issues - check network connectivity and API status",
     );
   }
 
   // If everything succeeded
-  if (result.response?.success && result.derivation.success && result.config.isCorrectUrl) {
-    hypotheses.push("✅ All checks passed - authentication is working correctly");
+  if (
+    result.response?.success &&
+    result.derivation.success &&
+    result.config.isCorrectUrl
+  ) {
+    hypotheses.push(
+      "✅ All checks passed - authentication is working correctly",
+    );
   }
 
   return hypotheses;

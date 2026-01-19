@@ -1,352 +1,197 @@
-# Polymarket Auto-Trade Bot - Implementation Summary
+# Startup Diagnostics Enhancement - Implementation Summary
 
 ## Overview
+This implementation enhances bot startup diagnostics to provide clear, actionable guidance when issues occur, particularly for authentication failures and mempool monitoring fallback.
 
-This document summarizes the comprehensive fixes implemented to enable reliable auto-trading for the Polymarket Sniper Bot. All requirements from the problem statement have been addressed.
+## Problem Addressed
+Users were confused during startup failures because:
+1. Auth failures showed `approvals_ok=true`, making users think approvals were the issue
+2. No clear indication of which blocker to fix first
+3. Mempool monitor fallback messages looked like errors
+4. Verbose logs without a single diagnostic summary
 
-## ✅ Changes Implemented
+## Solution Summary
 
-### 1. Strict Auth Mode State Machine
+### 1. Enhanced Preflight Summary (src/polymarket/preflight.ts)
+**Changes:**
+- Added visual status indicators (✅/❌/⚪) for each check
+- Introduced PRIMARY_BLOCKER logic with proper prioritization:
+  1. AUTH_FAILED (most actionable technical blocker)
+  2. APPROVALS_FAILED (secondary technical blocker)
+  3. GEOBLOCKED (compliance issue)
+  4. LIVE_TRADING_DISABLED (safety flag)
+  5. CHECKS_FAILED (catch-all)
+- Added explicit warning messages when auth is the primary blocker
+- Enhanced visual summary with separator lines
 
-**Three Authentication Modes:**
-
-- **Mode A (Explicit)**: Manual CLOB credentials via environment variables
-  - `POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, `POLYMARKET_API_PASSPHRASE`
-  - Direct use of provided API keys
-  
-- **Mode B (Derived)**: Auto-create/derive credentials from private key
-  - Set `CLOB_DERIVE_CREDS=true`
-  - Credentials cached in `/data/clob-creds.json` (or `./data/clob-creds.json` fallback)
-  - Reused across restarts, never spam-created
-  - 10-minute (configurable) backoff after creation failures
-  
-- **Mode C (Magic/Proxy)**: Signature type 1 or 2 with funderAddress
-  - `CLOB_SIGNATURE_TYPE=1` (POLY_PROXY) or `2` (POLY_GNOSIS_SAFE)
-  - `CLOB_FUNDER_ADDRESS` required - becomes the POLY_ADDRESS in headers
-  - For EOA (type 0), uses derived signer address
-
-**Preflight Logging:**
+**Before:**
 ```
-[CLOB][Auth] mode=MODE_B_DERIVED signatureType=0 signerAddress=0x9B9... funderAddress=none effectivePolyAddress=0x9B9...
-```
-
-### 2. Fixed CLOB Key Creation Flow
-
-**Improvements:**
-- Disk cache checked first → memory cache → server creation
-- Detailed error logging: status code, request shape, response payload
-- No retry on permanent 400 errors ("Could not create api key")
-- Retry with exponential backoff only for transient errors (network, 500s)
-- Fallback to local derive when server creation unavailable
-
-**Error Handling:**
-```typescript
-// On 400 error, blocks server creation for configurable period (default 10 min)
-// Falls back to local derive (deriveApiKey) instead
-// Logs exact error message from server
+[Preflight][Summary] signer=0x... auth_ok=false approvals_ok=true ready_to_trade=false
 ```
 
-### 3. Fixed Balance-Allowance Endpoint
-
-**Correct Parameters:**
-- Uses `asset_type=COLLATERAL` for USD balance checks
-- Includes `signature_type` in query params when signatureType is configured
-- Signed path includes query string for HMAC validation
-
-**Error Handling:**
-- 400 "Invalid asset type" → Fatal error, no retry, logs config issue
-- Other errors → Standard retry logic with fallback to on-chain reads
-
-### 4. Approvals for All Required Contracts
-
-**Three USDC.e Allowance Targets:**
-1. CTF (Conditional Token Framework): `0x4d97dcd97ec945f40cf65f87097ace5ea0476045`
-2. CTF Exchange: `0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E`
-3. Neg Risk CTF Exchange: `0xC5d563A36AE78145C45a50134d48A1215220f80a`
-
-**Two ERC1155 setApprovalForAll Targets:**
-1. CTF Exchange: `0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E`
-2. Neg Risk CTF Exchange: `0xC5d563A36AE78145C45a50134d48A1215220f80a`
-
-**Verification Logging:**
+**After:**
 ```
-[Preflight][Approvals][USDC] ✅ spender=0x4d97... allowance=1000000.00
-[Preflight][Approvals][USDC] ✅ spender=0x4bFb... allowance=1000000.00
-[Preflight][Approvals][USDC] ✅ spender=0xC5d5... allowance=1000000.00
-[Preflight][Approvals][ERC1155] ✅ operator=0x4bFb... approvedForAll=true
-[Preflight][Approvals][ERC1155] ✅ operator=0xC5d5... approvedForAll=true
+[Preflight][Summary] ========================================
+[Preflight][Summary] ❌ Auth: FAILED
+[Preflight][Summary] ✅ Approvals: PASSED
+[Preflight][Summary] ❌ Ready to Trade: NO
+[Preflight][Summary] ========================================
+[Preflight] ❌ READY_TO_TRADE=false PRIMARY_BLOCKER=AUTH_FAILED
+[Preflight] ⚠️  PRIMARY STARTUP BLOCKER: Authentication failed
+[Preflight] ⚠️  Note: Approvals may show as OK, but trading is blocked by auth failure
+[Preflight] ⚠️  Run 'npm run auth:diag' for detailed authentication diagnostics
 ```
 
-### 5. Gas Handling with Floors
+### 2. Improved Mempool Monitor Messages (src/services/mempool-monitor.service.ts)
+**Changes:**
+- Replaced terse 3-line message with comprehensive 20-line explanation
+- Listed common RPC providers that don't support mempool monitoring
+- Clarified this is NORMAL and EXPECTED, not an error
+- Explained fallback to API polling (reliable alternative)
+- Provided upgrade path for real-time mempool monitoring
+- Moved subscription setup inside try block for accuracy
+- Added explanatory comment about subscription dependency on capability check
 
-**EIP-1559 Strategy (Already Implemented):**
-- Minimum priority fee: 30 gwei (configurable via `POLY_MAX_PRIORITY_FEE_GWEI`)
-- Minimum max fee: 60 gwei (configurable via `POLY_MAX_FEE_GWEI`)
-- Formula: `maxFeePerGas = max(baseFee * 2 + priority, configured_min)`
-- Multiplier support: `POLY_GAS_MULTIPLIER=1.2` (20% increase)
-
-**Retry Logic:**
-- Exponential backoff for tx failures
-- Configurable max attempts: `APPROVALS_MAX_RETRY_ATTEMPTS=3`
-
-### 6. Relayer Integration (Already Implemented)
-
-**Optional Gasless Approvals:**
-- Enabled with `POLY_BUILDER_API_KEY`, `POLY_BUILDER_API_SECRET`, `POLY_BUILDER_API_PASSPHRASE`
-- Or with `SIGNER_URL` + optional `SIGNER_AUTH_TOKEN`
-- Set `USE_RELAYER_FOR_APPROVALS=true` (default) to enable
-- Falls back to direct RPC if relayer unavailable
-- Does NOT block trading if relayer fails
-
-### 7. Build & Documentation
-
-**New .env.example:**
-- 210+ lines of comprehensive documentation
-- Documents all three auth modes with examples
-- POLY_ADDRESS resolution rules
-- Gas tuning parameters
-- Required approvals checklist
-- All configuration options with defaults
-
-**Build Improvements:**
-- TypeScript target: ES2022 (supports BigInt, replaceAll, etc.)
-- Docker: node:20-alpine (compliant with requirements)
-- .dockerignore for optimized builds
-
-## 📝 Configuration Guide
-
-### Minimal Configuration (Mode B - Derived Creds)
-
-```bash
-# Required
-RPC_URL=https://polygon-rpc.com
-PRIVATE_KEY=your_private_key_here  # No 0x prefix
-
-# Enable derived credentials
-CLOB_DERIVE_CREDS=true
-
-# Enable live trading (exact string required)
-ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS
-
-# Optional - adjust gas if needed
-POLY_MAX_PRIORITY_FEE_GWEI=30
-POLY_MAX_FEE_GWEI=60
+**Before:**
+```
+[Monitor] RPC endpoint does not support eth_newPendingTransactionFilter method.
+[Monitor] Mempool monitoring via pending transaction subscription is disabled.
+[Monitor] The bot will continue to operate using Polymarket API polling.
 ```
 
-### Full Configuration (Mode A - Explicit Creds + Relayer)
-
-```bash
-# Network
-RPC_URL=https://polygon-rpc.com
-PRIVATE_KEY=your_private_key_here
-
-# Mode A: Explicit CLOB credentials
-POLYMARKET_API_KEY=your_api_key
-POLYMARKET_API_SECRET=your_api_secret
-POLYMARKET_API_PASSPHRASE=your_passphrase
-
-# Relayer (optional gasless approvals)
-POLY_BUILDER_API_KEY=your_builder_key
-POLY_BUILDER_API_SECRET=your_builder_secret
-POLY_BUILDER_API_PASSPHRASE=your_builder_passphrase
-USE_RELAYER_FOR_APPROVALS=true
-
-# Trading
-ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS
-
-# Approvals
-APPROVALS_AUTO=true
-APPROVAL_MIN_USDC=1000
+**After:**
+```
+[Monitor] ===================================================================
+[Monitor] ℹ️  RPC Capability: eth_newPendingTransactionFilter NOT supported
+[Monitor] ===================================================================
+[Monitor] This RPC endpoint does not support real-time mempool monitoring.
+[Monitor] This is expected and NORMAL for many RPC providers, including:
+[Monitor]   • Alchemy Free Tier
+[Monitor]   • Infura Free Tier
+[Monitor]   • QuickNode (some plans)
+[Monitor]   • Most public RPC endpoints
+[Monitor] 
+[Monitor] ✅ FALLBACK MODE: The bot will use Polymarket API polling instead.
+[Monitor] This provides reliable trade detection via the Polymarket API,
+[Monitor] checking for recent activity at regular intervals.
+[Monitor] 
+[Monitor] ℹ️  For real-time mempool monitoring, you can upgrade to:
+[Monitor]   • Alchemy Growth or Scale plan with eth_subscribe
+[Monitor]   • Infura with WebSocket support
+[Monitor]   • QuickNode with stream add-on
+[Monitor]   • Your own Polygon node
+[Monitor] ===================================================================
 ```
 
-### Proxy Configuration (Mode C)
+### 3. Enhanced Documentation
 
-```bash
-# Network
-RPC_URL=https://polygon-rpc.com
-PRIVATE_KEY=your_proxy_private_key
+#### README.md
+Added new "Understanding Startup Blockers" section (100+ lines) with:
+- Detailed explanation of preflight summary
+- Definition and examples of each PRIMARY_BLOCKER
+- Clear distinction between auth and approvals (independent checks)
+- Step-by-step fix instructions for each blocker
+- Example Auth Story JSON with annotations
+- Common questions and answers
 
-# Mode C: Proxy/Safe signatures
-CLOB_SIGNATURE_TYPE=1  # 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE
-CLOB_FUNDER_ADDRESS=0xYourFunderAddress  # Actual wallet funding trades
+#### STARTUP_DIAGNOSTICS.md (NEW FILE)
+Created comprehensive 300+ line troubleshooting guide with:
+- Complete startup flow explanation (5 phases)
+- How to read preflight summary (success and failure cases)
+- Detailed explanation of each PRIMARY_BLOCKER with:
+  - What it means
+  - Common causes
+  - Solutions
+  - Diagnostic commands
+- Mempool monitor status interpretation
+- Step-by-step troubleshooting workflow
+- Common questions and answers
+- Getting help section
 
-# Credentials (can use Mode A or B)
-CLOB_DERIVE_CREDS=true
+## Design Principles Followed
 
-# Trading
-ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS
-```
+1. **Minimize, don't maximize** - Only log what moves diagnosis forward
+2. **Single Auth Story per run** - All auth attempts in one JSON (existing pattern maintained)
+3. **No secrets** - Only suffixes, hashes, lengths (existing pattern maintained)
+4. **Clear visual hierarchy** - Icons, boxed sections, PRIMARY_BLOCKER
+5. **Actionable guidance** - Direct users to specific commands
+6. **Proper prioritization** - Technical blockers before policy blockers
 
-## 🧪 Testing the Implementation
+## Files Changed
 
-### 1. Test Preflight Command
+1. **src/polymarket/preflight.ts** (40 lines modified)
+   - Added PRIMARY_BLOCKER determination logic
+   - Enhanced logPreflightSummary() with visual indicators
+   - Added explicit auth failure warning messages
 
-```bash
-# Set minimal required env vars
-export RPC_URL="https://polygon-rpc.com"
-export PRIVATE_KEY="your_test_key"
-export CLOB_DERIVE_CREDS="true"
-export ARB_LIVE_TRADING="false"  # Test mode
+2. **src/services/mempool-monitor.service.ts** (30 lines modified)
+   - Expanded RPC capability fallback message
+   - Moved subscription setup inside try block
+   - Added explanatory comments
 
-# Run preflight
-npm run preflight
+3. **README.md** (100+ lines added)
+   - New "Understanding Startup Blockers" section
+   - Examples and explanations for each blocker
+   - Auth Story JSON documentation
 
-# Check exit code
-echo $?
-# Non-zero = not ready to trade (expected without real network)
-# Zero = ready to trade
-```
+4. **STARTUP_DIAGNOSTICS.md** (300+ lines, NEW FILE)
+   - Comprehensive troubleshooting guide
+   - Step-by-step workflows
+   - Common questions and answers
 
-### 2. Verify Docker Build
+## Testing
 
-```bash
-docker build -t polymarket-bot .
-```
+- ✅ TypeScript compilation successful (no errors)
+- ✅ Linter passes (auto-fixed formatting issues)
+- ✅ PRIMARY_BLOCKER logic verified in compiled output
+- ✅ Correct priority order: AUTH_FAILED → APPROVALS_FAILED → GEOBLOCKED → LIVE_TRADING_DISABLED
+- ✅ Enhanced summary function present in build
+- ✅ Subscription setup only when capability check passes
+- ✅ No changes to existing auth logic (credential-derivation-v2.ts, auth-story.ts unchanged)
 
-### 3. Run in Container
+## No Breaking Changes
 
-```bash
-docker run --rm \
-  -e RPC_URL="https://polygon-rpc.com" \
-  -e PRIVATE_KEY="your_key" \
-  -e CLOB_DERIVE_CREDS="true" \
-  -e ARB_LIVE_TRADING="I_UNDERSTAND_THE_RISKS" \
-  -v $(pwd)/data:/data \
-  polymarket-bot
-```
+- All existing functionality preserved
+- Only improved messaging and diagnostic output
+- Backward compatible with existing logs
+- Auth Story JSON format unchanged
+- No API changes
+- No configuration changes required
 
-## 🔍 Troubleshooting
+## Impact
 
-### CLOB 401 Unauthorized
+**User Experience:**
+- Clear identification of PRIMARY_BLOCKER
+- No more confusion about why approvals show OK when auth fails
+- Mempool fallback message no longer looks like an error
+- Single comprehensive guide for troubleshooting
 
-**Check:**
-1. Auth mode logged at startup: `[CLOB][Auth] mode=...`
-2. Effective POLY_ADDRESS: `effectivePolyAddress=...`
-3. For Mode C, verify funderAddress is set correctly
+**Developer Experience:**
+- Enhanced logs with visual indicators
+- Clear priority order for fixing issues
+- Comprehensive documentation for support
 
-**Solutions:**
-- Mode A: Verify API key/secret/passphrase are correct
-- Mode B: Check if credentials cached in `/data/clob-creds.json` - delete if stale
-- Mode C: Ensure `CLOB_FUNDER_ADDRESS` matches the actual funder wallet
+**Support/Maintenance:**
+- Easier to diagnose user issues from logs
+- PRIMARY_BLOCKER immediately identifies the problem
+- Single troubleshooting guide to reference
 
-### CLOB 400 "Could not create api key"
+## Follow-up Opportunities
 
-**Cause:** Server cannot create API key for your wallet (rate limiting, already exists, etc.)
+While not required for this fix, future enhancements could include:
+1. Add `--verbose` flag for detailed step-by-step diagnostics
+2. Auto-detect RPC provider type and provide provider-specific guidance
+3. Add telemetry to track most common PRIMARY_BLOCKER values
+4. Create interactive troubleshooting CLI tool
+5. Add health check endpoint for monitoring
 
-**Solution:**
-- Bot automatically falls back to local derive
-- Blocks server creation for 10 minutes (configurable: `AUTH_DERIVE_RETRY_SECONDS`)
-- Check logs for exact error message: `[CLOB] API key creation failed: ...`
+## Conclusion
 
-### Approvals Failing
+This implementation successfully addresses all issues from the original issue #1:
+- ✅ Clear auth failure messaging (PRIMARY_BLOCKER=AUTH_FAILED)
+- ✅ Separation of auth and approvals concerns (independent checks explained)
+- ✅ Improved mempool monitor fallback messaging (comprehensive explanation)
+- ✅ Single diagnostic summary (Auth Story JSON + PRIMARY_BLOCKER)
+- ✅ Comprehensive documentation (README + STARTUP_DIAGNOSTICS.md)
 
-**Check approval status:**
-```
-[Preflight][Approvals][USDC] ❌ spender=0x... allowance=0.00
-```
-
-**Solutions:**
-- Set `APPROVALS_AUTO=true` to auto-approve
-- Ensure `ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS` is set
-- Check wallet has sufficient POL for gas
-- If using relayer, verify `POLY_BUILDER_API_KEY` credentials
-
-### Gas Price Too Low
-
-**Error:** "transaction gas price below minimum ... minimum needed 25 gwei"
-
-**Solution:**
-```bash
-POLY_MAX_PRIORITY_FEE_GWEI=30  # Increase if needed
-POLY_MAX_FEE_GWEI=60           # Increase if needed
-POLY_GAS_MULTIPLIER=1.5        # Add 50% buffer
-```
-
-## 📊 Expected Preflight Output
-
-### Success (READY_TO_TRADE=true)
-
-```
-[CLOB][Auth] mode=MODE_B_DERIVED signatureType=0 signerAddress=0x9B9... effectivePolyAddress=0x9B9...
-[CLOB] Using disk-cached derived credentials.
-[CLOB] Auth header presence: key=✅ secret=✅ sig=✅ timestamp=✅
-[Preflight] signer=0x9B9... effective_trading_address=0x9B9... public_key=none
-[Preflight] contracts usdc=0x2791... ctf=0x4d97... ctf_exchange=0x4bFb... neg_risk_exchange=0xC5d5...
-[Preflight][Approvals] USDC balance=1500.00 owner=0x9B9...
-[Preflight][Approvals][USDC] ✅ spender=0x4d97... allowance=1000000.00
-[Preflight][Approvals][USDC] ✅ spender=0x4bFb... allowance=1000000.00
-[Preflight][Approvals][USDC] ✅ spender=0xC5d5... allowance=1000000.00
-[Preflight][Approvals][ERC1155] ✅ operator=0x4bFb... approvedForAll=true
-[Preflight][Approvals][ERC1155] ✅ operator=0xC5d5... approvedForAll=true
-[Preflight] READY_TO_TRADE=true reason=OK
-[Preflight][Summary] signer=0x9B9... relayer_enabled=false approvals_ok=true auth_ok=true ready_to_trade=true
-```
-
-### Failure (READY_TO_TRADE=false)
-
-```
-[CLOB][Auth] mode=MODE_B_DERIVED signatureType=0 signerAddress=0x9B9... effectivePolyAddress=0x9B9...
-[CLOB] Attempting to create/derive API credentials from server...
-[CLOB] API key creation failed: status=400 error=Could not create api key
-[CLOB] Failed to create API key (400 error); falling back to local derive. Will retry in 600s.
-[CLOB] Auth preflight failed; switching to detect-only.
-[Preflight][Approvals][USDC] ❌ spender=0x4d97... allowance=0.00
-[Preflight][Approvals] APPROVALS_AUTO=false; staying detect-only.
-[Preflight] READY_TO_TRADE=false reason=CHECKS_FAILED
-[Preflight][Summary] signer=0x9B9... approvals_ok=false auth_ok=false ready_to_trade=false
-```
-
-## 🎯 Acceptance Test Checklist
-
-- [x] Bot derives or loads credentials from cache
-- [x] CLOB preflight passes without 401/403
-- [x] Approvals verified for all 3 contracts (CTF, CTF Exchange, Neg Risk)
-- [x] Gas fees use EIP-1559 with 30 gwei priority floor
-- [x] Preflight exits 0 when READY_TO_TRADE=true
-- [x] Preflight exits non-zero when checks fail
-- [x] Docker builds with node:20-alpine
-- [x] .env.example documents all configuration
-- [x] Relayer integration works (optional, doesn't block trading)
-
-## 📚 Additional Resources
-
-**Files to Review:**
-- `.env.example` - Complete configuration reference
-- `src/infrastructure/clob-client.factory.ts` - Auth mode implementation
-- `src/utils/credential-storage.util.ts` - Credential caching logic
-- `src/polymarket/approvals.ts` - Approval management
-- `src/utils/gas.ts` - Gas fee calculation
-
-**Environment Variables Reference:**
-- All variables documented in `.env.example`
-- Search for specific variable name in file for full documentation
-
-**Debugging:**
-- Enable matrix testing: `CLOB_PREFLIGHT_MATRIX=true`
-- Force auth check: `CLOB_AUTH_FORCE=true`
-- Test multiple signature types, encoding modes
-
-## 🔐 Security Notes
-
-1. **Never commit `.env` files** - Use `.env.example` as template
-2. **Protect private keys** - Store securely, never in code
-3. **API credentials** - Cached credentials in `/data/` should be in secure volume
-4. **Relayer credentials** - Builder API keys have same security requirements as CLOB keys
-5. **Gas limits** - Set reasonable maximums to prevent excessive spending
-
-## ✅ Implementation Complete
-
-All requirements from the problem statement have been addressed:
-- ✅ Strict auth mode state machine (Mode A/B/C)
-- ✅ Persistent credential caching
-- ✅ POLY_ADDRESS resolution with funderAddress
-- ✅ Enhanced diagnostics and logging
-- ✅ Balance-allowance endpoint fixes
-- ✅ Approvals for all 3 contracts
-- ✅ Gas handling with floors
-- ✅ Relayer integration
-- ✅ Comprehensive documentation
-- ✅ Docker build compliance
-- ✅ Preflight command with proper exit codes
-
-The bot is now ready for production testing with real credentials and network connectivity.
+The changes are minimal, surgical, and follow all existing patterns in the codebase.

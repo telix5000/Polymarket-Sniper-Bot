@@ -169,7 +169,12 @@ export class AdaptiveTradeLearner {
   /**
    * Record a new trade
    */
-  recordTrade(trade: Omit<TradeRecord, "id" | "hourOfDay" | "dayOfWeek" | "volatilityBucket">): string {
+  recordTrade(
+    trade: Omit<
+      TradeRecord,
+      "id" | "hourOfDay" | "dayOfWeek" | "volatilityBucket"
+    >,
+  ): string {
     const id = `trade_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const date = new Date(trade.timestamp);
 
@@ -188,7 +193,10 @@ export class AdaptiveTradeLearner {
       this.trades = this.trades.slice(-this.config.maxTradeHistory);
     }
 
-    this.log("debug", `[Learn] 📝 Recorded trade ${id} for market ${trade.marketId.slice(0, 12)}...`);
+    this.log(
+      "debug",
+      `[Learn] 📝 Recorded trade ${id} for market ${trade.marketId.slice(0, 12)}...`,
+    );
     return id;
   }
 
@@ -250,22 +258,35 @@ export class AdaptiveTradeLearner {
     const marketStats = this.marketStats.get(params.marketId);
     if (marketStats) {
       // Check if market is on avoid list
-      if (marketStats.isAvoided && marketStats.avoidUntil && marketStats.avoidUntil > now) {
+      if (
+        marketStats.isAvoided &&
+        marketStats.avoidUntil &&
+        marketStats.avoidUntil > now
+      ) {
         const remainingMs = marketStats.avoidUntil - now;
         const remainingMin = Math.ceil(remainingMs / 60000);
         return {
           shouldTrade: false,
           confidence: 0,
-          reasons: [`❌ Market avoided (${marketStats.consecutiveLosses} losses, ${remainingMin}m remaining)`],
+          reasons: [
+            `❌ Market avoided (${marketStats.consecutiveLosses} losses, ${remainingMin}m remaining)`,
+          ],
           adjustments,
         };
       }
 
       // Clear avoid status if expired
-      if (marketStats.isAvoided && marketStats.avoidUntil && marketStats.avoidUntil <= now) {
+      if (
+        marketStats.isAvoided &&
+        marketStats.avoidUntil &&
+        marketStats.avoidUntil <= now
+      ) {
         marketStats.isAvoided = false;
         marketStats.avoidUntil = undefined;
-        this.log("info", `[Learn] ✅ Market ${params.marketId.slice(0, 12)}... removed from avoid list`);
+        this.log(
+          "info",
+          `[Learn] ✅ Market ${params.marketId.slice(0, 12)}... removed from avoid list`,
+        );
       }
 
       // Adjust confidence based on market performance
@@ -273,13 +294,17 @@ export class AdaptiveTradeLearner {
         confidence = marketStats.confidenceScore;
 
         if (marketStats.winRate < this.config.minWinRate) {
-          reasons.push(`⚠️  Low win rate (${(marketStats.winRate * 100).toFixed(0)}%)`);
+          reasons.push(
+            `⚠️  Low win rate (${(marketStats.winRate * 100).toFixed(0)}%)`,
+          );
           adjustments.sizeMultiplier *= 0.5;
           adjustments.tighterStopLoss = true;
         }
 
         if (marketStats.winRate > 0.7) {
-          reasons.push(`✅ High win rate (${(marketStats.winRate * 100).toFixed(0)}%)`);
+          reasons.push(
+            `✅ High win rate (${(marketStats.winRate * 100).toFixed(0)}%)`,
+          );
           adjustments.sizeMultiplier *= 1.2;
         }
       }
@@ -288,14 +313,18 @@ export class AdaptiveTradeLearner {
     // Check edge threshold
     if (params.edgeBps < this.globalStats.effectiveMinEdgeBps) {
       confidence -= 20;
-      reasons.push(`⚠️  Edge below threshold (${params.edgeBps} < ${this.globalStats.effectiveMinEdgeBps}bps)`);
+      reasons.push(
+        `⚠️  Edge below threshold (${params.edgeBps} < ${this.globalStats.effectiveMinEdgeBps}bps)`,
+      );
       adjustments.sizeMultiplier *= 0.7;
     }
 
     // Check spread threshold
     if (params.spreadBps > this.globalStats.effectiveMaxSpreadBps) {
       confidence -= 15;
-      reasons.push(`⚠️  Spread above threshold (${params.spreadBps} > ${this.globalStats.effectiveMaxSpreadBps}bps)`);
+      reasons.push(
+        `⚠️  Spread above threshold (${params.spreadBps} > ${this.globalStats.effectiveMaxSpreadBps}bps)`,
+      );
       adjustments.sizeMultiplier *= 0.8;
     }
 
@@ -325,7 +354,10 @@ export class AdaptiveTradeLearner {
     }
 
     // Ensure size multiplier is reasonable
-    adjustments.sizeMultiplier = Math.max(0.25, Math.min(2.0, adjustments.sizeMultiplier));
+    adjustments.sizeMultiplier = Math.max(
+      0.25,
+      Math.min(2.0, adjustments.sizeMultiplier),
+    );
 
     return {
       shouldTrade,
@@ -352,12 +384,18 @@ export class AdaptiveTradeLearner {
 
     if (winningTrades.length >= 10) {
       // Calculate 25th percentile of winning trade edges
-      const sortedEdges = winningTrades.map((t) => t.edgeBps).sort((a, b) => a - b);
-      minEdgeBps = sortedEdges[Math.floor(sortedEdges.length * 0.25)] || minEdgeBps;
+      const sortedEdges = winningTrades
+        .map((t) => t.edgeBps)
+        .sort((a, b) => a - b);
+      minEdgeBps =
+        sortedEdges[Math.floor(sortedEdges.length * 0.25)] || minEdgeBps;
 
       // Calculate 75th percentile of winning trade spreads
-      const sortedSpreads = winningTrades.map((t) => t.spreadBps).sort((a, b) => a - b);
-      maxSpreadBps = sortedSpreads[Math.floor(sortedSpreads.length * 0.75)] || maxSpreadBps;
+      const sortedSpreads = winningTrades
+        .map((t) => t.spreadBps)
+        .sort((a, b) => a - b);
+      maxSpreadBps =
+        sortedSpreads[Math.floor(sortedSpreads.length * 0.75)] || maxSpreadBps;
     }
 
     // Analyze hours
@@ -418,13 +456,27 @@ export class AdaptiveTradeLearner {
 
     const winIcon = g.winRate >= 0.5 ? "✅" : "⚠️";
     this.log("info", `   Total Trades: ${g.totalTrades}`);
-    this.log("info", `   ${winIcon} Win Rate: ${(g.winRate * 100).toFixed(1)}% (${g.wins}W/${g.losses}L/${g.breakevens}BE)`);
-    this.log("info", `   💰 Total P/L: $${g.totalProfitUsd >= 0 ? "+" : ""}${g.totalProfitUsd.toFixed(2)}`);
-    this.log("info", `   📈 Avg/Trade: $${g.avgProfitPerTrade >= 0 ? "+" : ""}${g.avgProfitPerTrade.toFixed(2)}`);
+    this.log(
+      "info",
+      `   ${winIcon} Win Rate: ${(g.winRate * 100).toFixed(1)}% (${g.wins}W/${g.losses}L/${g.breakevens}BE)`,
+    );
+    this.log(
+      "info",
+      `   💰 Total P/L: $${g.totalProfitUsd >= 0 ? "+" : ""}${g.totalProfitUsd.toFixed(2)}`,
+    );
+    this.log(
+      "info",
+      `   📈 Avg/Trade: $${g.avgProfitPerTrade >= 0 ? "+" : ""}${g.avgProfitPerTrade.toFixed(2)}`,
+    );
     this.log("info", `   ⏰ Best Hour: ${g.bestHourOfDay}:00 UTC`);
-    this.log("info", `   📊 Min Edge: ${g.effectiveMinEdgeBps}bps | Max Spread: ${g.effectiveMaxSpreadBps}bps`);
+    this.log(
+      "info",
+      `   📊 Min Edge: ${g.effectiveMinEdgeBps}bps | Max Spread: ${g.effectiveMaxSpreadBps}bps`,
+    );
 
-    const avoidedMarkets = Array.from(this.marketStats.values()).filter((m) => m.isAvoided);
+    const avoidedMarkets = Array.from(this.marketStats.values()).filter(
+      (m) => m.isAvoided,
+    );
     if (avoidedMarkets.length > 0) {
       this.log("info", "");
       this.log("warn", `   ⛔ Avoided Markets: ${avoidedMarkets.length}`);
@@ -459,7 +511,10 @@ export class AdaptiveTradeLearner {
     this.trades = state.trades;
     this.marketStats = new Map(state.marketStats);
     this.globalStats = state.globalStats;
-    this.log("info", `[Learn] ✅ Loaded ${this.trades.length} trades, ${this.marketStats.size} markets`);
+    this.log(
+      "info",
+      `[Learn] ✅ Loaded ${this.trades.length} trades, ${this.marketStats.size} markets`,
+    );
   }
 
   /**
@@ -531,13 +586,18 @@ export class AdaptiveTradeLearner {
     // Update averages (exponential moving average with recency weight)
     const alpha = this.config.recencyWeight;
     stats.avgEdgeBps = alpha * trade.edgeBps + (1 - alpha) * stats.avgEdgeBps;
-    stats.avgSpreadBps = alpha * trade.spreadBps + (1 - alpha) * stats.avgSpreadBps;
+    stats.avgSpreadBps =
+      alpha * trade.spreadBps + (1 - alpha) * stats.avgSpreadBps;
 
     if (trade.profitBps !== undefined) {
       if (trade.outcome === "win") {
-        stats.avgProfitBps = alpha * trade.profitBps + (1 - alpha) * (stats.avgProfitBps || trade.profitBps);
+        stats.avgProfitBps =
+          alpha * trade.profitBps +
+          (1 - alpha) * (stats.avgProfitBps || trade.profitBps);
       } else if (trade.outcome === "loss") {
-        stats.avgLossBps = alpha * Math.abs(trade.profitBps) + (1 - alpha) * (stats.avgLossBps || Math.abs(trade.profitBps));
+        stats.avgLossBps =
+          alpha * Math.abs(trade.profitBps) +
+          (1 - alpha) * (stats.avgLossBps || Math.abs(trade.profitBps));
       }
     }
 
@@ -573,9 +633,15 @@ export class AdaptiveTradeLearner {
     const completedTrades = this.trades.filter((t) => t.outcome !== "pending");
 
     this.globalStats.totalTrades = completedTrades.length;
-    this.globalStats.wins = completedTrades.filter((t) => t.outcome === "win").length;
-    this.globalStats.losses = completedTrades.filter((t) => t.outcome === "loss").length;
-    this.globalStats.breakevens = completedTrades.filter((t) => t.outcome === "breakeven").length;
+    this.globalStats.wins = completedTrades.filter(
+      (t) => t.outcome === "win",
+    ).length;
+    this.globalStats.losses = completedTrades.filter(
+      (t) => t.outcome === "loss",
+    ).length;
+    this.globalStats.breakevens = completedTrades.filter(
+      (t) => t.outcome === "breakeven",
+    ).length;
     this.globalStats.winRate =
       this.globalStats.totalTrades > 0
         ? this.globalStats.wins / this.globalStats.totalTrades
@@ -591,10 +657,13 @@ export class AdaptiveTradeLearner {
         : 0;
 
     // Calculate average hold time
-    const tradesWithHoldTime = completedTrades.filter((t) => t.holdTimeMs !== undefined);
+    const tradesWithHoldTime = completedTrades.filter(
+      (t) => t.holdTimeMs !== undefined,
+    );
     this.globalStats.avgHoldTimeMs =
       tradesWithHoldTime.length > 0
-        ? tradesWithHoldTime.reduce((sum, t) => sum + (t.holdTimeMs || 0), 0) / tradesWithHoldTime.length
+        ? tradesWithHoldTime.reduce((sum, t) => sum + (t.holdTimeMs || 0), 0) /
+          tradesWithHoldTime.length
         : 0;
 
     // Find best and worst hours
@@ -626,14 +695,21 @@ export class AdaptiveTradeLearner {
     const winningTrades = completedTrades.filter((t) => t.outcome === "win");
     if (winningTrades.length >= 10) {
       const edges = winningTrades.map((t) => t.edgeBps).sort((a, b) => a - b);
-      this.globalStats.effectiveMinEdgeBps = edges[Math.floor(edges.length * 0.2)] || 50;
+      this.globalStats.effectiveMinEdgeBps =
+        edges[Math.floor(edges.length * 0.2)] || 50;
 
-      const spreads = winningTrades.map((t) => t.spreadBps).sort((a, b) => a - b);
-      this.globalStats.effectiveMaxSpreadBps = spreads[Math.floor(spreads.length * 0.8)] || 200;
+      const spreads = winningTrades
+        .map((t) => t.spreadBps)
+        .sort((a, b) => a - b);
+      this.globalStats.effectiveMaxSpreadBps =
+        spreads[Math.floor(spreads.length * 0.8)] || 200;
     }
   }
 
-  private log(level: "info" | "warn" | "error" | "debug", message: string): void {
+  private log(
+    level: "info" | "warn" | "error" | "debug",
+    message: string,
+  ): void {
     if (this.logger) {
       this.logger[level](message);
     }
