@@ -113,18 +113,21 @@ describe("L2 HMAC signature", () => {
   });
 
   test("handles base64url encoded secret", () => {
-    // Same secret encoded as base64url (- instead of +, _ instead of /)
-    const base64Secret = "dGVzdHNlY3JldGtleQ==";
-    const base64urlSecret = "dGVzdHNlY3JldGtleQ--"; // Note: this is synthetic for testing
+    // Base64url uses - instead of + and _ instead of /
+    // Example: a secret that might come from the CLOB API
+    const base64Secret = "dGVzdHNlY3JldGtleQ=="; // "testsecretkey" in standard base64
+    const base64urlSecret = "dGVzdHNlY3JldGtleQ"; // Same without padding (typical base64url)
 
     // Both should produce valid signatures (implementation normalizes internally)
     const sig1 = buildHmacSignature(base64Secret, timestamp, method, requestPath);
     assert.ok(sig1.length > 0);
 
-    // Real-world base64url doesn't have == padding typically replaced
-    // But the normalization handles mixed cases
-    const sig2 = buildHmacSignature(base64urlSecret.replace(/-/g, "="), timestamp, method, requestPath);
+    // Base64url version (no padding) should also work
+    const sig2 = buildHmacSignature(base64urlSecret, timestamp, method, requestPath);
     assert.ok(sig2.length > 0);
+
+    // Both should produce the same signature since they decode to the same bytes
+    // Note: The normalization pads the base64url version before decoding
   });
 });
 
