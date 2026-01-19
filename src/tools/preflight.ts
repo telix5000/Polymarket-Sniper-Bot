@@ -42,10 +42,15 @@ async function main(): Promise<void> {
   const rpcUrl = required("RPC_URL");
   const privateKey = required("PRIVATE_KEY");
   const publicKey = readEnv("PUBLIC_KEY");
-  const clobDeriveEnabled =
-    readEnv("CLOB_DERIVE_CREDS") === "true" ||
-    readEnv("CLOB_DERIVE_API_KEY") === "true";
   const clobCreds = getClobCreds();
+
+  // Following pmxt methodology: auto-derive credentials when not explicitly provided
+  // Only disable derivation if CLOB_DERIVE_CREDS is explicitly set to "false"
+  const deriveDisabled = readEnv("CLOB_DERIVE_CREDS") === "false";
+  const hasExplicitCreds = Boolean(
+    clobCreds.key && clobCreds.secret && clobCreds.passphrase,
+  );
+  const clobDeriveEnabled = !deriveDisabled && !hasExplicitCreds;
   const collateralTokenDecimals = Number(
     readEnv("COLLATERAL_TOKEN_DECIMALS") ?? 6,
   );
