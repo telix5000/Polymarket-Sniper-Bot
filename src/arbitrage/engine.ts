@@ -14,7 +14,10 @@ import type {
   ArbDiagnostics,
   CandidateSnapshot,
 } from "./strategy/intra-market.strategy";
-import { getAdaptiveLearner, type AdaptiveTradeLearner } from "./learning/adaptive-learner";
+import {
+  getAdaptiveLearner,
+  type AdaptiveTradeLearner,
+} from "./learning/adaptive-learner";
 
 export class ArbitrageEngine {
   private readonly provider: MarketDataProvider;
@@ -29,7 +32,10 @@ export class ArbitrageEngine {
   private running = false;
   private activeTrades = 0;
   /** Track pending trades for outcome recording */
-  private pendingTrades: Map<string, { tradeId: string; opportunity: Opportunity; startTime: number }> = new Map();
+  private pendingTrades: Map<
+    string,
+    { tradeId: string; opportunity: Opportunity; startTime: number }
+  > = new Map();
 
   constructor(params: {
     provider: MarketDataProvider;
@@ -55,7 +61,9 @@ export class ArbitrageEngine {
     if (this.running) return;
     this.running = true;
     this.logger.info("[ARB] ✅ Arbitrage engine started");
-    this.logger.info("[ARB] 📊 Adaptive learning enabled - will learn from trade outcomes");
+    this.logger.info(
+      "[ARB] 📊 Adaptive learning enabled - will learn from trade outcomes",
+    );
     while (this.running) {
       const startedAt = Date.now();
       await this.scanOnce(startedAt);
@@ -176,7 +184,8 @@ export class ArbitrageEngine {
     }
 
     // Apply learner's size adjustment
-    const adjustedSize = opportunity.sizeUsd * learnerEval.adjustments.sizeMultiplier;
+    const adjustedSize =
+      opportunity.sizeUsd * learnerEval.adjustments.sizeMultiplier;
 
     const decision = this.riskManager.canExecute(opportunity, now);
     if (!decision.allowed) {
@@ -224,7 +233,8 @@ export class ArbitrageEngine {
       noAsk: opportunity.noAsk,
       sizeUsd: adjustedSize,
       edgeBps: opportunity.edgeBps,
-      estProfitUsd: opportunity.estProfitUsd * learnerEval.adjustments.sizeMultiplier,
+      estProfitUsd:
+        opportunity.estProfitUsd * learnerEval.adjustments.sizeMultiplier,
     };
 
     this.logger.info(

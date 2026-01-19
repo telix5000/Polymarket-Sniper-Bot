@@ -97,7 +97,11 @@ export class SingleFlightDerivation {
   shouldRetry(): { canRetry: boolean; waitMs: number; reason?: string } {
     // If we have cached successful credentials, no need to retry
     if (this.state.cachedResult?.success) {
-      return { canRetry: false, waitMs: 0, reason: "Cached credentials available" };
+      return {
+        canRetry: false,
+        waitMs: 0,
+        reason: "Cached credentials available",
+      };
     }
 
     // If no previous failure, allow retry
@@ -266,7 +270,11 @@ export function getSingleFlightDerivation(
   structuredLogger?: StructuredLogger,
 ): SingleFlightDerivation {
   if (!globalSingleFlight) {
-    globalSingleFlight = new SingleFlightDerivation({}, logger, structuredLogger);
+    globalSingleFlight = new SingleFlightDerivation(
+      {},
+      logger,
+      structuredLogger,
+    );
   }
   return globalSingleFlight;
 }

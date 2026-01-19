@@ -98,7 +98,10 @@ export class SimpleAuth {
    */
   async authenticate(): Promise<SimpleAuthResult> {
     const address = this.wallet.address;
-    this.log("info", `[Auth] 🔐 Authenticating wallet ${address.slice(0, 10)}...`);
+    this.log(
+      "info",
+      `[Auth] 🔐 Authenticating wallet ${address.slice(0, 10)}...`,
+    );
 
     // Step 1: Check cache
     if (!this.skipCache) {
@@ -111,7 +114,10 @@ export class SimpleAuth {
           this.cachedCreds = cached;
           return { success: true, creds: cached, cached: true };
         }
-        this.log("warn", "[Auth] ⚠️  Cached credentials invalid, will re-derive");
+        this.log(
+          "warn",
+          "[Auth] ⚠️  Cached credentials invalid, will re-derive",
+        );
         this.clearCache();
       }
     }
@@ -132,7 +138,8 @@ export class SimpleAuth {
         this.log("error", "[Auth] ❌ Credentials incomplete or missing");
         return {
           success: false,
-          error: "Credentials incomplete - wallet may need to trade on Polymarket first",
+          error:
+            "Credentials incomplete - wallet may need to trade on Polymarket first",
         };
       }
 
@@ -153,16 +160,26 @@ export class SimpleAuth {
       this.cachedCreds = creds;
 
       const keySuffix = creds.key.slice(-6);
-      this.log("info", `[Auth] ✅ Authentication successful (key: ...${keySuffix})`);
+      this.log(
+        "info",
+        `[Auth] ✅ Authentication successful (key: ...${keySuffix})`,
+      );
 
       return { success: true, creds, cached: false };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const status = (error as { response?: { status?: number } })?.response?.status;
+      const status = (error as { response?: { status?: number } })?.response
+        ?.status;
 
-      if (status === 400 && message.toLowerCase().includes("could not create")) {
+      if (
+        status === 400 &&
+        message.toLowerCase().includes("could not create")
+      ) {
         this.log("error", "[Auth] ❌ Wallet has never traded on Polymarket");
-        this.log("info", "[Auth] 💡 Visit https://polymarket.com and make a trade first");
+        this.log(
+          "info",
+          "[Auth] 💡 Visit https://polymarket.com and make a trade first",
+        );
         return {
           success: false,
           error: "Wallet must trade on Polymarket website first",
@@ -230,7 +247,8 @@ export class SimpleAuth {
 
       return true;
     } catch (error) {
-      const status = (error as { response?: { status?: number } })?.response?.status;
+      const status = (error as { response?: { status?: number } })?.response
+        ?.status;
       if (status === 401 || status === 403) {
         return false;
       }

@@ -69,7 +69,9 @@ export async function createClient(
     : `0x${options.privateKey}`;
   const wallet = new Wallet(pk, provider);
 
-  logger?.info(`[Client] 🔐 Wallet: ${wallet.address.slice(0, 10)}...${wallet.address.slice(-6)}`);
+  logger?.info(
+    `[Client] 🔐 Wallet: ${wallet.address.slice(0, 10)}...${wallet.address.slice(-6)}`,
+  );
 
   // Check if credentials were provided
   const hasProvidedCreds =
@@ -114,7 +116,9 @@ export async function createClient(
       authOk = true;
     }
   } else {
-    logger?.warn("[Client] ⚠️  No credentials provided and derivation disabled");
+    logger?.warn(
+      "[Client] ⚠️  No credentials provided and derivation disabled",
+    );
   }
 
   // Create the client
@@ -150,11 +154,7 @@ async function deriveCredentials(
   logger?: Logger,
 ): Promise<ApiKeyCreds | null> {
   try {
-    const client = new ClobClient(
-      CLOB_HOST,
-      CHAIN_ID,
-      asClobSigner(wallet),
-    );
+    const client = new ClobClient(CLOB_HOST, CHAIN_ID, asClobSigner(wallet));
 
     const creds = await client.createOrDeriveApiKey();
 
@@ -178,11 +178,14 @@ async function deriveCredentials(
     return creds;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const status = (error as { response?: { status?: number } })?.response?.status;
+    const status = (error as { response?: { status?: number } })?.response
+      ?.status;
 
     if (status === 400 && message.toLowerCase().includes("could not create")) {
       logger?.error("[Client] ❌ Wallet has never traded on Polymarket");
-      logger?.info("[Client] 💡 Visit https://polymarket.com and make a trade first");
+      logger?.info(
+        "[Client] 💡 Visit https://polymarket.com and make a trade first",
+      );
     } else {
       logger?.error(`[Client] ❌ Failed to derive credentials: ${message}`);
     }
@@ -224,7 +227,8 @@ async function verifyCredentials(
 
     return true;
   } catch (error) {
-    const status = (error as { response?: { status?: number } })?.response?.status;
+    const status = (error as { response?: { status?: number } })?.response
+      ?.status;
     if (status === 401 || status === 403) {
       return false;
     }
@@ -240,7 +244,10 @@ async function verifyCredentials(
 export async function createClientFromEnv(
   logger?: Logger,
 ): Promise<ExtendedClobClient> {
-  const rpcUrl = process.env.RPC_URL || process.env.POLYGON_RPC_URL || "https://polygon-rpc.com";
+  const rpcUrl =
+    process.env.RPC_URL ||
+    process.env.POLYGON_RPC_URL ||
+    "https://polygon-rpc.com";
   const privateKey = process.env.PRIVATE_KEY;
 
   if (!privateKey) {

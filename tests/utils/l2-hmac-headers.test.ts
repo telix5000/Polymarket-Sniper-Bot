@@ -35,7 +35,10 @@ function buildHmacSignature(
   const normalizedSecret = secret.replace(/-/g, "+").replace(/_/g, "/");
 
   // Create HMAC signature
-  const hmac = crypto.createHmac("sha256", Buffer.from(normalizedSecret, "base64"));
+  const hmac = crypto.createHmac(
+    "sha256",
+    Buffer.from(normalizedSecret, "base64"),
+  );
   hmac.update(message);
   const signature = hmac.digest("base64");
 
@@ -56,7 +59,13 @@ function buildL2Headers(
   requestPath: string,
   body?: string,
 ): Record<string, string> {
-  const signature = buildHmacSignature(secret, timestamp, method, requestPath, body);
+  const signature = buildHmacSignature(
+    secret,
+    timestamp,
+    method,
+    requestPath,
+    body,
+  );
 
   return {
     POLY_ADDRESS: address,
@@ -81,7 +90,12 @@ describe("L2 HMAC signature", () => {
 
   test("produces different signatures for different timestamps", () => {
     const sig1 = buildHmacSignature(testSecret, timestamp, method, requestPath);
-    const sig2 = buildHmacSignature(testSecret, timestamp + 1, method, requestPath);
+    const sig2 = buildHmacSignature(
+      testSecret,
+      timestamp + 1,
+      method,
+      requestPath,
+    );
     assert.notEqual(sig1, sig2);
   });
 
@@ -99,12 +113,23 @@ describe("L2 HMAC signature", () => {
 
   test("includes body in signature when present", () => {
     const sig1 = buildHmacSignature(testSecret, timestamp, "POST", "/order");
-    const sig2 = buildHmacSignature(testSecret, timestamp, "POST", "/order", '{"side":"BUY"}');
+    const sig2 = buildHmacSignature(
+      testSecret,
+      timestamp,
+      "POST",
+      "/order",
+      '{"side":"BUY"}',
+    );
     assert.notEqual(sig1, sig2);
   });
 
   test("signature is URL-safe base64", () => {
-    const signature = buildHmacSignature(testSecret, timestamp, method, requestPath);
+    const signature = buildHmacSignature(
+      testSecret,
+      timestamp,
+      method,
+      requestPath,
+    );
     // URL-safe base64 should not contain + or /
     assert.equal(signature.includes("+"), false, "Should not contain +");
     assert.equal(signature.includes("/"), false, "Should not contain /");
@@ -119,11 +144,21 @@ describe("L2 HMAC signature", () => {
     const base64urlSecret = "dGVzdHNlY3JldGtleQ"; // Same without padding (typical base64url)
 
     // Both should produce valid signatures (implementation normalizes internally)
-    const sig1 = buildHmacSignature(base64Secret, timestamp, method, requestPath);
+    const sig1 = buildHmacSignature(
+      base64Secret,
+      timestamp,
+      method,
+      requestPath,
+    );
     assert.ok(sig1.length > 0);
 
     // Base64url version (no padding) should also work
-    const sig2 = buildHmacSignature(base64urlSecret, timestamp, method, requestPath);
+    const sig2 = buildHmacSignature(
+      base64urlSecret,
+      timestamp,
+      method,
+      requestPath,
+    );
     assert.ok(sig2.length > 0);
 
     // Both should produce the same signature since they decode to the same bytes
