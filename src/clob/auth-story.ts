@@ -28,7 +28,7 @@ export interface AuthAttempt {
   sigType: number; // 0, 1, 2
   l1Auth: string; // L1 auth address used
   maker: string; // Maker address
-  funder: string; // Funder address
+  funder: string | undefined; // Funder address (undefined for EOA)
   verifyEndpoint: string; // /balance-allowance or similar
   signedPath: string; // Path that was signed
   usedAxiosParams: boolean; // Whether axios params were used (bug!)
