@@ -246,12 +246,14 @@ export function createCredentialFingerprint(creds: {
     const hasBase64UrlChars = secret.includes("-") || secret.includes("_");
     const hasPadding = secret.endsWith("=");
 
+    // Determine encoding based on character patterns
     if (hasBase64UrlChars) {
       secretEncodingGuess = "base64url";
     } else if (hasBase64Chars || hasPadding) {
       secretEncodingGuess = "base64";
     } else if (/^[A-Za-z0-9]+$/.test(secret)) {
-      secretEncodingGuess = "base64"; // Probably base64 without special chars
+      // Probably base64 without special chars
+      secretEncodingGuess = "base64";
     } else {
       secretEncodingGuess = "raw";
     }

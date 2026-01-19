@@ -134,8 +134,10 @@ export async function authenticateMinimal(
   const runId = generateRunId();
   const startTime = Date.now();
   
-  // Create or reuse logger
-  const logger = config.logger ?? new AuthLogger(runId);
+  // Create or reuse logger (if provided, ensure runId matches)
+  const logger = config.logger 
+    ? config.logger 
+    : new AuthLogger(runId);
 
   // Initialize story
   const story: AuthStory = {

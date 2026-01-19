@@ -33,7 +33,7 @@ const AUTH_FILES = [
 ];
 
 // Patterns to detect violations
-const CONSOLE_LOG_PATTERN = /console\.(log|info|warn|error|debug)/g;
+const CONSOLE_LOG_PATTERN = /console\.(log|info|warn|error|debug)/;
 const SECRET_LOG_PATTERNS = [
   // Match logging of raw secret variables (not in method names)
   /log.*\b(apiKey|secret|passphrase|privateKey)\s*[,}]/i,

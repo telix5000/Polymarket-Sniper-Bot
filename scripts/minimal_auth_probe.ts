@@ -40,12 +40,12 @@ async function main(): Promise<number> {
     | "json"
     | "pretty";
 
-  // Only print header in pretty mode
+  // Only print header in pretty mode (to stdout, not stderr)
   if (format === "pretty") {
-    console.error("=".repeat(60));
-    console.error("POLYMARKET MINIMAL AUTH PROBE");
-    console.error("Python Agents Style - Simple & Working");
-    console.error("=".repeat(60) + "\n");
+    console.log("=".repeat(60));
+    console.log("POLYMARKET MINIMAL AUTH PROBE");
+    console.log("Python Agents Style - Simple & Working");
+    console.log("=".repeat(60) + "\n");
   }
 
   try {
@@ -55,12 +55,12 @@ async function main(): Promise<number> {
     // Run minimal auth (Python agents approach)
     const result = await authenticateMinimal(config);
 
-    // Print Auth Story (json goes to stdout, pretty goes to stderr)
+    // Print Auth Story
     if (format === "json") {
       // Pure JSON to stdout for parsing
       console.log(JSON.stringify(result.story));
     } else {
-      // Pretty format to stderr for human readability
+      // Pretty format to stdout for human readability
       printAuthStory(result.story, "pretty");
     }
 
