@@ -5,6 +5,11 @@
  * It tries different combinations of signature types and L1 auth addresses until
  * one works, then caches the successful configuration.
  *
+ * Key Fix (2025-01-19):
+ * - Now uses createOrDeriveApiKey() method (official/recommended approach)
+ * - Previous approach: separate deriveApiKey() → createApiKey() calls (caused 401s)
+ * - Matches working implementation from Polymarket's official agents repo
+ *
  * Features:
  * - Single-flight derivation (prevents concurrent derivation attempts)
  * - Exponential backoff on failures (30s, 60s, 2m, 5m, 10m max)
