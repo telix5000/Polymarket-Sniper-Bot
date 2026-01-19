@@ -320,6 +320,21 @@ export class AuthStoryBuilder {
 let globalAuthStory: AuthStoryBuilder | null = null;
 
 /**
+ * State transition tracking - ensures summary is printed only once per state change
+ */
+interface AuthStateTracker {
+  lastAuthOk: boolean | null;
+  summaryPrintedForCurrentState: boolean;
+  processStartPrinted: boolean;
+}
+
+let stateTracker: AuthStateTracker = {
+  lastAuthOk: null,
+  summaryPrintedForCurrentState: false,
+  processStartPrinted: false,
+};
+
+/**
  * Initialize global auth story
  */
 export function initAuthStory(params: {
@@ -344,4 +359,63 @@ export function getAuthStory(): AuthStoryBuilder | null {
  */
 export function resetAuthStory(): void {
   globalAuthStory = null;
+  stateTracker = {
+    lastAuthOk: null,
+    summaryPrintedForCurrentState: false,
+    processStartPrinted: false,
+  };
+}
+
+/**
+ * Check if summary should be printed based on state transitions
+ * Returns true only for:
+ * - First process start (once per process)
+ * - State transition: authOk changes from false→true or true→false
+ */
+export function shouldPrintSummary(currentAuthOk: boolean): boolean {
+  // Always print on first process start
+  if (!stateTracker.processStartPrinted) {
+    return true;
+  }
+
+  // Print on state transition
+  if (stateTracker.lastAuthOk !== currentAuthOk) {
+    return true;
+  }
+
+  // Already printed for this state
+  return false;
+}
+
+/**
+ * Record that summary was printed for current state
+ */
+export function recordSummaryPrinted(authOk: boolean): void {
+  stateTracker.lastAuthOk = authOk;
+  stateTracker.summaryPrintedForCurrentState = true;
+  stateTracker.processStartPrinted = true;
+}
+
+/**
+ * Conditionally print auth story summary (once per state transition)
+ */
+export function printAuthStorySummaryIfNeeded(authOk: boolean): boolean {
+  if (!globalAuthStory) {
+    return false;
+  }
+
+  if (shouldPrintSummary(authOk)) {
+    globalAuthStory.printSummary();
+    recordSummaryPrinted(authOk);
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Get current state tracker (for testing/diagnostics)
+ */
+export function getStateTracker(): Readonly<AuthStateTracker> {
+  return { ...stateTracker };
 }

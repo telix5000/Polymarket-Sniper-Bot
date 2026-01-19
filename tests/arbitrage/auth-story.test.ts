@@ -2,7 +2,7 @@
  * Tests for Auth Story
  */
 
-import { describe, it } from "node:test";
+import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   AuthStoryBuilder,
@@ -10,6 +10,10 @@ import {
   initAuthStory,
   getAuthStory,
   resetAuthStory,
+  shouldPrintSummary,
+  recordSummaryPrinted,
+  getStateTracker,
+  printAuthStorySummaryIfNeeded,
 } from "../../src/clob/auth-story";
 import type {
   OrderIdentity,
@@ -251,5 +255,104 @@ describe("Auth Story", () => {
     const story = builder.getStory();
     assert.equal(story.selectedMode, "PROXY");
     assert.equal(story.selectedSignatureType, 1);
+  });
+
+  describe("State Tracking", () => {
+    beforeEach(() => {
+      resetAuthStory();
+    });
+
+    it("should print on first process start", () => {
+      const shouldPrint = shouldPrintSummary(false);
+      assert.strictEqual(shouldPrint, true);
+    });
+
+    it("should not print again for same state after recording", () => {
+      // First time - should print
+      assert.strictEqual(shouldPrintSummary(false), true);
+      recordSummaryPrinted(false);
+
+      // Second time - should not print
+      assert.strictEqual(shouldPrintSummary(false), false);
+    });
+
+    it("should print on state transition from false to true", () => {
+      // Start with authOk=false
+      recordSummaryPrinted(false);
+      assert.strictEqual(shouldPrintSummary(false), false);
+
+      // Transition to authOk=true - should print
+      assert.strictEqual(shouldPrintSummary(true), true);
+    });
+
+    it("should print on state transition from true to false", () => {
+      // Start with authOk=true
+      recordSummaryPrinted(true);
+      assert.strictEqual(shouldPrintSummary(true), false);
+
+      // Transition to authOk=false - should print
+      assert.strictEqual(shouldPrintSummary(false), true);
+    });
+
+    it("should track state correctly", () => {
+      // Initial state
+      let tracker = getStateTracker();
+      assert.strictEqual(tracker.lastAuthOk, null);
+      assert.strictEqual(tracker.processStartPrinted, false);
+
+      // After recording
+      recordSummaryPrinted(true);
+      tracker = getStateTracker();
+      assert.strictEqual(tracker.lastAuthOk, true);
+      assert.strictEqual(tracker.processStartPrinted, true);
+    });
+
+    it("should reset state tracker on resetAuthStory", () => {
+      recordSummaryPrinted(true);
+      resetAuthStory();
+
+      const tracker = getStateTracker();
+      assert.strictEqual(tracker.lastAuthOk, null);
+      assert.strictEqual(tracker.processStartPrinted, false);
+    });
+  });
+
+  describe("printAuthStorySummaryIfNeeded", () => {
+    beforeEach(() => {
+      resetAuthStory();
+    });
+
+    it("should return false when no global auth story", () => {
+      const printed = printAuthStorySummaryIfNeeded(false);
+      assert.strictEqual(printed, false);
+    });
+
+    it("should print and return true on first call", () => {
+      initAuthStory({
+        runId: "test_run_123",
+        signerAddress: "0x1234567890abcdef1234567890abcdef12345678",
+        clobHost: "https://clob.polymarket.com",
+        chainId: 137,
+      });
+
+      const printed = printAuthStorySummaryIfNeeded(false);
+      assert.strictEqual(printed, true);
+    });
+
+    it("should not print twice for same state", () => {
+      initAuthStory({
+        runId: "test_run_123",
+        signerAddress: "0x1234567890abcdef1234567890abcdef12345678",
+        clobHost: "https://clob.polymarket.com",
+        chainId: 137,
+      });
+
+      // First call - prints
+      printAuthStorySummaryIfNeeded(false);
+
+      // Second call - should not print
+      const printed = printAuthStorySummaryIfNeeded(false);
+      assert.strictEqual(printed, false);
+    });
   });
 });
