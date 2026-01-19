@@ -541,9 +541,9 @@ async function attemptDerive(params: {
       const errorDetails = [
         `Credentials derived but failed verification (401) with sigType=${params.attempt.signatureType}.`,
         "MOST LIKELY CAUSES (in order):",
-        "1. WRONG SIGNATURE TYPE: If you logged in via browser to Polymarket, set POLYMARKET_SIGNATURE_TYPE=2 AND POLYMARKET_PROXY_ADDRESS=<your-deposit-address>",
-        "2. MISSING PROXY ADDRESS: Safe/Proxy wallets need POLYMARKET_PROXY_ADDRESS set to your Polymarket deposit address",
-        "3. WALLET NOT REGISTERED: If neither above applies, visit https://polymarket.com and make one trade",
+        "(1) Wrong signature type - browser wallets need POLYMARKET_SIGNATURE_TYPE=2 AND POLYMARKET_PROXY_ADDRESS",
+        "(2) Missing proxy address - Safe/Proxy wallets need POLYMARKET_PROXY_ADDRESS set to your Polymarket deposit address",
+        "(3) Wallet not registered - if neither above applies, visit https://polymarket.com and make one trade",
         "Run 'npm run wallet:detect' to identify your correct wallet configuration.",
       ];
       return {

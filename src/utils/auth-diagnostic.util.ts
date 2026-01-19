@@ -153,15 +153,17 @@ export function diagnoseAuthFailure(params: {
     verificationFailed &&
     status === 401
   ) {
+    const messageParts = [
+      "API credentials were derived successfully, but verification with Polymarket CLOB failed (401 Unauthorized).",
+      "MOST LIKELY CAUSES (in order):",
+      "(1) Wrong signature type - browser wallets need POLYMARKET_SIGNATURE_TYPE=2 and POLYMARKET_PROXY_ADDRESS",
+      "(2) Missing proxy address for Safe/Proxy wallet",
+      "(3) Wallet never traded on Polymarket (if neither above applies)",
+    ];
     return {
       cause: "DERIVED_KEYS_REJECTED",
       confidence: "high",
-      message:
-        "API credentials were derived successfully, but verification with Polymarket CLOB failed (401 Unauthorized). " +
-        "MOST LIKELY CAUSES (in order): " +
-        "(1) Wrong signature type - if you logged in via browser to Polymarket, you need POLYMARKET_SIGNATURE_TYPE=2 and POLYMARKET_PROXY_ADDRESS; " +
-        "(2) Missing proxy address for Safe/Proxy wallet; " +
-        "(3) Wallet never traded on Polymarket (if neither above applies).",
+      message: messageParts.join(" "),
       recommendations: [
         "🔍 FIRST: Run 'npm run wallet:detect' to identify your wallet type and correct configuration",
         "⚠️  If you logged in via browser (MetaMask, etc.): Set POLYMARKET_SIGNATURE_TYPE=2",
@@ -201,15 +203,17 @@ export function diagnoseAuthFailure(params: {
   // Case 5: Derive enabled but derived creds fail verification
   // This happens when credential derivation goes through but verification returns 401
   if (deriveEnabled && deriveFailed && verificationFailed) {
+    const messageParts = [
+      "API credentials were derived but failed verification (401).",
+      "MOST LIKELY CAUSES (in order of likelihood):",
+      "(1) Wrong signature type - browser wallets need POLYMARKET_SIGNATURE_TYPE=2 AND POLYMARKET_PROXY_ADDRESS",
+      "(2) Missing POLYMARKET_PROXY_ADDRESS for Safe/Proxy wallets",
+      "(3) Wallet has never traded on Polymarket (only if you've NEVER used Polymarket)",
+    ];
     return {
       cause: "DERIVE_FAILED",
       confidence: "high",
-      message:
-        "API credentials were derived but failed verification (401). " +
-        "MOST LIKELY CAUSES (in order of likelihood): " +
-        "(1) WRONG SIGNATURE TYPE - if you logged in via browser (MetaMask, Coinbase Wallet, etc.), set POLYMARKET_SIGNATURE_TYPE=2 AND POLYMARKET_PROXY_ADDRESS; " +
-        "(2) Missing POLYMARKET_PROXY_ADDRESS for Safe/Proxy wallets; " +
-        "(3) Wallet has never traded on Polymarket (only if you've NEVER used Polymarket).",
+      message: messageParts.join(" "),
       recommendations: [
         "🔍 FIRST: Run 'npm run wallet:detect' to identify your wallet type",
         "⚠️  If you logged in via browser: Set POLYMARKET_SIGNATURE_TYPE=2",
