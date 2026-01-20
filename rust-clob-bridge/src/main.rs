@@ -18,7 +18,8 @@ use std::io::{self, BufRead, Write};
 
 use anyhow::{Context, Result};
 use polymarket_client_sdk::clob::{Client, Config};
-use polymarket_client_sdk::clob::types::{SignatureType, Side, OrderType, Amount, BalanceAllowanceRequest};
+use polymarket_client_sdk::clob::types::{SignatureType, Side, OrderType, Amount};
+use polymarket_client_sdk::clob::types::request::BalanceAllowanceRequest;
 use polymarket_client_sdk::auth::{LocalSigner, Signer};
 use polymarket_client_sdk::types::{Address, Decimal, U256};
 use polymarket_client_sdk::POLYGON;
@@ -562,9 +563,10 @@ async fn main() -> Result<()> {
 
                 match result {
                     Ok(markets) => {
+                        // MarketResponse doesn't implement Serialize, so just return the count
                         emit_response(&success_response(serde_json::json!({
                             "count": markets.data.len(),
-                            "markets": markets.data.iter().take(10).collect::<Vec<_>>(),
+                            "message": "Markets retrieved successfully. Use Polymarket API directly for full market data.",
                         })));
                     }
                     Err(e) => {
