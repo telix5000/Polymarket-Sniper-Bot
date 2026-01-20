@@ -567,6 +567,10 @@ async function attemptDerive(params: {
     }
 
     // Verify credentials work
+    // CRITICAL FIX: Use effectiveSigner (not params.wallet) for verification
+    // This ensures the same wallet identity is used for both derivation AND verification
+    // For Safe/Proxy: effectiveSigner returns the Safe/proxy address
+    // For EOA: effectiveSigner is the same as params.wallet
     log("debug", `Verifying credentials from ${method}`, {
       logger: params.logger,
       structuredLogger: params.structuredLogger,
@@ -574,11 +578,13 @@ async function attemptDerive(params: {
         category: "CRED_DERIVE",
         attemptId: params.attemptId,
         method,
+        walletAddress: await effectiveSigner.getAddress(),
+        useEffectiveForL1: params.attempt.useEffectiveForL1,
       },
     });
     const isValid = await verifyCredentials({
       creds,
-      wallet: params.wallet,
+      wallet: effectiveSigner,
       signatureType: params.attempt.signatureType,
       funderAddress: params.funderAddress,
       logger: params.logger,
@@ -745,11 +751,34 @@ async function deriveCredentialsWithFallbackInternal(
     } else {
       params.logger?.info("[CredDerive] Verifying cached credentials...");
     }
+    
+    // CRITICAL FIX: Build effectiveSigner for Safe/Proxy modes
+    // Cached credentials must be verified with the same wallet identity used during derivation
+    // For Safe/Proxy: need to build effectiveSigner that returns the Safe/proxy address
+    // For EOA: effectiveSigner is the same as wallet
+    const signatureType = params.signatureType ?? orderIdentity.signatureTypeForOrders;
+    const needsEffectiveSigner = 
+      signatureType === SignatureType.POLY_PROXY || 
+      signatureType === SignatureType.POLY_GNOSIS_SAFE;
+    
+    const verificationWallet = needsEffectiveSigner
+      ? buildEffectiveSigner(wallet, orderIdentity.effectiveAddress)
+      : wallet;
+    
+    if (sLogger) {
+      sLogger.debug("Cached credential verification wallet", {
+        category: "CRED_DERIVE",
+        signatureType,
+        needsEffectiveSigner,
+        walletAddress: verificationWallet.address,
+        effectiveAddress: orderIdentity.effectiveAddress,
+      });
+    }
+    
     const isValid = await verifyCredentials({
       creds: cachedCreds,
-      wallet,
-      signatureType:
-        params.signatureType ?? orderIdentity.signatureTypeForOrders,
+      wallet: verificationWallet,
+      signatureType,
       funderAddress: params.funderAddress,
       logger: params.logger,
       structuredLogger: sLogger,
