@@ -422,6 +422,9 @@ function logAuthDiagnostics(params: {
 /**
  * Check if a signature type requires an effective signer
  * Safe/Proxy modes need effectiveSigner to return the correct address
+ * 
+ * @param signatureType - The signature type to check (0=EOA, 1=Proxy, 2=Safe)
+ * @returns true if the signature type requires an effective signer (Proxy or Safe), false otherwise
  */
 function requiresEffectiveSigner(signatureType: number): boolean {
   return (
@@ -582,6 +585,7 @@ async function attemptDerive(params: {
     // This ensures the same wallet identity is used for both derivation AND verification
     // For Safe/Proxy: effectiveSigner returns the Safe/proxy address
     // For EOA: effectiveSigner is the same as params.wallet
+    const walletAddress = await effectiveSigner.getAddress();
     log("debug", `Verifying credentials from ${method}`, {
       logger: params.logger,
       structuredLogger: params.structuredLogger,
@@ -589,7 +593,7 @@ async function attemptDerive(params: {
         category: "CRED_DERIVE",
         attemptId: params.attemptId,
         method,
-        walletAddress: await effectiveSigner.getAddress(),
+        walletAddress,
         useEffectiveForL1: params.attempt.useEffectiveForL1,
       },
     });
@@ -775,11 +779,12 @@ async function deriveCredentialsWithFallbackInternal(
       : wallet;
     
     if (sLogger) {
+      const walletAddress = await verificationWallet.getAddress();
       sLogger.debug("Cached credential verification wallet", {
         category: "CRED_DERIVE",
         signatureType,
         needsEffectiveSigner,
-        walletAddress: await verificationWallet.getAddress(),
+        walletAddress,
         effectiveAddress: orderIdentity.effectiveAddress,
       });
     }
