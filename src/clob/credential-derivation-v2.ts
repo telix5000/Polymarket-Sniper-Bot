@@ -420,6 +420,17 @@ function logAuthDiagnostics(params: {
 }
 
 /**
+ * Check if a signature type requires an effective signer
+ * Safe/Proxy modes need effectiveSigner to return the correct address
+ */
+function requiresEffectiveSigner(signatureType: number): boolean {
+  return (
+    signatureType === SignatureType.POLY_PROXY ||
+    signatureType === SignatureType.POLY_GNOSIS_SAFE
+  );
+}
+
+/**
  * Build effective signer proxy for L1 auth
  * When useEffectiveForL1=true, proxy the wallet to return the effective address for getAddress()
  */
@@ -757,9 +768,7 @@ async function deriveCredentialsWithFallbackInternal(
     // For Safe/Proxy: need to build effectiveSigner that returns the Safe/proxy address
     // For EOA: effectiveSigner is the same as wallet
     const signatureType = params.signatureType ?? orderIdentity.signatureTypeForOrders;
-    const needsEffectiveSigner = 
-      signatureType === SignatureType.POLY_PROXY || 
-      signatureType === SignatureType.POLY_GNOSIS_SAFE;
+    const needsEffectiveSigner = requiresEffectiveSigner(signatureType);
     
     const verificationWallet = needsEffectiveSigner
       ? buildEffectiveSigner(wallet, orderIdentity.effectiveAddress)
@@ -770,7 +779,7 @@ async function deriveCredentialsWithFallbackInternal(
         category: "CRED_DERIVE",
         signatureType,
         needsEffectiveSigner,
-        walletAddress: verificationWallet.address,
+        walletAddress: await verificationWallet.getAddress(),
         effectiveAddress: orderIdentity.effectiveAddress,
       });
     }
@@ -845,9 +854,7 @@ async function deriveCredentialsWithFallbackInternal(
 
     // Skip Safe/Proxy attempts when no funderAddress is configured
     // These signature types REQUIRE a funder address to work correctly
-    const requiresFunder =
-      attempt.signatureType === SignatureType.POLY_PROXY ||
-      attempt.signatureType === SignatureType.POLY_GNOSIS_SAFE;
+    const requiresFunder = requiresEffectiveSigner(attempt.signatureType);
 
     if (requiresFunder && !params.funderAddress) {
       log("debug", `Skipping ${attempt.label}: no funderAddress configured`, {
