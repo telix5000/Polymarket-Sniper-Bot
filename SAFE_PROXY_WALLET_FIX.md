@@ -67,8 +67,8 @@ const isValid = await verifyCredentials({
 ```
 
 #### 3. Added Defensive Logging
-- Logs wallet address before verification (lines 574-584)
-- Logs whether effectiveSigner was built for cached verification (lines 768-776)
+- Logs wallet address before verification in `attemptDerive()` (lines 588-599)
+- Logs whether effectiveSigner was built for cached verification (lines 781-790)
 - Helps diagnose any future wallet address mismatches
 
 ## Behavior By Wallet Mode
