@@ -420,6 +420,20 @@ function logAuthDiagnostics(params: {
 }
 
 /**
+ * Check if a signature type requires an effective signer
+ * Safe/Proxy modes need effectiveSigner to return the correct address
+ *
+ * @param signatureType - The signature type to check (0=EOA, 1=Proxy, 2=Safe)
+ * @returns true if the signature type requires an effective signer (Proxy or Safe), false otherwise
+ */
+function requiresEffectiveSigner(signatureType: number): boolean {
+  return (
+    signatureType === SignatureType.POLY_PROXY ||
+    signatureType === SignatureType.POLY_GNOSIS_SAFE
+  );
+}
+
+/**
  * Build effective signer proxy for L1 auth
  * When useEffectiveForL1=true, proxy the wallet to return the effective address for getAddress()
  */
@@ -567,6 +581,11 @@ async function attemptDerive(params: {
     }
 
     // Verify credentials work
+    // CRITICAL FIX: Use effectiveSigner (not params.wallet) for verification
+    // This ensures the same wallet identity is used for both derivation AND verification
+    // For Safe/Proxy: effectiveSigner returns the Safe/proxy address
+    // For EOA: effectiveSigner is the same as params.wallet
+    const walletAddress = await effectiveSigner.getAddress();
     log("debug", `Verifying credentials from ${method}`, {
       logger: params.logger,
       structuredLogger: params.structuredLogger,
@@ -574,11 +593,13 @@ async function attemptDerive(params: {
         category: "CRED_DERIVE",
         attemptId: params.attemptId,
         method,
+        walletAddress,
+        useEffectiveForL1: params.attempt.useEffectiveForL1,
       },
     });
     const isValid = await verifyCredentials({
       creds,
-      wallet: params.wallet,
+      wallet: effectiveSigner,
       signatureType: params.attempt.signatureType,
       funderAddress: params.funderAddress,
       logger: params.logger,
@@ -745,11 +766,34 @@ async function deriveCredentialsWithFallbackInternal(
     } else {
       params.logger?.info("[CredDerive] Verifying cached credentials...");
     }
+
+    // CRITICAL FIX: Build effectiveSigner for Safe/Proxy modes
+    // Cached credentials must be verified with the same wallet identity used during derivation
+    // For Safe/Proxy: need to build effectiveSigner that returns the Safe/proxy address
+    // For EOA: effectiveSigner is the same as wallet
+    const signatureType =
+      params.signatureType ?? orderIdentity.signatureTypeForOrders;
+    const needsEffectiveSigner = requiresEffectiveSigner(signatureType);
+
+    const verificationWallet = needsEffectiveSigner
+      ? buildEffectiveSigner(wallet, orderIdentity.effectiveAddress)
+      : wallet;
+
+    if (sLogger) {
+      const walletAddress = await verificationWallet.getAddress();
+      sLogger.debug("Cached credential verification wallet", {
+        category: "CRED_DERIVE",
+        signatureType,
+        needsEffectiveSigner,
+        walletAddress,
+        effectiveAddress: orderIdentity.effectiveAddress,
+      });
+    }
+
     const isValid = await verifyCredentials({
       creds: cachedCreds,
-      wallet,
-      signatureType:
-        params.signatureType ?? orderIdentity.signatureTypeForOrders,
+      wallet: verificationWallet,
+      signatureType,
       funderAddress: params.funderAddress,
       logger: params.logger,
       structuredLogger: sLogger,
@@ -816,9 +860,7 @@ async function deriveCredentialsWithFallbackInternal(
 
     // Skip Safe/Proxy attempts when no funderAddress is configured
     // These signature types REQUIRE a funder address to work correctly
-    const requiresFunder =
-      attempt.signatureType === SignatureType.POLY_PROXY ||
-      attempt.signatureType === SignatureType.POLY_GNOSIS_SAFE;
+    const requiresFunder = requiresEffectiveSigner(attempt.signatureType);
 
     if (requiresFunder && !params.funderAddress) {
       log("debug", `Skipping ${attempt.label}: no funderAddress configured`, {
