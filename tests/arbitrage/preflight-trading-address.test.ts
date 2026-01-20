@@ -168,8 +168,8 @@ test("address resolution priority: relayer > effectivePolyAddress > signer", asy
   const relayerAddress = "0x3333333333333333333333333333333333333333";
 
   // Test 1: Only signer available (EOA mode, no relayer)
-  let noRelayer: string | undefined = undefined;
-  let noEffectivePolyAddress: string | undefined = undefined;
+  let noRelayer: string | undefined;
+  let noEffectivePolyAddress: string | undefined;
   let tradingAddress = resolveTradingAddress(
     noRelayer,
     noEffectivePolyAddress,
@@ -178,7 +178,6 @@ test("address resolution priority: relayer > effectivePolyAddress > signer", asy
   assert.strictEqual(tradingAddress, signerAddress);
 
   // Test 2: Signer + effectivePolyAddress available (Safe/Proxy mode, no relayer)
-  noRelayer = undefined;
   tradingAddress = resolveTradingAddress(noRelayer, funderAddress, signerAddress);
   assert.strictEqual(tradingAddress, funderAddress);
 
