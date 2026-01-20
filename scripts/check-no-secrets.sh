@@ -20,7 +20,7 @@ VIOLATIONS=0
 echo ""
 echo "Checking for direct secret logging..."
 if grep -rn --include="*.ts" --include="*.js" \
-  -E "console\.(log|info|warn|error|debug)\(.*\b(privateKey|secret|passphrase|apiKey)\b" \
+  -iE "console\.(log|info|warn|error|debug)\(.*\b(private.*key|secret|passphrase|api.*key)\b" \
   src/ 2>/dev/null | grep -v "// eslint-disable" | grep -v "src/utils/structured-logger.ts"; then
   echo -e "${RED}❌ VIOLATION: Found direct secret logging${NC}"
   VIOLATIONS=$((VIOLATIONS + 1))
@@ -32,7 +32,7 @@ fi
 echo ""
 echo "Checking for credential object logging..."
 if grep -rn --include="*.ts" --include="*.js" \
-  -E "console\.(log|info|warn|error|debug)\(.*\b(creds|credentials|apiKey)\b.*\)" \
+  -iE "console\.(log|info|warn|error|debug)\(.*\b(creds|credentials|api.*key)\b.*\)" \
   src/ 2>/dev/null | grep -v "// eslint-disable" | grep -v "apiKeySuffix" | grep -v "src/utils/structured-logger.ts"; then
   echo -e "${YELLOW}⚠️  WARNING: Found potential credential object logging${NC}"
   echo "   Review these manually to ensure they're using redaction"
@@ -44,7 +44,7 @@ fi
 echo ""
 echo "Checking for secret string interpolation..."
 if grep -rn --include="*.ts" --include="*.js" \
-  -E "\`.*\$\{(privateKey|secret|passphrase|apiKey)\}.*\`" \
+  -iE "\`.*\$\{(private.*key|secret|passphrase|api.*key)\}.*\`" \
   src/ 2>/dev/null | grep -v "src/utils/structured-logger.ts"; then
   echo -e "${RED}❌ VIOLATION: Found secret string interpolation${NC}"
   VIOLATIONS=$((VIOLATIONS + 1))

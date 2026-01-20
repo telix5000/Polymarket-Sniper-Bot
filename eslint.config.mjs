@@ -71,7 +71,7 @@ export default [
       'no-restricted-syntax': [
         'warn',
         {
-          selector: "CallExpression[callee.property.name=/log|info|warn|error|debug/] > Literal[value=/private.*key|secret|passphrase|apikey|api_key/i]",
+          selector: "CallExpression[callee.property.name=/log|info|warn|error|debug/i] > Literal[value=/private.*key|secret|passphrase|api.*key/i]",
           message: 'Do not log secrets directly. Use structured logger with redaction.',
         },
       ],
