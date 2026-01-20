@@ -405,6 +405,7 @@ A: Use fingerprints:
 logger.debug('Credential check', {
   apiKeySuffix: creds.key.slice(-6),  // Last 6 chars
   secretLength: creds.secret.length,   // Length only
+  // Note: Even hash prefixes should be used judiciously in production
   secretHash: crypto.createHash('sha256').update(creds.secret).digest('hex').slice(0, 8)
 });
 ```
