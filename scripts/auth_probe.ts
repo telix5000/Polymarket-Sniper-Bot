@@ -204,12 +204,40 @@ function printAuthStory(story: AuthStory): void {
       console.log(`   Reason: ${story.errorMessage}`);
     }
     console.log("\nTroubleshooting:");
-    if (!story.credentialsObtained) {
+
+    // Case 1: Credentials obtained but verification failed with 401
+    if (
+      story.credentialsObtained &&
+      !story.verificationPassed &&
+      story.errorMessage?.includes("401")
+    ) {
+      console.log("\n  🔑 MOST LIKELY CAUSE: Wallet not registered on Polymarket");
+      console.log("");
+      console.log("  The deriveApiKey() endpoint returned credentials, but the");
+      console.log("  credentials failed verification. This typically means:");
+      console.log("");
+      console.log("  1. Your wallet has NEVER made a trade on Polymarket");
+      console.log("  2. The credentials are computed locally but not recognized server-side");
+      console.log("");
+      console.log("  TO FIX:");
+      console.log("  1. Visit https://polymarket.com");
+      console.log("  2. Connect your wallet (the one with PRIVATE_KEY)");
+      console.log("  3. Make at least one trade (even $1 works)");
+      console.log("  4. Run this probe again");
+      console.log("");
+      console.log("  OTHER POSSIBILITIES:");
+      console.log("  - Wrong signature type (try POLYMARKET_SIGNATURE_TYPE=2 for browser wallets)");
+      console.log("  - Geographic restriction (try VPN if applicable)");
+      console.log("  - Cached stale credentials (delete /data/clob-creds.json if exists)");
+    }
+    // Case 2: Credentials not obtained
+    else if (!story.credentialsObtained) {
       console.log("  - Ensure PRIVATE_KEY is set correctly");
       console.log("  - Wallet may need to trade on Polymarket first");
       console.log("    Visit: https://polymarket.com");
     }
-    if (story.credentialsObtained && !story.verificationPassed) {
+    // Case 3: Credentials obtained but other verification failure
+    else if (story.credentialsObtained && !story.verificationPassed) {
       console.log("  - Check signature type configuration");
       console.log("  - For browser wallets, set POLYMARKET_SIGNATURE_TYPE=2");
       console.log("  - For Safe/Proxy, also set POLYMARKET_PROXY_ADDRESS");

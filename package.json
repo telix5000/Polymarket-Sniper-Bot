@@ -42,6 +42,7 @@
     "test-auth": "node test-auth-harness.js",
     "auth:probe": "ts-node scripts/auth-probe.ts",
     "auth:diag": "ts-node scripts/auth_diagnostic.ts",
+    "auth:401": "ts-node scripts/diagnose_401.ts",
     "check:secrets": "bash scripts/lint-check-secrets.sh",
     "lint:secrets": "bash scripts/lint-check-secrets.sh && npm run lint",
     "auth:diag:debug": "LOG_LEVEL=debug ts-node scripts/auth_diagnostic.ts",
