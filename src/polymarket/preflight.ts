@@ -470,6 +470,32 @@ export const ensureTradingReady = async (
     return { detectOnly: true, authOk, approvalsOk: false, geoblockPassed };
   }
 
+  // CRITICAL: Block all on-chain operations if authentication failed
+  // This prevents gas waste on approval transactions when CLOB API is unreachable
+  if (!authOk) {
+    params.logger.error(
+      "[Preflight][GasGuard] ⛔ BLOCKING APPROVALS: Authentication failed. Will not send on-chain transactions to prevent gas waste.",
+    );
+    params.logger.error(
+      "[Preflight][GasGuard] Fix authentication issues before approvals will be attempted.",
+    );
+    
+    // Set final result and print auth story summary
+    authStory.setFinalResult({
+      authOk: false,
+      readyToTrade: false,
+      reason: "AUTH_FAILED_BLOCKED_APPROVALS",
+    });
+    authStory.printSummary();
+
+    (
+      params.client as ClobClient & {
+        relayerContext?: ReturnType<typeof createRelayerContext>;
+      }
+    ).relayerContext = relayer;
+    return { detectOnly: true, authOk: false, approvalsOk: false, geoblockPassed };
+  }
+
   let approvalResult;
   let approvalsOk = false;
   try {
