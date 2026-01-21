@@ -7,6 +7,10 @@ import { EndgameSweepStrategy } from "./endgame-sweep";
 import type { QuickFlipConfig } from "./quick-flip";
 import type { AutoSellConfig } from "./auto-sell";
 import type { EndgameSweepConfig } from "./endgame-sweep";
+import {
+  POSITION_TRACKER_REFRESH_INTERVAL_MS,
+  STRATEGY_EXECUTION_INTERVAL_MS,
+} from "./constants";
 
 export interface StrategyOrchestratorConfig {
   client: ClobClient;
@@ -26,7 +30,7 @@ export interface StrategyOrchestratorConfig {
  * Priority Order:
  * 1. Risk-Free Arb (existing YES/NO < $1.00)
  * 2. Endgame Sweep (buy 98-99¢)
- * 3. Auto-Sell at 99¢ (free up capital)
+ * 3. Auto-Sell near $1.00 (configurable threshold, frees up capital)
  * 4. Quick Flip (sell at +5% gain)
  * 5. Whale Copy (existing monitor strategy)
  */
@@ -48,13 +52,14 @@ export class StrategyOrchestrator {
     this.logger = config.logger;
     this.arbEnabled = config.arbEnabled;
     this.monitorEnabled = config.monitorEnabled;
-    this.executionIntervalMs = config.executionIntervalMs ?? 60000; // 60 seconds default
+    this.executionIntervalMs =
+      config.executionIntervalMs ?? STRATEGY_EXECUTION_INTERVAL_MS;
 
     // Initialize position tracker
     this.positionTracker = new PositionTracker({
       client: config.client,
       logger: config.logger,
-      refreshIntervalMs: 30000, // Refresh positions every 30 seconds
+      refreshIntervalMs: POSITION_TRACKER_REFRESH_INTERVAL_MS,
     });
 
     // Initialize strategies
@@ -91,7 +96,7 @@ export class StrategyOrchestrator {
     this.logger.info("[Orchestrator] Starting strategy orchestrator");
     this.isRunning = true;
 
-    // Start position tracker
+    // Start position tracker and await initial refresh to ensure data is available
     await this.positionTracker.start();
 
     // Run initial execution

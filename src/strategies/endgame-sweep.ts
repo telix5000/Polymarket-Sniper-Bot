@@ -1,5 +1,6 @@
 import type { ClobClient } from "@polymarket/clob-client";
 import type { ConsoleLogger } from "../utils/logger.util";
+import { MAX_LIQUIDITY_USAGE_PCT } from "./constants";
 
 export interface EndgameSweepConfig {
   enabled: boolean;
@@ -33,6 +34,7 @@ export class EndgameSweepStrategy {
   private logger: ConsoleLogger;
   private config: EndgameSweepConfig;
   private purchasedMarkets: Set<string> = new Set();
+  private purchaseTimestamps: Map<string, number> = new Map(); // Track when markets were purchased
 
   constructor(strategyConfig: EndgameSweepStrategyConfig) {
     this.client = strategyConfig.client;
@@ -48,6 +50,9 @@ export class EndgameSweepStrategy {
     if (!this.config.enabled) {
       return 0;
     }
+
+    // Clean up stale entries (older than 24 hours)
+    this.cleanupOldPurchases();
 
     let purchasedCount = 0;
 
@@ -73,6 +78,7 @@ export class EndgameSweepStrategy {
       try {
         await this.buyPosition(market);
         this.purchasedMarkets.add(marketKey);
+        this.purchaseTimestamps.set(marketKey, Date.now());
         purchasedCount++;
       } catch (err) {
         this.logger.error(
@@ -96,18 +102,43 @@ export class EndgameSweepStrategy {
    * Returns markets with prices in the target range
    */
   private async scanForEndgameOpportunities(): Promise<Market[]> {
-    // This would use actual Polymarket API to scan markets
-    // For now, this is a placeholder
     this.logger.debug(
       `[EndgameSweep] Scanning for positions between ${(this.config.minPrice * 100).toFixed(1)}¢ and ${(this.config.maxPrice * 100).toFixed(1)}¢`
     );
 
+    // TODO: Implement actual Polymarket API integration
+    // This is a placeholder that needs to be replaced with real API calls
+    
     // In production, this would:
-    // 1. Fetch all active markets from Polymarket
-    // 2. Filter for markets with prices in target range
-    // 3. Check liquidity is sufficient
-    // 4. Verify market hasn't already resolved
-    // 5. Return sorted by expected profit
+    // 1. Call client.getMarkets() or equivalent endpoint to fetch all active markets
+    // 2. For each market, get current orderbook to check best ask/bid prices
+    // 3. Filter markets where:
+    //    - price is between minPrice and maxPrice (e.g., 0.98 - 0.995)
+    //    - liquidity is sufficient (at least maxPositionUsd / price shares available)
+    //    - market is still active and hasn't resolved yet
+    //    - market has reasonable volume to ensure liquidity
+    // 4. Sort results by expected profit (1.0 - price) descending
+    // 5. Return top N opportunities
+    //
+    // Example structure (when implemented):
+    // const markets = await this.client.getMarkets({ active: true });
+    // const opportunities: Market[] = [];
+    // for (const market of markets) {
+    //   const orderbook = await this.client.getOrderbook(market.id);
+    //   const bestAsk = orderbook.asks[0];
+    //   if (bestAsk.price >= this.config.minPrice && 
+    //       bestAsk.price <= this.config.maxPrice &&
+    //       bestAsk.size * bestAsk.price >= this.config.maxPositionUsd) {
+    //     opportunities.push({
+    //       id: market.id,
+    //       tokenId: market.tokenId,
+    //       side: market.side,
+    //       price: bestAsk.price,
+    //       liquidity: bestAsk.size
+    //     });
+    //   }
+    // }
+    // return opportunities.sort((a, b) => (1 - a.price) - (1 - b.price)).slice(0, 10);
 
     return [];
   }
@@ -117,21 +148,67 @@ export class EndgameSweepStrategy {
    * This is a placeholder for actual buying logic
    */
   private async buyPosition(market: Market): Promise<void> {
-    // Calculate position size
+    // Validate market price before calculations
+    if (market.price <= 0) {
+      this.logger.warn(
+        `[EndgameSweep] Invalid market price (${market.price}) for ${market.id}, skipping`
+      );
+      return;
+    }
+
+    // Calculate position size based on configured max and available liquidity
     const positionSize = Math.min(
       this.config.maxPositionUsd / market.price,
-      market.liquidity * 0.1 // Don't take more than 10% of liquidity
+      market.liquidity * MAX_LIQUIDITY_USAGE_PCT // Don't take more than configured % of liquidity
     );
+
+    // Validate position size before proceeding
+    if (positionSize <= 0) {
+      this.logger.warn(
+        `[EndgameSweep] Invalid position size (${positionSize}) for ${market.id}, skipping`
+      );
+      return;
+    }
 
     this.logger.debug(
       `[EndgameSweep] Would buy ${positionSize.toFixed(2)} of ${market.tokenId} at ${(market.price * 100).toFixed(1)}¢`
     );
 
+    // TODO: Implement actual CLOB order creation
+    // This is a placeholder that needs to be replaced with real order submission
+    
     // In production, this would:
-    // 1. Create buy order at current ask price
-    // 2. Submit order to CLOB
-    // 3. Wait for fill confirmation
-    // 4. Log successful purchase with expected profit
+    // 1. Get current best ask price from orderbook
+    //    const orderbook = await this.client.getOrderbook(market.id);
+    //    const bestAsk = orderbook.asks[0];
+    // 
+    // 2. Create a market buy order (or limit order at ask price for better fill)
+    //    const order = {
+    //      tokenId: market.tokenId,
+    //      side: 'BUY',
+    //      type: 'LIMIT',
+    //      price: bestAsk.price,
+    //      size: positionSize,
+    //      feeRateBps: 0, // Or get from client config
+    //    };
+    // 
+    // 3. Sign the order with wallet credentials
+    //    const signedOrder = await this.client.createOrder(order);
+    // 
+    // 4. Submit order to CLOB API
+    //    const result = await this.client.postOrder(signedOrder);
+    // 
+    // 5. Poll for order status or wait for fill
+    //    const filled = await this.client.waitForOrderFill(result.orderId, 30000);
+    // 
+    // 6. Log successful purchase with details
+    //    if (filled) {
+    //      const expectedProfit = (1.0 - market.price) * positionSize;
+    //      this.logger.info(
+    //        `[EndgameSweep] ✓ Bought ${positionSize.toFixed(2)} at ${(market.price * 100).toFixed(1)}¢ ` +
+    //        `(expected profit: $${expectedProfit.toFixed(2)})`
+    //      );
+    //    }
   }
 
   /**
@@ -152,9 +229,34 @@ export class EndgameSweepStrategy {
   }
 
   /**
+   * Clean up purchased markets older than 24 hours
+   * This prevents the Set from growing indefinitely
+   */
+  private cleanupOldPurchases(): void {
+    const now = Date.now();
+    const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+    
+    let cleanedCount = 0;
+    for (const [marketKey, timestamp] of this.purchaseTimestamps.entries()) {
+      if (now - timestamp > twentyFourHoursMs) {
+        this.purchasedMarkets.delete(marketKey);
+        this.purchaseTimestamps.delete(marketKey);
+        cleanedCount++;
+      }
+    }
+    
+    if (cleanedCount > 0) {
+      this.logger.debug(
+        `[EndgameSweep] Cleaned up ${cleanedCount} old purchase records`
+      );
+    }
+  }
+
+  /**
    * Reset purchased markets tracking (for testing or daily reset)
    */
   reset(): void {
     this.purchasedMarkets.clear();
+    this.purchaseTimestamps.clear();
   }
 }

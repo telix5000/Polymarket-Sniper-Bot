@@ -169,6 +169,7 @@ export const STRATEGY_PRESETS = {
     ENDGAME_SWEEP_ENABLED: false,
     ENDGAME_MIN_PRICE: 0.98,
     ENDGAME_MAX_PRICE: 0.995,
+    ENDGAME_MAX_POSITION_USD: 25,
   },
   conservative: {
     STRATEGY_ENABLED: true,
@@ -188,6 +189,7 @@ export const STRATEGY_PRESETS = {
     ENDGAME_SWEEP_ENABLED: true,
     ENDGAME_MIN_PRICE: 0.985,        // 98.5¢
     ENDGAME_MAX_PRICE: 0.995,        // 99.5¢ (auto-sell threshold is higher to avoid conflict)
+    ENDGAME_MAX_POSITION_USD: 15,    // Conservative position sizing
     // Rate limits
     ORDER_SUBMIT_MAX_PER_HOUR: 30,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 10000,
@@ -222,6 +224,7 @@ export const STRATEGY_PRESETS = {
     ENDGAME_SWEEP_ENABLED: true,
     ENDGAME_MIN_PRICE: 0.98,         // 98¢
     ENDGAME_MAX_PRICE: 0.995,        // 99.5¢ (auto-sell threshold is higher)
+    ENDGAME_MAX_POSITION_USD: 25,    // Balanced position sizing
     // Rate limits (higher for more trades)
     ORDER_SUBMIT_MAX_PER_HOUR: 60,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 5000,
@@ -272,6 +275,7 @@ export const STRATEGY_PRESETS = {
     ENDGAME_SWEEP_ENABLED: true,
     ENDGAME_MIN_PRICE: 0.97,         // 97¢
     ENDGAME_MAX_PRICE: 0.995,        // 99.5¢ (auto-sell threshold is higher)
+    ENDGAME_MAX_POSITION_USD: 50,    // Aggressive position sizing
     // Rate limits (maximum)
     ORDER_SUBMIT_MAX_PER_HOUR: 120,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 3000,

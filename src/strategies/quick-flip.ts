@@ -45,6 +45,9 @@ export class QuickFlipStrategy {
       return 0;
     }
 
+    // Clean up entry times for positions that no longer exist
+    this.cleanupStaleEntries();
+
     let soldCount = 0;
 
     // Check for positions that hit target gain
@@ -102,15 +105,19 @@ export class QuickFlipStrategy {
 
   /**
    * Check if position should be sold based on hold time
+   * Gets entry time from position tracker (not on first call)
    */
   private shouldSell(marketId: string, tokenId: string): boolean {
     const key = `${marketId}-${tokenId}`;
-    const entryTime = this.positionEntryTimes.get(key);
+    
+    // Check if we already have an entry time tracked
+    let entryTime = this.positionEntryTimes.get(key);
     
     if (!entryTime) {
-      // First time seeing this position, record entry time
-      this.positionEntryTimes.set(key, Date.now());
-      return false;
+      // Record current time as entry time (first time seeing this position)
+      entryTime = Date.now();
+      this.positionEntryTimes.set(key, entryTime);
+      return false; // Don't sell on first detection
     }
 
     const holdTimeSeconds = (Date.now() - entryTime) / 1000;
@@ -126,21 +133,77 @@ export class QuickFlipStrategy {
     tokenId: string,
     size: number
   ): Promise<void> {
-    // This would use actual ClobClient methods to sell
-    // For now, this is a placeholder
     this.logger.debug(
       `[QuickFlip] Would sell ${size} of ${tokenId} in market ${marketId}`
     );
     
+    // TODO: Implement actual CLOB sell order creation
+    // This is a placeholder that needs to be replaced with real order submission
+    
     // In production, this would:
-    // 1. Get current best bid price
-    // 2. Create sell order slightly below best bid
-    // 3. Submit order to CLOB
-    // 4. Wait for fill confirmation
+    // 1. Get current best bid price from orderbook
+    //    const orderbook = await this.client.getOrderbook(marketId);
+    //    const bestBid = orderbook.bids[0];
+    // 
+    // 2. Create a sell order slightly below best bid for quick fill
+    //    const sellPrice = bestBid.price * 0.999; // Slight discount for immediate fill
+    //    const order = {
+    //      tokenId: tokenId,
+    //      side: 'SELL',
+    //      type: 'LIMIT',
+    //      price: sellPrice,
+    //      size: size,
+    //      feeRateBps: 0,
+    //    };
+    // 
+    // 3. Sign the sell order
+    //    const signedOrder = await this.client.createOrder(order);
+    // 
+    // 4. Submit order to CLOB
+    //    const result = await this.client.postOrder(signedOrder);
+    // 
+    // 5. Wait for fill confirmation (with timeout)
+    //    const filled = await this.client.waitForOrderFill(result.orderId, 30000);
+    // 
+    // 6. Log the sale result
+    //    if (filled) {
+    //      this.logger.info(
+    //        `[QuickFlip] ✓ Sold ${size.toFixed(2)} shares at ${(sellPrice * 100).toFixed(1)}¢`
+    //      );
+    //    }
     
     // Remove from entry times after selling
     const key = `${marketId}-${tokenId}`;
     this.positionEntryTimes.delete(key);
+  }
+
+  /**
+   * Clean up entry times for positions that no longer exist
+   * Prevents memory leak from tracking sold/closed positions
+   */
+  private cleanupStaleEntries(): void {
+    const currentPositions = this.positionTracker.getPositions();
+    const currentKeys = new Set(
+      currentPositions.map(pos => `${pos.marketId}-${pos.tokenId}`)
+    );
+    
+    let cleanedCount = 0;
+    const keysToDelete: string[] = [];
+    for (const key of this.positionEntryTimes.keys()) {
+      if (!currentKeys.has(key)) {
+        keysToDelete.push(key);
+      }
+    }
+    for (const key of keysToDelete) {
+      this.positionEntryTimes.delete(key);
+      cleanedCount++;
+    }
+    
+    if (cleanedCount > 0) {
+      this.logger.debug(
+        `[QuickFlip] Cleaned up ${cleanedCount} stale position entries`
+      );
+    }
   }
 
   /**

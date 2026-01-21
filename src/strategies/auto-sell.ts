@@ -47,6 +47,9 @@ export class AutoSellStrategy {
       return 0;
     }
 
+    // Clean up stale entries
+    this.cleanupStaleEntries();
+
     let soldCount = 0;
 
     // Get positions near resolution (price >= threshold)
@@ -116,17 +119,88 @@ export class AutoSellStrategy {
     tokenId: string,
     size: number
   ): Promise<void> {
-    // This would use actual ClobClient methods to sell
-    // For now, this is a placeholder
     this.logger.debug(
       `[AutoSell] Would sell ${size} of ${tokenId} in market ${marketId}`
     );
     
+    // TODO: Implement actual CLOB sell order creation
+    // This is a placeholder that needs to be replaced with real order submission
+    
     // In production, this would:
-    // 1. Get current best bid price
-    // 2. Create market sell order to exit quickly
-    // 3. Submit order to CLOB
-    // 4. Wait for fill confirmation
+    // 1. Get current best bid price from orderbook
+    //    const orderbook = await this.client.getOrderbook(marketId);
+    //    const bestBid = orderbook.bids[0];
+    // 
+    // 2. Create a market sell order to exit quickly at current price
+    //    // Use market order or aggressive limit order for immediate execution
+    //    const order = {
+    //      tokenId: tokenId,
+    //      side: 'SELL',
+    //      type: 'MARKET', // Or LIMIT at slightly below bid
+    //      size: size,
+    //      price: bestBid.price * 0.998, // Accept small slippage for speed
+    //      feeRateBps: 0,
+    //    };
+    // 
+    // 3. Sign the sell order
+    //    const signedOrder = await this.client.createOrder(order);
+    // 
+    // 4. Submit order to CLOB API
+    //    const result = await this.client.postOrder(signedOrder);
+    // 
+    // 5. Wait for fill confirmation (shorter timeout since this is urgent)
+    //    const filled = await this.client.waitForOrderFill(result.orderId, 15000);
+    // 
+    // 6. Log the sale and capital freed
+    //    if (filled) {
+    //      this.logger.info(
+    //        `[AutoSell] ✓ Sold ${size.toFixed(2)} shares, freed $${size.toFixed(2)} capital`
+    //      );
+    //    }
+  }
+
+  /**
+   * Clean up stale entries from tracking Maps/Sets
+   * Removes entries for positions that no longer exist or were sold
+   */
+  private cleanupStaleEntries(): void {
+    const currentPositions = this.positionTracker.getPositions();
+    const currentKeys = new Set(
+      currentPositions.map(pos => `${pos.marketId}-${pos.tokenId}`)
+    );
+    
+    // Clean up positionFirstSeen for positions that no longer exist
+    let cleanedFirstSeen = 0;
+    const firstSeenKeysToDelete: string[] = [];
+    for (const key of this.positionFirstSeen.keys()) {
+      if (!currentKeys.has(key)) {
+        firstSeenKeysToDelete.push(key);
+      }
+    }
+    for (const key of firstSeenKeysToDelete) {
+      this.positionFirstSeen.delete(key);
+      cleanedFirstSeen++;
+    }
+    
+    // Clean up soldPositions that are no longer in current positions
+    // (they've been fully removed/resolved)
+    let cleanedSold = 0;
+    const soldKeysToDelete: string[] = [];
+    for (const key of this.soldPositions) {
+      if (!currentKeys.has(key)) {
+        soldKeysToDelete.push(key);
+      }
+    }
+    for (const key of soldKeysToDelete) {
+      this.soldPositions.delete(key);
+      cleanedSold++;
+    }
+    
+    if (cleanedFirstSeen > 0 || cleanedSold > 0) {
+      this.logger.debug(
+        `[AutoSell] Cleaned up ${cleanedFirstSeen} first-seen and ${cleanedSold} sold entries`
+      );
+    }
   }
 
   /**
@@ -149,5 +223,6 @@ export class AutoSellStrategy {
    */
   reset(): void {
     this.soldPositions.clear();
+    this.positionFirstSeen.clear();
   }
 }
