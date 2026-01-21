@@ -95,9 +95,9 @@ export class TradeExecutorService {
       }
 
       // Validate our order meets minimum size requirements
-      // Note: This validation is also performed by OrderSubmissionController.checkPreflight,
-      // but we check early here to provide immediate feedback with helpful tips to the user.
-      const minOrderSize = env.minOrderUsd || DEFAULT_CONFIG.MIN_ORDER_USD;
+      // Note: When MAX_POSITION_USD is set, it takes precedence - if you set MAX_POSITION_USD=5,
+      // you want to trade $5, so we respect that and adjust the minimum accordingly.
+      const minOrderSize = sizing.effectiveMinOrderUsd;
       if (frontrunSize < minOrderSize) {
         logger.warn(
           `[Frontrun] ⚠️ Order size ${frontrunSize.toFixed(2)} USD is below minimum ${minOrderSize.toFixed(2)} USD. Skipping trade.`,
@@ -190,6 +190,7 @@ export class TradeExecutorService {
     maxSize: number;
     wasCapped: boolean;
     cappedByEndgame: boolean;
+    effectiveMinOrderUsd: number;
   } {
     // Frontrun with a percentage of the target size
     // This can be configured via env variable
@@ -210,7 +211,14 @@ export class TradeExecutorService {
     const cappedByEndgame = hasEndgameCap && endgameMax < frontrunMax;
     const size = Math.min(calculatedSize, maxSize);
 
-    return { size, multiplier, maxSize, wasCapped, cappedByEndgame };
+    // Auto-adjust MIN_ORDER_USD if MAX_POSITION_USD is lower to avoid impossible conditions
+    // This ensures orders can still execute when MAX_POSITION_USD is intentionally set low
+    const configuredMinOrderUsd = env.minOrderUsd || DEFAULT_CONFIG.MIN_ORDER_USD;
+    const effectiveMinOrderUsd = hasEndgameCap
+      ? Math.min(configuredMinOrderUsd, endgameMax)
+      : configuredMinOrderUsd;
+
+    return { size, multiplier, maxSize, wasCapped, cappedByEndgame, effectiveMinOrderUsd };
   }
 
   // Keep copyTrade for backward compatibility, but redirect to frontrun
