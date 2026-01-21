@@ -68,10 +68,10 @@ describe("PositionTracker Settlement Price Logic", () => {
     const pnlPct = ((settlementPrice - entryPrice) / entryPrice) * 100;
 
     assert.strictEqual(pnlUsd, 40, "P&L should be $40");
-    assert.strictEqual(
-      Math.round(pnlPct * 100) / 100,
-      66.67,
-      "P&L should be ~66.67%",
+    // Use robust floating-point comparison
+    assert.ok(
+      Math.abs(pnlPct - 66.67) < 0.01,
+      `P&L should be ~66.67%, got ${pnlPct}`,
     );
   });
 

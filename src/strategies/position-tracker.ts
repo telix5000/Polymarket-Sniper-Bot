@@ -31,6 +31,9 @@ export class PositionTracker {
   private refreshIntervalMs: number;
   private refreshTimer?: NodeJS.Timeout;
   private isRefreshing: boolean = false; // Prevent concurrent refreshes
+  
+  // Timeout for Gamma API market outcome requests (in milliseconds)
+  private static readonly MARKET_OUTCOME_TIMEOUT_MS = 5000;
 
   constructor(config: PositionTrackerConfig) {
     this.client = config.client;
@@ -247,10 +250,17 @@ export class PositionTracker {
               // Determine position side early (needed for both redeemable and active positions)
               const sideValue = apiPos.outcome ?? apiPos.side;
               const sideUpperCase = sideValue?.toUpperCase();
-              const side =
-                sideUpperCase === "YES" || sideUpperCase === "NO"
-                  ? (sideUpperCase as "YES" | "NO")
-                  : "YES"; // Default to YES if unknown
+              let side: "YES" | "NO";
+              
+              if (sideUpperCase === "YES" || sideUpperCase === "NO") {
+                side = sideUpperCase;
+              } else {
+                // Log warning when side is unknown - this could affect P&L accuracy
+                this.logger.warn(
+                  `[PositionTracker] Unknown side/outcome value "${sideValue}" for tokenId ${tokenId}, defaulting to YES`,
+                );
+                side = "YES";
+              }
 
               // Skip orderbook fetch for resolved/closed markets (no orderbook available)
               let currentPrice: number;
@@ -458,7 +468,7 @@ export class PositionTracker {
       );
 
       const market = await httpGet<GammaMarketResponse>(url, {
-        timeout: 5000,
+        timeout: PositionTracker.MARKET_OUTCOME_TIMEOUT_MS,
       });
 
       if (!market) {
