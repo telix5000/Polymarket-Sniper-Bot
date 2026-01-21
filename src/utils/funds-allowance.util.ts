@@ -397,6 +397,17 @@ export const checkFundsAndAllowance = async (
     params.collateralTokenId,
   );
 
+  // CLOB API Bug Workaround: getBalanceAllowance() returns allowance=0 even when on-chain approvals are set
+  // See: https://github.com/Polymarket/clob-client/issues/128
+  //      https://github.com/Polymarket/py-clob-client/issues/102
+  //      https://github.com/Polymarket/py-clob-client/issues/109
+  // When TRUST_ONCHAIN_APPROVALS=true and preflight verified approvals, skip CLOB allowance check
+  const trustOnchainApprovals =
+    process.env.TRUST_ONCHAIN_APPROVALS?.toLowerCase() !== "false"; // Default: true (CLOB is broken)
+  const onchainApprovalsVerified =
+    (params.client as { onchainApprovalsVerified?: boolean })
+      .onchainApprovalsVerified ?? false;
+
   try {
     let refreshed = false;
     let collateralSnapshot = await fetchBalanceAllowance(
@@ -442,20 +453,6 @@ export const checkFundsAndAllowance = async (
       allowanceUsd = collateralSnapshot.allowanceUsd;
     };
 
-    const firstInsufficient = !isSnapshotSufficient(
-      collateralSnapshot,
-      requiredUsd,
-    )
-      ? collateralSnapshot
-      : conditionalSnapshot &&
-          !isSnapshotSufficient(conditionalSnapshot, requiredUsd)
-        ? conditionalSnapshot
-        : null;
-
-    if (firstInsufficient) {
-      await refreshAndRetry();
-    }
-
     const insufficientSnapshot = !isSnapshotSufficient(
       collateralSnapshot,
       requiredUsd,
@@ -467,101 +464,141 @@ export const checkFundsAndAllowance = async (
         : null;
 
     if (insufficientSnapshot) {
-      const reason = "INSUFFICIENT_BALANCE_OR_ALLOWANCE";
-      const assetLabel = formatAssetLabel(insufficientSnapshot);
-      params.logger.warn(
-        `[CLOB] Order skipped (${reason}): need=${formatUsd(requiredUsd)} have=${formatUsd(insufficientSnapshot.balanceUsd)} allowance=${formatUsd(insufficientSnapshot.allowanceUsd)} asset=${assetLabel} signer=${signerAddress} collateral=${collateralLabel}`,
-      );
-
-      if (
-        insufficientSnapshot.allowanceUsd < requiredUsd &&
-        insufficientSnapshot.assetType === AssetType.COLLATERAL
-      ) {
-        if (params.autoApprove && params.collateralTokenAddress) {
-          const wallet = (params.client as { wallet?: Wallet }).wallet;
-          if (!wallet) {
-            params.logger.warn(
-              `[CLOB] Auto-approve requested but wallet missing. signer=${signerAddress} collateral=${collateralLabel}`,
-            );
-          } else {
-            const approvalsConfig = readApprovalsConfig();
-            const liveTradingEnabled =
-              process.env.ARB_LIVE_TRADING === "I_UNDERSTAND_THE_RISKS";
-            if (!liveTradingEnabled || approvalsConfig.mode !== "true") {
-              params.logger.warn(
-                `[CLOB] Auto-approve blocked (live trading disabled or APPROVALS_AUTO!=true). signer=${signerAddress} collateral=${collateralLabel}`,
-              );
-              return {
-                ok: false,
-                requiredUsd,
-                balanceUsd: insufficientSnapshot.balanceUsd,
-                allowanceUsd: insufficientSnapshot.allowanceUsd,
-                reason,
-              };
-            }
-
-            const approvalKey = `${tradingAddress}:${params.collateralTokenAddress}`;
-            const lastAttempt = approvalAttemptCooldown.get(approvalKey) ?? 0;
-            if (Date.now() - lastAttempt < APPROVAL_RETRY_COOLDOWN_MS) {
-              params.logger.warn(
-                "[CLOB] Auto-approve cooldown active; skipping approval retry.",
-              );
-            } else {
-              if (
-                params.autoApproveMaxUsd &&
-                params.autoApproveMaxUsd < requiredUsd
-              ) {
-                params.logger.warn(
-                  `[CLOB] Auto-approve cap ${formatUsd(params.autoApproveMaxUsd)} is below required ${formatUsd(requiredUsd)}.`,
-                );
-                return {
-                  ok: false,
-                  requiredUsd,
-                  balanceUsd: insufficientSnapshot.balanceUsd,
-                  allowanceUsd: insufficientSnapshot.allowanceUsd,
-                  reason,
-                };
-              }
-              approvalAttemptCooldown.set(approvalKey, Date.now());
-              await ensureApprovals({
-                wallet,
-                owner: tradingAddress,
-                relayer: (params.client as { relayerContext?: RelayerContext })
-                  .relayerContext,
-                logger: params.logger,
-                config: approvalsConfig,
-              });
-
-              // Sync CLOB cache with on-chain state after approvals
-              await syncClobAllowanceCache(
-                params.client,
-                params.logger,
-                "after auto-approve",
-              );
-
-              await refreshAndRetry();
-            }
-          }
+      // Always refresh cache on first insufficient check to ensure we have fresh data
+      await refreshAndRetry();
+      
+      // Re-check after refresh
+      const refreshedInsufficient = !isSnapshotSufficient(
+        collateralSnapshot,
+        requiredUsd,
+      )
+        ? collateralSnapshot
+        : conditionalSnapshot &&
+            !isSnapshotSufficient(conditionalSnapshot, requiredUsd)
+          ? conditionalSnapshot
+          : null;
+      
+      if (refreshedInsufficient) {
+        const balanceSufficient = refreshedInsufficient.balanceUsd >= requiredUsd;
+        const allowanceSufficient = refreshedInsufficient.allowanceUsd >= requiredUsd;
+        
+        // Trust mode bypass: Only applies to COLLATERAL tokens (USDC) when:
+        // 1. Trust mode is enabled (TRUST_ONCHAIN_APPROVALS=true)
+        // 2. Preflight verified on-chain approvals
+        // 3. Balance is sufficient (only allowance is the issue)
+        // 4. This is a collateral token (not conditional)
+        // This bypasses CLOB's broken allowance=0 response for USDC approvals only.
+        const canBypassAllowanceCheck =
+          trustOnchainApprovals &&
+          onchainApprovalsVerified &&
+          balanceSufficient &&
+          !allowanceSufficient &&
+          refreshedInsufficient.assetType === AssetType.COLLATERAL;
+        
+        if (canBypassAllowanceCheck) {
+          params.logger.info(
+            `[CLOB][TrustMode] Bypassing CLOB allowance check for COLLATERAL (known bug). Balance sufficient and on-chain approvals verified. need=${formatUsd(requiredUsd)} have=${formatUsd(refreshedInsufficient.balanceUsd)} allowance=${formatUsd(refreshedInsufficient.allowanceUsd)}`,
+          );
+          // Skip the error return and continue with ERC1155 approval checks below
         } else {
-          if (insufficientSnapshot.allowanceUsd <= 0) {
-            params.logger.warn(
-              `[CLOB] Allowance is 0; approvals needed for collateral ${collateralLabel}.`,
-            );
-          } else {
-            params.logger.warn(
-              `[CLOB] Approval required for collateral ${collateralLabel}.`,
-            );
+          const reason = "INSUFFICIENT_BALANCE_OR_ALLOWANCE";
+          const assetLabel = formatAssetLabel(refreshedInsufficient);
+          params.logger.warn(
+            `[CLOB] Order skipped (${reason}): need=${formatUsd(requiredUsd)} have=${formatUsd(refreshedInsufficient.balanceUsd)} allowance=${formatUsd(refreshedInsufficient.allowanceUsd)} asset=${assetLabel} signer=${signerAddress} collateral=${collateralLabel}`,
+          );
+
+          if (
+            refreshedInsufficient.allowanceUsd < requiredUsd &&
+            refreshedInsufficient.assetType === AssetType.COLLATERAL
+          ) {
+            if (params.autoApprove && params.collateralTokenAddress) {
+              const wallet = (params.client as { wallet?: Wallet }).wallet;
+              if (!wallet) {
+                params.logger.warn(
+                  `[CLOB] Auto-approve requested but wallet missing. signer=${signerAddress} collateral=${collateralLabel}`,
+                );
+              } else {
+                const approvalsConfig = readApprovalsConfig();
+                const liveTradingEnabled =
+                  process.env.ARB_LIVE_TRADING === "I_UNDERSTAND_THE_RISKS";
+                if (!liveTradingEnabled || approvalsConfig.mode !== "true") {
+                  params.logger.warn(
+                    `[CLOB] Auto-approve blocked (live trading disabled or APPROVALS_AUTO!=true). signer=${signerAddress} collateral=${collateralLabel}`,
+                  );
+                  return {
+                    ok: false,
+                    requiredUsd,
+                    balanceUsd: refreshedInsufficient.balanceUsd,
+                    allowanceUsd: refreshedInsufficient.allowanceUsd,
+                    reason,
+                  };
+                }
+
+                const approvalKey = `${tradingAddress}:${params.collateralTokenAddress}`;
+                const lastAttempt = approvalAttemptCooldown.get(approvalKey) ?? 0;
+                if (Date.now() - lastAttempt < APPROVAL_RETRY_COOLDOWN_MS) {
+                  params.logger.warn(
+                    "[CLOB] Auto-approve cooldown active; skipping approval retry.",
+                  );
+                } else {
+                  if (
+                    params.autoApproveMaxUsd &&
+                    params.autoApproveMaxUsd < requiredUsd
+                  ) {
+                    params.logger.warn(
+                      `[CLOB] Auto-approve cap ${formatUsd(params.autoApproveMaxUsd)} is below required ${formatUsd(requiredUsd)}.`,
+                    );
+                    return {
+                      ok: false,
+                      requiredUsd,
+                      balanceUsd: refreshedInsufficient.balanceUsd,
+                      allowanceUsd: refreshedInsufficient.allowanceUsd,
+                      reason,
+                    };
+                  }
+                  approvalAttemptCooldown.set(approvalKey, Date.now());
+                  await ensureApprovals({
+                    wallet,
+                    owner: tradingAddress,
+                    relayer: (params.client as { relayerContext?: RelayerContext })
+                      .relayerContext,
+                    logger: params.logger,
+                    config: approvalsConfig,
+                  });
+
+                  // Sync CLOB cache with on-chain state after approvals
+                  await syncClobAllowanceCache(
+                    params.client,
+                    params.logger,
+                    "after auto-approve",
+                  );
+
+                  // Refresh again after approval
+                  await refreshAndRetry();
+                }
+              }
+            } else {
+              if (refreshedInsufficient.allowanceUsd <= 0) {
+                params.logger.warn(
+                  `[CLOB] Allowance is 0; approvals needed for collateral ${collateralLabel}.`,
+                );
+              } else {
+                params.logger.warn(
+                  `[CLOB] Approval required for collateral ${collateralLabel}.`,
+                );
+              }
+            }
           }
+
+          return {
+            ok: false,
+            requiredUsd,
+            balanceUsd: refreshedInsufficient.balanceUsd,
+            allowanceUsd: refreshedInsufficient.allowanceUsd,
+            reason,
+          };
         }
       }
-
-      return {
-        ok: false,
-        requiredUsd,
-        balanceUsd: insufficientSnapshot.balanceUsd,
-        allowanceUsd: insufficientSnapshot.allowanceUsd,
-        reason,
-      };
     }
 
     const approvedForAll = await fetchApprovedForAll({
