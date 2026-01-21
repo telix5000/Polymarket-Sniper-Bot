@@ -71,7 +71,8 @@ export async function parallelBatch<T, R>(
     `[${label}] Processed ${items.length} items in ${totalTime}ms (${errors.length} errors)`,
   );
 
-  return { results: results.filter(Boolean), errors, totalTime };
+  // Filter out undefined values but keep legitimate falsy values (0, false, empty string)
+  return { results: results.filter((r) => r !== undefined), errors, totalTime };
 }
 
 /**

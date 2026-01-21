@@ -206,20 +206,7 @@ export class MempoolMonitorService {
   private async monitorRecentOrders(): Promise<void> {
     const { logger, env } = this.deps;
     const startTime = Date.now();
-    const stats: MonitorStats = {
-      tradesSeen: 0,
-      recentTrades: 0,
-      eligibleTrades: 0,
-      skippedSmallTrades: 0,
-      skippedUnconfirmedTrades: 0,
-      skippedNonTargetTrades: 0,
-      skippedParseErrorTrades: 0,
-      skippedOutsideRecentWindowTrades: 0,
-      skippedUnsupportedActionTrades: 0,
-      skippedMissingFieldsTrades: 0,
-      skippedApiErrorTrades: 0,
-      skippedOtherTrades: 0,
-    };
+    const stats: MonitorStats = this.createEmptyStats();
 
     // Monitor all addresses from env in parallel (these are the addresses we want to frontrun)
     // Use parallelBatch to control concurrency and prevent overwhelming the API
@@ -228,10 +215,7 @@ export class MempoolMonitorService {
     const batchResult = await parallelBatch(
       env.targetAddresses,
       async (targetAddress) => {
-        const localStats: MonitorStats = { ...stats };
-        Object.keys(localStats).forEach(key => {
-          localStats[key as keyof MonitorStats] = 0;
-        });
+        const localStats = this.createEmptyStats();
         
         try {
           await this.checkRecentActivity(targetAddress, localStats);
@@ -243,7 +227,9 @@ export class MempoolMonitorService {
           logger.debug(
             `Error checking activity for ${targetAddress}: ${sanitizeErrorMessage(err)}`,
           );
-          return { success: false, stats: localStats, error: err };
+          // Mark this as an API error in the local stats
+          localStats.skippedApiErrorTrades = 1;
+          return { success: false, stats: localStats };
         }
       },
       { concurrency: MAX_CONCURRENT_ADDRESS_CHECKS, logger, label: "activity-check" },
@@ -254,10 +240,7 @@ export class MempoolMonitorService {
     for (const result of batchResult.results) {
       if (result) {
         checkedAddresses++;
-        if (!result.success) {
-          stats.skippedApiErrorTrades += 1;
-        }
-        // Aggregate individual stats
+        // Aggregate individual stats (skippedApiErrorTrades already included in localStats for failed requests)
         stats.tradesSeen += result.stats.tradesSeen;
         stats.recentTrades += result.stats.recentTrades;
         stats.eligibleTrades += result.stats.eligibleTrades;
@@ -272,7 +255,8 @@ export class MempoolMonitorService {
         stats.skippedOtherTrades += result.stats.skippedOtherTrades;
       }
     }
-    // Add errors count to checked addresses (they were still checked)
+    // Count exceptions from parallelBatch (these are uncaught errors from the batch processor)
+    // These were not included in results, so we count them separately
     checkedAddresses += batchResult.errors.length;
     stats.skippedApiErrorTrades += batchResult.errors.length;
 
@@ -280,6 +264,26 @@ export class MempoolMonitorService {
     logger.info(
       `[Monitor] Checked ${checkedAddresses} address(es) in ${durationMs}ms | trades: ${stats.tradesSeen}, recent: ${stats.recentTrades}, eligible: ${stats.eligibleTrades}, skipped_small: ${stats.skippedSmallTrades}, skipped_unconfirmed: ${stats.skippedUnconfirmedTrades}, skipped_non_target: ${stats.skippedNonTargetTrades}, skipped_parse_error: ${stats.skippedParseErrorTrades}, skipped_outside_recent_window: ${stats.skippedOutsideRecentWindowTrades}, skipped_unsupported_action: ${stats.skippedUnsupportedActionTrades}, skipped_missing_fields: ${stats.skippedMissingFieldsTrades}, skipped_api_error: ${stats.skippedApiErrorTrades}, skipped_other: ${stats.skippedOtherTrades}`,
     );
+  }
+
+  /**
+   * Factory function to create a new MonitorStats object with all values initialized to 0
+   */
+  private createEmptyStats(): MonitorStats {
+    return {
+      tradesSeen: 0,
+      recentTrades: 0,
+      eligibleTrades: 0,
+      skippedSmallTrades: 0,
+      skippedUnconfirmedTrades: 0,
+      skippedNonTargetTrades: 0,
+      skippedParseErrorTrades: 0,
+      skippedOutsideRecentWindowTrades: 0,
+      skippedUnsupportedActionTrades: 0,
+      skippedMissingFieldsTrades: 0,
+      skippedApiErrorTrades: 0,
+      skippedOtherTrades: 0,
+    };
   }
 
   private async checkRecentActivity(
