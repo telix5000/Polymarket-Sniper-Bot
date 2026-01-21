@@ -170,13 +170,21 @@ export class PositionTracker {
       const walletAddress = resolveSignerAddress(this.client);
       
       // Fetch positions from Data API
+      // Updated to match actual Data API response format (2024/2025)
       interface ApiPosition {
+        // New API format fields
+        asset?: string;           // Token/asset identifier (replaces token_id/asset_id)
+        conditionId?: string;     // Market identifier (replaces market/id)
+        size?: string | number;   // Position size
+        avgPrice?: string | number; // Average entry price (replaces initial_average_price)
+        outcome?: string;         // "YES" or "NO" outcome
+        
+        // Legacy fields for backwards compatibility
         id?: string;
         market?: string;
         asset_id?: string;
         token_id?: string;
         side?: string;
-        size?: string | number;
         initial_cost?: string | number;
         initial_average_price?: string | number;
       }
@@ -197,6 +205,7 @@ export class PositionTracker {
       
       // Enrich positions with current prices and calculate P&L
       const positions: Position[] = [];
+      const skippedPositions: Array<{ reason: string; data: ApiPosition }> = [];
       const maxConcurrent = 5; // Rate limit concurrent orderbook fetches
       
       for (let i = 0; i < apiPositions.length; i += maxConcurrent) {
@@ -204,20 +213,31 @@ export class PositionTracker {
         const batchResults = await Promise.allSettled(
           batch.map(async (apiPos) => {
             try {
-              const tokenId = apiPos.token_id ?? apiPos.asset_id;
-              const marketId = apiPos.market ?? apiPos.id;
+              // Try new API format first, then fall back to legacy format
+              const tokenId = apiPos.asset ?? apiPos.token_id ?? apiPos.asset_id;
+              const marketId = apiPos.conditionId ?? apiPos.market ?? apiPos.id;
               
               if (!tokenId || !marketId) {
-                this.logger.debug("[PositionTracker] Skipping position with missing tokenId or marketId");
+                const reason = `Missing required fields - tokenId: ${tokenId || 'MISSING'}, marketId: ${marketId || 'MISSING'}`;
+                skippedPositions.push({ reason, data: apiPos });
+                this.logger.warn(`[PositionTracker] ${reason}`);
+                this.logger.warn(`[PositionTracker] Raw API data: ${JSON.stringify(apiPos)}`);
                 return null;
               }
               
               const size = typeof apiPos.size === "string" ? parseFloat(apiPos.size) : (apiPos.size ?? 0);
-              const entryPrice = typeof apiPos.initial_average_price === "string" 
-                ? parseFloat(apiPos.initial_average_price) 
-                : (apiPos.initial_average_price ?? 0);
+              // Try new API field first, then fall back to legacy field
+              const entryPrice = typeof apiPos.avgPrice === "string" 
+                ? parseFloat(apiPos.avgPrice)
+                : (apiPos.avgPrice ?? 
+                   (typeof apiPos.initial_average_price === "string" 
+                     ? parseFloat(apiPos.initial_average_price) 
+                     : (apiPos.initial_average_price ?? 0)));
               
               if (size <= 0 || entryPrice <= 0) {
+                const reason = `Invalid size/price - size: ${size}, entryPrice: ${entryPrice}`;
+                skippedPositions.push({ reason, data: apiPos });
+                this.logger.warn(`[PositionTracker] ${reason}`);
                 return null;
               }
               
@@ -225,7 +245,9 @@ export class PositionTracker {
               const orderbook = await this.client.getOrderBook(tokenId);
               
               if (!orderbook.bids?.[0] || !orderbook.asks?.[0]) {
-                this.logger.debug(`[PositionTracker] No orderbook data for ${tokenId}`);
+                const reason = `No orderbook data for tokenId: ${tokenId}`;
+                skippedPositions.push({ reason, data: apiPos });
+                this.logger.warn(`[PositionTracker] ${reason}`);
                 return null;
               }
               
@@ -237,8 +259,10 @@ export class PositionTracker {
               const pnlUsd = (currentPrice - entryPrice) * size;
               const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
               
-              const side = apiPos.side?.toUpperCase() === "YES" || apiPos.side?.toUpperCase() === "NO" 
-                ? (apiPos.side.toUpperCase() as "YES" | "NO")
+              // Try new API field first, then fall back to legacy field
+              const sideValue = apiPos.outcome ?? apiPos.side;
+              const side = sideValue?.toUpperCase() === "YES" || sideValue?.toUpperCase() === "NO" 
+                ? (sideValue.toUpperCase() as "YES" | "NO")
                 : "YES"; // Default to YES if unknown
               
               return {
@@ -252,9 +276,10 @@ export class PositionTracker {
                 pnlUsd,
               };
             } catch (err) {
-              this.logger.debug(
-                `[PositionTracker] Failed to enrich position: ${err instanceof Error ? err.message : String(err)}`
-              );
+              const reason = `Failed to enrich position: ${err instanceof Error ? err.message : String(err)}`;
+              skippedPositions.push({ reason, data: apiPos });
+              this.logger.warn(`[PositionTracker] ${reason}`);
+              this.logger.warn(`[PositionTracker] Raw API data: ${JSON.stringify(apiPos)}`);
               return null;
             }
           })
@@ -273,9 +298,43 @@ export class PositionTracker {
         }
       }
       
-      this.logger.debug(
-        `[PositionTracker] Successfully enriched ${positions.length}/${apiPositions.length} positions`
-      );
+      // Log comprehensive summary of position processing
+      const successCount = positions.length;
+      const skippedCount = skippedPositions.length;
+      const totalCount = apiPositions.length;
+      
+      if (successCount > 0) {
+        this.logger.info(
+          `[PositionTracker] ✓ Successfully processed ${successCount}/${totalCount} positions`
+        );
+      }
+      
+      if (skippedCount > 0) {
+        this.logger.warn(
+          `[PositionTracker] ⚠ Skipped ${skippedCount}/${totalCount} positions`
+        );
+        
+        // Group skipped positions by reason for better diagnostics
+        const reasonGroups = new Map<string, number>();
+        for (const { reason } of skippedPositions) {
+          const count = reasonGroups.get(reason) || 0;
+          reasonGroups.set(reason, count + 1);
+        }
+        
+        this.logger.warn("[PositionTracker] Skipped position breakdown:");
+        for (const [reason, count] of reasonGroups.entries()) {
+          this.logger.warn(`[PositionTracker]   - ${count}x: ${reason}`);
+        }
+        
+        // Log first few skipped positions for debugging
+        const sampleSize = Math.min(3, skippedCount);
+        this.logger.warn(`[PositionTracker] Sample of skipped positions (first ${sampleSize}):`);
+        for (let i = 0; i < sampleSize; i++) {
+          const { reason, data } = skippedPositions[i];
+          this.logger.warn(`[PositionTracker]   [${i + 1}] ${reason}`);
+          this.logger.warn(`[PositionTracker]       Data: ${JSON.stringify(data)}`);
+        }
+      }
       
       return positions;
     } catch (err) {
