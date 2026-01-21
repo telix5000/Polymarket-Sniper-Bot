@@ -144,7 +144,7 @@ export class TradeExecutorService {
         targetGasPrice: signal.targetGasPrice,
         logger,
         orderConfig: {
-          minOrderUsd: env.minOrderUsd,
+          minOrderUsd: sizing.effectiveMinOrderUsd,
           orderSubmitMinIntervalMs: env.orderSubmitMinIntervalMs,
           orderSubmitMaxPerHour: env.orderSubmitMaxPerHour,
           orderSubmitMarketCooldownSeconds:
