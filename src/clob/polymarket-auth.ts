@@ -28,7 +28,7 @@ const POLYGON_CHAIN_ID = Chain.POLYGON;
 export interface PolymarketCredentials {
   /** Private key for wallet authentication (required) */
   privateKey: string;
-  /** RPC URL for blockchain interactions (required for balance/approval checks) */
+  /** RPC URL for blockchain interactions (optional, but recommended for balance/approval checks) */
   rpcUrl?: string;
   /** Pre-configured API key (optional - will derive if not provided) */
   apiKey?: string;

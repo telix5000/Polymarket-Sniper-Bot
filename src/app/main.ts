@@ -46,7 +46,10 @@ async function main(): Promise<void> {
   const client = await auth.getClobClient();
   
   // Load config to get parameters for preflight
-  const env = mode === "arb" ? loadArbConfig(cliOverrides) : loadMonitorConfig(cliOverrides);
+  // For MODE=both, prefer ARB config as it has all necessary parameters
+  const env = (mode === "arb" || mode === "both") 
+    ? loadArbConfig(cliOverrides) 
+    : loadMonitorConfig(cliOverrides);
   
   // Run preflight ONCE for all modes
   logger.info("🔍 Running preflight checks...");
