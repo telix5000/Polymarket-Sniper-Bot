@@ -119,6 +119,7 @@ There are TWO different credential systems in Polymarket:
 | `FETCH_INTERVAL` | `1` | Polling frequency in seconds |
 | `MIN_TRADE_SIZE_USD` | `100` | Minimum trade size to frontrun (USD) |
 | `FRONTRUN_SIZE_MULTIPLIER` | `0.5` | Frontrun size as % of target (0.0-1.0) |
+| `FRONTRUN_MAX_SIZE_USD` | `50` | Maximum USD size for any frontrun order (caps calculated size) |
 | `GAS_PRICE_MULTIPLIER` | `1.2` | Gas price multiplier for priority (e.g., 1.2 = 20% higher) |
 | `TRADE_MULTIPLIER` | `1.0` | Legacy: Position size multiplier (kept for compatibility) |
 | `RETRY_LIMIT` | `3` | Maximum retry attempts for failed orders |
@@ -318,10 +319,15 @@ Set environment variables through your platform's configuration:
 ### Frontrun Sizing Formula
 
 ```
-frontrun_size = target_trade_size * FRONTRUN_SIZE_MULTIPLIER
+calculated_size = target_trade_size * FRONTRUN_SIZE_MULTIPLIER
+frontrun_size = min(calculated_size, FRONTRUN_MAX_SIZE_USD)
 ```
 
-Example: If target trade is $1000 and multiplier is 0.5, frontrun size is $500.
+Example: If target trade is $1000, multiplier is 0.5, and max is $50:
+- Calculated size: $1000 × 0.5 = $500
+- Final frontrun size: min($500, $50) = $50 (capped)
+
+This ensures your maximum exposure per trade is controlled regardless of target trade size.
 
 ### Gas Price Strategy
 

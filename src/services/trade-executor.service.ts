@@ -77,13 +77,23 @@ export class TradeExecutorService {
       const frontrunSize = this.calculateFrontrunSize(signal.sizeUsd, env);
       const frontrunMultiplier =
         env.frontrunSizeMultiplier || DEFAULT_CONFIG.FRONTRUN_SIZE_MULTIPLIER;
+      const maxSize =
+        env.frontrunMaxSizeUsd || DEFAULT_CONFIG.FRONTRUN_MAX_SIZE_USD;
+      const calculatedSize = signal.sizeUsd * frontrunMultiplier;
+      const wasCapped = calculatedSize > maxSize;
 
       logger.info(
         `[Frontrun] Detected trade: ${signal.side} ${signal.sizeUsd.toFixed(2)} USD by other trader`,
       );
-      logger.info(
-        `[Frontrun] Our order: ${signal.side} ${frontrunSize.toFixed(2)} USD (${(frontrunMultiplier * 100).toFixed(1)}% of target)`,
-      );
+      if (wasCapped) {
+        logger.info(
+          `[Frontrun] Our order: ${signal.side} ${frontrunSize.toFixed(2)} USD (capped from ${calculatedSize.toFixed(2)} USD by FRONTRUN_MAX_SIZE_USD=${maxSize})`,
+        );
+      } else {
+        logger.info(
+          `[Frontrun] Our order: ${signal.side} ${frontrunSize.toFixed(2)} USD (${(frontrunMultiplier * 100).toFixed(1)}% of target)`,
+        );
+      }
 
       // Validate our order meets minimum size requirements
       // Note: This validation is also performed by OrderSubmissionController.checkPreflight,
@@ -177,7 +187,12 @@ export class TradeExecutorService {
     // This can be configured via env variable
     const frontrunMultiplier =
       env.frontrunSizeMultiplier || DEFAULT_CONFIG.FRONTRUN_SIZE_MULTIPLIER;
-    return targetSize * frontrunMultiplier;
+    const calculatedSize = targetSize * frontrunMultiplier;
+
+    // Cap at max frontrun size if configured
+    const maxSize =
+      env.frontrunMaxSizeUsd || DEFAULT_CONFIG.FRONTRUN_MAX_SIZE_USD;
+    return Math.min(calculatedSize, maxSize);
   }
 
   // Keep copyTrade for backward compatibility, but redirect to frontrun
