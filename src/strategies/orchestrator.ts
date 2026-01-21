@@ -77,6 +77,19 @@ export class StrategyOrchestrator {
       config: config.autoSellConfig,
     });
 
+    // Log safety warning about position sizing
+    if (config.endgameSweepConfig.enabled) {
+      const maxPos = config.endgameSweepConfig.maxPositionUsd;
+      if (maxPos > 50) {
+        this.logger.warn(
+          `⚠️  ENDGAME_MAX_POSITION_USD is set to $${maxPos} - this is VERY HIGH and may deplete your wallet quickly!`
+        );
+      }
+      this.logger.info(
+        `[Orchestrator] Endgame Sweep: Max $${maxPos} per position (can buy multiple positions simultaneously)`
+      );
+    }
+
     this.endgameSweepStrategy = new EndgameSweepStrategy({
       client: config.client,
       logger: config.logger,

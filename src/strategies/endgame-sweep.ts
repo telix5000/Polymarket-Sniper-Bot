@@ -11,7 +11,23 @@ export interface EndgameSweepConfig {
   enabled: boolean;
   minPrice: number;  // Minimum price to consider (e.g., 0.98 = 98¢)
   maxPrice: number;  // Maximum price to consider (e.g., 0.995 = 99.5¢)
-  maxPositionUsd: number;  // Maximum USD to invest per position
+  /**
+   * ⚠️ CRITICAL SAFETY SETTING ⚠️
+   * Maximum USD to invest PER POSITION (NOT total exposure)
+   * 
+   * This strategy can buy MULTIPLE positions simultaneously.
+   * Your total exposure = maxPositionUsd × number of opportunities found
+   * 
+   * RECOMMENDED VALUES:
+   * - Testing/New users: $5-10 per position
+   * - Conservative: $10-20 per position
+   * - Balanced: $20-30 per position
+   * - Aggressive: $30-50 per position (HIGH RISK)
+   * 
+   * WARNING: Setting this too high can deplete your entire wallet quickly!
+   * Start small and increase gradually as you gain confidence.
+   */
+  maxPositionUsd: number;
 }
 
 export interface Market {
