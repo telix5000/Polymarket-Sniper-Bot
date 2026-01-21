@@ -1,5 +1,4 @@
 import type { ApiKeyCreds, ClobClient } from "@polymarket/clob-client";
-import { AssetType } from "@polymarket/clob-client";
 import { formatUnits, type BigNumberish } from "ethers";
 import type { Wallet } from "ethers";
 import { isAuthError } from "../infrastructure/clob-auth";
