@@ -6,8 +6,8 @@
  * This tool helps diagnose 401 "Unauthorized/Invalid api key" errors by:
  * 1. Verifying ethers v6 → v5 compatibility shim works
  * 2. Testing L1 authentication (deriveApiKey)
- * 3. Testing L2 authentication (getBalanceAllowance)
- * 4. Providing detailed diagnostic output
+ * 3. Testing L2 authentication with ALL signature types (0, 1, 2)
+ * 4. Providing detailed diagnostic output and recommendations
  *
  * Usage:
  *   npx ts-node scripts/diagnose_401.ts
@@ -15,7 +15,7 @@
  */
 
 import { Wallet } from "ethers";
-import { ClobClient, Chain, AssetType, createL1Headers, createL2Headers } from "@polymarket/clob-client";
+import { Chain, createL1Headers, createL2Headers } from "@polymarket/clob-client";
 import type { ApiKeyCreds } from "@polymarket/clob-client";
 import axios from "axios";
 import * as crypto from "crypto";
@@ -24,11 +24,26 @@ import * as crypto from "crypto";
 const CLOB_HOST = "https://clob.polymarket.com";
 const CHAIN_ID = Chain.POLYGON;
 
+// Signature type definitions
+const SIGNATURE_TYPES = [
+  { type: 0, name: "EOA", description: "Direct wallet (no proxy)" },
+  { type: 1, name: "PROXY", description: "Magic Link / Email login" },
+  { type: 2, name: "GNOSIS_SAFE", description: "Browser wallet (MetaMask, etc.)" },
+] as const;
+
 interface DiagnosticResult {
   step: string;
   status: "pass" | "fail" | "warn";
   message: string;
   details?: Record<string, unknown>;
+}
+
+interface SignatureTypeResult {
+  signatureType: number;
+  name: string;
+  success: boolean;
+  status?: number;
+  error?: string;
 }
 
 const results: DiagnosticResult[] = [];
@@ -73,6 +88,53 @@ function redact(value: string, showChars: number = 4): string {
   return `${value.slice(0, showChars)}...${value.slice(-showChars)}`;
 }
 
+/**
+ * Test L2 authentication with a specific signature type
+ */
+async function testSignatureType(
+  wallet: Wallet,
+  creds: ApiKeyCreds,
+  signatureType: number,
+): Promise<SignatureTypeResult> {
+  const sigTypeInfo = SIGNATURE_TYPES.find((s) => s.type === signatureType);
+  const name = sigTypeInfo?.name ?? `TYPE_${signatureType}`;
+
+  try {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const method = "GET";
+    const requestPath = `/balance-allowance?asset_type=COLLATERAL&signature_type=${signatureType}`;
+
+    const l2Headers = (await createL2Headers(
+      wallet as unknown as Parameters<typeof createL2Headers>[0],
+      creds,
+      { method, requestPath },
+      timestamp
+    )) as unknown as Record<string, string>;
+
+    const fullUrl = `${CLOB_HOST}${requestPath}`;
+    const response = await axios.get(fullUrl, {
+      headers: l2Headers,
+      timeout: 30000,
+    });
+
+    return {
+      signatureType,
+      name,
+      success: response.status === 200,
+      status: response.status,
+    };
+  } catch (err) {
+    const axiosErr = err as { response?: { status?: number; data?: { error?: string } }; code?: string };
+    return {
+      signatureType,
+      name,
+      success: false,
+      status: axiosErr?.response?.status,
+      error: axiosErr?.response?.data?.error || axiosErr?.code || (err instanceof Error ? err.message : "Unknown error"),
+    };
+  }
+}
+
 async function runDiagnostics(): Promise<void> {
   console.log("=".repeat(70));
   console.log("CLOB 401 DIAGNOSTIC TOOL");
@@ -97,7 +159,9 @@ async function runDiagnostics(): Promise<void> {
     step: "ENV",
     status: "pass",
     message: "Environment check passed",
-    details: { PRIVATE_KEY: `${normalizedKey.slice(0, 6)}...${normalizedKey.slice(-4)}` },
+    details: {
+      PRIVATE_KEY: `${normalizedKey.slice(0, 6)}...${normalizedKey.slice(-4)}`,
+    },
   });
 
   // Step 1: Create wallet
@@ -177,7 +241,7 @@ async function runDiagnostics(): Promise<void> {
 
     const response = await axios.get(`${CLOB_HOST}/auth/derive-api-key`, {
       headers,
-      timeout: 30000, // 30 second timeout
+      timeout: 30000,
     });
 
     creds = {
@@ -211,129 +275,87 @@ async function runDiagnostics(): Promise<void> {
     return;
   }
 
-  // Step 5: Test L2 headers
-  console.log("\n--- L2 Authentication (HMAC) ---");
-  const timestamp = Math.floor(Date.now() / 1000);
-  const method = "GET";
-  const requestPath = "/balance-allowance?asset_type=COLLATERAL&signature_type=0";
+  // Step 5: Test ALL signature types
+  console.log("\n--- Testing ALL Signature Types ---");
+  console.log("(This will try EOA, Proxy, and Gnosis Safe modes)\n");
 
-  let l2Headers: Record<string, string> | null = null;
-  try {
-    l2Headers = (await createL2Headers(
-      wallet as unknown as Parameters<typeof createL2Headers>[0],
-      creds,
-      { method, requestPath },
-      timestamp
-    )) as unknown as Record<string, string>;
+  const signatureTypeResults: SignatureTypeResult[] = [];
 
-    log({
-      step: "L2-HEADERS",
-      status: "pass",
-      message: "L2 headers created successfully",
-      details: {
-        POLY_ADDRESS: l2Headers.POLY_ADDRESS,
-        POLY_API_KEY: redact(l2Headers.POLY_API_KEY, 8),
-        POLY_TIMESTAMP: l2Headers.POLY_TIMESTAMP,
-        POLY_SIGNATURE: redact(l2Headers.POLY_SIGNATURE, 10),
-      },
-    });
-  } catch (err) {
-    log({
-      step: "L2-HEADERS",
-      status: "fail",
-      message: "Failed to create L2 headers",
-      details: { error: err instanceof Error ? err.message : String(err) },
-    });
-    return;
+  for (const sigType of SIGNATURE_TYPES) {
+    process.stdout.write(`Testing signature_type=${sigType.type} (${sigType.name})... `);
+    const result = await testSignatureType(wallet, creds, sigType.type);
+    signatureTypeResults.push(result);
+
+    if (result.success) {
+      console.log(`✅ SUCCESS`);
+    } else {
+      console.log(`❌ FAILED (${result.status || "error"}: ${result.error?.slice(0, 50) || "unknown"})`);
+    }
   }
 
-  // Step 6: Compute manual HMAC for comparison
-  const messageStr = `${timestamp}${method}${requestPath}`;
-  const messageHash = crypto.createHash("sha256").update(messageStr).digest("hex");
+  // Step 6: Analyze and display results
+  const workingTypes = signatureTypeResults.filter((r) => r.success);
+  const failedTypes = signatureTypeResults.filter((r) => !r.success);
 
-  log({
-    step: "HMAC-INPUT",
-    status: "pass",
-    message: "HMAC message constructed",
-    details: {
-      message: messageStr,
-      messageHash: redact(messageHash, 8),
-      messageLength: messageStr.length,
-    },
-  });
+  console.log("\n" + "=".repeat(70));
+  console.log("SIGNATURE TYPE PROBE RESULTS");
+  console.log("=".repeat(70));
+  console.log("");
 
-  // Step 7: Test actual API call
-  console.log("\n--- API Verification ---");
-  const fullUrl = `${CLOB_HOST}${requestPath}`;
-
-  try {
-    const response = await axios.get(fullUrl, {
-      headers: l2Headers,
-      timeout: 30000, // 30 second timeout
-    });
-
+  if (workingTypes.length > 0) {
     log({
-      step: "VERIFY",
+      step: "SIG-PROBE",
       status: "pass",
-      message: "API verification PASSED!",
+      message: `Found ${workingTypes.length} working signature type(s)`,
       details: {
-        status: response.status,
-        balance: response.data?.balance,
-        allowance: response.data?.allowance,
+        working: workingTypes.map((r) => `${r.signatureType} (${r.name})`).join(", "),
       },
     });
-  } catch (err) {
-    const axiosErr = err as { response?: { status?: number; data?: { error?: string } }; code?: string };
-    const status = axiosErr?.response?.status;
-    const errorMsg = axiosErr?.response?.data?.error || axiosErr?.code || "Unknown error";
 
-    if (status === 401) {
-      log({
-        step: "VERIFY",
-        status: "fail",
-        message: "API verification FAILED with 401",
-        details: {
-          status: 401,
-          error: errorMsg,
-          url: fullUrl,
-        },
-      });
-
-      console.log("\n" + "=".repeat(70));
-      console.log("DIAGNOSIS: 401 Unauthorized");
-      console.log("=".repeat(70));
-      console.log("");
-      console.log("The credentials were derived successfully, but verification failed.");
-      console.log("This typically means ONE of the following:");
-      console.log("");
-      console.log("1. MOST LIKELY: Your wallet has NEVER traded on Polymarket");
-      console.log("   - The deriveApiKey endpoint returns deterministic credentials");
-      console.log("   - But those credentials only work if your wallet is registered");
-      console.log("   - FIX: Visit polymarket.com, connect wallet, make any trade");
-      console.log("");
-      console.log("2. Wrong signature type:");
-      console.log("   - If you created your wallet via browser/Metamask, try:");
-      console.log("     POLYMARKET_SIGNATURE_TYPE=2");
-      console.log("");
-      console.log("3. Geographic restriction:");
-      console.log("   - Polymarket blocks some regions");
-      console.log("   - Try using a VPN if applicable");
-      console.log("");
-      console.log("4. Stale cached credentials:");
-      console.log("   - Delete /data/clob-creds.json if it exists");
-      console.log("   - Try again");
-      console.log("");
-    } else {
-      log({
-        step: "VERIFY",
-        status: "fail",
-        message: `API verification FAILED with status ${status}`,
-        details: {
-          status,
-          error: errorMsg,
-        },
-      });
+    console.log("\n✅ WORKING CONFIGURATION(S):");
+    for (const result of workingTypes) {
+      const sigInfo = SIGNATURE_TYPES.find((s) => s.type === result.signatureType);
+      console.log(`   • signature_type=${result.signatureType} (${result.name})`);
+      console.log(`     ${sigInfo?.description}`);
     }
+
+    // Recommend the most likely correct one
+    const recommended = workingTypes[0];
+    console.log("\n📝 RECOMMENDED .env CONFIGURATION:");
+    console.log(`   POLYMARKET_SIGNATURE_TYPE=${recommended.signatureType}`);
+    if (recommended.signatureType !== 0) {
+      console.log(`   POLYMARKET_PROXY_ADDRESS=<your Polymarket deposit address>`);
+      console.log("\n   To find your deposit address:");
+      console.log("   1. Go to https://polymarket.com");
+      console.log("   2. Connect your wallet");
+      console.log("   3. Look for 'Deposit Address' in your profile");
+    }
+  } else {
+    log({
+      step: "SIG-PROBE",
+      status: "fail",
+      message: "No working signature type found",
+      details: {
+        tried: SIGNATURE_TYPES.map((s) => s.type).join(", "),
+      },
+    });
+
+    console.log("\n❌ ALL SIGNATURE TYPES FAILED");
+    console.log("");
+    console.log("This typically means:");
+    console.log("");
+    console.log("1. MOST LIKELY: Your wallet has NEVER traded on Polymarket");
+    console.log("   - The deriveApiKey endpoint returns deterministic credentials");
+    console.log("   - But those credentials only work if your wallet is registered");
+    console.log("   - FIX: Visit polymarket.com, connect wallet, make any trade");
+    console.log("");
+    console.log("2. Geographic restriction:");
+    console.log("   - Polymarket blocks some regions");
+    console.log("   - Try using a VPN if applicable");
+    console.log("");
+    console.log("3. Stale cached credentials:");
+    console.log("   - Delete /data/clob-creds.json if it exists");
+    console.log("   - Try again");
   }
 
   // Summary
@@ -350,11 +372,12 @@ async function runDiagnostics(): Promise<void> {
   console.log(`  ❌ Failed: ${failed}`);
   console.log(`  ⚠️ Warnings: ${warned}`);
 
-  if (failed === 0) {
-    console.log("\n✅ All diagnostics passed! Your CLOB auth should work.");
-  } else if (results.some((r) => r.step === "VERIFY" && r.status === "fail")) {
-    console.log("\n❌ Authentication flow works, but API verification failed.");
-    console.log("   See diagnosis above for recommended actions.");
+  if (workingTypes.length > 0) {
+    console.log(`\n✅ Found working signature type: ${workingTypes[0].signatureType} (${workingTypes[0].name})`);
+    console.log("   Use this value for POLYMARKET_SIGNATURE_TYPE in your .env");
+  } else if (failed === 0) {
+    console.log("\n✅ All diagnostics passed but no signature type worked.");
+    console.log("   Your wallet may not be registered on Polymarket yet.");
   } else {
     console.log("\n❌ Some diagnostics failed. Review the output above.");
   }
