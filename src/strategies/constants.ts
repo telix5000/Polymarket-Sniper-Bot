@@ -33,7 +33,7 @@ export function calculateNetProfit(grossProfitPct: number): number {
  */
 export function isProfitableAfterFees(
   grossProfitPct: number,
-  minNetProfitPct: number = 0.5
+  minNetProfitPct: number = 0.5,
 ): boolean {
   return calculateNetProfit(grossProfitPct) >= minNetProfitPct;
 }

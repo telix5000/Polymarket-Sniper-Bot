@@ -6,9 +6,9 @@ import { calculateNetProfit } from "./constants";
 
 export interface QuickFlipConfig {
   enabled: boolean;
-  targetPct: number;        // Sell at this gain percentage (e.g., 5 = 5%)
-  stopLossPct: number;      // Sell at this loss percentage (e.g., 3 = -3%)
-  minHoldSeconds: number;   // Minimum time to hold position before selling
+  targetPct: number; // Sell at this gain percentage (e.g., 5 = 5%)
+  stopLossPct: number; // Sell at this loss percentage (e.g., 3 = -3%)
+  minHoldSeconds: number; // Minimum time to hold position before selling
 }
 
 export interface QuickFlipStrategyConfig {
@@ -54,23 +54,27 @@ export class QuickFlipStrategy {
 
     // Check for positions that hit target gain
     const targetPositions = this.positionTracker.getPositionsAboveTarget(
-      this.config.targetPct
+      this.config.targetPct,
     );
-    
+
     for (const position of targetPositions) {
       if (this.shouldSell(position.marketId, position.tokenId)) {
         const netProfitPct = calculateNetProfit(position.pnlPct);
         this.logger.info(
-          `[QuickFlip] Selling position at +${position.pnlPct.toFixed(2)}% gross (+${netProfitPct.toFixed(2)}% net after fees): ${position.marketId}`
+          `[QuickFlip] Selling position at +${position.pnlPct.toFixed(2)}% gross (+${netProfitPct.toFixed(2)}% net after fees): ${position.marketId}`,
         );
-        
+
         try {
-          await this.sellPosition(position.marketId, position.tokenId, position.size);
+          await this.sellPosition(
+            position.marketId,
+            position.tokenId,
+            position.size,
+          );
           soldCount++;
         } catch (err) {
           this.logger.error(
             `[QuickFlip] Failed to sell position ${position.marketId}`,
-            err as Error
+            err as Error,
           );
         }
       }
@@ -78,23 +82,27 @@ export class QuickFlipStrategy {
 
     // Check for positions that hit stop loss
     const stopLossPositions = this.positionTracker.getPositionsBelowStopLoss(
-      this.config.stopLossPct
+      this.config.stopLossPct,
     );
-    
+
     for (const position of stopLossPositions) {
       if (this.shouldSell(position.marketId, position.tokenId)) {
         const netLossPct = position.pnlPct - 0.2; // Include 0.2% fees in loss calculation
         this.logger.warn(
-          `[QuickFlip] Stop-loss triggered at ${position.pnlPct.toFixed(2)}% gross (${netLossPct.toFixed(2)}% net with fees): ${position.marketId}`
+          `[QuickFlip] Stop-loss triggered at ${position.pnlPct.toFixed(2)}% gross (${netLossPct.toFixed(2)}% net with fees): ${position.marketId}`,
         );
-        
+
         try {
-          await this.sellPosition(position.marketId, position.tokenId, position.size);
+          await this.sellPosition(
+            position.marketId,
+            position.tokenId,
+            position.size,
+          );
           soldCount++;
         } catch (err) {
           this.logger.error(
             `[QuickFlip] Failed to execute stop-loss for ${position.marketId}`,
-            err as Error
+            err as Error,
           );
         }
       }
@@ -113,10 +121,10 @@ export class QuickFlipStrategy {
    */
   private shouldSell(marketId: string, tokenId: string): boolean {
     const key = `${marketId}-${tokenId}`;
-    
+
     // Check if we already have an entry time tracked
     let entryTime = this.positionEntryTimes.get(key);
-    
+
     if (!entryTime) {
       // Record current time as entry time (first time seeing this position)
       entryTime = Date.now();
@@ -135,56 +143,56 @@ export class QuickFlipStrategy {
   private async sellPosition(
     marketId: string,
     tokenId: string,
-    size: number
+    size: number,
   ): Promise<void> {
     try {
       // Import postOrder utility
       const { postOrder } = await import("../utils/post-order.util");
-      
+
       // Get current orderbook to check liquidity and best bid
       const orderbook = await this.client.getOrderBook(tokenId);
-      
+
       if (!orderbook.bids || orderbook.bids.length === 0) {
         throw new Error(`No bids available for token ${tokenId} - cannot sell`);
       }
-      
+
       const bestBid = parseFloat(orderbook.bids[0].price);
       const bestBidSize = parseFloat(orderbook.bids[0].size);
-      
+
       this.logger.debug(
-        `[QuickFlip] Best bid: ${(bestBid * 100).toFixed(1)}¢ (size: ${bestBidSize.toFixed(2)})`
+        `[QuickFlip] Best bid: ${(bestBid * 100).toFixed(1)}¢ (size: ${bestBidSize.toFixed(2)})`,
       );
-      
+
       // Check if there's sufficient liquidity
       const totalBidLiquidity = orderbook.bids
         .slice(0, 3) // Top 3 levels
         .reduce((sum, level) => sum + parseFloat(level.size), 0);
-      
+
       if (totalBidLiquidity < size * 0.5) {
         this.logger.warn(
-          `[QuickFlip] Low liquidity warning: attempting to sell ${size.toFixed(2)} but only ${totalBidLiquidity.toFixed(2)} available in top 3 levels`
+          `[QuickFlip] Low liquidity warning: attempting to sell ${size.toFixed(2)} but only ${totalBidLiquidity.toFixed(2)} available in top 3 levels`,
         );
       }
-      
+
       // Calculate sell value (size * best bid price)
       const sizeUsd = size * bestBid;
-      
+
       // Validate minimum order size
       const minOrderUsd = 10; // From DEFAULT_CONFIG
       if (sizeUsd < minOrderUsd) {
         this.logger.warn(
-          `[QuickFlip] Position too small to sell: $${sizeUsd.toFixed(2)} < $${minOrderUsd} minimum`
+          `[QuickFlip] Position too small to sell: $${sizeUsd.toFixed(2)} < $${minOrderUsd} minimum`,
         );
         return;
       }
-      
+
       // Extract wallet if available (for compatibility with postOrder)
       const wallet = (this.client as { wallet?: Wallet }).wallet;
-      
+
       this.logger.info(
-        `[QuickFlip] Executing sell: ${size.toFixed(2)} shares at ~${(bestBid * 100).toFixed(1)}¢ ($${sizeUsd.toFixed(2)})`
+        `[QuickFlip] Executing sell: ${size.toFixed(2)} shares at ~${(bestBid * 100).toFixed(1)}¢ ($${sizeUsd.toFixed(2)})`,
       );
-      
+
       // Execute sell order using postOrder utility
       const result = await postOrder({
         client: this.client,
@@ -198,26 +206,25 @@ export class QuickFlipStrategy {
         logger: this.logger,
         priority: false, // Not a frontrun trade
       });
-      
+
       if (result.status === "submitted") {
         this.logger.info(
-          `[QuickFlip] ✓ Sold ${size.toFixed(2)} shares at ~${(bestBid * 100).toFixed(1)}¢`
+          `[QuickFlip] ✓ Sold ${size.toFixed(2)} shares at ~${(bestBid * 100).toFixed(1)}¢`,
         );
       } else if (result.status === "skipped") {
         this.logger.warn(
-          `[QuickFlip] Sell order skipped: ${result.reason ?? "unknown reason"}`
+          `[QuickFlip] Sell order skipped: ${result.reason ?? "unknown reason"}`,
         );
       } else {
         this.logger.error(
-          `[QuickFlip] Sell order failed: ${result.reason ?? "unknown reason"}`
+          `[QuickFlip] Sell order failed: ${result.reason ?? "unknown reason"}`,
         );
         throw new Error(`Sell order failed: ${result.reason ?? "unknown"}`);
       }
-      
     } catch (err) {
       // Re-throw error for caller to handle
       this.logger.error(
-        `[QuickFlip] Failed to sell position: ${err instanceof Error ? err.message : String(err)}`
+        `[QuickFlip] Failed to sell position: ${err instanceof Error ? err.message : String(err)}`,
       );
       throw err;
     } finally {
@@ -234,9 +241,9 @@ export class QuickFlipStrategy {
   private cleanupStaleEntries(): void {
     const currentPositions = this.positionTracker.getPositions();
     const currentKeys = new Set(
-      currentPositions.map(pos => `${pos.marketId}-${pos.tokenId}`)
+      currentPositions.map((pos) => `${pos.marketId}-${pos.tokenId}`),
     );
-    
+
     let cleanedCount = 0;
     const keysToDelete: string[] = [];
     for (const key of this.positionEntryTimes.keys()) {
@@ -248,10 +255,10 @@ export class QuickFlipStrategy {
       this.positionEntryTimes.delete(key);
       cleanedCount++;
     }
-    
+
     if (cleanedCount > 0) {
       this.logger.debug(
-        `[QuickFlip] Cleaned up ${cleanedCount} stale position entries`
+        `[QuickFlip] Cleaned up ${cleanedCount} stale position entries`,
       );
     }
   }

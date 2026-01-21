@@ -6,7 +6,7 @@
 /**
  * Check if live trading is enabled via ARB_LIVE_TRADING or LIVE_TRADING env vars.
  * Live trading is enabled if either variable is set to exactly "I_UNDERSTAND_THE_RISKS".
- * 
+ *
  * @returns true if either ARB_LIVE_TRADING or LIVE_TRADING is set to "I_UNDERSTAND_THE_RISKS"
  */
 export function isLiveTradingEnabled(): boolean {
