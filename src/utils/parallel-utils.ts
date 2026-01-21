@@ -9,6 +9,9 @@
 
 import type { Logger } from "./logger.util";
 
+/** Sentinel value to distinguish "no result" from "undefined result" */
+const NO_RESULT = Symbol("NO_RESULT");
+
 export interface BatchResult<T> {
   results: T[];
   errors: Error[];
@@ -35,7 +38,8 @@ export async function parallelBatch<T, R>(
 ): Promise<BatchResult<R>> {
   const { concurrency = 6, logger, label = "batch" } = options;
   const startTime = Date.now();
-  const results: R[] = [];
+  // Use sentinel value to distinguish "no result" from "undefined result"
+  const results: (R | typeof NO_RESULT)[] = new Array(items.length).fill(NO_RESULT);
   const errors: Error[] = [];
 
   // Process items in batches
@@ -71,8 +75,9 @@ export async function parallelBatch<T, R>(
     `[${label}] Processed ${items.length} items in ${totalTime}ms (${errors.length} errors)`,
   );
 
-  // Filter out undefined values but keep legitimate falsy values (0, false, empty string)
-  return { results: results.filter((r) => r !== undefined), errors, totalTime };
+  // Filter out sentinel values but keep legitimate undefined results
+  const filteredResults = results.filter((r): r is R => r !== NO_RESULT);
+  return { results: filteredResults, errors, totalTime };
 }
 
 /**
@@ -99,6 +104,7 @@ export async function parallelFetch<T extends Record<string, Promise<unknown>>>(
  */
 export class TTLCache<K, V> {
   private cache = new Map<K, CacheEntry<V>>();
+  private pendingFetches = new Map<K, Promise<V>>();
   private readonly defaultTtlMs: number;
 
   constructor(defaultTtlMs: number = 30_000) {
@@ -123,7 +129,15 @@ export class TTLCache<K, V> {
   }
 
   has(key: K): boolean {
-    return this.get(key) !== undefined;
+    const entry = this.cache.get(key);
+    if (!entry) {
+      return false;
+    }
+    if (Date.now() > entry.expiresAt) {
+      this.cache.delete(key);
+      return false;
+    }
+    return true;
   }
 
   delete(key: K): boolean {
@@ -135,20 +149,39 @@ export class TTLCache<K, V> {
   }
 
   /**
-   * Get or fetch with automatic caching
+   * Get or fetch with automatic caching.
+   * Protects against concurrent fetches - if multiple callers request the same
+   * uncached key simultaneously, only one fetch will occur.
    */
   async getOrFetch(
     key: K,
     fetcher: () => Promise<V>,
     ttlMs?: number,
   ): Promise<V> {
-    const cached = this.get(key);
-    if (cached !== undefined) {
-      return cached;
+    // Check cache first
+    if (this.has(key)) {
+      return this.cache.get(key)!.value;
     }
-    const value = await fetcher();
-    this.set(key, value, ttlMs);
-    return value;
+
+    // Check if there's already a pending fetch for this key
+    const pendingFetch = this.pendingFetches.get(key);
+    if (pendingFetch) {
+      return pendingFetch;
+    }
+
+    // Start a new fetch and track it
+    const fetchPromise = (async () => {
+      try {
+        const value = await fetcher();
+        this.set(key, value, ttlMs);
+        return value;
+      } finally {
+        this.pendingFetches.delete(key);
+      }
+    })();
+
+    this.pendingFetches.set(key, fetchPromise);
+    return fetchPromise;
   }
 
   /**
@@ -167,26 +200,22 @@ export class TTLCache<K, V> {
 }
 
 /**
- * Debounce multiple calls to the same function within a time window
- * Only the last call's result is returned to all waiters
+ * Coalesce concurrent calls for the same key.
+ * All concurrent callers for the same key share the result of the first execution.
+ * No artificial delay is added - deduplication only occurs for truly concurrent calls.
  */
-export class DebouncedExecutor<K, V> {
+export class RequestCoalescer<K, V> {
   private pending = new Map<K, Promise<V>>();
-  private readonly delayMs: number;
-
-  constructor(delayMs: number = 100) {
-    this.delayMs = delayMs;
-  }
 
   async execute(key: K, fn: () => Promise<V>): Promise<V> {
+    // If there's already a pending request for this key, return its promise
     const existing = this.pending.get(key);
     if (existing) {
       return existing;
     }
 
+    // Start a new request and track it
     const promise = (async () => {
-      // Small delay to collect concurrent calls
-      await new Promise((resolve) => setTimeout(resolve, this.delayMs));
       try {
         return await fn();
       } finally {
@@ -198,6 +227,11 @@ export class DebouncedExecutor<K, V> {
     return promise;
   }
 }
+
+/**
+ * @deprecated Use RequestCoalescer instead. DebouncedExecutor is kept for backwards compatibility.
+ */
+export const DebouncedExecutor = RequestCoalescer;
 
 /**
  * Combine multiple balance/allowance checks into a single batch

@@ -86,16 +86,19 @@ const balances = await parallelFetch({
 // balances.usdc and balances.pol will be the values or null on error
 ```
 
-### DebouncedExecutor
-Dedupe concurrent calls to the same operation within a time window.
+### RequestCoalescer
+Coalesce concurrent calls for the same key. All concurrent callers share the result of a single execution.
+No artificial delay is added - deduplication only occurs for truly concurrent calls.
 
 ```typescript
-import { DebouncedExecutor } from "../utils/parallel-utils";
+import { RequestCoalescer } from "../utils/parallel-utils";
 
-const executor = new DebouncedExecutor<string, Result>(100);
-// Multiple calls with same key within 100ms will share the same result
-const result = await executor.execute("key", async () => expensiveOp());
+const coalescer = new RequestCoalescer<string, Result>();
+// Concurrent calls with same key share the first call's result
+const result = await coalescer.execute("key", async () => expensiveOp());
 ```
+
+> **Note:** `DebouncedExecutor` is deprecated and is now an alias for `RequestCoalescer`.
 
 ## Configuration
 

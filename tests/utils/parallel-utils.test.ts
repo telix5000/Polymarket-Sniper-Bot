@@ -4,6 +4,7 @@ import {
   parallelBatch,
   parallelFetch,
   TTLCache,
+  RequestCoalescer,
   DebouncedExecutor,
 } from "../../src/utils/parallel-utils";
 
@@ -53,6 +54,19 @@ describe("parallelBatch", () => {
     // Results should still contain successful items
     assert.ok(result.results.includes(1));
     assert.ok(result.results.includes(3));
+  });
+
+  it("should preserve legitimate undefined results", async () => {
+    const items = [1, 2, 3];
+    const result = await parallelBatch(items, async (n) => {
+      if (n === 2) return undefined;
+      return n;
+    });
+
+    assert.strictEqual(result.results.length, 3);
+    assert.strictEqual(result.errors.length, 0);
+    // Verify undefined is in the results
+    assert.ok(result.results.includes(undefined as unknown as number));
   });
 });
 
@@ -123,6 +137,28 @@ describe("TTLCache", () => {
     assert.strictEqual(fetchCount, 1); // Fetcher should only be called once
   });
 
+  it("getOrFetch should dedupe concurrent fetches for same key", async () => {
+    const cache = new TTLCache<string, number>(1000);
+    let fetchCount = 0;
+
+    const fetcher = async () => {
+      fetchCount++;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return 42;
+    };
+
+    // Start 3 concurrent fetches for the same key
+    const results = await Promise.all([
+      cache.getOrFetch("key", fetcher),
+      cache.getOrFetch("key", fetcher),
+      cache.getOrFetch("key", fetcher),
+    ]);
+
+    assert.deepStrictEqual(results, [42, 42, 42]);
+    // Fetcher should only be called once despite 3 concurrent calls
+    assert.strictEqual(fetchCount, 1);
+  });
+
   it("should track size correctly", () => {
     const cache = new TTLCache<string, number>(1000);
     assert.strictEqual(cache.size, 0);
@@ -139,9 +175,9 @@ describe("TTLCache", () => {
   });
 });
 
-describe("DebouncedExecutor", () => {
+describe("RequestCoalescer", () => {
   it("should dedupe concurrent calls with same key", async () => {
-    const executor = new DebouncedExecutor<string, number>(10);
+    const coalescer = new RequestCoalescer<string, number>();
     let callCount = 0;
 
     const fn = async () => {
@@ -152,9 +188,9 @@ describe("DebouncedExecutor", () => {
 
     // Start 3 concurrent calls with the same key
     const results = await Promise.all([
-      executor.execute("key", fn),
-      executor.execute("key", fn),
-      executor.execute("key", fn),
+      coalescer.execute("key", fn),
+      coalescer.execute("key", fn),
+      coalescer.execute("key", fn),
     ]);
 
     // All should get the same result
@@ -164,15 +200,15 @@ describe("DebouncedExecutor", () => {
   });
 
   it("should handle different keys separately", async () => {
-    const executor = new DebouncedExecutor<string, string>(10);
+    const coalescer = new RequestCoalescer<string, string>();
     let callCount = 0;
 
     const results = await Promise.all([
-      executor.execute("a", async () => {
+      coalescer.execute("a", async () => {
         callCount++;
         return "result-a";
       }),
-      executor.execute("b", async () => {
+      coalescer.execute("b", async () => {
         callCount++;
         return "result-b";
       }),
@@ -181,5 +217,37 @@ describe("DebouncedExecutor", () => {
     assert.ok(results.includes("result-a"));
     assert.ok(results.includes("result-b"));
     assert.strictEqual(callCount, 2);
+  });
+
+  it("should not add artificial delay", async () => {
+    const coalescer = new RequestCoalescer<string, number>();
+    const startTime = Date.now();
+
+    await coalescer.execute("key", async () => 42);
+
+    const elapsed = Date.now() - startTime;
+    // Should complete nearly instantly (< 10ms) without artificial delay
+    assert.ok(elapsed < 10, `Expected < 10ms but took ${elapsed}ms`);
+  });
+});
+
+describe("DebouncedExecutor (backwards compatibility)", () => {
+  it("should work as an alias for RequestCoalescer", async () => {
+    const executor = new DebouncedExecutor<string, number>();
+    let callCount = 0;
+
+    const fn = async () => {
+      callCount++;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return 42;
+    };
+
+    const results = await Promise.all([
+      executor.execute("key", fn),
+      executor.execute("key", fn),
+    ]);
+
+    assert.deepStrictEqual(results, [42, 42]);
+    assert.strictEqual(callCount, 1);
   });
 });

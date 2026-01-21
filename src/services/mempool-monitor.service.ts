@@ -227,8 +227,8 @@ export class MempoolMonitorService {
           logger.debug(
             `Error checking activity for ${targetAddress}: ${sanitizeErrorMessage(err)}`,
           );
-          // Mark this as an API error in the local stats
-          localStats.skippedApiErrorTrades = 1;
+          // Do not mark this as a skipped API error trade, since no trades were processed.
+          // The address check failed, but we didn't skip any actual trades.
           return { success: false, stats: localStats };
         }
       },
@@ -237,10 +237,14 @@ export class MempoolMonitorService {
 
     // Aggregate stats from all parallel checks
     let checkedAddresses = 0;
+    let failedAddressChecks = 0;
     for (const result of batchResult.results) {
       if (result) {
         checkedAddresses++;
-        // Aggregate individual stats (skippedApiErrorTrades already included in localStats for failed requests)
+        if (!result.success) {
+          failedAddressChecks++;
+        }
+        // Aggregate individual stats
         stats.tradesSeen += result.stats.tradesSeen;
         stats.recentTrades += result.stats.recentTrades;
         stats.eligibleTrades += result.stats.eligibleTrades;
@@ -256,13 +260,13 @@ export class MempoolMonitorService {
       }
     }
     // Count exceptions from parallelBatch (these are uncaught errors from the batch processor)
-    // These were not included in results, so we count them separately
+    // These were not included in results, so we count them separately as failed address checks
+    failedAddressChecks += batchResult.errors.length;
     checkedAddresses += batchResult.errors.length;
-    stats.skippedApiErrorTrades += batchResult.errors.length;
 
     const durationMs = Date.now() - startTime;
     logger.info(
-      `[Monitor] Checked ${checkedAddresses} address(es) in ${durationMs}ms | trades: ${stats.tradesSeen}, recent: ${stats.recentTrades}, eligible: ${stats.eligibleTrades}, skipped_small: ${stats.skippedSmallTrades}, skipped_unconfirmed: ${stats.skippedUnconfirmedTrades}, skipped_non_target: ${stats.skippedNonTargetTrades}, skipped_parse_error: ${stats.skippedParseErrorTrades}, skipped_outside_recent_window: ${stats.skippedOutsideRecentWindowTrades}, skipped_unsupported_action: ${stats.skippedUnsupportedActionTrades}, skipped_missing_fields: ${stats.skippedMissingFieldsTrades}, skipped_api_error: ${stats.skippedApiErrorTrades}, skipped_other: ${stats.skippedOtherTrades}`,
+      `[Monitor] Checked ${checkedAddresses} address(es) in ${durationMs}ms (${failedAddressChecks} failed) | trades: ${stats.tradesSeen}, recent: ${stats.recentTrades}, eligible: ${stats.eligibleTrades}, skipped_small: ${stats.skippedSmallTrades}, skipped_unconfirmed: ${stats.skippedUnconfirmedTrades}, skipped_non_target: ${stats.skippedNonTargetTrades}, skipped_parse_error: ${stats.skippedParseErrorTrades}, skipped_outside_recent_window: ${stats.skippedOutsideRecentWindowTrades}, skipped_unsupported_action: ${stats.skippedUnsupportedActionTrades}, skipped_missing_fields: ${stats.skippedMissingFieldsTrades}, skipped_api_error: ${stats.skippedApiErrorTrades}, skipped_other: ${stats.skippedOtherTrades}`,
     );
   }
 
