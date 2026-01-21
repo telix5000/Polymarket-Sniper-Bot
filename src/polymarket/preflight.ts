@@ -11,6 +11,7 @@ import { formatClobAuthFailureHint } from "../utils/clob-auth-hint.util";
 import { isGeoblocked } from "../utils/geoblock.util";
 import type { Logger } from "../utils/logger.util";
 import { sanitizeErrorMessage } from "../utils/sanitize-axios-error.util";
+import { syncClobAllowanceCache } from "../utils/funds-allowance.util";
 import {
   publicKeyMatchesDerived,
   deriveSignerAddress,
@@ -615,21 +616,11 @@ export const ensureTradingReady = async (
 
     // If approvals were set/confirmed, sync CLOB cache with on-chain state
     if (approvalsOk) {
-      try {
-        params.logger.info(
-          "[Preflight][Approvals] Syncing CLOB allowance cache with on-chain state...",
-        );
-        await params.client.updateBalanceAllowance({
-          asset_type: AssetType.COLLATERAL,
-        });
-        params.logger.info(
-          "[Preflight][Approvals] CLOB allowance cache synced successfully.",
-        );
-      } catch (syncError) {
-        params.logger.warn(
-          `[Preflight][Approvals] Failed to sync CLOB cache, but approvals are confirmed on-chain. ${sanitizeErrorMessage(syncError)}`,
-        );
-      }
+      await syncClobAllowanceCache(
+        params.client,
+        params.logger,
+        "after preflight approvals",
+      );
     }
   } catch (error) {
     params.logger.warn(

@@ -10,6 +10,7 @@ import {
 import type { RelayerContext } from "../polymarket/relayer";
 import { buildSignedPath } from "./query-string.util";
 import type { Logger } from "./logger.util";
+import { sanitizeErrorMessage } from "./sanitize-axios-error.util";
 
 const ERC20_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
@@ -108,7 +109,7 @@ const parseUsdValue = (value: unknown): number => {
 
 const formatUsd = (value: number): string => value.toFixed(2);
 
-const syncClobAllowanceCache = async (
+export const syncClobAllowanceCache = async (
   client: ClobClient,
   logger: Logger,
   context: string,
@@ -120,9 +121,9 @@ const syncClobAllowanceCache = async (
     });
     logger.info("[CLOB] CLOB allowance cache synced successfully.");
   } catch (syncError) {
-    const syncMessage =
-      syncError instanceof Error ? syncError.message : String(syncError);
-    logger.warn(`[CLOB] Failed to sync CLOB cache ${context}: ${syncMessage}`);
+    logger.warn(
+      `[CLOB] Failed to sync CLOB cache ${context}: ${sanitizeErrorMessage(syncError)}`,
+    );
   }
 };
 
@@ -589,7 +590,7 @@ export const checkFundsAndAllowance = async (
                 config: approvalsConfig,
               });
 
-              // Sync CLOB cache with on-chain state after ERC1155 approvals
+              // Sync CLOB cache with on-chain state after approvals
               await syncClobAllowanceCache(
                 params.client,
                 params.logger,
