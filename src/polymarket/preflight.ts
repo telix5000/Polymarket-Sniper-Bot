@@ -309,7 +309,7 @@ export const ensureTradingReady = async (
         if (
           preflight &&
           !preflight.ok &&
-          (preflight.status === 401 || preflight.status === 403)
+          preflight.severity === "FATAL"
         ) {
           detectOnly = true;
           authOk = false;
@@ -317,7 +317,7 @@ export const ensureTradingReady = async (
           authFailureContext.status = preflight.status;
           authFailureContext.verificationError = "Unauthorized/Invalid api key";
           params.logger.warn(
-            "[CLOB] Auth preflight failed; switching to detect-only.",
+            "[CLOB] Auth preflight failed (FATAL); switching to detect-only.",
           );
           params.logger.warn(
             formatClobAuthFailureHint(params.clobDeriveEnabled),
@@ -330,12 +330,45 @@ export const ensureTradingReady = async (
               success: false,
             }),
           );
+        } else if (preflight && !preflight.ok && preflight.severity === "NON_FATAL") {
+          // Non-fatal error - log warning but don't block trading
+          authOk = true; // Auth credentials are OK, just a non-critical preflight issue
+          authFailureContext.verificationFailed = false;
+          authFailureContext.status = preflight.status;
+          params.logger.warn(
+            `[CLOB] Auth preflight check failed (NON_FATAL) but credentials appear valid; allowing trading. status=${preflight.status}`,
+          );
+          // Add attempt to auth story showing non-fatal issue
+          authStory.addAttempt(
+            createAuthAttempt("A", {
+              httpStatus: preflight.status,
+              errorTextShort: `Non-fatal: ${preflight.reason ?? "Unknown"}`,
+              success: true, // Mark as success since we're allowing trading
+            }),
+          );
+        } else if (preflight && !preflight.ok && preflight.severity === "TRANSIENT") {
+          // Transient error - log warning but don't block trading
+          authOk = true; // Auth credentials are OK, just a transient network/server issue
+          authFailureContext.verificationFailed = false;
+          authFailureContext.status = preflight.status;
+          params.logger.warn(
+            `[CLOB] Auth preflight check failed (TRANSIENT); allowing trading with retry. status=${preflight.status}`,
+          );
+          // Add attempt to auth story showing transient issue
+          authStory.addAttempt(
+            createAuthAttempt("A", {
+              httpStatus: preflight.status,
+              errorTextShort: `Transient: ${preflight.reason ?? "Network/Server"}`,
+              success: true, // Mark as success since we're allowing trading
+            }),
+          );
         } else if (preflight && !preflight.ok) {
+          // Legacy fallback for errors without severity classification
           authOk = false;
           authFailureContext.verificationFailed = true;
           authFailureContext.status = preflight.status;
           params.logger.warn(
-            "[CLOB] Auth preflight failed; continuing with order submissions.",
+            "[CLOB] Auth preflight failed (no severity); continuing with order submissions.",
           );
           // Add failed attempt to auth story
           authStory.addAttempt(
@@ -468,7 +501,14 @@ export const ensureTradingReady = async (
   // If CLOB API auth fails, there's no point in deploying a Safe wallet or setting up approvals
   // because you won't be able to trade anyway. This guard prevents wasting gas on on-chain
   // transactions that serve no purpose without working API authentication.
-  if (!authOk) {
+  //
+  // Override: Set ALLOW_TRADING_WITHOUT_PREFLIGHT=true to bypass this check (not recommended)
+  const allowTradingWithoutPreflight = parseBool(
+    readEnv("ALLOW_TRADING_WITHOUT_PREFLIGHT"),
+    false,
+  );
+  
+  if (!authOk && !allowTradingWithoutPreflight) {
     params.logger.error(
       "[Preflight][GasGuard] ⛔ BLOCKING ALL ON-CHAIN TRANSACTIONS",
     );
@@ -484,6 +524,12 @@ export const ensureTradingReady = async (
     params.logger.error(
       "[Preflight][GasGuard] Run 'npm run auth:diag' for detailed authentication diagnostics.",
     );
+    
+    if (allowTradingWithoutPreflight) {
+      params.logger.warn(
+        "[Preflight][GasGuard] ALLOW_TRADING_WITHOUT_PREFLIGHT=true - bypassing auth check (NOT RECOMMENDED)",
+      );
+    }
 
     const tradingAddress =
       relayer.tradingAddress ??

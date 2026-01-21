@@ -43,6 +43,8 @@ export type AuthFailureReason =
 
 export type PreflightIssue = "AUTH" | "PARAM" | "FUNDS" | "NETWORK" | "UNKNOWN";
 
+export type PreflightSeverity = "FATAL" | "NON_FATAL" | "TRANSIENT";
+
 const SIGNATURE_ENCODING_USED: SignatureEncodingMode = "base64url";
 const SECRET_DECODING_USED: SecretDecodingMode = "base64";
 const PREFLIGHT_BACKOFF_BASE_MS = 1000;
@@ -527,6 +529,39 @@ export const classifyPreflightIssue = (params: {
   return "UNKNOWN";
 };
 
+/**
+ * Classify the severity of a preflight failure to determine if trading should be blocked.
+ * 
+ * - FATAL: Authentication failed (401/403) - must block all trading
+ * - TRANSIENT: Network errors, rate limits - should retry, don't block trading permanently
+ * - NON_FATAL: Other errors (params, unknown) - log but don't block if credentials are valid
+ */
+export const classifyPreflightSeverity = (params: {
+  status?: number;
+  code?: string | null;
+  issue: PreflightIssue;
+}): PreflightSeverity => {
+  // 401/403 are fatal auth failures - must block trading
+  if (params.status === 401 || params.status === 403) {
+    return "FATAL";
+  }
+  
+  // Network errors and transient codes should be retried, not block permanently
+  if (params.issue === "NETWORK" || (params.code && PREFLIGHT_TRANSIENT_CODES.has(params.code))) {
+    return "TRANSIENT";
+  }
+  
+  // 500+ errors are server-side issues - transient
+  if (params.status && params.status >= 500) {
+    return "TRANSIENT";
+  }
+  
+  // All other errors (bad params, unknown, funds) are non-fatal
+  // If creds were derived successfully and this is just a preflight issue, allow trading
+  return "NON_FATAL";
+};
+
+
 const logPreflightHint = (logger: AnyLogger, issue: PreflightIssue): void => {
   const hints: Record<PreflightIssue, string> = {
     AUTH: "Auth failed: verify API key/secret/passphrase, signature_type, and POLY_ADDRESS.",
@@ -746,6 +781,7 @@ export const runClobAuthPreflight = async (params: {
   ok: boolean;
   status?: number;
   reason?: AuthFailureReason;
+  severity?: PreflightSeverity;
   forced: boolean;
 } | null> => {
   if (!params.logger || !params.creds) return null;
@@ -855,14 +891,12 @@ export const runClobAuthPreflight = async (params: {
         message: responseErrorMessage || "unauthorized",
         data: (response as { data?: unknown })?.data,
       });
-      logPreflightHint(
-        params.logger,
-        classifyPreflightIssue({
-          status,
-          message: responseErrorMessage,
-          data: (response as { data?: unknown })?.data,
-        }),
-      );
+      const issue = classifyPreflightIssue({
+        status,
+        message: responseErrorMessage,
+        data: (response as { data?: unknown })?.data,
+      });
+      logPreflightHint(params.logger, issue);
       const secretFormat = detectSecretDecodingMode(params.creds.secret);
       const reason = classifyAuthFailure({
         configuredPublicKey: params.configuredPublicKey,
@@ -882,6 +916,7 @@ export const runClobAuthPreflight = async (params: {
           ...logContext,
           status,
           reason,
+          severity: "FATAL",
           address: params.derivedSignerAddress ?? "n/a",
           sigType: signatureType,
           funder: funderAddress ?? "none",
@@ -902,7 +937,7 @@ export const runClobAuthPreflight = async (params: {
         preflightBackoffMs * 2,
         PREFLIGHT_BACKOFF_MAX_MS,
       );
-      return { ok: false, status, reason, forced: Boolean(params.force) };
+      return { ok: false, status, reason, severity: "FATAL", forced: Boolean(params.force) };
     }
     if (status && status >= 500) {
       logPreflightFailure({
@@ -916,6 +951,7 @@ export const runClobAuthPreflight = async (params: {
         preflightBackoffMs * 2,
         PREFLIGHT_BACKOFF_MAX_MS,
       );
+      // Server errors are transient - return null to trigger retry
       return null;
     }
     if (status && status >= 400 && status < 500) {
@@ -954,19 +990,36 @@ export const runClobAuthPreflight = async (params: {
       message: responseErrorMessage || "unknown_error",
       data: (response as { data?: unknown })?.data,
     });
-    logPreflightHint(
-      params.logger,
-      classifyPreflightIssue({
+    const issue = classifyPreflightIssue({
+      status,
+      message: responseErrorMessage || "unknown_error",
+      data: (response as { data?: unknown })?.data,
+    });
+    logPreflightHint(params.logger, issue);
+    const severity = classifyPreflightSeverity({
+      status,
+      code: null,
+      issue,
+    });
+    
+    if (isStructuredLogger(params.logger)) {
+      params.logger.warn("Preflight check failed with unknown error", {
+        ...logContext,
         status,
-        message: responseErrorMessage || "unknown_error",
-        data: (response as { data?: unknown })?.data,
-      }),
-    );
+        severity,
+        issue,
+      });
+    } else {
+      params.logger.warn(
+        `[CLOB][Preflight] UNKNOWN_ERROR status=${status} severity=${severity} issue=${issue}`,
+      );
+    }
+    
     preflightBackoffMs = Math.min(
       preflightBackoffMs * 2,
       PREFLIGHT_BACKOFF_MAX_MS,
     );
-    return { ok: false, status, forced: Boolean(params.force) };
+    return { ok: false, status, severity, forced: Boolean(params.force) };
   } catch (error) {
     const details = extractPreflightErrorDetails(error);
 
@@ -990,15 +1043,13 @@ export const runClobAuthPreflight = async (params: {
       data: details.data,
       url: details.url,
     });
-    logPreflightHint(
-      params.logger,
-      classifyPreflightIssue({
-        status: details.status,
-        code: details.code,
-        message: details.message,
-        data: details.data,
-      }),
-    );
+    const issue = classifyPreflightIssue({
+      status: details.status,
+      code: details.code,
+      message: details.message,
+      data: details.data,
+    });
+    logPreflightHint(params.logger, issue);
     if (details.code && PREFLIGHT_TRANSIENT_CODES.has(details.code)) {
       preflightBackoffMs = Math.min(
         preflightBackoffMs * 2,
@@ -1026,6 +1077,7 @@ export const runClobAuthPreflight = async (params: {
           ...logContext,
           status: details.status,
           reason,
+          severity: "FATAL",
           address: params.derivedSignerAddress ?? "n/a",
           sigType: signatureType,
           funder: funderAddress ?? "none",
@@ -1050,6 +1102,7 @@ export const runClobAuthPreflight = async (params: {
         ok: false,
         status: details.status,
         reason,
+        severity: "FATAL",
         forced: Boolean(params.force),
       };
     }
@@ -1078,11 +1131,32 @@ export const runClobAuthPreflight = async (params: {
         forced: Boolean(params.force),
       };
     }
+    
+    // Unknown error - classify severity
+    const severity = classifyPreflightSeverity({
+      status: details.status,
+      code: details.code,
+      issue,
+    });
+    
+    if (isStructuredLogger(params.logger)) {
+      params.logger.warn("Preflight request failed with unknown error", {
+        ...logContext,
+        status: details.status,
+        severity,
+        issue,
+      });
+    } else {
+      params.logger.warn(
+        `[CLOB][Preflight] ERROR status=${details.status ?? "n/a"} severity=${severity} issue=${issue}`,
+      );
+    }
+    
     preflightBackoffMs = Math.min(
       preflightBackoffMs * 2,
       PREFLIGHT_BACKOFF_MAX_MS,
     );
-    return { ok: false, status: details.status, forced: Boolean(params.force) };
+    return { ok: false, status: details.status, severity, forced: Boolean(params.force) };
   }
 };
 
