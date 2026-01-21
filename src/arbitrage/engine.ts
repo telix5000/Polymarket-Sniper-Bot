@@ -134,7 +134,7 @@ export class ArbitrageEngine {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`[ARB] ⚠️  Scan error: ${message}`);
+      this.logger.warn(`[ARB] ⚠️ Scan error: ${message}`);
     }
   }
 
@@ -148,7 +148,7 @@ export class ArbitrageEngine {
     } catch (error) {
       if (error instanceof OrderbookNotFoundError) {
         this.logger.warn(
-          `[ARB] ⚠️  Invalid orderbook token ${tokenId} for market ${marketId}. Remove from config/watchlist if applicable.`,
+          `[ARB] ⚠️ Invalid orderbook token ${tokenId} for market ${marketId}. Remove from config/watchlist if applicable.`,
         );
         return { top: { bestAsk: 0, bestBid: 0 }, failed: true };
       }

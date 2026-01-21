@@ -178,7 +178,7 @@ export class QuickFlipStrategy {
 
       if (totalBidLiquidity < size * 0.5) {
         this.logger.warn(
-          `[QuickFlip] ⚠️  Low liquidity warning: attempting to sell ${size.toFixed(2)} but only ${totalBidLiquidity.toFixed(2)} available in top 3 levels`,
+          `[QuickFlip] ⚠️ Low liquidity warning: attempting to sell ${size.toFixed(2)} but only ${totalBidLiquidity.toFixed(2)} available in top 3 levels`,
         );
       }
 
@@ -190,7 +190,7 @@ export class QuickFlipStrategy {
       const minOrderUsd = 10; // From DEFAULT_CONFIG
       if (!isStopLoss && sizeUsd < minOrderUsd) {
         this.logger.warn(
-          `[QuickFlip] ⚠️  Position too small to sell: $${sizeUsd.toFixed(2)} < $${minOrderUsd} minimum`,
+          `[QuickFlip] ⚠️ Position too small to sell: $${sizeUsd.toFixed(2)} < $${minOrderUsd} minimum`,
         );
         return;
       }
@@ -224,7 +224,7 @@ export class QuickFlipStrategy {
         );
       } else if (result.status === "skipped") {
         this.logger.warn(
-          `[QuickFlip] ⏭️  Sell order skipped: ${result.reason ?? "unknown reason"}`,
+          `[QuickFlip] ⏭️ Sell order skipped: ${result.reason ?? "unknown reason"}`,
         );
       } else {
         this.logger.error(

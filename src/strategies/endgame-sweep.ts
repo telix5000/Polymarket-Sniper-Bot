@@ -318,7 +318,7 @@ export class EndgameSweepStrategy {
     // Validate market price before calculations
     if (market.price <= 0) {
       this.logger.warn(
-        `[EndgameSweep] ⚠️  Invalid market price (${market.price}) for ${market.id}, skipping`,
+        `[EndgameSweep] ⚠️ Invalid market price (${market.price}) for ${market.id}, skipping`,
       );
       return;
     }
@@ -332,7 +332,7 @@ export class EndgameSweepStrategy {
     // Validate position size before proceeding
     if (positionSize <= 0) {
       this.logger.warn(
-        `[EndgameSweep] ⚠️  Invalid position size (${positionSize}) for ${market.id}, skipping`,
+        `[EndgameSweep] ⚠️ Invalid position size (${positionSize}) for ${market.id}, skipping`,
       );
       return;
     }
@@ -356,7 +356,7 @@ export class EndgameSweepStrategy {
       // Re-validate price is still in range (may have changed)
       if (bestAsk < this.config.minPrice || bestAsk > this.config.maxPrice) {
         this.logger.warn(
-          `[EndgameSweep] ⚠️  Price moved out of range: ${(bestAsk * 100).toFixed(1)}¢ (was ${(market.price * 100).toFixed(1)}¢)`,
+          `[EndgameSweep] ⚠️ Price moved out of range: ${(bestAsk * 100).toFixed(1)}¢ (was ${(market.price * 100).toFixed(1)}¢)`,
         );
         return;
       }
@@ -408,7 +408,7 @@ export class EndgameSweepStrategy {
         );
       } else if (result.status === "skipped") {
         this.logger.warn(
-          `[EndgameSweep] ⏭️  Buy order skipped: ${result.reason ?? "unknown reason"}`,
+          `[EndgameSweep] ⏭️ Buy order skipped: ${result.reason ?? "unknown reason"}`,
         );
         throw new Error(`Buy order skipped: ${result.reason ?? "unknown"}`);
       } else {

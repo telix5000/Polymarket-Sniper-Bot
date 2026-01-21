@@ -100,7 +100,7 @@ export class TradeExecutorService {
       const minOrderSize = env.minOrderUsd || DEFAULT_CONFIG.MIN_ORDER_USD;
       if (frontrunSize < minOrderSize) {
         logger.warn(
-          `[Frontrun] ⚠️  Order size ${frontrunSize.toFixed(2)} USD is below minimum ${minOrderSize.toFixed(2)} USD. Skipping trade.`,
+          `[Frontrun] ⚠️ Order size ${frontrunSize.toFixed(2)} USD is below minimum ${minOrderSize.toFixed(2)} USD. Skipping trade.`,
         );
         logger.info(
           `[Frontrun] 💡 Tip: Increase FRONTRUN_SIZE_MULTIPLIER (current: ${(sizing.multiplier * 100).toFixed(1)}%) or decrease MIN_ORDER_USD to execute smaller trades.`,
@@ -170,7 +170,7 @@ export class TradeExecutorService {
         errorMessage.includes("No orderbook")
       ) {
         logger.warn(
-          `[Frontrun] ⏭️  Skipping trade - Market ${signal.marketId} is closed or resolved: ${errorMessage}`,
+          `[Frontrun] ⏭️ Skipping trade - Market ${signal.marketId} is closed or resolved: ${errorMessage}`,
         );
       } else {
         logger.error(

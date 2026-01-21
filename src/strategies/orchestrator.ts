@@ -102,7 +102,7 @@ export class StrategyOrchestrator {
    */
   async start(): Promise<void> {
     if (this.isRunning) {
-      this.logger.warn("[Orchestrator] ⚠️  Already running");
+      this.logger.warn("[Orchestrator] ⚠️ Already running");
       return;
     }
 

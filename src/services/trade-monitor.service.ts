@@ -143,7 +143,7 @@ export class TradeMonitorService {
       // Handle 404 gracefully - user might have no activities yet or endpoint doesn't exist
       if (axios.isAxiosError(err) && err.response?.status === 404) {
         this.deps.logger.warn(
-          `[Monitor] ⚠️  No activities found for ${trader} (404)`,
+          `[Monitor] ⚠️ No activities found for ${trader} (404)`,
         );
         return;
       }
