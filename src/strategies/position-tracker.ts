@@ -171,7 +171,8 @@ export class PositionTracker {
       const walletAddress = resolveSignerAddress(this.client);
 
       // Fetch positions from Data API
-      // Updated to match actual Data API response format (2024/2025)
+      // Updated Jan 2025 to match the current Data API positions response format.
+      // Supports both the new format (introduced in late 2024) and the legacy format for backward compatibility.
       interface ApiPosition {
         // New API format fields
         asset?: string; // Token/asset identifier (replaces token_id/asset_id)
@@ -222,7 +223,7 @@ export class PositionTracker {
               if (!tokenId || !marketId) {
                 const reason = `Missing required fields - tokenId: ${tokenId || "MISSING"}, marketId: ${marketId || "MISSING"}`;
                 skippedPositions.push({ reason, data: apiPos });
-                this.logger.warn(`[PositionTracker] ${reason}`);
+                this.logger.debug(`[PositionTracker] ${reason}`);
                 return null;
               }
 
@@ -237,7 +238,7 @@ export class PositionTracker {
               if (size <= 0 || entryPrice <= 0) {
                 const reason = `Invalid size/price - size: ${size}, entryPrice: ${entryPrice}`;
                 skippedPositions.push({ reason, data: apiPos });
-                this.logger.warn(`[PositionTracker] ${reason}`);
+                this.logger.debug(`[PositionTracker] ${reason}`);
                 return null;
               }
 
@@ -247,7 +248,7 @@ export class PositionTracker {
               if (!orderbook.bids?.[0] || !orderbook.asks?.[0]) {
                 const reason = `No orderbook data for tokenId: ${tokenId}`;
                 skippedPositions.push({ reason, data: apiPos });
-                this.logger.warn(`[PositionTracker] ${reason}`);
+                this.logger.debug(`[PositionTracker] ${reason}`);
                 return null;
               }
 
@@ -280,7 +281,7 @@ export class PositionTracker {
             } catch (err) {
               const reason = `Failed to enrich position: ${err instanceof Error ? err.message : String(err)}`;
               skippedPositions.push({ reason, data: apiPos });
-              this.logger.warn(`[PositionTracker] ${reason}`);
+              this.logger.debug(`[PositionTracker] ${reason}`);
               return null;
             }
           }),
