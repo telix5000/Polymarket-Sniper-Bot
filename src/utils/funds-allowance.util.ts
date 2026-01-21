@@ -108,6 +108,24 @@ const parseUsdValue = (value: unknown): number => {
 
 const formatUsd = (value: number): string => value.toFixed(2);
 
+const syncClobAllowanceCache = async (
+  client: ClobClient,
+  logger: Logger,
+  context: string,
+): Promise<void> => {
+  try {
+    logger.info(`[CLOB] Syncing CLOB allowance cache ${context}...`);
+    await client.updateBalanceAllowance({
+      asset_type: AssetType.COLLATERAL,
+    });
+    logger.info("[CLOB] CLOB allowance cache synced successfully.");
+  } catch (syncError) {
+    const syncMessage =
+      syncError instanceof Error ? syncError.message : String(syncError);
+    logger.warn(`[CLOB] Failed to sync CLOB cache ${context}: ${syncMessage}`);
+  }
+};
+
 export const buildBalanceAllowanceParams = (
   assetType: AssetType,
   tokenId?: string,
@@ -514,25 +532,11 @@ export const checkFundsAndAllowance = async (
               });
 
               // Sync CLOB cache with on-chain state after approvals
-              try {
-                params.logger.info(
-                  "[CLOB] Syncing CLOB allowance cache after auto-approve...",
-                );
-                await params.client.updateBalanceAllowance({
-                  asset_type: AssetType.COLLATERAL,
-                });
-                params.logger.info(
-                  "[CLOB] CLOB allowance cache synced successfully.",
-                );
-              } catch (syncError) {
-                const syncMessage =
-                  syncError instanceof Error
-                    ? syncError.message
-                    : String(syncError);
-                params.logger.warn(
-                  `[CLOB] Failed to sync CLOB cache after auto-approve: ${syncMessage}`,
-                );
-              }
+              await syncClobAllowanceCache(
+                params.client,
+                params.logger,
+                "after auto-approve",
+              );
 
               await refreshAndRetry();
             }
@@ -586,25 +590,11 @@ export const checkFundsAndAllowance = async (
               });
 
               // Sync CLOB cache with on-chain state after ERC1155 approvals
-              try {
-                params.logger.info(
-                  "[CLOB] Syncing CLOB allowance cache after ERC1155 approval...",
-                );
-                await params.client.updateBalanceAllowance({
-                  asset_type: AssetType.COLLATERAL,
-                });
-                params.logger.info(
-                  "[CLOB] CLOB allowance cache synced successfully.",
-                );
-              } catch (syncError) {
-                const syncMessage =
-                  syncError instanceof Error
-                    ? syncError.message
-                    : String(syncError);
-                params.logger.warn(
-                  `[CLOB] Failed to sync CLOB cache after ERC1155 approval: ${syncMessage}`,
-                );
-              }
+              await syncClobAllowanceCache(
+                params.client,
+                params.logger,
+                "after ERC1155 approval",
+              );
 
               const refreshedApproval = await fetchApprovedForAll({
                 client: params.client,
