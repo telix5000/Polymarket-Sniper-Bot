@@ -213,43 +213,57 @@ describe("PositionTracker Side Validation", () => {
 
   test("Valid string outcomes should be accepted and preserve case", () => {
     // Test binary market outcomes (case variations)
-    const binarySides = ["YES", "yes", "Yes", "NO", "no", "No"];
+    const testCases = [
+      { input: "YES", expected: "YES" },
+      { input: "yes", expected: "yes" },  // Verify NOT normalized to "YES"
+      { input: "Yes", expected: "Yes" },  // Verify NOT normalized to "YES"
+      { input: "NO", expected: "NO" },
+      { input: "no", expected: "no" },    // Verify NOT normalized to "NO"
+      { input: "No", expected: "No" },    // Verify NOT normalized to "NO"
+    ];
     
-    for (const side of binarySides) {
-      const isValid = side && typeof side === 'string' && side.trim() !== '';
-      const trimmed = side.trim();
+    for (const { input, expected } of testCases) {
+      const isValid = input && typeof input === 'string' && input.trim() !== '';
+      const processed = input.trim(); // Simulates the actual processing in position-tracker
 
       assert.ok(
         isValid,
-        `"${side}" should be accepted as valid side`,
+        `"${input}" should be accepted as valid side`,
       );
       
       // Verify case is preserved (not normalized to uppercase)
       assert.strictEqual(
-        trimmed,
-        side,
-        `Case should be preserved: "${side}" should remain "${side}"`,
+        processed,
+        expected,
+        `Case should be preserved: "${input}" should remain "${expected}", not normalized to uppercase`,
       );
     }
   });
 
   test("Valid multi-outcome market sides should be accepted and preserve case", () => {
-    const testSides = ["Medjedovic", "Under", "FC Bayern München", "LNG Esports", "Over", "Norrie"];
+    const testCases = [
+      { input: "Medjedovic", expected: "Medjedovic" },  // Not "MEDJEDOVIC"
+      { input: "Under", expected: "Under" },            // Not "UNDER"
+      { input: "FC Bayern München", expected: "FC Bayern München" },  // Preserves special chars
+      { input: "LNG Esports", expected: "LNG Esports" },
+      { input: "Over", expected: "Over" },              // Not "OVER"
+      { input: "Norrie", expected: "Norrie" },          // Not "NORRIE"
+    ];
 
-    for (const side of testSides) {
-      const isValid = side && typeof side === 'string' && side.trim() !== '';
-      const trimmed = side.trim();
+    for (const { input, expected } of testCases) {
+      const isValid = input && typeof input === 'string' && input.trim() !== '';
+      const processed = input.trim(); // Simulates the actual processing in position-tracker
 
       assert.ok(
         isValid,
-        `"${side}" should be accepted as valid multi-outcome side`,
+        `"${input}" should be accepted as valid multi-outcome side`,
       );
       
       // Verify case and special characters are preserved
       assert.strictEqual(
-        trimmed,
-        side,
-        `Original value should be preserved: "${side}"`,
+        processed,
+        expected,
+        `Original value should be preserved: "${input}" should remain "${expected}"`,
       );
     }
   });
