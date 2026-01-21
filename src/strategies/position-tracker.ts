@@ -246,10 +246,10 @@ export class PositionTracker {
 
               // Determine position side early (needed for both redeemable and active positions)
               const sideValue = apiPos.outcome ?? apiPos.side;
+              const sideUpperCase = sideValue?.toUpperCase();
               const side =
-                sideValue?.toUpperCase() === "YES" ||
-                sideValue?.toUpperCase() === "NO"
-                  ? (sideValue.toUpperCase() as "YES" | "NO")
+                sideUpperCase === "YES" || sideUpperCase === "NO"
+                  ? (sideUpperCase as "YES" | "NO")
                   : "YES"; // Default to YES if unknown
 
               // Skip orderbook fetch for resolved/closed markets (no orderbook available)
@@ -439,15 +439,9 @@ export class PositionTracker {
 
       // Fetch market details from Gamma API
       interface GammaMarketResponse {
-        condition_id?: string;
-        market_slug?: string;
-        outcomes?: string[];
-        outcomePrices?: string[];
-        outcome_prices?: string[];
         tokens?: Array<{
           outcome?: string;
           winner?: boolean;
-          token_id?: string;
         }>;
         resolvedOutcome?: string;
         resolved_outcome?: string;
