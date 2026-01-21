@@ -157,6 +157,18 @@ export const MONITOR_PRESETS = {
 export const STRATEGY_PRESETS = {
   off: {
     STRATEGY_ENABLED: false,
+    ARB_ENABLED: false,
+    MONITOR_ENABLED: false,
+    QUICK_FLIP_ENABLED: false,
+    QUICK_FLIP_TARGET_PCT: 5,
+    QUICK_FLIP_STOP_LOSS_PCT: 3,
+    QUICK_FLIP_MIN_HOLD_SECONDS: 30,
+    AUTO_SELL_ENABLED: false,
+    AUTO_SELL_THRESHOLD: 0.99,
+    AUTO_SELL_MIN_HOLD_SECONDS: 120,
+    ENDGAME_SWEEP_ENABLED: false,
+    ENDGAME_MIN_PRICE: 0.98,
+    ENDGAME_MAX_PRICE: 0.995,
   },
   conservative: {
     STRATEGY_ENABLED: true,
@@ -170,11 +182,12 @@ export const STRATEGY_PRESETS = {
     QUICK_FLIP_MIN_HOLD_SECONDS: 60,
     // Auto-sell settings
     AUTO_SELL_ENABLED: true,
-    AUTO_SELL_THRESHOLD: 0.995,      // 99.5¢
+    AUTO_SELL_THRESHOLD: 0.997,      // 99.7¢ (only if price improves above endgame purchases)
+    AUTO_SELL_MIN_HOLD_SECONDS: 300, // Hold at least 5 minutes before auto-selling
     // Endgame sweep settings
     ENDGAME_SWEEP_ENABLED: true,
     ENDGAME_MIN_PRICE: 0.985,        // 98.5¢
-    ENDGAME_MAX_PRICE: 0.995,
+    ENDGAME_MAX_PRICE: 0.995,        // 99.5¢ (auto-sell threshold is higher to avoid conflict)
     // Rate limits
     ORDER_SUBMIT_MAX_PER_HOUR: 30,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 10000,
@@ -203,11 +216,12 @@ export const STRATEGY_PRESETS = {
     QUICK_FLIP_MIN_HOLD_SECONDS: 30,
     // Auto-sell settings
     AUTO_SELL_ENABLED: true,
-    AUTO_SELL_THRESHOLD: 0.99,       // 99¢
+    AUTO_SELL_THRESHOLD: 0.996,      // 99.6¢ (above endgame max to avoid conflict)
+    AUTO_SELL_MIN_HOLD_SECONDS: 120, // Hold at least 2 minutes before auto-selling
     // Endgame sweep settings
     ENDGAME_SWEEP_ENABLED: true,
     ENDGAME_MIN_PRICE: 0.98,         // 98¢
-    ENDGAME_MAX_PRICE: 0.995,        // 99.5¢
+    ENDGAME_MAX_PRICE: 0.995,        // 99.5¢ (auto-sell threshold is higher)
     // Rate limits (higher for more trades)
     ORDER_SUBMIT_MAX_PER_HOUR: 60,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 5000,
@@ -252,11 +266,12 @@ export const STRATEGY_PRESETS = {
     QUICK_FLIP_MIN_HOLD_SECONDS: 15,
     // Auto-sell settings
     AUTO_SELL_ENABLED: true,
-    AUTO_SELL_THRESHOLD: 0.985,      // 98.5¢ (sell earlier)
+    AUTO_SELL_THRESHOLD: 0.996,      // 99.6¢ (above endgame max)
+    AUTO_SELL_MIN_HOLD_SECONDS: 60,  // Hold at least 1 minute
     // Endgame sweep settings (wider range)
     ENDGAME_SWEEP_ENABLED: true,
     ENDGAME_MIN_PRICE: 0.97,         // 97¢
-    ENDGAME_MAX_PRICE: 0.995,
+    ENDGAME_MAX_PRICE: 0.995,        // 99.5¢ (auto-sell threshold is higher)
     // Rate limits (maximum)
     ORDER_SUBMIT_MAX_PER_HOUR: 120,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 3000,

@@ -19,14 +19,6 @@ export interface StrategyOrchestratorConfig {
   executionIntervalMs?: number;
 }
 
-export interface StrategyOpportunity {
-  priority: number;
-  strategyName: string;
-  description: string;
-  expectedProfitPct?: number;
-  execute: () => Promise<void>;
-}
-
 /**
  * Strategy Orchestrator
  * Executes strategies in priority order to maximize returns while managing risk

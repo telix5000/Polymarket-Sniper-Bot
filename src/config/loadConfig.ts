@@ -1092,6 +1092,7 @@ export type StrategyConfig = {
   quickFlipMinHoldSeconds: number;
   autoSellEnabled: boolean;
   autoSellThreshold: number;
+  autoSellMinHoldSeconds: number;
   endgameSweepEnabled: boolean;
   endgameMinPrice: number;
   endgameMaxPrice: number;
@@ -1148,6 +1149,7 @@ export function loadStrategyConfig(
     quickFlipMinHoldSeconds: preset.QUICK_FLIP_MIN_HOLD_SECONDS ?? 30,
     autoSellEnabled: preset.AUTO_SELL_ENABLED ?? false,
     autoSellThreshold: preset.AUTO_SELL_THRESHOLD ?? 0.99,
+    autoSellMinHoldSeconds: preset.AUTO_SELL_MIN_HOLD_SECONDS ?? 120,
     endgameSweepEnabled: preset.ENDGAME_SWEEP_ENABLED ?? false,
     endgameMinPrice: preset.ENDGAME_MIN_PRICE ?? 0.98,
     endgameMaxPrice: preset.ENDGAME_MAX_PRICE ?? 0.995,

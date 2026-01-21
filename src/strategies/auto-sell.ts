@@ -5,6 +5,7 @@ import type { PositionTracker } from "./position-tracker";
 export interface AutoSellConfig {
   enabled: boolean;
   threshold: number;  // Price threshold to auto-sell (e.g., 0.99 = 99¢)
+  minHoldSeconds: number;  // Minimum time to hold before auto-selling (avoids conflict with endgame sweep)
 }
 
 export interface AutoSellStrategyConfig {
@@ -15,11 +16,12 @@ export interface AutoSellStrategyConfig {
 }
 
 /**
- * Auto-Sell at 99¢ Strategy
+ * Auto-Sell at High Price Strategy
  * Monitors owned positions approaching resolution
- * Automatically sells when price hits threshold (e.g., 99¢)
+ * Automatically sells when price hits threshold (e.g., 99.6¢)
+ * Only sells positions held longer than minHoldSeconds to avoid conflict with endgame sweep
  * Don't wait for 4pm UTC payout - free up capital immediately
- * Lose 1¢ per share but gain hours of capital availability
+ * Lose small amount per share but gain hours of capital availability
  */
 export class AutoSellStrategy {
   private client: ClobClient;
@@ -27,6 +29,7 @@ export class AutoSellStrategy {
   private positionTracker: PositionTracker;
   private config: AutoSellConfig;
   private soldPositions: Set<string> = new Set();
+  private positionFirstSeen: Map<string, number> = new Map();
 
   constructor(strategyConfig: AutoSellStrategyConfig) {
     this.client = strategyConfig.client;
@@ -59,8 +62,23 @@ export class AutoSellStrategy {
         continue;
       }
 
+      // Track first seen time
+      if (!this.positionFirstSeen.has(positionKey)) {
+        this.positionFirstSeen.set(positionKey, Date.now());
+        continue; // Don't sell on first detection
+      }
+
+      // Check minimum hold time (avoids conflict with endgame sweep)
+      const holdTimeSeconds = (Date.now() - this.positionFirstSeen.get(positionKey)!) / 1000;
+      if (holdTimeSeconds < this.config.minHoldSeconds) {
+        this.logger.debug(
+          `[AutoSell] Position ${position.marketId} held for ${holdTimeSeconds.toFixed(0)}s, waiting for ${this.config.minHoldSeconds}s`
+        );
+        continue;
+      }
+
       this.logger.info(
-        `[AutoSell] Selling position at ${(position.currentPrice * 100).toFixed(1)}¢: ${position.marketId}`
+        `[AutoSell] Selling position at ${(position.currentPrice * 100).toFixed(1)}¢ (held ${holdTimeSeconds.toFixed(0)}s): ${position.marketId}`
       );
       
       try {
