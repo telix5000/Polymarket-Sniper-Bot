@@ -10,6 +10,7 @@ export interface Position {
   currentPrice: number;
   pnlPct: number;
   pnlUsd: number;
+  redeemable?: boolean; // True if market is resolved/closed
 }
 
 export interface PositionTrackerConfig {
@@ -180,6 +181,7 @@ export class PositionTracker {
         size?: string | number; // Position size
         avgPrice?: string | number; // Average entry price (replaces initial_average_price)
         outcome?: string; // "YES" or "NO" outcome
+        redeemable?: boolean; // True if market is resolved/closed (no orderbook available)
 
         // Legacy fields for backwards compatibility
         id?: string;
@@ -242,19 +244,50 @@ export class PositionTracker {
                 return null;
               }
 
-              // Get current orderbook to calculate mid-market price
-              const orderbook = await this.client.getOrderBook(tokenId);
+              // Skip orderbook fetch for resolved/closed markets (no orderbook available)
+              let currentPrice: number;
+              const isRedeemable = apiPos.redeemable === true;
 
-              if (!orderbook.bids?.[0] || !orderbook.asks?.[0]) {
-                const reason = `No orderbook data for tokenId: ${tokenId}`;
+              if (isRedeemable) {
+                // Market is resolved - we cannot reliably determine the settlement price
+                // without fetching the actual market resolution outcome.
+                // Skipping this position as we cannot determine if it won (1.0) or lost (0.0).
+                const reason = `Position is redeemable (market resolved) - cannot determine settlement price for tokenId: ${tokenId}`;
                 skippedPositions.push({ reason, data: apiPos });
                 this.logger.debug(`[PositionTracker] ${reason}`);
                 return null;
-              }
+              } else {
+                // Active market - fetch current orderbook
+                try {
+                  const orderbook = await this.client.getOrderBook(tokenId);
 
-              const bestBid = parseFloat(orderbook.bids[0].price);
-              const bestAsk = parseFloat(orderbook.asks[0].price);
-              const currentPrice = (bestBid + bestAsk) / 2;
+                  if (!orderbook.bids?.[0] || !orderbook.asks?.[0]) {
+                    const reason = `No orderbook data for tokenId: ${tokenId}`;
+                    skippedPositions.push({ reason, data: apiPos });
+                    this.logger.debug(`[PositionTracker] ${reason}`);
+                    return null;
+                  }
+
+                  const bestBid = parseFloat(orderbook.bids[0].price);
+                  const bestAsk = parseFloat(orderbook.asks[0].price);
+                  currentPrice = (bestBid + bestAsk) / 2;
+                } catch (err) {
+                  // If orderbook fetch fails, we cannot safely assume a favorable settlement
+                  const errMsg = err instanceof Error ? err.message : String(err);
+                  if (errMsg.includes("404") || errMsg.includes("not found")) {
+                    const reason = `Orderbook not found for tokenId: ${tokenId} (404/not found) - skipping position due to ambiguous resolution`;
+                    skippedPositions.push({ reason, data: apiPos });
+                    this.logger.debug(`[PositionTracker] ${reason}`);
+                    return null;
+                  } else {
+                    // Other error - skip this position
+                    const reason = `Failed to fetch orderbook: ${errMsg}`;
+                    skippedPositions.push({ reason, data: apiPos });
+                    this.logger.debug(`[PositionTracker] ${reason}`);
+                    return null;
+                  }
+                }
+              }
 
               // Calculate P&L
               const pnlUsd = (currentPrice - entryPrice) * size;
@@ -277,6 +310,7 @@ export class PositionTracker {
                 currentPrice,
                 pnlPct,
                 pnlUsd,
+                redeemable: isRedeemable,
               };
             } catch (err) {
               const reason = `Failed to enrich position: ${err instanceof Error ? err.message : String(err)}`;

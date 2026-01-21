@@ -75,10 +75,29 @@ export class TradeExecutorService {
       // For frontrunning, we execute the same trade but with higher priority
       // Calculate frontrun size (typically smaller or same as target)
       const frontrunSize = this.calculateFrontrunSize(signal.sizeUsd, env);
+      const frontrunMultiplier =
+        env.frontrunSizeMultiplier || DEFAULT_CONFIG.FRONTRUN_SIZE_MULTIPLIER;
 
       logger.info(
-        `[Frontrun] Executing ${signal.side} ${frontrunSize.toFixed(2)} USD (target: ${signal.sizeUsd.toFixed(2)} USD)`,
+        `[Frontrun] Detected trade: ${signal.side} ${signal.sizeUsd.toFixed(2)} USD by other trader`,
       );
+      logger.info(
+        `[Frontrun] Our order: ${signal.side} ${frontrunSize.toFixed(2)} USD (${(frontrunMultiplier * 100).toFixed(1)}% of target)`,
+      );
+
+      // Validate our order meets minimum size requirements
+      // Note: This validation is also performed by OrderSubmissionController.checkPreflight,
+      // but we check early here to provide immediate feedback with helpful tips to the user.
+      const minOrderSize = env.minOrderUsd || DEFAULT_CONFIG.MIN_ORDER_USD;
+      if (frontrunSize < minOrderSize) {
+        logger.warn(
+          `[Frontrun] Order size ${frontrunSize.toFixed(2)} USD is below minimum ${minOrderSize.toFixed(2)} USD. Skipping trade.`,
+        );
+        logger.info(
+          `[Frontrun] Tip: Increase FRONTRUN_SIZE_MULTIPLIER (current: ${(frontrunMultiplier * 100).toFixed(1)}%) or decrease MIN_ORDER_USD to execute smaller trades.`,
+        );
+        return;
+      }
 
       // Balance validation
       const requiredUsdc = frontrunSize;
