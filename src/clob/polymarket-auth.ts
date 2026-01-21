@@ -13,7 +13,7 @@
 
 import { ClobClient, Chain } from "@polymarket/clob-client";
 import type { ApiKeyCreds } from "@polymarket/clob-client";
-import { Wallet } from "ethers";
+import { Wallet, JsonRpcProvider } from "ethers";
 import { SignatureType } from "@polymarket/order-utils";
 import { POLYMARKET_API } from "../constants/polymarket.constants";
 import type { Logger } from "../utils/logger.util";
@@ -28,6 +28,8 @@ const POLYGON_CHAIN_ID = Chain.POLYGON;
 export interface PolymarketCredentials {
   /** Private key for wallet authentication (required) */
   privateKey: string;
+  /** RPC URL for blockchain interactions (optional, but recommended for balance/approval checks) */
+  rpcUrl?: string;
   /** Pre-configured API key (optional - will derive if not provided) */
   apiKey?: string;
   /** Pre-configured API secret (optional - will derive if not provided) */
@@ -71,6 +73,7 @@ export class PolymarketAuth {
   private credentials: PolymarketCredentials;
   private signer: Wallet;
   private clobClient?: ClobClient;
+  private cachedClientWithWallet?: ClobClient & { wallet: Wallet };
   private apiCreds?: ApiKeyCreds;
   private logger?: Logger;
   private effectiveSignatureType: number;
@@ -85,11 +88,25 @@ export class PolymarketAuth {
     this.effectiveSignatureType =
       credentials.signatureType ?? SignatureType.EOA;
 
-    // Initialize the signer
+    // Initialize the signer with provider if RPC URL is provided
     const privateKey = credentials.privateKey.startsWith("0x")
       ? credentials.privateKey
       : `0x${credentials.privateKey}`;
-    this.signer = new Wallet(privateKey);
+    
+    if (credentials.rpcUrl) {
+      const provider = new JsonRpcProvider(credentials.rpcUrl);
+      this.signer = new Wallet(privateKey, provider);
+      this.log(
+        "debug",
+        `PolymarketAuth initialized with provider: address=${this.signer.address}`,
+      );
+    } else {
+      this.signer = new Wallet(privateKey);
+      this.log(
+        "warn",
+        `PolymarketAuth initialized without provider - balance/approval checks will fail`,
+      );
+    }
 
     this.log(
       "info",
@@ -207,11 +224,16 @@ export class PolymarketAuth {
   /**
    * Get an authenticated CLOB client for L2 operations (trading).
    * This client can place orders, cancel orders, query positions, etc.
+   * 
+   * Returns a client with wallet attached for compatibility with existing code.
+   * The returned client is cached and the same instance is returned on subsequent calls.
    */
-  async getClobClient(): Promise<ClobClient> {
-    // Return cached client if available
-    if (this.clobClient) {
-      return this.clobClient;
+  async getClobClient(): Promise<
+    ClobClient & { wallet: Wallet }
+  > {
+    // Return cached wrapped client if available
+    if (this.cachedClientWithWallet) {
+      return this.cachedClientWithWallet;
     }
 
     // Get API credentials (L1 auth)
@@ -237,7 +259,9 @@ export class PolymarketAuth {
         : undefined,
     );
 
-    return this.clobClient;
+    // Create and cache wrapped client for consistency
+    this.cachedClientWithWallet = Object.assign(this.clobClient, { wallet: this.signer });
+    return this.cachedClientWithWallet;
   }
 
   /**
@@ -295,6 +319,7 @@ export class PolymarketAuth {
     this.log("debug", "Resetting cached credentials and client");
     this.apiCreds = undefined;
     this.clobClient = undefined;
+    this.cachedClientWithWallet = undefined;
   }
 
   /**
@@ -322,6 +347,7 @@ export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
     );
   }
 
+  const rpcUrl = process.env.RPC_URL ?? process.env.rpc_url;
   const apiKey =
     process.env.POLYMARKET_API_KEY ??
     process.env.POLY_API_KEY ??
@@ -344,6 +370,7 @@ export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
 
   return new PolymarketAuth({
     privateKey,
+    rpcUrl,
     apiKey,
     apiSecret,
     passphrase,
