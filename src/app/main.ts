@@ -2,6 +2,7 @@ import "dotenv/config";
 import {
   loadMonitorConfig,
   loadArbConfig,
+  loadStrategyConfig,
   parseCliOverrides,
 } from "../config/loadConfig";
 import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
@@ -19,6 +20,7 @@ import {
 } from "../utils/clob-credentials.util";
 import { ensureTradingReady } from "../polymarket/preflight";
 import { getContextAwareWarnings } from "../utils/auth-diagnostic.util";
+import { StrategyOrchestrator } from "../strategies/orchestrator";
 
 async function main(): Promise<void> {
   const logger = new ConsoleLogger();
@@ -28,6 +30,10 @@ async function main(): Promise<void> {
     await startWireguard(logger);
   }
   const cliOverrides = parseCliOverrides(process.argv.slice(2));
+  
+  // Check if unified STRATEGY_PRESET is configured
+  const strategyConfig = loadStrategyConfig(cliOverrides);
+  
   const mode = String(
     process.env.MODE ?? process.env.mode ?? "mempool",
   ).toLowerCase();
@@ -69,6 +75,40 @@ async function main(): Promise<void> {
     clobDeriveEnabled: env.clobDeriveEnabled,
     collateralTokenDecimals: env.collateralTokenDecimals,
   });
+
+  // Start unified strategy orchestrator if STRATEGY_PRESET is configured
+  if (strategyConfig && strategyConfig.enabled && !tradingReady.detectOnly) {
+    logger.info(`🎯 Starting unified strategy orchestrator (preset: ${strategyConfig.presetName})`);
+    
+    const orchestrator = new StrategyOrchestrator({
+      client,
+      logger,
+      arbEnabled: strategyConfig.arbEnabled,
+      monitorEnabled: strategyConfig.monitorEnabled,
+      quickFlipConfig: {
+        enabled: strategyConfig.quickFlipEnabled,
+        targetPct: strategyConfig.quickFlipTargetPct,
+        stopLossPct: strategyConfig.quickFlipStopLossPct,
+        minHoldSeconds: strategyConfig.quickFlipMinHoldSeconds,
+      },
+      autoSellConfig: {
+        enabled: strategyConfig.autoSellEnabled,
+        threshold: strategyConfig.autoSellThreshold,
+        minHoldSeconds: strategyConfig.autoSellMinHoldSeconds,
+      },
+      endgameSweepConfig: {
+        enabled: strategyConfig.endgameSweepEnabled,
+        minPrice: strategyConfig.endgameMinPrice,
+        maxPrice: strategyConfig.endgameMaxPrice,
+        maxPositionUsd: strategyConfig.endgameMaxPositionUsd,
+      },
+    });
+
+    await orchestrator.start();
+    logger.info("✅ Strategy orchestrator started successfully");
+  } else if (strategyConfig && !strategyConfig.enabled) {
+    logger.info(`[Strategy] Preset=${strategyConfig.presetName} disabled; using individual ARB/MONITOR presets.`);
+  }
 
   // Start ARB engine if configured, passing pre-authenticated client
   if (mode === "arb" || mode === "both") {
