@@ -495,6 +495,21 @@ export const ensureTradingReady = async (
     ).relayerContext = relayer;
     return { detectOnly: true, authOk, approvalsOk: false, geoblockPassed };
   }
+  
+  // Log warning if bypass is enabled
+  const allowTradingWithoutPreflight = parseBool(
+    readEnv("ALLOW_TRADING_WITHOUT_PREFLIGHT"),
+    false,
+  );
+  
+  if (!authOk && allowTradingWithoutPreflight) {
+    params.logger.warn(
+      "[Preflight][GasGuard] ⚠️  ALLOW_TRADING_WITHOUT_PREFLIGHT=true - bypassing auth check (NOT RECOMMENDED)",
+    );
+    params.logger.warn(
+      "[Preflight][GasGuard] Trading will proceed despite authentication failure. This may result in failed orders.",
+    );
+  }
 
   // CRITICAL: Block ALL on-chain operations (including Safe/Proxy deployment) if authentication failed
   // This prevents gas waste on wallet setup and approval transactions when CLOB API auth fails
@@ -508,10 +523,6 @@ export const ensureTradingReady = async (
   // transactions that serve no purpose without working API authentication.
   //
   // Override: Set ALLOW_TRADING_WITHOUT_PREFLIGHT=true to bypass this check (not recommended)
-  const allowTradingWithoutPreflight = parseBool(
-    readEnv("ALLOW_TRADING_WITHOUT_PREFLIGHT"),
-    false,
-  );
   
   if (!authOk && !allowTradingWithoutPreflight) {
     params.logger.error(
@@ -529,12 +540,6 @@ export const ensureTradingReady = async (
     params.logger.error(
       "[Preflight][GasGuard] Run 'npm run auth:diag' for detailed authentication diagnostics.",
     );
-    
-    if (allowTradingWithoutPreflight) {
-      params.logger.warn(
-        "[Preflight][GasGuard] ALLOW_TRADING_WITHOUT_PREFLIGHT=true - bypassing auth check (NOT RECOMMENDED)",
-      );
-    }
 
     const tradingAddress =
       relayer.tradingAddress ??

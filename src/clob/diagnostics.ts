@@ -961,8 +961,8 @@ export const runClobAuthPreflight = async (params: {
         preflightBackoffMs * 2,
         PREFLIGHT_BACKOFF_MAX_MS,
       );
-      // Server errors are transient - return null to trigger retry
-      return null;
+      // Server errors are transient - return with TRANSIENT severity
+      return { ok: false, status, severity: "TRANSIENT", forced: Boolean(params.force) };
     }
     if (status && status >= 400 && status < 500) {
       logPreflightFailure({
@@ -1121,7 +1121,8 @@ export const runClobAuthPreflight = async (params: {
         preflightBackoffMs * 2,
         PREFLIGHT_BACKOFF_MAX_MS,
       );
-      return null;
+      // Server errors are transient - return with TRANSIENT severity
+      return { ok: false, status: details.status, severity: "TRANSIENT", forced: Boolean(params.force) };
     }
     if (details.status && details.status >= 400 && details.status < 500) {
       if (isStructuredLogger(params.logger)) {
