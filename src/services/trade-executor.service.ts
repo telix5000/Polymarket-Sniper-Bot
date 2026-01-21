@@ -82,8 +82,11 @@ export class TradeExecutorService {
         `[Frontrun] Detected trade: ${signal.side} ${signal.sizeUsd.toFixed(2)} USD by other trader`,
       );
       if (sizing.wasCapped) {
+        const capSource = sizing.cappedByEndgame
+          ? "ENDGAME_MAX_POSITION_USD"
+          : "FRONTRUN_MAX_SIZE_USD";
         logger.info(
-          `[Frontrun] Our order: ${signal.side} ${frontrunSize.toFixed(2)} USD (capped from ${calculatedSize.toFixed(2)} USD by FRONTRUN_MAX_SIZE_USD=${sizing.maxSize})`,
+          `[Frontrun] Our order: ${signal.side} ${frontrunSize.toFixed(2)} USD (capped from ${calculatedSize.toFixed(2)} USD by ${capSource}=${sizing.maxSize})`,
         );
       } else {
         logger.info(
@@ -181,7 +184,13 @@ export class TradeExecutorService {
   private calculateFrontrunSize(
     targetSize: number,
     env: RuntimeEnv,
-  ): { size: number; multiplier: number; maxSize: number; wasCapped: boolean } {
+  ): {
+    size: number;
+    multiplier: number;
+    maxSize: number;
+    wasCapped: boolean;
+    cappedByEndgame: boolean;
+  } {
     // Frontrun with a percentage of the target size
     // This can be configured via env variable
     const multiplier =
@@ -189,12 +198,19 @@ export class TradeExecutorService {
     const calculatedSize = targetSize * multiplier;
 
     // Cap at max frontrun size if configured
-    const maxSize =
+    // Also respect ENDGAME_MAX_POSITION_USD from environment as an additional cap
+    const frontrunMax =
       env.frontrunMaxSizeUsd || DEFAULT_CONFIG.FRONTRUN_MAX_SIZE_USD;
+    const endgameMax = Number(process.env.ENDGAME_MAX_POSITION_USD);
+    const hasEndgameCap = Number.isFinite(endgameMax) && endgameMax > 0;
+    const maxSize = hasEndgameCap
+      ? Math.min(frontrunMax, endgameMax)
+      : frontrunMax;
     const wasCapped = calculatedSize > maxSize;
+    const cappedByEndgame = hasEndgameCap && endgameMax < frontrunMax;
     const size = Math.min(calculatedSize, maxSize);
 
-    return { size, multiplier, maxSize, wasCapped };
+    return { size, multiplier, maxSize, wasCapped, cappedByEndgame };
   }
 
   // Keep copyTrade for backward compatibility, but redirect to frontrun

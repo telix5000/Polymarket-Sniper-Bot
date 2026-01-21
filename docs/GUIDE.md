@@ -320,12 +320,16 @@ Set environment variables through your platform's configuration:
 
 ```
 calculated_size = target_trade_size * FRONTRUN_SIZE_MULTIPLIER
-frontrun_size = min(calculated_size, FRONTRUN_MAX_SIZE_USD)
+max_size = min(FRONTRUN_MAX_SIZE_USD, ENDGAME_MAX_POSITION_USD)
+frontrun_size = min(calculated_size, max_size)
 ```
 
-Example: If target trade is $1000, multiplier is 0.5, and max is $50:
-- Calculated size: $1000 × 0.5 = $500
-- Final frontrun size: min($500, $50) = $50 (capped)
+The frontrun size is capped by the **lower** of `FRONTRUN_MAX_SIZE_USD` and `ENDGAME_MAX_POSITION_USD`. This ensures that if you've set `ENDGAME_MAX_POSITION_USD=5` to limit your position sizes, frontrun orders will also respect that limit.
+
+Example: If target trade is $540, multiplier is 0.1, and `ENDGAME_MAX_POSITION_USD=5`:
+- Calculated size: $540 × 0.1 = $54
+- Max size: min($50 default, $5 endgame) = $5
+- Final frontrun size: min($54, $5) = $5 (capped by ENDGAME_MAX_POSITION_USD)
 
 This ensures your maximum exposure per trade is controlled regardless of target trade size.
 
