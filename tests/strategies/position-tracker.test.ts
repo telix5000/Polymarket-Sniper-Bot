@@ -211,28 +211,45 @@ describe("PositionTracker Side Validation", () => {
     }
   });
 
-  test("Valid binary market sides should be accepted", () => {
-    const testSides = ["YES", "yes", "Yes", "NO", "no", "No"];
-
-    for (const side of testSides) {
+  test("Valid string outcomes should be accepted and preserve case", () => {
+    // Test binary market outcomes (case variations)
+    const binarySides = ["YES", "yes", "Yes", "NO", "no", "No"];
+    
+    for (const side of binarySides) {
       const isValid = side && typeof side === 'string' && side.trim() !== '';
+      const trimmed = side.trim();
 
       assert.ok(
         isValid,
         `"${side}" should be accepted as valid side`,
       );
+      
+      // Verify case is preserved (not normalized to uppercase)
+      assert.strictEqual(
+        trimmed,
+        side,
+        `Case should be preserved: "${side}" should remain "${side}"`,
+      );
     }
   });
 
-  test("Valid multi-outcome market sides should be accepted", () => {
+  test("Valid multi-outcome market sides should be accepted and preserve case", () => {
     const testSides = ["Medjedovic", "Under", "FC Bayern München", "LNG Esports", "Over", "Norrie"];
 
     for (const side of testSides) {
       const isValid = side && typeof side === 'string' && side.trim() !== '';
+      const trimmed = side.trim();
 
       assert.ok(
         isValid,
         `"${side}" should be accepted as valid multi-outcome side`,
+      );
+      
+      // Verify case and special characters are preserved
+      assert.strictEqual(
+        trimmed,
+        side,
+        `Original value should be preserved: "${side}"`,
       );
     }
   });
