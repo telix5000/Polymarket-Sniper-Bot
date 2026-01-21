@@ -203,6 +203,7 @@ export class QuickFlipStrategy {
       );
 
       // Execute sell order using postOrder utility
+      // For stop-loss orders, set minOrderUsd=0 to bypass order-submission layer checks
       const result = await postOrder({
         client: this.client,
         wallet,
@@ -214,6 +215,7 @@ export class QuickFlipStrategy {
         maxAcceptablePrice: bestBid * 0.95, // Accept up to 5% slippage
         logger: this.logger,
         priority: false, // Not a frontrun trade
+        orderConfig: isStopLoss ? { minOrderUsd: 0 } : undefined,
       });
 
       if (result.status === "submitted") {
