@@ -1011,7 +1011,7 @@ export const runClobAuthPreflight = async (params: {
     // (e.g., successful result object rather than HTTP response wrapper)
     // This is NON_FATAL - credentials are valid, trading can proceed
     const responseType = typeof response;
-    const isObject = response && typeof response === "object";
+    const isObject = response !== null && typeof response === "object";
     const hasData = isObject && "data" in response;
     const hasError = isObject && "error" in response;
     const responseKeys = isObject ? Object.keys(response).join(",") : "none";
@@ -1049,10 +1049,7 @@ export const runClobAuthPreflight = async (params: {
       });
     } else {
       params.logger.warn(
-        `[CLOB][Preflight] BENIGN: response without HTTP status - credentials OK, trading allowed`,
-      );
-      params.logger.warn(
-        `[CLOB][Preflight] Details: status=${status ?? "undefined"} severity=${severity} issue=${issue} responseType=${responseType} keys=${responseKeys}`,
+        `[CLOB][Preflight] BENIGN: response without HTTP status - credentials OK, trading allowed. Details: status=${status ?? "undefined"} severity=${severity} issue=${issue} responseType=${responseType} keys=${responseKeys}`,
       );
     }
 
