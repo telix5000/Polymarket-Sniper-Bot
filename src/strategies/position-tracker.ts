@@ -570,10 +570,22 @@ export class PositionTracker {
         );
       }
 
-      // Log raw error at debug level for troubleshooting
-      this.logger.debug(
-        `[PositionTracker] Raw error while fetching market outcome for ${marketId}: ${JSON.stringify(anyErr)}`,
-      );
+      // Log raw error at debug level for troubleshooting (limited depth to avoid performance issues)
+      if (anyErr && typeof anyErr === "object") {
+        const errorSummary = {
+          message: anyErr.message || message,
+          code: anyErr.code,
+          status: anyErr.status || anyErr.statusCode || anyErr.response?.status,
+          name: anyErr.name,
+        };
+        this.logger.debug(
+          `[PositionTracker] Raw error while fetching market outcome for ${marketId}: ${JSON.stringify(errorSummary)}`,
+        );
+      } else {
+        this.logger.debug(
+          `[PositionTracker] Raw error while fetching market outcome for ${marketId}: ${String(anyErr)}`,
+        );
+      }
 
       return null;
     }

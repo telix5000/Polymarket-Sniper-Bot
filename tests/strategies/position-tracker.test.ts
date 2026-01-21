@@ -138,10 +138,10 @@ describe("PositionTracker Error Handling", () => {
   });
 
   test("Error categorization - network errors should be categorized as error", () => {
-    const networkCodes = ["ETIMEDOUT", "ECONNREFUSED", "ECONNRESET"];
+    const NETWORK_ERROR_CODES = ["ETIMEDOUT", "ECONNREFUSED", "ECONNRESET"];
 
-    for (const code of networkCodes) {
-      const isNetworkError = ["ETIMEDOUT", "ECONNREFUSED", "ECONNRESET"].includes(code);
+    for (const code of NETWORK_ERROR_CODES) {
+      const isNetworkError = NETWORK_ERROR_CODES.includes(code);
       assert.ok(isNetworkError, `${code} should be recognized as network error`);
     }
   });
