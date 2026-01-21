@@ -26,7 +26,7 @@ export interface StrategyOrchestratorConfig {
 /**
  * Strategy Orchestrator
  * Executes strategies in priority order to maximize returns while managing risk
- * 
+ *
  * Priority Order:
  * 1. Risk-Free Arb (existing YES/NO < $1.00)
  * 2. Endgame Sweep (buy 98-99¢)
@@ -82,11 +82,11 @@ export class StrategyOrchestrator {
       const maxPos = config.endgameSweepConfig.maxPositionUsd;
       if (maxPos > 50) {
         this.logger.warn(
-          `⚠️  ENDGAME_MAX_POSITION_USD is set to $${maxPos} - this is VERY HIGH and may deplete your wallet quickly!`
+          `⚠️  ENDGAME_MAX_POSITION_USD is set to $${maxPos} - this is VERY HIGH and may deplete your wallet quickly!`,
         );
       }
       this.logger.info(
-        `[Orchestrator] Endgame Sweep: Max $${maxPos} per position (can buy multiple positions simultaneously)`
+        `[Orchestrator] Endgame Sweep: Max $${maxPos} per position (can buy multiple positions simultaneously)`,
       );
     }
 
@@ -123,7 +123,7 @@ export class StrategyOrchestrator {
     }, this.executionIntervalMs);
 
     this.logger.info(
-      `[Orchestrator] Started (execution interval: ${this.executionIntervalMs}ms)`
+      `[Orchestrator] Started (execution interval: ${this.executionIntervalMs}ms)`,
     );
   }
 
@@ -136,7 +136,7 @@ export class StrategyOrchestrator {
     }
 
     this.logger.info("[Orchestrator] Stopping strategy orchestrator");
-    
+
     if (this.executionTimer) {
       clearInterval(this.executionTimer);
       this.executionTimer = undefined;
@@ -165,7 +165,7 @@ export class StrategyOrchestrator {
       const endgameCount = await this.endgameSweepStrategy.execute();
       if (endgameCount > 0) {
         this.logger.info(
-          `[Orchestrator] Priority 2: Endgame Sweep executed ${endgameCount} trades`
+          `[Orchestrator] Priority 2: Endgame Sweep executed ${endgameCount} trades`,
         );
       }
 
@@ -173,7 +173,7 @@ export class StrategyOrchestrator {
       const autoSellCount = await this.autoSellStrategy.execute();
       if (autoSellCount > 0) {
         this.logger.info(
-          `[Orchestrator] Priority 3: Auto-Sell executed ${autoSellCount} trades`
+          `[Orchestrator] Priority 3: Auto-Sell executed ${autoSellCount} trades`,
         );
       }
 
@@ -181,21 +181,23 @@ export class StrategyOrchestrator {
       const quickFlipCount = await this.quickFlipStrategy.execute();
       if (quickFlipCount > 0) {
         this.logger.info(
-          `[Orchestrator] Priority 4: Quick Flip executed ${quickFlipCount} trades`
+          `[Orchestrator] Priority 4: Quick Flip executed ${quickFlipCount} trades`,
         );
       }
 
       // Priority 5: Whale Copy (handled by existing monitor service)
       // This runs continuously in its own loop
       if (this.monitorEnabled) {
-        this.logger.debug("[Orchestrator] Monitor service is active (Priority 5)");
+        this.logger.debug(
+          "[Orchestrator] Monitor service is active (Priority 5)",
+        );
       }
 
       this.logger.debug("[Orchestrator] Strategy execution complete");
     } catch (err) {
       this.logger.error(
         "[Orchestrator] Error during strategy execution",
-        err as Error
+        err as Error,
       );
     }
   }

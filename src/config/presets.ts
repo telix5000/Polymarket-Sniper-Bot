@@ -178,18 +178,18 @@ export const STRATEGY_PRESETS = {
     MONITOR_ENABLED: true,
     // Quick Flip settings
     QUICK_FLIP_ENABLED: true,
-    QUICK_FLIP_TARGET_PCT: 7,        // Higher target, fewer trades
+    QUICK_FLIP_TARGET_PCT: 7, // Higher target, fewer trades
     QUICK_FLIP_STOP_LOSS_PCT: 2,
     QUICK_FLIP_MIN_HOLD_SECONDS: 60,
     // Auto-sell settings
     AUTO_SELL_ENABLED: true,
-    AUTO_SELL_THRESHOLD: 0.997,      // 99.7¢ (only if price improves above endgame purchases)
+    AUTO_SELL_THRESHOLD: 0.997, // 99.7¢ (only if price improves above endgame purchases)
     AUTO_SELL_MIN_HOLD_SECONDS: 300, // Hold at least 5 minutes before auto-selling
     // Endgame sweep settings
     ENDGAME_SWEEP_ENABLED: true,
-    ENDGAME_MIN_PRICE: 0.985,        // 98.5¢
-    ENDGAME_MAX_PRICE: 0.995,        // 99.5¢ (auto-sell threshold is higher to avoid conflict)
-    ENDGAME_MAX_POSITION_USD: 15,    // Conservative position sizing
+    ENDGAME_MIN_PRICE: 0.985, // 98.5¢
+    ENDGAME_MAX_PRICE: 0.995, // 99.5¢ (auto-sell threshold is higher to avoid conflict)
+    ENDGAME_MAX_POSITION_USD: 15, // Conservative position sizing
     // Rate limits
     ORDER_SUBMIT_MAX_PER_HOUR: 30,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 10000,
@@ -213,18 +213,18 @@ export const STRATEGY_PRESETS = {
     MONITOR_ENABLED: true,
     // Quick Flip settings
     QUICK_FLIP_ENABLED: true,
-    QUICK_FLIP_TARGET_PCT: 5,        // 5% gain target
-    QUICK_FLIP_STOP_LOSS_PCT: 3,     // 3% stop loss
+    QUICK_FLIP_TARGET_PCT: 5, // 5% gain target
+    QUICK_FLIP_STOP_LOSS_PCT: 3, // 3% stop loss
     QUICK_FLIP_MIN_HOLD_SECONDS: 30,
     // Auto-sell settings
     AUTO_SELL_ENABLED: true,
-    AUTO_SELL_THRESHOLD: 0.996,      // 99.6¢ (above endgame max to avoid conflict)
+    AUTO_SELL_THRESHOLD: 0.996, // 99.6¢ (above endgame max to avoid conflict)
     AUTO_SELL_MIN_HOLD_SECONDS: 120, // Hold at least 2 minutes before auto-selling
     // Endgame sweep settings
     ENDGAME_SWEEP_ENABLED: true,
-    ENDGAME_MIN_PRICE: 0.985,        // 98.5¢ (ensures 1.3% net profit minimum after 0.2% fees)
-    ENDGAME_MAX_PRICE: 0.995,        // 99.5¢ (auto-sell threshold is higher)
-    ENDGAME_MAX_POSITION_USD: 25,    // Balanced position sizing
+    ENDGAME_MIN_PRICE: 0.985, // 98.5¢ (ensures 1.3% net profit minimum after 0.2% fees)
+    ENDGAME_MAX_PRICE: 0.995, // 99.5¢ (auto-sell threshold is higher)
+    ENDGAME_MAX_POSITION_USD: 25, // Balanced position sizing
     // Rate limits (higher for more trades)
     ORDER_SUBMIT_MAX_PER_HOUR: 60,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 5000,
@@ -234,7 +234,7 @@ export const STRATEGY_PRESETS = {
     ARB_MIN_EDGE_BPS: 50,
     ARB_MIN_PROFIT_USD: 0.05,
     ARB_MIN_LIQUIDITY_USD: 3000,
-    ARB_MAX_SPREAD_BPS: 10000,       // Very permissive
+    ARB_MAX_SPREAD_BPS: 10000, // Very permissive
     ARB_TRADE_BASE_USD: 5,
     ARB_SIZE_SCALING: "sqrt",
     ARB_SLIPPAGE_BPS: 50,
@@ -249,7 +249,7 @@ export const STRATEGY_PRESETS = {
     ARB_DEBUG_TOP_N: 10,
     // Existing Monitor settings (from active, optimized)
     FETCH_INTERVAL: 1,
-    MIN_TRADE_SIZE_USD: 1,           // Low minimum to catch more
+    MIN_TRADE_SIZE_USD: 1, // Low minimum to catch more
     MIN_ORDER_USD: 1,
     TRADE_MULTIPLIER: 0.15,
     TRADE_AGGREGATION_ENABLED: true,
@@ -264,18 +264,18 @@ export const STRATEGY_PRESETS = {
     MONITOR_ENABLED: true,
     // Quick Flip settings (tighter targets for faster trades)
     QUICK_FLIP_ENABLED: true,
-    QUICK_FLIP_TARGET_PCT: 3,        // Lower target, more trades
+    QUICK_FLIP_TARGET_PCT: 3, // Lower target, more trades
     QUICK_FLIP_STOP_LOSS_PCT: 2,
     QUICK_FLIP_MIN_HOLD_SECONDS: 15,
     // Auto-sell settings (sell higher for more profit)
     AUTO_SELL_ENABLED: true,
-    AUTO_SELL_THRESHOLD: 0.95,       // 95¢ - sell when positions appreciate significantly
-    AUTO_SELL_MIN_HOLD_SECONDS: 60,  // Hold at least 1 minute
+    AUTO_SELL_THRESHOLD: 0.95, // 95¢ - sell when positions appreciate significantly
+    AUTO_SELL_MIN_HOLD_SECONDS: 60, // Hold at least 1 minute
     // Endgame sweep settings (AGGRESSIVE: buy 85-95¢ range for higher profit potential)
     ENDGAME_SWEEP_ENABLED: true,
-    ENDGAME_MIN_PRICE: 0.85,         // 85¢ - more uncertainty, higher potential profit (10-15% gains)
-    ENDGAME_MAX_PRICE: 0.95,         // 95¢ - room to appreciate before auto-sell triggers
-    ENDGAME_MAX_POSITION_USD: 50,    // Aggressive position sizing
+    ENDGAME_MIN_PRICE: 0.85, // 85¢ - more uncertainty, higher potential profit (10-15% gains)
+    ENDGAME_MAX_PRICE: 0.95, // 95¢ - room to appreciate before auto-sell triggers
+    ENDGAME_MAX_POSITION_USD: 50, // Aggressive position sizing
     // Rate limits (maximum)
     ORDER_SUBMIT_MAX_PER_HOUR: 120,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 3000,

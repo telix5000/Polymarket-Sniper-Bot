@@ -1108,7 +1108,7 @@ export type StrategyConfig = {
  * Supports LIVE_TRADING as alias for ARB_LIVE_TRADING
  */
 export function loadStrategyConfig(
-  overrides?: Record<string, string>
+  overrides?: Record<string, string>,
 ): StrategyConfig | null {
   const strategyPresetName = readEnv("STRATEGY_PRESET", overrides);
 
@@ -1120,7 +1120,7 @@ export function loadStrategyConfig(
   // Validate preset name
   if (!(strategyPresetName in STRATEGY_PRESETS)) {
     throw new Error(
-      `Invalid STRATEGY_PRESET="${strategyPresetName}". Valid values: ${Object.keys(STRATEGY_PRESETS).join(", ")}`
+      `Invalid STRATEGY_PRESET="${strategyPresetName}". Valid values: ${Object.keys(STRATEGY_PRESETS).join(", ")}`,
     );
   }
 
@@ -1159,7 +1159,7 @@ export function loadStrategyConfig(
 
   // Apply preset settings to environment for ARB and MONITOR config loaders
   const tempEnv: Record<string, string> = {};
-  
+
   // Map preset values to env vars
   for (const [key, value] of Object.entries(preset)) {
     if (value !== undefined && value !== null) {
@@ -1191,7 +1191,7 @@ export function loadStrategyConfig(
   }
 
   console.info(
-    `[StrategyConfig] Loaded unified preset: ${presetName} (ARB=${config.arbEnabled}, MONITOR=${config.monitorEnabled})`
+    `[StrategyConfig] Loaded unified preset: ${presetName} (ARB=${config.arbEnabled}, MONITOR=${config.monitorEnabled})`,
   );
 
   return config;
