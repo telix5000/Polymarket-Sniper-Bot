@@ -37,7 +37,6 @@ export async function refreshApiCreds(
     const clientCreds = (client as ClobClient & { creds?: ApiKeyCreds }).creds;
     if (clientCreds) {
       cachedCreds = clientCreds; // Cache them for future use
-      applyClientCreds(client, cachedCreds);
       return cachedCreds;
     }
 

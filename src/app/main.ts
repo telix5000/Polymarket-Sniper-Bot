@@ -4,10 +4,7 @@ import {
   loadArbConfig,
   parseCliOverrides,
 } from "../config/loadConfig";
-import {
-  PolymarketAuth,
-  createPolymarketAuthFromEnv,
-} from "../clob/polymarket-auth";
+import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 import { MempoolMonitorService } from "../services/mempool-monitor.service";
 import { TradeExecutorService } from "../services/trade-executor.service";
 import { ConsoleLogger } from "../utils/logger.util";

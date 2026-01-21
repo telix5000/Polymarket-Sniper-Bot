@@ -1,9 +1,6 @@
 import "dotenv/config";
 import { ConsoleLogger } from "../utils/logger.util";
-import {
-  PolymarketAuth,
-  createPolymarketAuthFromEnv,
-} from "../clob/polymarket-auth";
+import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 import { ensureTradingReady } from "../polymarket/preflight";
 import { isApiKeyCreds } from "../utils/clob-credentials.util";
 
