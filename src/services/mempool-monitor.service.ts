@@ -14,6 +14,7 @@ import {
   sanitizeAxiosError,
   sanitizeErrorMessage,
 } from "../utils/sanitize-axios-error.util";
+import { parallelBatch } from "../utils/parallel-utils";
 
 export type MempoolMonitorDeps = {
   client: ClobClient;
@@ -205,8 +206,75 @@ export class MempoolMonitorService {
   private async monitorRecentOrders(): Promise<void> {
     const { logger, env } = this.deps;
     const startTime = Date.now();
+    const stats: MonitorStats = this.createEmptyStats();
+
+    // Monitor all addresses from env in parallel (these are the addresses we want to frontrun)
+    // Use parallelBatch to control concurrency and prevent overwhelming the API
+    const MAX_CONCURRENT_ADDRESS_CHECKS = 4;
+    
+    const batchResult = await parallelBatch(
+      env.targetAddresses,
+      async (targetAddress) => {
+        const localStats = this.createEmptyStats();
+        
+        try {
+          await this.checkRecentActivity(targetAddress, localStats);
+          return { success: true, stats: localStats };
+        } catch (err) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            return { success: true, stats: localStats };
+          }
+          logger.debug(
+            `Error checking activity for ${targetAddress}: ${sanitizeErrorMessage(err)}`,
+          );
+          // Do not mark this as a skipped API error trade, since no trades were processed.
+          // The address check failed, but we didn't skip any actual trades.
+          return { success: false, stats: localStats };
+        }
+      },
+      { concurrency: MAX_CONCURRENT_ADDRESS_CHECKS, logger, label: "activity-check" },
+    );
+
+    // Aggregate stats from all parallel checks
     let checkedAddresses = 0;
-    const stats: MonitorStats = {
+    let failedAddressChecks = 0;
+    for (const result of batchResult.results) {
+      if (result) {
+        checkedAddresses++;
+        if (!result.success) {
+          failedAddressChecks++;
+        }
+        // Aggregate individual stats
+        stats.tradesSeen += result.stats.tradesSeen;
+        stats.recentTrades += result.stats.recentTrades;
+        stats.eligibleTrades += result.stats.eligibleTrades;
+        stats.skippedSmallTrades += result.stats.skippedSmallTrades;
+        stats.skippedUnconfirmedTrades += result.stats.skippedUnconfirmedTrades;
+        stats.skippedNonTargetTrades += result.stats.skippedNonTargetTrades;
+        stats.skippedParseErrorTrades += result.stats.skippedParseErrorTrades;
+        stats.skippedOutsideRecentWindowTrades += result.stats.skippedOutsideRecentWindowTrades;
+        stats.skippedUnsupportedActionTrades += result.stats.skippedUnsupportedActionTrades;
+        stats.skippedMissingFieldsTrades += result.stats.skippedMissingFieldsTrades;
+        stats.skippedApiErrorTrades += result.stats.skippedApiErrorTrades;
+        stats.skippedOtherTrades += result.stats.skippedOtherTrades;
+      }
+    }
+    // Count exceptions from parallelBatch (these are uncaught errors from the batch processor)
+    // These were not included in results, so we count them separately as failed address checks
+    failedAddressChecks += batchResult.errors.length;
+    checkedAddresses += batchResult.errors.length;
+
+    const durationMs = Date.now() - startTime;
+    logger.info(
+      `[Monitor] Checked ${checkedAddresses} address(es) in ${durationMs}ms (${failedAddressChecks} failed) | trades: ${stats.tradesSeen}, recent: ${stats.recentTrades}, eligible: ${stats.eligibleTrades}, skipped_small: ${stats.skippedSmallTrades}, skipped_unconfirmed: ${stats.skippedUnconfirmedTrades}, skipped_non_target: ${stats.skippedNonTargetTrades}, skipped_parse_error: ${stats.skippedParseErrorTrades}, skipped_outside_recent_window: ${stats.skippedOutsideRecentWindowTrades}, skipped_unsupported_action: ${stats.skippedUnsupportedActionTrades}, skipped_missing_fields: ${stats.skippedMissingFieldsTrades}, skipped_api_error: ${stats.skippedApiErrorTrades}, skipped_other: ${stats.skippedOtherTrades}`,
+    );
+  }
+
+  /**
+   * Factory function to create a new MonitorStats object with all values initialized to 0
+   */
+  private createEmptyStats(): MonitorStats {
+    return {
       tradesSeen: 0,
       recentTrades: 0,
       eligibleTrades: 0,
@@ -220,28 +288,6 @@ export class MempoolMonitorService {
       skippedApiErrorTrades: 0,
       skippedOtherTrades: 0,
     };
-
-    // Monitor all addresses from env (these are the addresses we want to frontrun)
-    for (const targetAddress of env.targetAddresses) {
-      try {
-        await this.checkRecentActivity(targetAddress, stats);
-        checkedAddresses += 1;
-      } catch (err) {
-        if (axios.isAxiosError(err) && err.response?.status === 404) {
-          checkedAddresses += 1;
-          continue;
-        }
-        stats.skippedApiErrorTrades += 1;
-        logger.debug(
-          `Error checking activity for ${targetAddress}: ${sanitizeErrorMessage(err)}`,
-        );
-      }
-    }
-
-    const durationMs = Date.now() - startTime;
-    logger.info(
-      `[Monitor] Checked ${checkedAddresses} address(es) in ${durationMs}ms | trades: ${stats.tradesSeen}, recent: ${stats.recentTrades}, eligible: ${stats.eligibleTrades}, skipped_small: ${stats.skippedSmallTrades}, skipped_unconfirmed: ${stats.skippedUnconfirmedTrades}, skipped_non_target: ${stats.skippedNonTargetTrades}, skipped_parse_error: ${stats.skippedParseErrorTrades}, skipped_outside_recent_window: ${stats.skippedOutsideRecentWindowTrades}, skipped_unsupported_action: ${stats.skippedUnsupportedActionTrades}, skipped_missing_fields: ${stats.skippedMissingFieldsTrades}, skipped_api_error: ${stats.skippedApiErrorTrades}, skipped_other: ${stats.skippedOtherTrades}`,
-    );
   }
 
   private async checkRecentActivity(
