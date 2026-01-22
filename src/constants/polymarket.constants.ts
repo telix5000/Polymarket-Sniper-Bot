@@ -24,9 +24,11 @@ export const DEFAULT_CONFIG = {
   AGGREGATION_WINDOW_SECONDS: 300,
   MIN_POL_BALANCE: 0.05,
   ACTIVITY_CHECK_WINDOW_SECONDS: 60,
-  ORDER_SUBMIT_MIN_INTERVAL_MS: 60_000,
-  ORDER_SUBMIT_MAX_PER_HOUR: 10,
-  ORDER_SUBMIT_MARKET_COOLDOWN_SECONDS: 600,
+  // Rate limits - Polymarket allows ~216,000 orders/hour (36,000 per 10 min sustained)
+  // For high-frequency scalping, we want maximum throughput
+  ORDER_SUBMIT_MIN_INTERVAL_MS: 0, // No artificial delay
+  ORDER_SUBMIT_MAX_PER_HOUR: 100000, // 100k/hour (well under Polymarket's 216k limit)
+  ORDER_SUBMIT_MARKET_COOLDOWN_SECONDS: 1, // 1 second per market (prevent spam on same market)
   CLOUDFLARE_COOLDOWN_SECONDS: 3600,
   CLOB_AUTH_COOLDOWN_SECONDS: 300,
   TRADE_MODE: "clob" as "clob" | "onchain",
