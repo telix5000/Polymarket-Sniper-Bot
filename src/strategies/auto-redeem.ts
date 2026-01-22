@@ -132,16 +132,22 @@ export class AutoRedeemStrategy {
       // Get all positions for this market
       const marketPositions = positionsByMarket.get(marketId) || [];
       
-      // Calculate total position value for this market
+      // Calculate total position value for this market (for logging purposes)
+      // Note: Losing positions have currentPrice=0, but we still need to redeem them to clear from wallet
       const totalValueUsd = marketPositions.reduce(
         (sum, pos) => sum + pos.size * pos.currentPrice,
         0,
       );
 
-      // Skip if total value is below threshold
-      if (totalValueUsd < this.config.minPositionUsd) {
+      // Calculate total size (for determining if this is dust)
+      const totalSize = marketPositions.reduce((sum, pos) => sum + pos.size, 0);
+
+      // Skip only if the total position SIZE is negligible (true dust)
+      // We want to redeem even losing positions to clear them from the wallet
+      // Use minPositionUsd as a proxy for minimum shares (assuming ~$1 per share)
+      if (totalSize < this.config.minPositionUsd * 0.01) {
         this.logger.debug(
-          `[AutoRedeem] Skipping dust market: $${totalValueUsd.toFixed(2)} < $${this.config.minPositionUsd} minimum`,
+          `[AutoRedeem] Skipping dust market: ${totalSize.toFixed(4)} shares < ${(this.config.minPositionUsd * 0.01).toFixed(4)} minimum`,
         );
         continue;
       }
@@ -149,8 +155,10 @@ export class AutoRedeemStrategy {
       // Use first position for redemption (all positions in the market will be redeemed together)
       const position = marketPositions[0];
       
+      // Determine if this is a winning or losing position
+      const isWinning = totalValueUsd > 0;
       this.logger.info(
-        `[AutoRedeem] Attempting to redeem market: market=${marketId}, positions=${marketPositions.length}, total_value=$${totalValueUsd.toFixed(2)}`,
+        `[AutoRedeem] Attempting to redeem ${isWinning ? 'WINNING' : 'LOSING'} market: market=${marketId}, positions=${marketPositions.length}, shares=${totalSize.toFixed(2)}, value=$${totalValueUsd.toFixed(2)}`,
       );
 
       try {
