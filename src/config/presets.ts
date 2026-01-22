@@ -280,14 +280,16 @@ export const STRATEGY_PRESETS = {
     QUICK_FLIP_TARGET_PCT: 3, // Lower target, more trades
     QUICK_FLIP_STOP_LOSS_PCT: 2,
     QUICK_FLIP_MIN_HOLD_SECONDS: 15,
-    // Auto-sell settings (sell higher for more profit)
-    AUTO_SELL_ENABLED: true,
-    AUTO_SELL_THRESHOLD: 0.95, // 95¢ - sell when positions appreciate significantly
-    AUTO_SELL_MIN_HOLD_SECONDS: 60, // Hold at least 1 minute
-    // Endgame sweep settings (AGGRESSIVE: buy 85-95¢ range for higher profit potential)
-    ENDGAME_SWEEP_ENABLED: true,
-    ENDGAME_MIN_PRICE: 0.85, // 85¢ - more uncertainty, higher potential profit (10-15% gains)
-    ENDGAME_MAX_PRICE: 0.95, // 95¢ - room to appreciate before auto-sell triggers
+    // Auto-sell settings: DISABLED - redeem is now the preferred exit strategy
+    // With auto-redeem working, we no longer need to sell before $1 - simply wait for resolution and redeem at full value
+    AUTO_SELL_ENABLED: false,
+    AUTO_SELL_THRESHOLD: 0.95, // Not used since disabled
+    AUTO_SELL_MIN_HOLD_SECONDS: 60,
+    // Endgame sweep settings: DISABLED - since we rely on redeem, no need to buy positions hoping they'll reach $1
+    // Redeem handles resolved positions automatically, so aggressive endgame buying is unnecessary
+    ENDGAME_SWEEP_ENABLED: false,
+    ENDGAME_MIN_PRICE: 0.85, // Not used since disabled
+    ENDGAME_MAX_PRICE: 0.95, // Not used since disabled
     MAX_POSITION_USD: 50, // Aggressive position sizing
     // Auto-Redeem settings (claim resolved positions)
     AUTO_REDEEM_ENABLED: true,
