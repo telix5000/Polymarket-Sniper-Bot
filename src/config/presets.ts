@@ -182,12 +182,13 @@ export const STRATEGY_PRESETS = {
     // Combines ARB + MONITOR settings
     ARB_ENABLED: true,
     MONITOR_ENABLED: true,
-    // Quick Flip settings - aim for meaningful profits
+    // Quick Flip settings - aim for substantial profits to justify trades
+    // Don't trade unless you're making real money
     QUICK_FLIP_ENABLED: true,
-    QUICK_FLIP_TARGET_PCT: 15, // 15% target on position size, with at least $0.50 profit per trade
-    QUICK_FLIP_STOP_LOSS_PCT: 5, // 5% stop loss
+    QUICK_FLIP_TARGET_PCT: 30, // 30% target - $3 profit on $10 positions
+    QUICK_FLIP_STOP_LOSS_PCT: 15, // 15% stop loss (2:1 reward/risk)
     QUICK_FLIP_MIN_HOLD_SECONDS: 60,
-    QUICK_FLIP_MIN_PROFIT_USD: 0.5, // Minimum $0.50 profit per trade
+    QUICK_FLIP_MIN_PROFIT_USD: 2.0, // Minimum $2.00 profit per trade
     // Auto-sell settings
     AUTO_SELL_ENABLED: true,
     AUTO_SELL_THRESHOLD: 0.997, // 99.7¢ (only if price improves above endgame purchases)
@@ -203,9 +204,10 @@ export const STRATEGY_PRESETS = {
     // Rate limits
     ORDER_SUBMIT_MAX_PER_HOUR: 30,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 10000,
-    // Existing ARB settings (from safe_small)
+    // Existing ARB settings
     ARB_SCAN_INTERVAL_MS: 2000,
-    ARB_MIN_EDGE_BPS: 120,
+    ARB_MIN_EDGE_BPS: 300, // 3% minimum edge
+    ARB_MIN_PROFIT_USD: 1.0, // Minimum $1 profit per arb
     ARB_MAX_SPREAD_BPS: 300,
     ARB_TRADE_BASE_USD: 3,
     ARB_MAX_POSITION_USD: 15,
@@ -224,12 +226,13 @@ export const STRATEGY_PRESETS = {
     // Combines ARB + MONITOR settings
     ARB_ENABLED: true,
     MONITOR_ENABLED: true,
-    // Quick Flip settings - aim for meaningful profits
+    // Quick Flip settings - aim for substantial profits
+    // Every trade should be worth your time
     QUICK_FLIP_ENABLED: true,
-    QUICK_FLIP_TARGET_PCT: 10, // 10% gain target - ensures $0.50+ profit on $5 positions
-    QUICK_FLIP_STOP_LOSS_PCT: 5, // 5% stop loss (proportional to target)
+    QUICK_FLIP_TARGET_PCT: 20, // 20% gain target - $2 profit on $10 positions
+    QUICK_FLIP_STOP_LOSS_PCT: 10, // 10% stop loss (2:1 reward/risk)
     QUICK_FLIP_MIN_HOLD_SECONDS: 30,
-    QUICK_FLIP_MIN_PROFIT_USD: 0.25, // Minimum $0.25 profit per trade
+    QUICK_FLIP_MIN_PROFIT_USD: 1.0, // Minimum $1.00 profit per trade
     // Auto-sell settings
     AUTO_SELL_ENABLED: true,
     AUTO_SELL_THRESHOLD: 0.996, // 99.6¢ (above endgame max to avoid conflict)
@@ -246,10 +249,10 @@ export const STRATEGY_PRESETS = {
     ORDER_SUBMIT_MAX_PER_HOUR: 60,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 5000,
     ORDER_SUBMIT_MARKET_COOLDOWN_SECONDS: 60,
-    // Existing ARB settings (from micro, optimized)
+    // Existing ARB settings
     ARB_SCAN_INTERVAL_MS: 1500,
-    ARB_MIN_EDGE_BPS: 50,
-    ARB_MIN_PROFIT_USD: 0.1, // Increased from 0.05 - minimum 10 cents profit
+    ARB_MIN_EDGE_BPS: 200, // 2% minimum edge
+    ARB_MIN_PROFIT_USD: 1.0, // Minimum $1 profit per arb
     ARB_MIN_LIQUIDITY_USD: 3000,
     ARB_MAX_SPREAD_BPS: 10000, // Very permissive
     ARB_TRADE_BASE_USD: 5,
@@ -283,13 +286,9 @@ export const STRATEGY_PRESETS = {
     /**
      * HIGH-FREQUENCY SCALPING STRATEGY
      *
-     * Fee structure (2024-2025):
-     * - Taker: 0.01% (1 bps)
-     * - Maker: 0%
-     * - Round-trip: 0.02%
-     *
-     * IMPORTANT: While fees are low, 5-cent profits on $5 trades are not meaningful.
-     * Aim for at least 5% gains ($0.25+ on $5) to make trades worthwhile.
+     * IMPORTANT: Don't waste time on penny profits!
+     * Every trade should make at least $1 to be worth the effort.
+     * Even aggressive HFT needs meaningful per-trade returns.
      *
      * Key strategies:
      * 1. Spread scalping - profit from bid/ask gaps
@@ -298,13 +297,13 @@ export const STRATEGY_PRESETS = {
      * 4. Momentum scalps - ride quick price movements
      */
 
-    // Quick Flip - SCALPING WITH MEANINGFUL PROFITS
-    // 5% target ensures at least $0.25 profit on $5 positions
+    // Quick Flip - SCALPING WITH REAL PROFITS
+    // 15% target on $10 position = $1.50 profit minimum
     QUICK_FLIP_ENABLED: true,
-    QUICK_FLIP_TARGET_PCT: 5, // 5% gross (was 2% - too small for meaningful profit)
-    QUICK_FLIP_STOP_LOSS_PCT: 3, // 3% stop - balanced risk/reward
+    QUICK_FLIP_TARGET_PCT: 15, // 15% target for meaningful scalp profits
+    QUICK_FLIP_STOP_LOSS_PCT: 7, // 7% stop - ~2:1 risk/reward ratio
     QUICK_FLIP_MIN_HOLD_SECONDS: 0, // Exit immediately when target hit
-    QUICK_FLIP_MIN_PROFIT_USD: 0.15, // Minimum $0.15 profit per trade (aggressive allows smaller)
+    QUICK_FLIP_MIN_PROFIT_USD: 1.0, // Minimum $1.00 profit per trade - non-negotiable
 
     // Auto-sell when price spikes
     AUTO_SELL_ENABLED: true,
@@ -326,23 +325,18 @@ export const STRATEGY_PRESETS = {
      * RATE LIMITS - HIGH THROUGHPUT
      * Polymarket limits: 9,000 req/10sec general, 36,000/10min sustained for orders
      * That's 216,000 orders/hour sustained capacity
-     *
-     * For HFT, we want:
-     * - Minimal delays (but not zero - avoid spam detection)
-     * - High concurrency for parallel execution
-     * - Smart throttling to stay under limits
      */
     ORDER_SUBMIT_MAX_PER_HOUR: 100000, // 100k/hour (under 216k limit)
     ORDER_SUBMIT_MIN_INTERVAL_MS: 10, // 10ms between orders (100/sec max)
     ORDER_SUBMIT_MARKET_COOLDOWN_SECONDS: 0, // No per-market cooldown
 
     /**
-     * ARBITRAGE SETTINGS - MEANINGFUL VOLUME
-     * With 0.01% taker fee, edges are profitable - but aim for bigger ones
+     * ARBITRAGE SETTINGS - REAL MONEY ONLY
+     * Don't bother with trades that don't make at least $1
      */
     ARB_SCAN_INTERVAL_MS: 100, // Scan 10x/second
-    ARB_MIN_EDGE_BPS: 50, // 0.5% edge (was 0.1% - too thin for meaningful profit)
-    ARB_MIN_PROFIT_USD: 0.1, // Minimum 10 cents profit per arb trade
+    ARB_MIN_EDGE_BPS: 150, // 1.5% minimum edge for meaningful profit
+    ARB_MIN_PROFIT_USD: 1.0, // Minimum $1 profit per arb trade
     ARB_MAX_SPREAD_BPS: 10000, // Permissive spread tolerance
     ARB_FEE_BPS: 1, // Correct fee: 0.01% per side
     ARB_SLIPPAGE_BPS: 20, // Account for 0.2% slippage

@@ -71,11 +71,14 @@ export function isProfitableAfterFees(
 /**
  * Minimum profit thresholds for scalping
  *
- * IMPORTANT: Small percentage gains on small positions result in tiny profits
- * that may not be worth the effort and risk. For example:
- * - 2% gain on $5 = $0.10 profit (barely covers fees on some platforms)
- * - 5% gain on $5 = $0.25 profit (still quite small)
- * - 10% gain on $5 = $0.50 profit (more reasonable)
+ * IMPORTANT: Small profits are NOT worth the effort and risk.
+ * Every trade has overhead: transaction fees, slippage risk, time.
+ * Aim for at least $1 profit per trade to make it worthwhile.
+ *
+ * Examples on a $10 position:
+ * - 10% gain = $1.00 profit (minimum acceptable)
+ * - 15% gain = $1.50 profit (good)
+ * - 25% gain = $2.50 profit (excellent)
  *
  * These thresholds ensure that trades generate meaningful profits.
  */
@@ -83,16 +86,15 @@ export function isProfitableAfterFees(
 /**
  * Minimum absolute profit in USD for quick-flip sells
  * Trades below this profit threshold will be held longer
- * Default: $0.25 minimum profit per trade
+ * Default: $1.00 minimum profit per trade - anything less isn't worth it
  */
-export const MIN_QUICK_FLIP_PROFIT_USD = 0.25;
+export const MIN_QUICK_FLIP_PROFIT_USD = 1.0;
 
 /**
  * Default minimum profit percentage for quick-flip
- * Higher than before to avoid 5-cent scalps
- * Default: 5% (was 2% for aggressive)
+ * 10% minimum to ensure meaningful dollar profits
  */
-export const DEFAULT_QUICK_FLIP_TARGET_PCT = 5;
+export const DEFAULT_QUICK_FLIP_TARGET_PCT = 10;
 
 /**
  * Check if a trade meets minimum profit requirements
