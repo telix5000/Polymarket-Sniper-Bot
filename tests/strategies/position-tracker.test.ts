@@ -97,11 +97,9 @@ describe("PositionTracker Settlement Price Logic", () => {
 
     for (const outcome of outcomes) {
       // Multi-outcome markets preserve the actual case, but binary markets are commonly uppercase
-      const isValid = outcome && typeof outcome === 'string' && outcome.trim() !== '';
-      assert.ok(
-        isValid,
-        `${outcome} should be recognized as valid outcome`,
-      );
+      const isValid =
+        outcome && typeof outcome === "string" && outcome.trim() !== "";
+      assert.ok(isValid, `${outcome} should be recognized as valid outcome`);
     }
   });
 
@@ -110,11 +108,9 @@ describe("PositionTracker Settlement Price Logic", () => {
 
     for (const outcome of outcomes) {
       // Multi-outcome markets preserve the actual case, but binary markets are commonly uppercase
-      const isValid = outcome && typeof outcome === 'string' && outcome.trim() !== '';
-      assert.ok(
-        isValid,
-        `${outcome} should be recognized as valid outcome`,
-      );
+      const isValid =
+        outcome && typeof outcome === "string" && outcome.trim() !== "";
+      assert.ok(isValid, `${outcome} should be recognized as valid outcome`);
     }
   });
 });
@@ -144,7 +140,10 @@ describe("PositionTracker Error Handling", () => {
 
     for (const code of NETWORK_ERROR_CODES) {
       const isNetworkError = NETWORK_ERROR_CODES.includes(code);
-      assert.ok(isNetworkError, `${code} should be recognized as network error`);
+      assert.ok(
+        isNetworkError,
+        `${code} should be recognized as network error`,
+      );
     }
   });
 });
@@ -196,7 +195,11 @@ describe("PositionTracker Caching Logic", () => {
     const value = cache.get(marketId);
 
     assert.ok(hasEntry, "Cache should contain entry for null outcome");
-    assert.strictEqual(value, null, "Cache should return null for unavailable outcomes");
+    assert.strictEqual(
+      value,
+      null,
+      "Cache should return null for unavailable outcomes",
+    );
   });
 });
 
@@ -206,12 +209,9 @@ describe("PositionTracker Side Validation", () => {
     const testSides = ["", undefined, null];
 
     for (const side of testSides) {
-      const isValid = side && typeof side === 'string' && side.trim() !== '';
+      const isValid = side && typeof side === "string" && side.trim() !== "";
 
-      assert.ok(
-        !isValid,
-        `"${side}" should be rejected as invalid side`,
-      );
+      assert.ok(!isValid, `"${side}" should be rejected as invalid side`);
     }
   });
 
@@ -219,22 +219,19 @@ describe("PositionTracker Side Validation", () => {
     // Test binary market outcomes (case variations)
     const testCases = [
       { input: "YES", expected: "YES" },
-      { input: "yes", expected: "yes" },  // Verify NOT normalized to "YES"
-      { input: "Yes", expected: "Yes" },  // Verify NOT normalized to "YES"
+      { input: "yes", expected: "yes" }, // Verify NOT normalized to "YES"
+      { input: "Yes", expected: "Yes" }, // Verify NOT normalized to "YES"
       { input: "NO", expected: "NO" },
-      { input: "no", expected: "no" },    // Verify NOT normalized to "NO"
-      { input: "No", expected: "No" },    // Verify NOT normalized to "NO"
+      { input: "no", expected: "no" }, // Verify NOT normalized to "NO"
+      { input: "No", expected: "No" }, // Verify NOT normalized to "NO"
     ];
-    
+
     for (const { input, expected } of testCases) {
-      const isValid = input && typeof input === 'string' && input.trim() !== '';
+      const isValid = input && typeof input === "string" && input.trim() !== "";
       const processed = input.trim(); // Simulates the actual processing in position-tracker
 
-      assert.ok(
-        isValid,
-        `"${input}" should be accepted as valid side`,
-      );
-      
+      assert.ok(isValid, `"${input}" should be accepted as valid side`);
+
       // Verify case is preserved (not normalized to uppercase)
       assert.strictEqual(
         processed,
@@ -246,23 +243,23 @@ describe("PositionTracker Side Validation", () => {
 
   test("Valid multi-outcome market sides should be accepted and preserve case", () => {
     const testCases = [
-      { input: "Medjedovic", expected: "Medjedovic" },  // Not "MEDJEDOVIC"
-      { input: "Under", expected: "Under" },            // Not "UNDER"
-      { input: "FC Bayern München", expected: "FC Bayern München" },  // Preserves special chars
+      { input: "Medjedovic", expected: "Medjedovic" }, // Not "MEDJEDOVIC"
+      { input: "Under", expected: "Under" }, // Not "UNDER"
+      { input: "FC Bayern München", expected: "FC Bayern München" }, // Preserves special chars
       { input: "LNG Esports", expected: "LNG Esports" },
-      { input: "Over", expected: "Over" },              // Not "OVER"
-      { input: "Norrie", expected: "Norrie" },          // Not "NORRIE"
+      { input: "Over", expected: "Over" }, // Not "OVER"
+      { input: "Norrie", expected: "Norrie" }, // Not "NORRIE"
     ];
 
     for (const { input, expected } of testCases) {
-      const isValid = input && typeof input === 'string' && input.trim() !== '';
+      const isValid = input && typeof input === "string" && input.trim() !== "";
       const processed = input.trim(); // Simulates the actual processing in position-tracker
 
       assert.ok(
         isValid,
         `"${input}" should be accepted as valid multi-outcome side`,
       );
-      
+
       // Verify case and special characters are preserved
       assert.strictEqual(
         processed,
@@ -363,7 +360,10 @@ describe("PositionTracker Gamma API Outcome Parsing", () => {
     }
 
     assert.strictEqual(winnerIndex, 0, "Winner should be index 0 (Yes)");
-    assert.ok(highestPrice > WINNER_THRESHOLD, "Winner price should exceed threshold");
+    assert.ok(
+      highestPrice > WINNER_THRESHOLD,
+      "Winner price should exceed threshold",
+    );
     assert.strictEqual(outcomes[winnerIndex], "Yes", "Winner should be 'Yes'");
   });
 
@@ -404,13 +404,19 @@ describe("PositionTracker Gamma API Outcome Parsing", () => {
     }
 
     assert.strictEqual(winnerIndex, 1, "Winner should be index 1 (Minaur)");
-    assert.strictEqual(outcomes[winnerIndex], "Minaur", "Winner should be 'Minaur'");
+    assert.strictEqual(
+      outcomes[winnerIndex],
+      "Minaur",
+      "Winner should be 'Minaur'",
+    );
   });
 
   test("Parse outcomePrices - high precision values near 1", () => {
     // Simulates Gamma API response with high-precision decimal prices
     const outcomes = JSON.parse('["Yes", "No"]');
-    const prices = JSON.parse('["0.9999989889179474774585826918585313", "0.000001011082052522541417308141468657552"]');
+    const prices = JSON.parse(
+      '["0.9999989889179474774585826918585313", "0.000001011082052522541417308141468657552"]',
+    );
 
     let winnerIndex = -1;
     let highestPrice = 0;
@@ -424,15 +430,25 @@ describe("PositionTracker Gamma API Outcome Parsing", () => {
     }
 
     assert.strictEqual(winnerIndex, 0, "Winner should be index 0 (Yes)");
-    assert.ok(highestPrice > WINNER_THRESHOLD, "Winner price should exceed threshold");
-    assert.ok(Math.abs(highestPrice - 1.0) < 0.001, "Winner price should be very close to 1");
+    assert.ok(
+      highestPrice > WINNER_THRESHOLD,
+      "Winner price should exceed threshold",
+    );
+    assert.ok(
+      Math.abs(highestPrice - 1.0) < 0.001,
+      "Winner price should be very close to 1",
+    );
     assert.strictEqual(outcomes[winnerIndex], "Yes", "Winner should be 'Yes'");
   });
 
   test("Parse outcomePrices - 5-outcome market", () => {
     // Simulates Gamma API response for a 5-outcome market (e.g., tweets prediction)
-    const outcomes = JSON.parse('["39 or less", "40-49", "50-59", "60-69", "70 or more"]');
-    const prices = JSON.parse('["0.000005275650370577064615954030495707515", "0.000005340405636688357816234795706832118", "0.000005425344774813496669289527006419526", "0.000006462611087563460063700913082470326", "0.9999774959881303576208348207337085"]');
+    const outcomes = JSON.parse(
+      '["39 or less", "40-49", "50-59", "60-69", "70 or more"]',
+    );
+    const prices = JSON.parse(
+      '["0.000005275650370577064615954030495707515", "0.000005340405636688357816234795706832118", "0.000005425344774813496669289527006419526", "0.000006462611087563460063700913082470326", "0.9999774959881303576208348207337085"]',
+    );
 
     let winnerIndex = -1;
     let highestPrice = 0;
@@ -446,8 +462,15 @@ describe("PositionTracker Gamma API Outcome Parsing", () => {
     }
 
     assert.strictEqual(winnerIndex, 4, "Winner should be index 4 (70 or more)");
-    assert.ok(highestPrice > WINNER_THRESHOLD, "Winner price should exceed threshold");
-    assert.strictEqual(outcomes[winnerIndex], "70 or more", "Winner should be '70 or more'");
+    assert.ok(
+      highestPrice > WINNER_THRESHOLD,
+      "Winner price should exceed threshold",
+    );
+    assert.strictEqual(
+      outcomes[winnerIndex],
+      "70 or more",
+      "Winner should be '70 or more'",
+    );
   });
 
   test("No clear winner when all prices are near 0", () => {
@@ -467,4 +490,3 @@ describe("PositionTracker Gamma API Outcome Parsing", () => {
     // In actual code, this would result in returning null
   });
 });
-

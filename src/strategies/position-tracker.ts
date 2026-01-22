@@ -44,11 +44,15 @@ export class PositionTracker {
   // Maximum cache size is enforced to prevent unbounded memory growth in long-running processes.
   private marketOutcomeCache: Map<string, string> = new Map();
   private static readonly MAX_OUTCOME_CACHE_SIZE = 1000; // Maximum number of cached market outcomes
-  private lastRefreshStats: { resolved: number; active: number; skipped: number } = { resolved: 0, active: 0, skipped: 0 }; // Track stats for summary logging
+  private lastRefreshStats: {
+    resolved: number;
+    active: number;
+    skipped: number;
+  } = { resolved: 0, active: 0, skipped: 0 }; // Track stats for summary logging
 
   // API timeout constant for external API calls
   private static readonly API_TIMEOUT_MS = 10000; // 10 seconds
-  
+
   // Threshold for determining market winner from outcomePrices
   // Price > 0.5 indicates the likely winner in resolved markets
   private static readonly WINNER_THRESHOLD = 0.5;
@@ -66,11 +70,14 @@ export class PositionTracker {
    */
   async start(): Promise<void> {
     this.logger.info("[PositionTracker] Starting position tracking");
-    
+
     // Start initial refresh in background (non-blocking) to allow trading to start immediately
     // This prevents slow API calls from delaying the entire orchestrator startup
     this.refresh().catch((err) => {
-      this.logger.error("[PositionTracker] Initial refresh failed", err as Error);
+      this.logger.error(
+        "[PositionTracker] Initial refresh failed",
+        err as Error,
+      );
     });
 
     this.refreshTimer = setInterval(() => {
@@ -98,7 +105,12 @@ export class PositionTracker {
   /**
    * Get statistics about the current refresh cycle
    */
-  getStats(): { resolved: number; active: number; skipped: number; cachedMarkets: number } {
+  getStats(): {
+    resolved: number;
+    active: number;
+    skipped: number;
+    cachedMarkets: number;
+  } {
     return {
       ...this.lastRefreshStats,
       cachedMarkets: this.marketOutcomeCache.size,
@@ -122,7 +134,7 @@ export class PositionTracker {
     try {
       // Note: We no longer clear marketOutcomeCache here to avoid redundant Gamma API calls
       // Resolved markets don't change their outcome, so caching is safe across refreshes
-      
+
       // Get current positions from Data API and enrich with current market prices
       // Note: "Refreshing positions" log removed to reduce noise - the summary log provides refresh status
 
@@ -253,7 +265,7 @@ export class PositionTracker {
       const positions: Position[] = [];
       const skippedPositions: Array<{ reason: string; data: ApiPosition }> = [];
       const maxConcurrent = 5; // Rate limit concurrent orderbook fetches
-      
+
       // Track stats for summary logging
       let resolvedCount = 0;
       let activeCount = 0;
@@ -293,15 +305,19 @@ export class PositionTracker {
 
               // Determine position side/outcome early (needed for both redeemable and active positions)
               const sideValue = apiPos.outcome ?? apiPos.side;
-              
-              if (!sideValue || typeof sideValue !== 'string' || sideValue.trim() === '') {
+
+              if (
+                !sideValue ||
+                typeof sideValue !== "string" ||
+                sideValue.trim() === ""
+              ) {
                 // Missing or invalid outcome - skip this position
                 const reason = `Missing or invalid side/outcome value for tokenId ${tokenId}`;
                 skippedPositions.push({ reason, data: apiPos });
                 this.logger.warn(`[PositionTracker] ${reason}`);
                 return null;
               }
-              
+
               // Store the actual outcome value (supports both binary YES/NO and multi-outcome markets)
               const side: string = sideValue.trim();
 
@@ -313,17 +329,23 @@ export class PositionTracker {
                 // Market is resolved - fetch the actual market outcome to determine settlement price
                 // Use marketId as cache key since all tokens in the same market share the same outcome
                 // This avoids redundant Gamma API calls for multi-outcome markets
-                let winningOutcome: string | null | undefined = this.marketOutcomeCache.get(marketId);
+                let winningOutcome: string | null | undefined =
+                  this.marketOutcomeCache.get(marketId);
                 const wasCached = winningOutcome !== undefined;
-                
+
                 if (!wasCached) {
                   winningOutcome = await this.fetchMarketOutcome(tokenId);
                   // Only cache definite outcomes; avoid caching null/undefined that may come from transient API errors
                   if (winningOutcome !== null && winningOutcome !== undefined) {
                     // Enforce maximum cache size to prevent unbounded memory growth
-                    if (this.marketOutcomeCache.size >= PositionTracker.MAX_OUTCOME_CACHE_SIZE) {
+                    if (
+                      this.marketOutcomeCache.size >=
+                      PositionTracker.MAX_OUTCOME_CACHE_SIZE
+                    ) {
                       // Remove oldest entry (first key in Map iteration order)
-                      const firstKey = this.marketOutcomeCache.keys().next().value;
+                      const firstKey = this.marketOutcomeCache
+                        .keys()
+                        .next().value;
                       if (firstKey) {
                         this.marketOutcomeCache.delete(firstKey);
                       }
@@ -451,7 +473,11 @@ export class PositionTracker {
       const totalCount = apiPositions.length;
 
       // Store stats for external access
-      this.lastRefreshStats = { resolved: resolvedCount, active: activeCount, skipped: skippedCount };
+      this.lastRefreshStats = {
+        resolved: resolvedCount,
+        active: activeCount,
+        skipped: skippedCount,
+      };
 
       if (successCount > 0) {
         // Only log detailed breakdown if there are new market lookups or if it's the first time
@@ -541,17 +567,15 @@ export class PositionTracker {
    * Fetch market resolution/outcome data from Gamma API using the tokenId.
    * Returns the winning outcome (e.g., "YES", "NO", "Medjedovic", "Under") or null if the outcome
    * cannot be determined (e.g. market unresolved, API/network error, or malformed response).
-   * 
+   *
    * Supports both binary markets (YES/NO) and multi-outcome markets.
-   * 
+   *
    * Uses the `clob_token_ids` query parameter to find the market, then parses
    * the `outcomePrices` array to determine which outcome won (price = 1 or ~1).
    */
-  private async fetchMarketOutcome(
-    tokenId: string,
-  ): Promise<string | null> {
+  private async fetchMarketOutcome(tokenId: string): Promise<string | null> {
     // Validate tokenId input
-    if (!tokenId || typeof tokenId !== 'string' || tokenId.trim() === '') {
+    if (!tokenId || typeof tokenId !== "string" || tokenId.trim() === "") {
       this.logger.debug(
         `[PositionTracker] Invalid tokenId provided to fetchMarketOutcome: ${tokenId}`,
       );
@@ -622,7 +646,10 @@ export class PositionTracker {
             }
 
             // Only consider it a winner if price is significantly above threshold
-            if (winnerIndex >= 0 && highestPrice > PositionTracker.WINNER_THRESHOLD) {
+            if (
+              winnerIndex >= 0 &&
+              highestPrice > PositionTracker.WINNER_THRESHOLD
+            ) {
               const winner = outcomes[winnerIndex].trim();
               this.logger.debug(
                 `[PositionTracker] Resolved market for tokenId ${tokenId}: winner="${winner}" (price=${highestPrice.toFixed(4)})`,
@@ -648,7 +675,7 @@ export class PositionTracker {
         market.winningOutcome ??
         market.winning_outcome;
 
-      if (winningOutcome && typeof winningOutcome === 'string') {
+      if (winningOutcome && typeof winningOutcome === "string") {
         const trimmed = winningOutcome.trim();
         if (trimmed) {
           this.logger.debug(
@@ -788,7 +815,7 @@ export class PositionTracker {
 
       // Return mid-price as best estimate of current value
       const midPrice = (buyPrice + sellPrice) / 2;
-      
+
       // Only log fallback price on first fetch for this token (suppress repetitive logs)
       if (!this.loggedFallbackPrices.has(tokenId)) {
         this.loggedFallbackPrices.add(tokenId);

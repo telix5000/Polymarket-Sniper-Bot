@@ -31,6 +31,8 @@ export class QuickFlipStrategy {
   private positionTracker: PositionTracker;
   private config: QuickFlipConfig;
   private positionEntryTimes: Map<string, number> = new Map();
+  // Track tokens with no liquidity to suppress repeated warnings
+  private noLiquidityTokens: Set<string> = new Set();
 
   constructor(strategyConfig: QuickFlipStrategyConfig) {
     this.client = strategyConfig.client;
@@ -53,10 +55,40 @@ export class QuickFlipStrategy {
 
     let soldCount = 0;
 
+    // Get all positions for diagnostic logging
+    const allPositions = this.positionTracker.getPositions();
+
     // Check for positions that hit target gain
     const targetPositions = this.positionTracker.getPositionsAboveTarget(
       this.config.targetPct,
     );
+
+    // Check for positions that hit stop loss
+    // Stop-loss executes immediately based on actual entry price P&L - no hold time required
+    // This ensures stop-loss works correctly even after bot restart (not memory-dependent)
+    const stopLossPositions = this.positionTracker.getPositionsBelowStopLoss(
+      this.config.stopLossPct,
+    );
+
+    // Log diagnostic info about positions being monitored
+    if (allPositions.length > 0) {
+      const worstPosition = allPositions.reduce((worst, pos) =>
+        pos.pnlPct < worst.pnlPct ? pos : worst,
+      );
+      const bestPosition = allPositions.reduce((best, pos) =>
+        pos.pnlPct > best.pnlPct ? pos : best,
+      );
+
+      this.logger.debug(
+        `[QuickFlip] 📊 Monitoring ${allPositions.length} positions | ` +
+          `Stop-loss threshold: -${this.config.stopLossPct}% | ` +
+          `Target threshold: +${this.config.targetPct}% | ` +
+          `Worst P&L: ${worstPosition.pnlPct.toFixed(2)}% | ` +
+          `Best P&L: ${bestPosition.pnlPct.toFixed(2)}% | ` +
+          `Stop-loss candidates: ${stopLossPositions.length} | ` +
+          `Target candidates: ${targetPositions.length}`,
+      );
+    }
 
     for (const position of targetPositions) {
       if (this.shouldSell(position.marketId, position.tokenId)) {
@@ -66,13 +98,14 @@ export class QuickFlipStrategy {
         );
 
         try {
-          await this.sellPosition(
+          const sold = await this.sellPosition(
             position.marketId,
             position.tokenId,
             position.size,
-            false, // Not a stop-loss
           );
-          soldCount++;
+          if (sold) {
+            soldCount++;
+          }
         } catch (err) {
           this.logger.error(
             `[QuickFlip] ❌ Failed to sell position ${position.marketId}`,
@@ -82,32 +115,28 @@ export class QuickFlipStrategy {
       }
     }
 
-    // Check for positions that hit stop loss
-    const stopLossPositions = this.positionTracker.getPositionsBelowStopLoss(
-      this.config.stopLossPct,
-    );
-
     for (const position of stopLossPositions) {
-      if (this.shouldSell(position.marketId, position.tokenId)) {
-        const netLossPct = position.pnlPct - 0.2; // Include 0.2% fees in loss calculation
-        this.logger.warn(
-          `[QuickFlip] 🔻 Stop-loss triggered at ${position.pnlPct.toFixed(2)}% gross (${netLossPct.toFixed(2)}% net with fees): ${position.marketId}`,
-        );
+      // Stop-loss sells immediately - don't use shouldSell() which requires hold time
+      // The P&L is already calculated from actual entry price, so stop-loss is reliable
+      const netLossPct = position.pnlPct - 0.2; // Include 0.2% fees in loss calculation
+      this.logger.warn(
+        `[QuickFlip] 🔻 Stop-loss triggered at ${position.pnlPct.toFixed(2)}% gross (${netLossPct.toFixed(2)}% net with fees): ${position.marketId}`,
+      );
 
-        try {
-          await this.sellPosition(
-            position.marketId,
-            position.tokenId,
-            position.size,
-            true, // Stop-loss - bypass minimum check
-          );
+      try {
+        const sold = await this.sellPosition(
+          position.marketId,
+          position.tokenId,
+          position.size,
+        );
+        if (sold) {
           soldCount++;
-        } catch (err) {
-          this.logger.error(
-            `[QuickFlip] ❌ Failed to execute stop-loss for ${position.marketId}`,
-            err as Error,
-          );
         }
+      } catch (err) {
+        this.logger.error(
+          `[QuickFlip] ❌ Failed to execute stop-loss for ${position.marketId}`,
+          err as Error,
+        );
       }
     }
 
@@ -145,15 +174,13 @@ export class QuickFlipStrategy {
    * @param marketId - The market ID
    * @param tokenId - The token ID to sell
    * @param size - Number of shares to sell
-   * @param isStopLoss - If true, bypasses minimum order size check to ensure stop-loss can execute.
-   *                     Defaults to false for regular profit-taking sells which respect the minimum.
+   * @returns true if order was submitted successfully, false if skipped/no liquidity
    */
   private async sellPosition(
     marketId: string,
     tokenId: string,
     size: number,
-    isStopLoss: boolean = false,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       // Import postOrder utility
       const { postOrder } = await import("../utils/post-order.util");
@@ -162,8 +189,19 @@ export class QuickFlipStrategy {
       const orderbook = await this.client.getOrderBook(tokenId);
 
       if (!orderbook.bids || orderbook.bids.length === 0) {
-        throw new Error(`No bids available for token ${tokenId} - cannot sell`);
+        // Only log if we haven't already logged for this token (suppress log spam)
+        if (!this.noLiquidityTokens.has(tokenId)) {
+          this.logger.warn(
+            `[QuickFlip] ⚠️ No bids available for token ${tokenId} - position cannot be sold (illiquid market)`,
+          );
+          this.noLiquidityTokens.add(tokenId);
+        }
+        // Return false - position will be re-evaluated on the next cycle when liquidity may return
+        return false;
       }
+
+      // Clear no-liquidity flag if liquidity has returned
+      this.noLiquidityTokens.delete(tokenId);
 
       const bestBid = parseFloat(orderbook.bids[0].price);
       const bestBidSize = parseFloat(orderbook.bids[0].size);
@@ -186,14 +224,17 @@ export class QuickFlipStrategy {
       // Calculate sell value (size * best bid price)
       const sizeUsd = size * bestBid;
 
-      // Validate minimum order size for regular sells only
-      // Stop-loss sells bypass this check to prevent being stuck in losing positions
+      // For sells (liquidations), we always allow the order regardless of size
+      // The minimum order size restriction is primarily to prevent spam on new buys
+      // For stop-loss and profit-taking sells, we need to be able to exit positions
+      // even if they've decreased in value below the minimum threshold
+
+      // Log info for small positions but don't block them
       const minOrderUsd = this.config.minOrderUsd;
-      if (!isStopLoss && sizeUsd < minOrderUsd) {
-        this.logger.warn(
-          `[QuickFlip] ⚠️ Position too small to sell: $${sizeUsd.toFixed(2)} < $${minOrderUsd} minimum`,
+      if (sizeUsd < minOrderUsd) {
+        this.logger.debug(
+          `[QuickFlip] ℹ️ Selling small position: $${sizeUsd.toFixed(2)} (below $${minOrderUsd} minimum, allowed for liquidation)`,
         );
-        return;
       }
 
       // Extract wallet if available (for compatibility with postOrder)
@@ -204,7 +245,8 @@ export class QuickFlipStrategy {
       );
 
       // Execute sell order using postOrder utility
-      // For stop-loss orders, set minOrderUsd=0 to bypass order-submission layer checks
+      // Always set minOrderUsd=0 for sells to allow liquidating small positions
+      // (positions acquired before minimum size requirements were enforced)
       const result = await postOrder({
         client: this.client,
         wallet,
@@ -216,17 +258,19 @@ export class QuickFlipStrategy {
         maxAcceptablePrice: bestBid * 0.95, // Accept up to 5% slippage
         logger: this.logger,
         priority: false, // Not a frontrun trade
-        orderConfig: isStopLoss ? { minOrderUsd: 0 } : undefined,
+        orderConfig: { minOrderUsd: 0 }, // Bypass minimum order size for all sells
       });
 
       if (result.status === "submitted") {
         this.logger.info(
           `[QuickFlip] ✅ Sold ${size.toFixed(2)} shares at ~${(bestBid * 100).toFixed(1)}¢`,
         );
+        return true;
       } else if (result.status === "skipped") {
         this.logger.warn(
           `[QuickFlip] ⏭️ Sell order skipped: ${result.reason ?? "unknown reason"}`,
         );
+        return false;
       } else {
         this.logger.error(
           `[QuickFlip] ❌ Sell order failed: ${result.reason ?? "unknown reason"}`,
@@ -255,6 +299,7 @@ export class QuickFlipStrategy {
     const currentKeys = new Set(
       currentPositions.map((pos) => `${pos.marketId}-${pos.tokenId}`),
     );
+    const currentTokenIds = new Set(currentPositions.map((pos) => pos.tokenId));
 
     let cleanedCount = 0;
     const keysToDelete: string[] = [];
@@ -266,6 +311,17 @@ export class QuickFlipStrategy {
     for (const key of keysToDelete) {
       this.positionEntryTimes.delete(key);
       cleanedCount++;
+    }
+
+    // Also clean up no-liquidity cache for tokens we no longer hold
+    const tokensToRemove: string[] = [];
+    for (const tokenId of this.noLiquidityTokens) {
+      if (!currentTokenIds.has(tokenId)) {
+        tokensToRemove.push(tokenId);
+      }
+    }
+    for (const tokenId of tokensToRemove) {
+      this.noLiquidityTokens.delete(tokenId);
     }
 
     if (cleanedCount > 0) {

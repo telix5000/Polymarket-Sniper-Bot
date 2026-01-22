@@ -298,7 +298,10 @@ test("frontrun executes trade when FRONTRUN_MAX_SIZE_USD is set below MIN_ORDER_
 
   // Verify the order was executed (not skipped due to MIN_ORDER_USD conflict)
   assert.ok(
-    logs.some((line) => line.includes("capped from") && line.includes("FRONTRUN_MAX_SIZE_USD")),
+    logs.some(
+      (line) =>
+        line.includes("capped from") && line.includes("FRONTRUN_MAX_SIZE_USD"),
+    ),
     "Should log that order was capped by FRONTRUN_MAX_SIZE_USD",
   );
   assert.ok(

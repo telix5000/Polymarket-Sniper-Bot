@@ -1177,11 +1177,13 @@ export function loadStrategyConfig(
     autoRedeemMinPositionUsd:
       parseNumber(readEnv("AUTO_REDEEM_MIN_POSITION_USD", overrides) ?? "") ??
       preset.AUTO_REDEEM_MIN_POSITION_USD ??
-      0.10, // Skip dust below 10 cents
+      0.1, // Skip dust below 10 cents
     // MIN_ORDER_USD: respect env override > preset > default
     minOrderUsd:
       parseNumber(readEnv("MIN_ORDER_USD", overrides) ?? "") ??
-      ("MIN_ORDER_USD" in preset ? (preset as { MIN_ORDER_USD: number }).MIN_ORDER_USD : undefined) ??
+      ("MIN_ORDER_USD" in preset
+        ? (preset as { MIN_ORDER_USD: number }).MIN_ORDER_USD
+        : undefined) ??
       DEFAULT_CONFIG.MIN_ORDER_USD,
   };
 
