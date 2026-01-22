@@ -107,6 +107,10 @@ async function main(): Promise<void> {
         maxPrice: strategyConfig.endgameMaxPrice,
         maxPositionUsd: strategyConfig.endgameMaxPositionUsd,
       },
+      autoRedeemConfig: {
+        enabled: strategyConfig.autoRedeemEnabled,
+        minPositionUsd: strategyConfig.autoRedeemMinPositionUsd,
+      },
     });
 
     await orchestrator.start();

@@ -16,6 +16,7 @@
 
 ## ✨ What's New
 
+- 💵 **Auto-Redeem Positions** - Automatically claim resolved market positions (wins and losses) for USDC
 - ⛓️ **On-Chain Trading Mode** - Bypass CLOB API entirely and trade directly on Polygon blockchain
 - 🦀 **Rust SDK Integration** - Optional use of official Polymarket Rust SDK for more reliable authentication
 - 🧠 **Adaptive Learning System** - Learns from trade outcomes to prevent bad trades
@@ -23,6 +24,50 @@
 - 📊 **Clean Logging** - ✅ for success, ❌ for failures - easy to troubleshoot
 - 🛡️ **Rate-Limited Error Logs** - No more log spam on repeated auth failures
 - ⚡ **Single-Flight Derivation** - Prevents concurrent credential derivation attempts
+
+## 💵 Auto-Redeem Positions (New)
+
+When a market resolves, your positions can be redeemed for USDC. Previously, this had to be done manually. Now, the bot **automatically claims your wins and losses** so your capital isn't sitting idle.
+
+### How It Works
+
+1. **Position Tracking**: The bot monitors all your positions through the Data API
+2. **Resolution Detection**: When a market resolves, positions are marked as "redeemable"
+3. **Automatic Redemption**: The bot calls the CTF contract's `redeemPositions()` to claim USDC
+4. **Capital Recovery**: Immediately frees up capital for new trades
+
+### Configuration
+
+Auto-redeem is **enabled by default** in all strategy presets (`conservative`, `balanced`, `aggressive`).
+
+```bash
+# Auto-redeem is automatically enabled when using strategy presets
+STRATEGY_PRESET=balanced
+
+# Or configure manually via environment variables:
+AUTO_REDEEM_ENABLED=true              # Enable/disable auto-redeem
+AUTO_REDEEM_MIN_POSITION_USD=0.10     # Skip dust positions below this value
+```
+
+### Manual Redemption
+
+You can also manually trigger redemption of all resolved positions:
+
+```bash
+# Manually redeem all resolved positions
+npm run redeem
+```
+
+### Priority
+
+Auto-redeem runs as **Priority 1** in the strategy orchestrator, ensuring resolved positions are claimed before any other trading strategies execute. This maximizes capital availability.
+
+### Benefits
+
+- 💰 **Automatic Capital Recovery** - No waiting for Polymarket's 4pm UTC settlement
+- ⚡ **Immediate USDC Availability** - Claimed funds ready for new trades instantly
+- 🔄 **Set and Forget** - No manual intervention required
+- 🧹 **Dust Prevention** - Skip tiny positions to save on gas costs
 
 ## ⛓️ On-Chain Trading Mode (New - Framework Ready)
 

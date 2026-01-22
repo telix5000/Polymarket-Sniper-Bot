@@ -37,6 +37,7 @@
     "set-token-allowance": "ts-node src/cli/set-token-allowance.command.ts",
     "manual-sell": "ts-node src/cli/manual-sell.command.ts",
     "simulate": "ts-node src/cli/run-simulations.command.ts",
+    "redeem": "ts-node src/cli/redeem-positions.command.ts",
     "test": "node --test -r ts-node/register/transpile-only tests/**/*.test.ts",
     "preflight": "node dist/tools/preflight.js",
     "test-auth": "node test-auth-harness.js",
