@@ -51,13 +51,17 @@ async function run(): Promise<void> {
   await positionTracker.refresh();
 
   const allPositions = positionTracker.getPositions();
-  const redeemablePositions = allPositions.filter((pos) => pos.redeemable === true);
+  const redeemablePositions = allPositions.filter(
+    (pos) => pos.redeemable === true,
+  );
 
   logger.info(`📈 Total positions: ${allPositions.length}`);
   logger.info(`💰 Redeemable positions: ${redeemablePositions.length}\n`);
 
   if (redeemablePositions.length === 0) {
-    logger.info("✅ No positions to redeem. All markets are still active or already claimed.\n");
+    logger.info(
+      "✅ No positions to redeem. All markets are still active or already claimed.\n",
+    );
     process.exit(0);
   }
 

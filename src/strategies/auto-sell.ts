@@ -32,6 +32,8 @@ export class AutoSellStrategy {
   private config: AutoSellConfig;
   private soldPositions: Set<string> = new Set();
   private positionFirstSeen: Map<string, number> = new Map();
+  // Track tokens with no liquidity to suppress repeated warnings
+  private noLiquidityTokens: Set<string> = new Set();
 
   constructor(strategyConfig: AutoSellStrategyConfig) {
     this.client = strategyConfig.client;
@@ -87,23 +89,26 @@ export class AutoSellStrategy {
       );
 
       try {
-        await this.sellPosition(
+        const sold = await this.sellPosition(
           position.marketId,
           position.tokenId,
           position.size,
         );
-        this.soldPositions.add(positionKey);
-        soldCount++;
 
-        // Log the capital recovery trade-off (includes 0.2% fees)
-        const lossPerShare = 1.0 - position.currentPrice;
-        const totalLossFromPrice = lossPerShare * position.size;
-        const feeCost = position.size * 0.002; // 0.2% round-trip fees
-        const totalCost = totalLossFromPrice + feeCost;
+        if (sold) {
+          this.soldPositions.add(positionKey);
+          soldCount++;
 
-        this.logger.info(
-          `[AutoSell] Freed $${position.size.toFixed(2)} capital (cost: $${totalLossFromPrice.toFixed(2)} + $${feeCost.toFixed(2)} fees = $${totalCost.toFixed(2)} total, ${((totalCost / position.size) * 100).toFixed(2)}% of position)`,
-        );
+          // Log the capital recovery trade-off (includes 0.2% fees)
+          const lossPerShare = 1.0 - position.currentPrice;
+          const totalLossFromPrice = lossPerShare * position.size;
+          const feeCost = position.size * 0.002; // 0.2% round-trip fees
+          const totalCost = totalLossFromPrice + feeCost;
+
+          this.logger.info(
+            `[AutoSell] Freed $${position.size.toFixed(2)} capital (cost: $${totalLossFromPrice.toFixed(2)} + $${feeCost.toFixed(2)} fees = $${totalCost.toFixed(2)} total, ${((totalCost / position.size) * 100).toFixed(2)}% of position)`,
+          );
+        }
       } catch (err) {
         this.logger.error(
           `[AutoSell] Failed to sell position ${position.marketId}`,
@@ -124,12 +129,13 @@ export class AutoSellStrategy {
   /**
    * Sell a position using postOrder utility
    * Executes market sell order at best bid for quick capital recovery
+   * @returns true if order was submitted successfully, false if skipped/no liquidity
    */
   private async sellPosition(
     marketId: string,
     tokenId: string,
     size: number,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       // Import postOrder utility
       const { postOrder } = await import("../utils/post-order.util");
@@ -138,10 +144,19 @@ export class AutoSellStrategy {
       const orderbook = await this.client.getOrderBook(tokenId);
 
       if (!orderbook.bids || orderbook.bids.length === 0) {
-        throw new Error(
-          `No bids available for token ${tokenId} - market may be closed or resolved`,
-        );
+        // Only log if we haven't already logged for this token (suppress log spam)
+        if (!this.noLiquidityTokens.has(tokenId)) {
+          this.logger.warn(
+            `[AutoSell] ⚠️ No bids available for token ${tokenId} - position cannot be sold (illiquid market)`,
+          );
+          this.noLiquidityTokens.add(tokenId);
+        }
+        // Return false - position will be re-evaluated on the next cycle when liquidity may return
+        return false;
       }
+
+      // Clear no-liquidity flag if liquidity has returned
+      this.noLiquidityTokens.delete(tokenId);
 
       const bestBid = parseFloat(orderbook.bids[0].price);
       const bestBidSize = parseFloat(orderbook.bids[0].size);
@@ -164,13 +179,12 @@ export class AutoSellStrategy {
       // Calculate sell value
       const sizeUsd = size * bestBid;
 
-      // Validate minimum order size
+      // Log info for small positions but allow selling them to liquidate
       const minOrderUsd = this.config.minOrderUsd;
       if (sizeUsd < minOrderUsd) {
-        this.logger.warn(
-          `[AutoSell] Position too small: $${sizeUsd.toFixed(2)} < $${minOrderUsd} minimum`,
+        this.logger.debug(
+          `[AutoSell] ℹ️ Selling small position: $${sizeUsd.toFixed(2)} (below $${minOrderUsd} minimum, allowed for liquidation)`,
         );
-        return;
       }
 
       // Extract wallet if available
@@ -185,6 +199,7 @@ export class AutoSellStrategy {
       );
 
       // Execute sell order - use aggressive pricing for fast fill
+      // Always set minOrderUsd=0 for sells to allow liquidating small positions
       const result = await postOrder({
         client: this.client,
         wallet,
@@ -196,6 +211,7 @@ export class AutoSellStrategy {
         maxAcceptablePrice: bestBid * 0.9, // Accept up to 10% slippage for urgent exit
         logger: this.logger,
         priority: false,
+        orderConfig: { minOrderUsd: 0 }, // Bypass minimum order size for all sells
       });
 
       if (result.status === "submitted") {
@@ -203,10 +219,12 @@ export class AutoSellStrategy {
         this.logger.info(
           `[AutoSell] ✓ Sold ${size.toFixed(2)} shares, freed $${freedCapital.toFixed(2)} capital`,
         );
+        return true;
       } else if (result.status === "skipped") {
         this.logger.warn(
           `[AutoSell] Sell order skipped: ${result.reason ?? "unknown reason"}`,
         );
+        return false;
       } else {
         this.logger.error(
           `[AutoSell] Sell order failed: ${result.reason ?? "unknown reason"}`,
@@ -231,6 +249,7 @@ export class AutoSellStrategy {
     const currentKeys = new Set(
       currentPositions.map((pos) => `${pos.marketId}-${pos.tokenId}`),
     );
+    const currentTokenIds = new Set(currentPositions.map((pos) => pos.tokenId));
 
     // Clean up positionFirstSeen for positions that no longer exist
     let cleanedFirstSeen = 0;
@@ -257,6 +276,17 @@ export class AutoSellStrategy {
     for (const key of soldKeysToDelete) {
       this.soldPositions.delete(key);
       cleanedSold++;
+    }
+
+    // Also clean up no-liquidity cache for tokens we no longer hold
+    const tokensToRemove: string[] = [];
+    for (const tokenId of this.noLiquidityTokens) {
+      if (!currentTokenIds.has(tokenId)) {
+        tokensToRemove.push(tokenId);
+      }
+    }
+    for (const tokenId of tokensToRemove) {
+      this.noLiquidityTokens.delete(tokenId);
     }
 
     if (cleanedFirstSeen > 0 || cleanedSold > 0) {
@@ -287,5 +317,6 @@ export class AutoSellStrategy {
   reset(): void {
     this.soldPositions.clear();
     this.positionFirstSeen.clear();
+    this.noLiquidityTokens.clear();
   }
 }
