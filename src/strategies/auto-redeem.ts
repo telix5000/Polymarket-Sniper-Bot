@@ -1,6 +1,6 @@
 import type { ClobClient } from "@polymarket/clob-client";
 import { Contract, formatUnits } from "ethers";
-import type { Wallet, TransactionResponse, TransactionReceipt } from "ethers";
+import type { Wallet, TransactionResponse } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker, Position } from "./position-tracker";
 import { resolvePolymarketContracts } from "../polymarket/contracts";
@@ -181,6 +181,8 @@ export class AutoRedeemStrategy {
    * Redeem a single position by calling the CTF contract
    */
   private async redeemPosition(position: Position): Promise<RedemptionResult> {
+    // Access wallet from client - this is a common pattern in the codebase
+    // The ClobClient is extended with a wallet property by the factory
     const wallet = (this.client as { wallet?: Wallet }).wallet;
 
     if (!wallet) {
@@ -220,7 +222,9 @@ export class AutoRedeemStrategy {
 
       // Index sets for binary markets: [1, 2] represents both outcomes
       // For YES/NO markets: indexSet 1 = YES, indexSet 2 = NO
-      // We redeem both to collect any winning position
+      // The CTF contract will only redeem positions that have value based on resolution.
+      // By passing both index sets, we ensure that whichever outcome the user holds
+      // (and won) will be redeemed. Losing positions have zero redemption value.
       const indexSets = [1, 2];
 
       this.logger.debug(
@@ -229,7 +233,15 @@ export class AutoRedeemStrategy {
 
       // Check gas price if configured
       if (this.config.maxGasPriceGwei) {
-        const feeData = await wallet.provider!.getFeeData();
+        if (!wallet.provider) {
+          return {
+            tokenId: position.tokenId,
+            marketId: position.marketId,
+            success: false,
+            error: "No provider available for gas price check",
+          };
+        }
+        const feeData = await wallet.provider.getFeeData();
         const gasPriceGwei = feeData.gasPrice ? Number(feeData.gasPrice) / 1e9 : 0;
         if (gasPriceGwei > this.config.maxGasPriceGwei) {
           return {
@@ -253,7 +265,7 @@ export class AutoRedeemStrategy {
       this.logger.info(`[AutoRedeem] Redemption tx submitted: ${tx.hash}`);
 
       // Wait for confirmation
-      const receipt = await tx.wait(1) as TransactionReceipt | null;
+      const receipt = await tx.wait(1);
 
       if (!receipt || receipt.status !== 1) {
         return {

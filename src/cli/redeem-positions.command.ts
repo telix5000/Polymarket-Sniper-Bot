@@ -15,7 +15,6 @@
  */
 
 import "dotenv/config";
-import { loadEnv } from "../config/env";
 import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 import { ConsoleLogger } from "../utils/logger.util";
 import { PositionTracker } from "../strategies/position-tracker";
