@@ -95,13 +95,17 @@ export class QuickFlipStrategy {
       let targetPct = this.config.targetPct;
       let stopLossPct = this.config.stopLossPct;
 
+      // Calculate quality assessment once for reuse if dynamic targets are enabled
+      let quality: ReturnType<typeof assessTradeQuality> | undefined;
       if (useDynamicTargets) {
         // Use dynamic targets based on entry price
         targetPct = getDynamicProfitTarget(position.entryPrice);
         stopLossPct = getDynamicStopLoss(position.entryPrice);
 
+        // Calculate quality once for potential reuse
+        quality = assessTradeQuality({ entryPrice: position.entryPrice });
+
         // Log quality assessment for debug
-        const quality = assessTradeQuality({ entryPrice: position.entryPrice });
         if (quality.action === "HOLD" && position.pnlPct > 0) {
           this.logger.debug(
             `[QuickFlip] 📊 Position ${position.marketId}: entry ${(position.entryPrice * 100).toFixed(1)}¢ suggests HOLD (score: ${quality.score}, target: ${targetPct}%)`,
@@ -149,19 +153,16 @@ export class QuickFlipStrategy {
         }
 
         // For low-price entries with dynamic targets, consider holding longer
+        // Reuse the quality assessment calculated earlier
         if (
           useDynamicTargets &&
-          position.entryPrice < PRICE_TIERS.STANDARD_MIN
+          position.entryPrice < PRICE_TIERS.STANDARD_MIN &&
+          quality?.action === "HOLD"
         ) {
-          const quality = assessTradeQuality({
-            entryPrice: position.entryPrice,
-          });
-          if (quality.action === "HOLD") {
-            this.logger.debug(
-              `[QuickFlip] ⏸️ Holding ${position.marketId}: entry ${(position.entryPrice * 100).toFixed(1)}¢ suggests hold for resolution (score: ${quality.score})`,
-            );
-            continue;
-          }
+          this.logger.debug(
+            `[QuickFlip] ⏸️ Holding ${position.marketId}: entry ${(position.entryPrice * 100).toFixed(1)}¢ suggests hold for resolution (score: ${quality.score})`,
+          );
+          continue;
         }
 
         if (this.shouldSell(position.marketId, position.tokenId)) {

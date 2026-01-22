@@ -465,7 +465,7 @@ export function calculateExpectedReturn(
   // Entry price implies probability of winning
   // If we buy at 80¢, there's ~80% chance of winning
   const winProbability = entryPrice;
-  const loseProbalility = 1 - entryPrice;
+  const loseProbability = 1 - entryPrice;
 
   // If we win, we get $1 per share (so profit = 1 - entryPrice)
   // If we lose, we lose entryPrice
@@ -474,7 +474,7 @@ export function calculateExpectedReturn(
 
   // Expected return = P(win) * profit% - P(lose) * loss%
   const expectedReturn =
-    winProbability * winProfit - loseProbalility * lossAmount;
+    winProbability * winProfit - loseProbability * lossAmount;
 
   return expectedReturn;
 }

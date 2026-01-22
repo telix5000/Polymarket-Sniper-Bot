@@ -348,9 +348,9 @@ export const STRATEGY_PRESETS = {
      * Focus on higher-edge trades rather than volume
      */
     ARB_SCAN_INTERVAL_MS: 100, // Scan 10x/second
-    ARB_MIN_EDGE_BPS: 200, // 2% minimum edge (up from 1.5%) for better profits
+    ARB_MIN_EDGE_BPS: 200, // 200bps (2%) minimum edge (up from 150bps) for better profits
     ARB_MIN_PROFIT_USD: 1.0, // Minimum $1 profit per arb trade
-    ARB_MAX_SPREAD_BPS: 500, // Tighter spread requirement (5% max)
+    ARB_MAX_SPREAD_BPS: 500, // Tighter spread requirement (500bps = 5% max)
     ARB_FEE_BPS: 1, // Correct fee: 0.01% per side
     ARB_SLIPPAGE_BPS: 20, // Account for 0.2% slippage
     ARB_TRADE_BASE_USD: 15, // Smaller base size for more controlled risk

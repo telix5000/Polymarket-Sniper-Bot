@@ -303,7 +303,7 @@ export class EndgameSweepStrategy {
                         tokenId,
                         side,
                         price: bestAsk,
-                        liquidity: liquidityUsd, // Now in USD
+                        liquidity: liquidityUsd, // Converted from shares to USD (shares * price)
                         spreadBps, // Include spread for quality assessment
                       });
                     }
