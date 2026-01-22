@@ -55,10 +55,40 @@ export class QuickFlipStrategy {
 
     let soldCount = 0;
 
+    // Get all positions for diagnostic logging
+    const allPositions = this.positionTracker.getPositions();
+
     // Check for positions that hit target gain
     const targetPositions = this.positionTracker.getPositionsAboveTarget(
       this.config.targetPct,
     );
+
+    // Check for positions that hit stop loss
+    // Stop-loss executes immediately based on actual entry price P&L - no hold time required
+    // This ensures stop-loss works correctly even after bot restart (not memory-dependent)
+    const stopLossPositions = this.positionTracker.getPositionsBelowStopLoss(
+      this.config.stopLossPct,
+    );
+
+    // Log diagnostic info about positions being monitored
+    if (allPositions.length > 0) {
+      const worstPosition = allPositions.reduce((worst, pos) =>
+        pos.pnlPct < worst.pnlPct ? pos : worst,
+      );
+      const bestPosition = allPositions.reduce((best, pos) =>
+        pos.pnlPct > best.pnlPct ? pos : best,
+      );
+
+      this.logger.debug(
+        `[QuickFlip] 📊 Monitoring ${allPositions.length} positions | ` +
+          `Stop-loss threshold: -${this.config.stopLossPct}% | ` +
+          `Target threshold: +${this.config.targetPct}% | ` +
+          `Worst P&L: ${worstPosition.pnlPct.toFixed(2)}% | ` +
+          `Best P&L: ${bestPosition.pnlPct.toFixed(2)}% | ` +
+          `Stop-loss candidates: ${stopLossPositions.length} | ` +
+          `Target candidates: ${targetPositions.length}`,
+      );
+    }
 
     for (const position of targetPositions) {
       if (this.shouldSell(position.marketId, position.tokenId)) {
@@ -82,13 +112,6 @@ export class QuickFlipStrategy {
         }
       }
     }
-
-    // Check for positions that hit stop loss
-    // Stop-loss executes immediately based on actual entry price P&L - no hold time required
-    // This ensures stop-loss works correctly even after bot restart (not memory-dependent)
-    const stopLossPositions = this.positionTracker.getPositionsBelowStopLoss(
-      this.config.stopLossPct,
-    );
 
     for (const position of stopLossPositions) {
       // Stop-loss sells immediately - don't use shouldSell() which requires hold time

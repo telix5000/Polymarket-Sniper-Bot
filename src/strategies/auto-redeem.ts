@@ -58,7 +58,10 @@ export class AutoRedeemStrategy {
   // Track redeemed markets by marketId only (not marketId-tokenId)
   // This is because redeemPositions() redeems ALL positions for a market condition in one tx
   private redeemedMarkets: Set<string> = new Set();
-  private redemptionAttempts: Map<string, { lastAttempt: number; failures: number }> = new Map();
+  private redemptionAttempts: Map<
+    string,
+    { lastAttempt: number; failures: number }
+  > = new Map();
 
   // Constants
   private static readonly MAX_REDEMPTION_FAILURES = 3;
@@ -92,7 +95,9 @@ export class AutoRedeemStrategy {
 
     // Get all positions and filter for redeemable ones
     const allPositions = this.positionTracker.getPositions();
-    const redeemablePositions = allPositions.filter((pos) => pos.redeemable === true);
+    const redeemablePositions = allPositions.filter(
+      (pos) => pos.redeemable === true,
+    );
 
     if (redeemablePositions.length === 0) {
       this.logger.debug("[AutoRedeem] No redeemable positions found");
@@ -128,14 +133,17 @@ export class AutoRedeemStrategy {
           );
           continue;
         }
-        if (Date.now() - attempts.lastAttempt < AutoRedeemStrategy.REDEMPTION_RETRY_COOLDOWN_MS) {
+        if (
+          Date.now() - attempts.lastAttempt <
+          AutoRedeemStrategy.REDEMPTION_RETRY_COOLDOWN_MS
+        ) {
           continue;
         }
       }
 
       // Get all positions for this market
       const marketPositions = positionsByMarket.get(marketId) || [];
-      
+
       // Calculate total position value for this market (for logging purposes)
       // Note: Losing positions have currentPrice=0, but we still need to redeem them to clear from wallet
       const totalValueUsd = marketPositions.reduce(
@@ -148,7 +156,9 @@ export class AutoRedeemStrategy {
 
       // Skip only if the total position SIZE is negligible (true dust)
       // We want to redeem even losing positions to clear them from the wallet
-      const minShares = this.config.minPositionUsd * AutoRedeemStrategy.MIN_SHARES_USD_MULTIPLIER;
+      const minShares =
+        this.config.minPositionUsd *
+        AutoRedeemStrategy.MIN_SHARES_USD_MULTIPLIER;
       if (totalSize < minShares) {
         this.logger.debug(
           `[AutoRedeem] Skipping dust market: ${totalSize.toFixed(4)} shares < ${minShares.toFixed(4)} minimum`,
@@ -158,12 +168,12 @@ export class AutoRedeemStrategy {
 
       // Use first position for redemption (all positions in the market will be redeemed together)
       const position = marketPositions[0];
-      
+
       // Determine if this is a winning or losing position:
       // consider it winning if any position in the market has a positive current price.
-      const isWinning = marketPositions.some(pos => pos.currentPrice > 0);
+      const isWinning = marketPositions.some((pos) => pos.currentPrice > 0);
       this.logger.info(
-        `[AutoRedeem] Attempting to redeem ${isWinning ? 'WINNING' : 'LOSING'} market: market=${marketId}, positions=${marketPositions.length}, shares=${totalSize.toFixed(2)}, value=$${totalValueUsd.toFixed(2)}`,
+        `[AutoRedeem] Attempting to redeem ${isWinning ? "WINNING" : "LOSING"} market: market=${marketId}, positions=${marketPositions.length}, shares=${totalSize.toFixed(2)}, value=$${totalValueUsd.toFixed(2)}`,
       );
 
       try {
@@ -178,7 +188,10 @@ export class AutoRedeemStrategy {
           );
         } else {
           // Track failure by marketId
-          const currentAttempts = this.redemptionAttempts.get(marketId) || { lastAttempt: 0, failures: 0 };
+          const currentAttempts = this.redemptionAttempts.get(marketId) || {
+            lastAttempt: 0,
+            failures: 0,
+          };
           this.redemptionAttempts.set(marketId, {
             lastAttempt: Date.now(),
             failures: currentAttempts.failures + 1,
@@ -190,7 +203,10 @@ export class AutoRedeemStrategy {
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         // Track failure by marketId
-        const currentAttempts = this.redemptionAttempts.get(marketId) || { lastAttempt: 0, failures: 0 };
+        const currentAttempts = this.redemptionAttempts.get(marketId) || {
+          lastAttempt: 0,
+          failures: 0,
+        };
         this.redemptionAttempts.set(marketId, {
           lastAttempt: Date.now(),
           failures: currentAttempts.failures + 1,
@@ -202,9 +218,7 @@ export class AutoRedeemStrategy {
     }
 
     if (redeemedCount > 0) {
-      this.logger.info(
-        `[AutoRedeem] Redeemed ${redeemedCount} market(s)`,
-      );
+      this.logger.info(`[AutoRedeem] Redeemed ${redeemedCount} market(s)`);
     }
 
     return redeemedCount;
@@ -246,11 +260,14 @@ export class AutoRedeemStrategy {
 
       // Get USDC balance before redemption (for logging)
       const usdcContract = new Contract(usdcAddress, ERC20_ABI, wallet);
-      const balanceBefore = await usdcContract.balanceOf(wallet.address) as bigint;
+      const balanceBefore = (await usdcContract.balanceOf(
+        wallet.address,
+      )) as bigint;
 
       // For Polymarket, the conditionId is the marketId
       // The parentCollectionId is always bytes32(0) for top-level positions
-      const parentCollectionId = "0x0000000000000000000000000000000000000000000000000000000000000000";
+      const parentCollectionId =
+        "0x0000000000000000000000000000000000000000000000000000000000000000";
       const conditionId = position.marketId;
 
       // Determine index sets dynamically based on the position's side.
@@ -293,7 +310,9 @@ export class AutoRedeemStrategy {
           };
         }
         const feeData = await wallet.provider.getFeeData();
-        const gasPriceGwei = feeData.gasPrice ? Number(feeData.gasPrice) / 1e9 : 0;
+        const gasPriceGwei = feeData.gasPrice
+          ? Number(feeData.gasPrice) / 1e9
+          : 0;
         if (gasPriceGwei > this.config.maxGasPriceGwei) {
           return {
             tokenId: position.tokenId,
@@ -305,13 +324,13 @@ export class AutoRedeemStrategy {
       }
 
       // Execute redemption transaction
-      const tx = await ctfContract.redeemPositions(
+      const tx = (await ctfContract.redeemPositions(
         usdcAddress,
         parentCollectionId,
         conditionId,
         indexSets,
         { gasLimit: AutoRedeemStrategy.DEFAULT_GAS_LIMIT },
-      ) as TransactionResponse;
+      )) as TransactionResponse;
 
       this.logger.info(`[AutoRedeem] Redemption tx submitted: ${tx.hash}`);
 
@@ -329,7 +348,9 @@ export class AutoRedeemStrategy {
       }
 
       // Get USDC balance after redemption
-      const balanceAfter = await usdcContract.balanceOf(wallet.address) as bigint;
+      const balanceAfter = (await usdcContract.balanceOf(
+        wallet.address,
+      )) as bigint;
       const amountRedeemed = balanceAfter - balanceBefore;
       const amountRedeemedFormatted = formatUnits(amountRedeemed, 6);
 
@@ -357,7 +378,10 @@ export class AutoRedeemStrategy {
         };
       }
 
-      if (errorMsg.includes("execution reverted") || errorMsg.includes("revert")) {
+      if (
+        errorMsg.includes("execution reverted") ||
+        errorMsg.includes("revert")
+      ) {
         // Position may already be redeemed or condition not resolved
         return {
           tokenId: position.tokenId,
@@ -381,7 +405,9 @@ export class AutoRedeemStrategy {
    */
   private cleanupStaleEntries(): void {
     const currentPositions = this.positionTracker.getPositions();
-    const currentMarketIds = new Set(currentPositions.map((pos) => pos.marketId));
+    const currentMarketIds = new Set(
+      currentPositions.map((pos) => pos.marketId),
+    );
 
     // Clean up redeemed markets that are no longer tracked
     let cleanedRedeemed = 0;
@@ -429,7 +455,10 @@ export class AutoRedeemStrategy {
     // Count unique markets with redeemable positions that haven't been redeemed yet
     const redeemableMarkets = new Set(
       allPositions
-        .filter((pos) => pos.redeemable === true && !this.redeemedMarkets.has(pos.marketId))
+        .filter(
+          (pos) =>
+            pos.redeemable === true && !this.redeemedMarkets.has(pos.marketId),
+        )
         .map((pos) => pos.marketId),
     );
 
@@ -448,7 +477,9 @@ export class AutoRedeemStrategy {
     const results: RedemptionResult[] = [];
 
     const allPositions = this.positionTracker.getPositions();
-    const redeemablePositions = allPositions.filter((pos) => pos.redeemable === true);
+    const redeemablePositions = allPositions.filter(
+      (pos) => pos.redeemable === true,
+    );
 
     if (redeemablePositions.length === 0) {
       this.logger.info("[AutoRedeem] No redeemable positions to force redeem");
