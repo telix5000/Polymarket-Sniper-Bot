@@ -174,6 +174,8 @@ export const STRATEGY_PRESETS = {
     ENDGAME_MIN_PRICE: 0.98,
     ENDGAME_MAX_PRICE: 0.995,
     MAX_POSITION_USD: 25,
+    AUTO_REDEEM_ENABLED: false,
+    AUTO_REDEEM_MIN_POSITION_USD: 0.10,
   },
   conservative: {
     STRATEGY_ENABLED: true,
@@ -194,6 +196,9 @@ export const STRATEGY_PRESETS = {
     ENDGAME_MIN_PRICE: 0.985, // 98.5¢
     ENDGAME_MAX_PRICE: 0.995, // 99.5¢ (auto-sell threshold is higher to avoid conflict)
     MAX_POSITION_USD: 15, // Conservative position sizing
+    // Auto-Redeem settings (claim resolved positions)
+    AUTO_REDEEM_ENABLED: true,
+    AUTO_REDEEM_MIN_POSITION_USD: 0.10, // Skip dust below 10 cents
     // Rate limits
     ORDER_SUBMIT_MAX_PER_HOUR: 30,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 10000,
@@ -229,6 +234,9 @@ export const STRATEGY_PRESETS = {
     ENDGAME_MIN_PRICE: 0.985, // 98.5¢ (ensures 1.3% net profit minimum after 0.2% fees)
     ENDGAME_MAX_PRICE: 0.995, // 99.5¢ (auto-sell threshold is higher)
     MAX_POSITION_USD: 25, // Balanced position sizing
+    // Auto-Redeem settings (claim resolved positions)
+    AUTO_REDEEM_ENABLED: true,
+    AUTO_REDEEM_MIN_POSITION_USD: 0.10, // Skip dust below 10 cents
     // Rate limits (higher for more trades)
     ORDER_SUBMIT_MAX_PER_HOUR: 60,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 5000,
@@ -281,6 +289,9 @@ export const STRATEGY_PRESETS = {
     ENDGAME_MIN_PRICE: 0.85, // 85¢ - more uncertainty, higher potential profit (10-15% gains)
     ENDGAME_MAX_PRICE: 0.95, // 95¢ - room to appreciate before auto-sell triggers
     MAX_POSITION_USD: 50, // Aggressive position sizing
+    // Auto-Redeem settings (claim resolved positions)
+    AUTO_REDEEM_ENABLED: true,
+    AUTO_REDEEM_MIN_POSITION_USD: 0.05, // Claim even small amounts aggressively
     // Rate limits (maximum)
     ORDER_SUBMIT_MAX_PER_HOUR: 120,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 3000,

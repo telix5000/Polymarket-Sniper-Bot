@@ -1107,6 +1107,8 @@ export type StrategyConfig = {
   endgameMinPrice: number;
   endgameMaxPrice: number;
   endgameMaxPositionUsd: number;
+  autoRedeemEnabled: boolean;
+  autoRedeemMinPositionUsd: number;
   minOrderUsd: number;
   // Combined settings from ARB and MONITOR
   arbConfig?: ArbRuntimeConfig;
@@ -1166,6 +1168,8 @@ export function loadStrategyConfig(
     endgameMinPrice: preset.ENDGAME_MIN_PRICE ?? 0.98,
     endgameMaxPrice: preset.ENDGAME_MAX_PRICE ?? 0.995,
     endgameMaxPositionUsd: preset.MAX_POSITION_USD ?? 25,
+    autoRedeemEnabled: preset.AUTO_REDEEM_ENABLED ?? true, // Enabled by default - always claim resolved positions
+    autoRedeemMinPositionUsd: preset.AUTO_REDEEM_MIN_POSITION_USD ?? 0.10, // Skip dust below 10 cents
     // MIN_ORDER_USD: respect env override > preset > default
     minOrderUsd:
       parseNumber(readEnv("MIN_ORDER_USD", overrides) ?? "") ??
