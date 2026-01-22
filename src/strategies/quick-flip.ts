@@ -98,12 +98,14 @@ export class QuickFlipStrategy {
         );
 
         try {
-          await this.sellPosition(
+          const sold = await this.sellPosition(
             position.marketId,
             position.tokenId,
             position.size,
           );
-          soldCount++;
+          if (sold) {
+            soldCount++;
+          }
         } catch (err) {
           this.logger.error(
             `[QuickFlip] ❌ Failed to sell position ${position.marketId}`,
@@ -122,12 +124,14 @@ export class QuickFlipStrategy {
       );
 
       try {
-        await this.sellPosition(
+        const sold = await this.sellPosition(
           position.marketId,
           position.tokenId,
           position.size,
         );
-        soldCount++;
+        if (sold) {
+          soldCount++;
+        }
       } catch (err) {
         this.logger.error(
           `[QuickFlip] ❌ Failed to execute stop-loss for ${position.marketId}`,
@@ -170,12 +174,13 @@ export class QuickFlipStrategy {
    * @param marketId - The market ID
    * @param tokenId - The token ID to sell
    * @param size - Number of shares to sell
+   * @returns true if order was submitted successfully, false if skipped/no liquidity
    */
   private async sellPosition(
     marketId: string,
     tokenId: string,
     size: number,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       // Import postOrder utility
       const { postOrder } = await import("../utils/post-order.util");
@@ -191,9 +196,8 @@ export class QuickFlipStrategy {
           );
           this.noLiquidityTokens.add(tokenId);
         }
-        // Return gracefully instead of throwing - this is a normal market condition
-        // The position will be re-evaluated on the next cycle when liquidity may return
-        return;
+        // Return false - position will be re-evaluated on the next cycle when liquidity may return
+        return false;
       }
 
       // Clear no-liquidity flag if liquidity has returned
@@ -261,10 +265,12 @@ export class QuickFlipStrategy {
         this.logger.info(
           `[QuickFlip] ✅ Sold ${size.toFixed(2)} shares at ~${(bestBid * 100).toFixed(1)}¢`,
         );
+        return true;
       } else if (result.status === "skipped") {
         this.logger.warn(
           `[QuickFlip] ⏭️ Sell order skipped: ${result.reason ?? "unknown reason"}`,
         );
+        return false;
       } else {
         this.logger.error(
           `[QuickFlip] ❌ Sell order failed: ${result.reason ?? "unknown reason"}`,
