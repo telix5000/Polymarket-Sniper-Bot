@@ -85,37 +85,35 @@ export class AutoSellStrategy {
         }
 
         // For dispute exit, we don't need minimum hold time - we want to exit ASAP
-        // Check if position is at or above dispute exit price (99.9¢)
-        if (position.currentPrice >= disputeExitPrice) {
-          this.logger.info(
-            `[AutoSell] 🚨 DISPUTE EXIT: Position at ${(position.currentPrice * 100).toFixed(1)}¢ - selling to exit dispute hold: ${position.marketId}`,
+        // getPositionsNearResolution already filters for currentPrice >= disputeExitPrice
+        this.logger.info(
+          `[AutoSell] 🚨 DISPUTE EXIT: Position at ${(position.currentPrice * 100).toFixed(1)}¢ - selling to exit dispute hold: ${position.marketId}`,
+        );
+
+        try {
+          const sold = await this.sellPosition(
+            position.marketId,
+            position.tokenId,
+            position.size,
           );
 
-          try {
-            const sold = await this.sellPosition(
-              position.marketId,
-              position.tokenId,
-              position.size,
-            );
+          if (sold) {
+            this.soldPositions.add(positionKey);
+            soldCount++;
 
-            if (sold) {
-              this.soldPositions.add(positionKey);
-              soldCount++;
+            // Calculate tiny loss for exiting at 99.9¢ vs waiting for $1.00
+            const lossPerShare = 1.0 - position.currentPrice;
+            const totalLoss = lossPerShare * position.size;
 
-              // Calculate tiny loss for exiting at 99.9¢ vs waiting for $1.00
-              const lossPerShare = 1.0 - position.currentPrice;
-              const totalLoss = lossPerShare * position.size;
-
-              this.logger.info(
-                `[AutoSell] ✅ DISPUTE EXIT: Freed $${(position.size * position.currentPrice).toFixed(2)} capital (cost: $${totalLoss.toFixed(3)} to avoid dispute hold wait)`,
-              );
-            }
-          } catch (err) {
-            this.logger.error(
-              `[AutoSell] Failed dispute exit for ${position.marketId}`,
-              err as Error,
+            this.logger.info(
+              `[AutoSell] ✅ DISPUTE EXIT: Freed $${(position.size * position.currentPrice).toFixed(2)} capital (cost: $${totalLoss.toFixed(3)} to avoid dispute hold wait)`,
             );
           }
+        } catch (err) {
+          this.logger.error(
+            `[AutoSell] Failed dispute exit for ${position.marketId}`,
+            err as Error,
+          );
         }
       }
     }
