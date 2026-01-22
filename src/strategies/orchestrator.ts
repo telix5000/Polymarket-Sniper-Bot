@@ -9,6 +9,11 @@ import {
   UniversalStopLossStrategy,
   type UniversalStopLossConfig,
 } from "./universal-stop-loss";
+import {
+  HedgeOnStopLossStrategy,
+  type HedgeOnStopLossConfig,
+  DEFAULT_HEDGE_ON_STOP_LOSS_CONFIG,
+} from "./hedge-on-stop-loss";
 import { getPerformanceTracker } from "./strategy-performance";
 import type { QuickFlipConfig } from "./quick-flip";
 import type { AutoSellConfig } from "./auto-sell";
@@ -39,6 +44,7 @@ export interface StrategyOrchestratorConfig {
   endgameSweepConfig: EndgameSweepConfig;
   autoRedeemConfig: AutoRedeemConfig;
   universalStopLossConfig?: UniversalStopLossConfig;
+  hedgeOnStopLossConfig?: HedgeOnStopLossConfig;
   executionIntervalMs?: number;
 }
 
@@ -69,6 +75,7 @@ export class StrategyOrchestrator {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private universalStopLossStrategy: UniversalStopLossStrategy;
+  private hedgeOnStopLossStrategy: HedgeOnStopLossStrategy;
   private quickFlipStrategy: QuickFlipStrategy;
   private autoSellStrategy: AutoSellStrategy;
   private endgameSweepStrategy: EndgameSweepStrategy;
@@ -107,6 +114,22 @@ export class StrategyOrchestrator {
     if (universalStopLossConfig.enabled) {
       this.logger.info(
         `[Orchestrator] 🛡️ Universal Stop-Loss: ENABLED (max: ${universalStopLossConfig.maxStopLossPct}%, dynamic tiers: ${universalStopLossConfig.useDynamicTiers ? "ON" : "OFF"})`,
+      );
+    }
+
+    // Initialize Hedge-on-Stop-Loss (converts losses to opposite positions)
+    const hedgeOnStopLossConfig =
+      config.hedgeOnStopLossConfig ?? DEFAULT_HEDGE_ON_STOP_LOSS_CONFIG;
+    this.hedgeOnStopLossStrategy = new HedgeOnStopLossStrategy({
+      client: config.client,
+      logger: config.logger,
+      positionTracker: this.positionTracker,
+      config: hedgeOnStopLossConfig,
+    });
+
+    if (hedgeOnStopLossConfig.enabled) {
+      this.logger.info(
+        `[Orchestrator] 💱 Hedge-on-Stop-Loss: ENABLED (max entry: ${(hedgeOnStopLossConfig.maxEntryPriceForHedge * 100).toFixed(0)}¢, min loss: ${hedgeOnStopLossConfig.minLossPctForHedge}%)`,
       );
     }
 
@@ -282,34 +305,43 @@ export class StrategyOrchestrator {
           this.autoRedeemStrategy.getStats().enabled,
         ),
 
-        // Priority 2: Universal Stop-Loss (SAFETY NET - protects ALL positions from excessive losses)
+        // Priority 2: Hedge-on-Stop-Loss (converts risky losses to opposite positions)
+        // Runs BEFORE universal stop-loss so it can hedge risky positions first
+        this.executeWithLogging(
+          "Hedge-on-Stop-Loss",
+          2,
+          () => this.hedgeOnStopLossStrategy.execute(),
+          this.hedgeOnStopLossStrategy.getStats().enabled,
+        ),
+
+        // Priority 3: Universal Stop-Loss (SAFETY NET - protects ALL positions from excessive losses)
         this.executeWithLogging(
           "Universal Stop-Loss",
-          2,
+          3,
           () => this.universalStopLossStrategy.execute(),
           this.universalStopLossStrategy.getStats().enabled,
         ),
 
-        // Priority 3: Endgame Sweep (buy high-probability positions)
+        // Priority 4: Endgame Sweep (buy high-probability positions)
         this.executeWithLogging(
           "Endgame Sweep",
-          3,
+          4,
           () => this.endgameSweepStrategy.execute(),
           this.endgameSweepStrategy.getStats().enabled,
         ),
 
-        // Priority 4: Auto-Sell (free up capital at threshold)
+        // Priority 5: Auto-Sell (free up capital at threshold)
         this.executeWithLogging(
           "Auto-Sell",
-          4,
+          5,
           () => this.autoSellStrategy.execute(),
           this.autoSellStrategy.getStats().enabled,
         ),
 
-        // Priority 5: Quick Flip (take profits at target)
+        // Priority 6: Quick Flip (take profits at target)
         this.executeWithLogging(
           "Quick Flip",
-          5,
+          6,
           () => this.quickFlipStrategy.execute(),
           this.quickFlipStrategy.getStats().enabled,
         ),
@@ -385,6 +417,7 @@ export class StrategyOrchestrator {
     arbEnabled: boolean;
     monitorEnabled: boolean;
     universalStopLossStats: ReturnType<UniversalStopLossStrategy["getStats"]>;
+    hedgeOnStopLossStats: ReturnType<HedgeOnStopLossStrategy["getStats"]>;
     quickFlipStats: ReturnType<QuickFlipStrategy["getStats"]>;
     autoSellStats: ReturnType<AutoSellStrategy["getStats"]>;
     endgameSweepStats: ReturnType<EndgameSweepStrategy["getStats"]>;
@@ -396,12 +429,20 @@ export class StrategyOrchestrator {
       arbEnabled: this.arbEnabled,
       monitorEnabled: this.monitorEnabled,
       universalStopLossStats: this.universalStopLossStrategy.getStats(),
+      hedgeOnStopLossStats: this.hedgeOnStopLossStrategy.getStats(),
       quickFlipStats: this.quickFlipStrategy.getStats(),
       autoSellStats: this.autoSellStrategy.getStats(),
       endgameSweepStats: this.endgameSweepStrategy.getStats(),
       autoRedeemStats: this.autoRedeemStrategy.getStats(),
       trackedPositions: this.positionTracker.getPositions().length,
     };
+  }
+
+  /**
+   * Get access to the hedge-on-stop-loss strategy for analysis
+   */
+  getHedgeOnStopLossStrategy(): HedgeOnStopLossStrategy {
+    return this.hedgeOnStopLossStrategy;
   }
 
   /**
