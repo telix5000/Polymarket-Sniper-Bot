@@ -283,13 +283,13 @@ export const STRATEGY_PRESETS = {
     // Auto-sell settings: DISABLED - redeem is now the preferred exit strategy
     // With auto-redeem working, we no longer need to sell before $1 - simply wait for resolution and redeem at full value
     AUTO_SELL_ENABLED: false,
-    AUTO_SELL_THRESHOLD: 0.99, // Not used since disabled
+    AUTO_SELL_THRESHOLD: 0.95, // Not used since disabled
     AUTO_SELL_MIN_HOLD_SECONDS: 60,
     // Endgame sweep settings: DISABLED - since we rely on redeem, no need to buy positions hoping they'll reach $1
     // Redeem handles resolved positions automatically, so aggressive endgame buying is unnecessary
     ENDGAME_SWEEP_ENABLED: false,
-    ENDGAME_MIN_PRICE: 0.98, // Not used since disabled
-    ENDGAME_MAX_PRICE: 0.995, // Not used since disabled
+    ENDGAME_MIN_PRICE: 0.85, // Not used since disabled
+    ENDGAME_MAX_PRICE: 0.95, // Not used since disabled
     MAX_POSITION_USD: 50, // Aggressive position sizing
     // Auto-Redeem settings (claim resolved positions)
     AUTO_REDEEM_ENABLED: true,
