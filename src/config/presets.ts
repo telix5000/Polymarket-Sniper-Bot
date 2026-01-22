@@ -175,7 +175,7 @@ export const STRATEGY_PRESETS = {
     ENDGAME_MAX_PRICE: 0.995,
     MAX_POSITION_USD: 25,
     AUTO_REDEEM_ENABLED: false,
-    AUTO_REDEEM_MIN_POSITION_USD: 0.10,
+    AUTO_REDEEM_MIN_POSITION_USD: 0.1,
   },
   conservative: {
     STRATEGY_ENABLED: true,
@@ -198,13 +198,12 @@ export const STRATEGY_PRESETS = {
     MAX_POSITION_USD: 15, // Conservative position sizing
     // Auto-Redeem settings (claim resolved positions)
     AUTO_REDEEM_ENABLED: true,
-    AUTO_REDEEM_MIN_POSITION_USD: 0.10, // Skip dust below 10 cents
-    // Rate limits - high throughput for volume
-    ORDER_SUBMIT_MAX_PER_HOUR: 3000,
-    ORDER_SUBMIT_MIN_INTERVAL_MS: 200,
-    ORDER_SUBMIT_MARKET_COOLDOWN_SECONDS: 10,
-    // Existing ARB settings
-    ARB_SCAN_INTERVAL_MS: 1000,
+    AUTO_REDEEM_MIN_POSITION_USD: 0.1, // Skip dust below 10 cents
+    // Rate limits
+    ORDER_SUBMIT_MAX_PER_HOUR: 30,
+    ORDER_SUBMIT_MIN_INTERVAL_MS: 10000,
+    // Existing ARB settings (from safe_small)
+    ARB_SCAN_INTERVAL_MS: 2000,
     ARB_MIN_EDGE_BPS: 120,
     ARB_MAX_SPREAD_BPS: 300,
     ARB_TRADE_BASE_USD: 3,
@@ -240,14 +239,14 @@ export const STRATEGY_PRESETS = {
     MAX_POSITION_USD: 25, // Balanced position sizing
     // Auto-Redeem settings (claim resolved positions)
     AUTO_REDEEM_ENABLED: true,
-    AUTO_REDEEM_MIN_POSITION_USD: 0.10, // Skip dust below 10 cents
-    // Rate limits - maximize throughput
-    ORDER_SUBMIT_MAX_PER_HOUR: 5000,
-    ORDER_SUBMIT_MIN_INTERVAL_MS: 100,
-    ORDER_SUBMIT_MARKET_COOLDOWN_SECONDS: 5,
-    // ARB settings - high volume
-    ARB_SCAN_INTERVAL_MS: 500,
-    ARB_MIN_EDGE_BPS: 25, // 0.25% edge (12x the fee!)
+    AUTO_REDEEM_MIN_POSITION_USD: 0.1, // Skip dust below 10 cents
+    // Rate limits (higher for more trades)
+    ORDER_SUBMIT_MAX_PER_HOUR: 60,
+    ORDER_SUBMIT_MIN_INTERVAL_MS: 5000,
+    ORDER_SUBMIT_MARKET_COOLDOWN_SECONDS: 60,
+    // Existing ARB settings (from micro, optimized)
+    ARB_SCAN_INTERVAL_MS: 1500,
+    ARB_MIN_EDGE_BPS: 50,
     ARB_MIN_PROFIT_USD: 0.05,
     ARB_MIN_LIQUIDITY_USD: 3000,
     ARB_MAX_SPREAD_BPS: 10000, // Very permissive
