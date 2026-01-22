@@ -503,7 +503,8 @@ export class AutoRedeemStrategy {
     );
 
     // Calculate time until next check
-    const timeSinceLastCheck = Date.now() - this.lastExecutionTime;
+    // Handle potential clock drift or system clock changes
+    const timeSinceLastCheck = Math.max(0, Date.now() - this.lastExecutionTime);
     const nextCheckInMs = Math.max(
       0,
       this.checkIntervalMs - timeSinceLastCheck,
