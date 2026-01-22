@@ -2,7 +2,10 @@ import type { ClobClient } from "@polymarket/clob-client";
 import type { Wallet } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker, Position } from "./position-tracker";
-import { PRICE_TIERS, getDynamicStopLoss } from "./trade-quality";
+import { PRICE_TIERS } from "./trade-quality";
+import { postOrder } from "../utils/post-order.util";
+import { httpGet } from "../utils/fetch-data.util";
+import { POLYMARKET_API } from "../constants/polymarket.constants";
 
 /**
  * Smart Hedging Strategy Configuration
@@ -313,13 +316,20 @@ export interface SmartHedgingStrategyConfig {
  * MATH EXAMPLE (user's scenario):
  * - Buy $5 of YES at 50¢ = 10 shares
  * - YES drops to 30¢, NO rises to 70¢
- * - Buy $5 of NO at 70¢ = 7.14 shares
- * - If YES wins: 10 × $1 = $10, total spent $10, profit = $0
- * - If NO wins: 7.14 × $1 = $7.14, total spent $10, loss = -$2.86
- * - Without hedge: YES worth $3, loss = -$2
- * - With hedge: Worst case -$2.86, but potential to break even if YES recovers!
+ * - Buy $5 of NO at 70¢ ≈ 7.14 shares
+ * - On resolution, each share that wins pays $1
+ * - If YES wins: 10 shares × $1 per share = $10 total payout, total spent $10 → profit = $0
+ * - If NO wins: 7.14 shares × $1 per share ≈ $7.14 total payout, total spent $10 → loss ≈ -$2.86
+ * - Without hedge (sell YES at 30¢ instead of hedging): YES worth $3, loss = -$2
+ * - With hedge: Worst case ≈ -$2.86 at resolution, but you keep upside if YES recovers before expiry
  *
  * KEY INSIGHT: Hedging provides OPTIONALITY - position can still win if market reverses
+ *
+ * BALANCE CHECK:
+ * - SMART_HEDGING_ABSOLUTE_MAX_USD is a config limit, NOT a balance check
+ * - If wallet has insufficient funds, the hedge order will fail gracefully
+ * - The strategy caps hedge size at absoluteMaxHedgeUsd but doesn't verify wallet balance
+ * - Order failures due to insufficient funds are logged and position remains unhedged
  */
 export class SmartHedgingStrategy {
   private client: ClobClient;
@@ -377,11 +387,75 @@ export class SmartHedgingStrategy {
    */
   private positionFirstSeenLosing: Map<string, number> = new Map();
 
+  /**
+   * Set of token IDs that are hedge positions (to avoid hedging hedges)
+   */
+  private hedgeTokenIds: Set<string> = new Set();
+
   constructor(strategyConfig: SmartHedgingStrategyConfig) {
     this.client = strategyConfig.client;
     this.logger = strategyConfig.logger;
     this.positionTracker = strategyConfig.positionTracker;
     this.config = strategyConfig.config;
+    this.validateConfig(strategyConfig.config);
+  }
+
+  /**
+   * Validate configuration values to prevent runtime errors
+   */
+  private validateConfig(config: SmartHedgingConfig): void {
+    if (config.triggerLossPct <= 0 || config.triggerLossPct >= 100) {
+      throw new Error(
+        `SmartHedgingConfig.triggerLossPct must be > 0 and < 100, received ${config.triggerLossPct}`,
+      );
+    }
+
+    if (config.emergencyLossThresholdPct < config.triggerLossPct) {
+      throw new Error(
+        `SmartHedgingConfig.emergencyLossThresholdPct must be >= triggerLossPct (${config.triggerLossPct}), received ${config.emergencyLossThresholdPct}`,
+      );
+    }
+
+    if (config.maxHedgeUsd <= 0) {
+      throw new Error(
+        `SmartHedgingConfig.maxHedgeUsd must be > 0, received ${config.maxHedgeUsd}`,
+      );
+    }
+
+    if (config.absoluteMaxHedgeUsd < config.maxHedgeUsd) {
+      throw new Error(
+        `SmartHedgingConfig.absoluteMaxHedgeUsd must be >= maxHedgeUsd (${config.maxHedgeUsd}), received ${config.absoluteMaxHedgeUsd}`,
+      );
+    }
+
+    if (config.reservePct < 0 || config.reservePct > 100) {
+      throw new Error(
+        `SmartHedgingConfig.reservePct must be between 0 and 100, received ${config.reservePct}`,
+      );
+    }
+
+    if (
+      config.optimalOpposingPriceMin < 0 ||
+      config.optimalOpposingPriceMin > 1 ||
+      config.optimalOpposingPriceMax < 0 ||
+      config.optimalOpposingPriceMax > 1
+    ) {
+      throw new Error(
+        `SmartHedgingConfig.optimalOpposingPriceMin/Max must each be between 0 and 1, received min=${config.optimalOpposingPriceMin}, max=${config.optimalOpposingPriceMax}`,
+      );
+    }
+
+    if (config.optimalOpposingPriceMin >= config.optimalOpposingPriceMax) {
+      throw new Error(
+        `SmartHedgingConfig.optimalOpposingPriceMin must be < optimalOpposingPriceMax, received min=${config.optimalOpposingPriceMin}, max=${config.optimalOpposingPriceMax}`,
+      );
+    }
+
+    if (config.minOpposingSidePrice < 0 || config.minOpposingSidePrice > 1) {
+      throw new Error(
+        `SmartHedgingConfig.minOpposingSidePrice must be between 0 and 1, received ${config.minOpposingSidePrice}`,
+      );
+    }
   }
 
   /**
@@ -424,6 +498,11 @@ export class SmartHedgingStrategy {
         return false;
       }
 
+      // Skip if THIS IS a hedge position (avoid hedging hedges / "hedge-ception")
+      if (this.hedgeTokenIds.has(pos.tokenId)) {
+        return false;
+      }
+
       // Skip if not in risky tier (entry price too high)
       if (pos.entryPrice >= this.config.maxEntryPriceForHedging) {
         return false;
@@ -436,6 +515,12 @@ export class SmartHedgingStrategy {
 
       // Skip resolved/redeemable positions
       if (pos.redeemable) {
+        return false;
+      }
+
+      // Skip non-binary markets (can only hedge YES/NO)
+      const side = pos.side?.toUpperCase();
+      if (side !== "YES" && side !== "NO") {
         return false;
       }
 
@@ -792,13 +877,166 @@ export class SmartHedgingStrategy {
   }
 
   /**
-   * Manage reserves by selling profitable positions when needed
+   * Manage reserves by selling profitable positions when needed to fund hedges
+   * 
+   * This ensures funds are always available for hedging by:
+   * 1. Calculating how much we need for potential hedges
+   * 2. Checking if we have enough reserves
+   * 3. Selling profitable positions (prioritizing those with declining volume) to free up funds
    */
   private async manageReserves(allPositions: Position[]): Promise<number> {
-    // TODO: Implement reserve management logic
-    // This will sell profitable positions to ensure funds are available for hedging
-    // For now, return 0 (no sells)
-    return 0;
+    // Find positions that might need hedging soon
+    const potentialHedgePositions = allPositions.filter((pos) => {
+      const key = `${pos.marketId}-${pos.tokenId}`;
+      if (this.hedgedPositions.has(key)) return false;
+      if (this.hedgeTokenIds.has(pos.tokenId)) return false;
+      if (pos.entryPrice >= this.config.maxEntryPriceForHedging) return false;
+      if (pos.redeemable) return false;
+      // Include positions that are losing OR approaching loss threshold
+      return pos.pnlPct <= 0;
+    });
+
+    if (potentialHedgePositions.length === 0) {
+      return 0; // No positions need hedging, no need for reserves
+    }
+
+    // Calculate estimated funds needed for hedging
+    const estimatedHedgeFundsNeeded = potentialHedgePositions.reduce((sum, pos) => {
+      const positionValue = pos.size * pos.entryPrice;
+      // Estimate hedge cost as position value (worst case)
+      return sum + Math.min(positionValue, this.config.maxHedgeUsd);
+    }, 0);
+
+    // Find profitable positions we could sell (excluding hedge positions)
+    const profitablePositions = allPositions
+      .filter((pos) => {
+        // Must be profitable
+        if (pos.pnlPct < this.config.reserveSellMinProfitPct) return false;
+        // Don't sell hedge positions
+        if (this.hedgeTokenIds.has(pos.tokenId)) return false;
+        // Don't sell positions we're hedging
+        const key = `${pos.marketId}-${pos.tokenId}`;
+        if (this.hedgedPositions.has(key)) return false;
+        // Don't sell recently sold positions (cooldown)
+        if (this.recentReserveSells.has(key)) return false;
+        // Don't sell resolved positions
+        if (pos.redeemable) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        // Prioritize selling positions with:
+        // 1. Higher profit % (lock in gains)
+        // 2. Declining volume (weak conviction)
+        const aVolume = this.volumeCache.get(a.tokenId);
+        const bVolume = this.volumeCache.get(b.tokenId);
+        const aDecline = aVolume?.volumeChangePercent ?? 0;
+        const bDecline = bVolume?.volumeChangePercent ?? 0;
+        
+        // Score: higher profit + more volume decline = sell first
+        const aScore = a.pnlPct + (aDecline < 0 ? Math.abs(aDecline) : 0);
+        const bScore = b.pnlPct + (bDecline < 0 ? Math.abs(bDecline) : 0);
+        return bScore - aScore;
+      });
+
+    if (profitablePositions.length === 0) {
+      this.logger.debug(
+        `[SmartHedging] No profitable positions available to sell for reserves (need ~$${estimatedHedgeFundsNeeded.toFixed(2)} for potential hedges)`,
+      );
+      return 0;
+    }
+
+    // Calculate how much we should have in reserve
+    const targetReserve = estimatedHedgeFundsNeeded * (this.config.reservePct / 100);
+
+    // Sell profitable positions until we have enough reserves
+    let soldCount = 0;
+    let fundsFreed = 0;
+
+    for (const position of profitablePositions) {
+      // Stop if we've freed enough funds
+      if (fundsFreed >= targetReserve) {
+        break;
+      }
+
+      const positionKey = `${position.marketId}-${position.tokenId}`;
+      const positionValue = position.size * position.currentPrice;
+
+      this.logger.info(
+        `[SmartHedging] 💰 Selling profitable position to maintain hedge reserves:` +
+          `\n  Position: ${position.size.toFixed(2)} @ ${(position.currentPrice * 100).toFixed(1)}¢ = $${positionValue.toFixed(2)}` +
+          `\n  Profit: ${position.pnlPct.toFixed(1)}%` +
+          `\n  Reason: Building reserves for potential hedges ($${fundsFreed.toFixed(2)}/$${targetReserve.toFixed(2)})`,
+      );
+
+      try {
+        const sold = await this.sellPositionForReserve(position);
+        if (sold) {
+          soldCount++;
+          fundsFreed += positionValue;
+          this.recentReserveSells.set(positionKey, Date.now());
+        }
+      } catch (err) {
+        this.logger.error(
+          `[SmartHedging] Failed to sell position for reserves: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    if (soldCount > 0) {
+      this.logger.info(
+        `[SmartHedging] ✅ Sold ${soldCount} profitable position(s), freed ~$${fundsFreed.toFixed(2)} for hedge reserves`,
+      );
+    }
+
+    return soldCount;
+  }
+
+  /**
+   * Sell a position to free up reserves for hedging
+   */
+  private async sellPositionForReserve(position: Position): Promise<boolean> {
+    try {
+      const wallet = (this.client as { wallet?: Wallet }).wallet;
+      if (!wallet) {
+        this.logger.error(
+          "[SmartHedging] ❌ Cannot sell for reserves: client has no wallet attached",
+        );
+        return false;
+      }
+
+      // Get current bid price for selling
+      const orderbook = await this.client.getOrderBook(position.tokenId);
+      if (!orderbook.bids || orderbook.bids.length === 0) {
+        this.logger.warn(
+          `[SmartHedging] ⚠️ No bids for position - cannot sell for reserves`,
+        );
+        return false;
+      }
+
+      const bestBid = parseFloat(orderbook.bids[0].price);
+      const sizeUsd = position.size * bestBid;
+
+      const result = await postOrder({
+        client: this.client,
+        wallet,
+        marketId: position.marketId,
+        tokenId: position.tokenId,
+        outcome: position.side as "YES" | "NO",
+        side: "SELL",
+        sizeUsd,
+        maxAcceptablePrice: bestBid * 0.95, // Accept up to 5% slippage
+        logger: this.logger,
+        priority: false,
+        orderConfig: { minOrderUsd: 0 },
+      });
+
+      return result.status === "submitted";
+    } catch (err) {
+      this.logger.error(
+        `[SmartHedging] ❌ Failed to sell for reserves: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
   }
 
   /**
@@ -906,7 +1144,6 @@ export class SmartHedgingStrategy {
       
       let targetHedgeUsd: number;
       let hedgeSizeReason: string;
-      let hedgeGoal: "profit" | "break_even" | "limit_loss";
 
       // Try to make the hedge PROFITABLE if possible within limits
       if (this.config.allowExceedMaxForProtection) {
@@ -914,23 +1151,40 @@ export class SmartHedgingStrategy {
           // We can afford a profitable hedge!
           targetHedgeUsd = profitableHedgeUsd;
           hedgeSizeReason = `💰 PROFITABLE HEDGE - buying enough to MAKE MONEY if hedge wins`;
-          hedgeGoal = "profit";
         } else if (isEmergency) {
           // Emergency - use max available even if not fully profitable
           targetHedgeUsd = this.config.absoluteMaxHedgeUsd;
           hedgeSizeReason = `🚨 EMERGENCY - using max $${this.config.absoluteMaxHedgeUsd} (${position.pnlPct.toFixed(1)}% loss)`;
-          hedgeGoal = "limit_loss";
+          // Warn user that limit prevents profitable hedge
+          this.logger.warn(
+            `[SmartHedging] ⚠️ SMART_HEDGING_ABSOLUTE_MAX_USD ($${this.config.absoluteMaxHedgeUsd}) prevents profitable hedge!` +
+              `\n  Profitable hedge would need: $${profitableHedgeUsd.toFixed(2)}` +
+              `\n  Using max allowed: $${this.config.absoluteMaxHedgeUsd}` +
+              `\n  Consider increasing SMART_HEDGING_ABSOLUTE_MAX_USD to turn losers into winners`,
+          );
         } else {
           // Can't afford profitable hedge, use what we can
           targetHedgeUsd = Math.min(originalInvestment, this.config.absoluteMaxHedgeUsd);
           hedgeSizeReason = `📊 Partial hedge - profitable would need $${profitableHedgeUsd.toFixed(2)}, using $${targetHedgeUsd.toFixed(2)}`;
-          hedgeGoal = "limit_loss";
+          // Warn user that limit prevents profitable hedge
+          this.logger.warn(
+            `[SmartHedging] ⚠️ Hedge limit prevents profitable outcome!` +
+              `\n  To MAKE MONEY on hedge win: need $${profitableHedgeUsd.toFixed(2)}` +
+              `\n  Your limit (SMART_HEDGING_ABSOLUTE_MAX_USD): $${this.config.absoluteMaxHedgeUsd}` +
+              `\n  Will use: $${targetHedgeUsd.toFixed(2)} (caps loss but won't profit)`,
+          );
         }
       } else {
         // Standard mode - respect maxHedgeUsd
         targetHedgeUsd = Math.min(originalInvestment, this.config.maxHedgeUsd);
         hedgeSizeReason = `Standard hedge within $${this.config.maxHedgeUsd} limit`;
-        hedgeGoal = targetHedgeUsd >= profitableHedgeUsd ? "profit" : "limit_loss";
+        if (profitableHedgeUsd > this.config.maxHedgeUsd) {
+          this.logger.warn(
+            `[SmartHedging] ⚠️ SMART_HEDGING_MAX_HEDGE_USD ($${this.config.maxHedgeUsd}) prevents profitable hedge!` +
+              `\n  Profitable hedge would need: $${profitableHedgeUsd.toFixed(2)}` +
+              `\n  Set SMART_HEDGING_ALLOW_EXCEED_MAX=true to allow larger hedges`,
+          );
+        }
       }
 
       const hedgeShares = targetHedgeUsd / opposingPrice;
@@ -993,8 +1247,14 @@ export class SmartHedgingStrategy {
       );
 
       // Execute the hedge buy
-      const { postOrder } = await import("../utils/post-order.util");
       const wallet = (this.client as { wallet?: Wallet }).wallet;
+      if (!wallet) {
+        this.logger.error(
+          "[SmartHedging] ❌ Cannot execute hedge: client has no wallet attached. " +
+            "Ensure ClobClient is constructed with a wallet for hedging to work.",
+        );
+        return false;
+      }
 
       const result = await postOrder({
         client: this.client,
@@ -1033,6 +1293,9 @@ export class SmartHedgingStrategy {
 
         const key = `${position.marketId}-${position.tokenId}`;
         this.hedgedPositions.set(key, hedgedPosition);
+        
+        // Track hedge token ID to avoid "hedge-ception" (hedging hedges)
+        this.hedgeTokenIds.add(opposingTokenId);
 
         this.logger.info(
           `[SmartHedging] ✅ HEDGE SUCCESSFUL!` +
