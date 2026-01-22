@@ -2,7 +2,7 @@ import type { ClobClient } from "@polymarket/clob-client";
 import type { Wallet } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker } from "./position-tracker";
-import { calculateNetProfit } from "./constants";
+import { calculateNetProfit, MIN_QUICK_FLIP_PROFIT_USD } from "./constants";
 
 export interface QuickFlipConfig {
   enabled: boolean;
@@ -10,6 +10,7 @@ export interface QuickFlipConfig {
   stopLossPct: number; // Sell at this loss percentage (e.g., 3 = -3%)
   minHoldSeconds: number; // Minimum time to hold position before selling
   minOrderUsd: number; // Minimum order size in USD (from MIN_ORDER_USD env)
+  minProfitUsd?: number; // Minimum absolute profit in USD (optional, default $0.25)
 }
 
 export interface QuickFlipStrategyConfig {
@@ -90,11 +91,26 @@ export class QuickFlipStrategy {
       );
     }
 
+    // Get configured minimum profit USD (default to constant if not set)
+    const minProfitUsd = this.config.minProfitUsd ?? MIN_QUICK_FLIP_PROFIT_USD;
+
     for (const position of targetPositions) {
+      // Calculate position value and absolute profit
+      const positionValueUsd = position.size * position.currentPrice;
+      const absoluteProfitUsd = (position.pnlPct / 100) * positionValueUsd;
+
+      // Check if profit meets minimum USD threshold
+      if (absoluteProfitUsd < minProfitUsd) {
+        this.logger.debug(
+          `[QuickFlip] ⏸️ Skipping ${position.marketId}: profit $${absoluteProfitUsd.toFixed(2)} below min $${minProfitUsd.toFixed(2)} (${position.pnlPct.toFixed(2)}% on $${positionValueUsd.toFixed(2)} position)`,
+        );
+        continue;
+      }
+
       if (this.shouldSell(position.marketId, position.tokenId)) {
         const netProfitPct = calculateNetProfit(position.pnlPct);
         this.logger.info(
-          `[QuickFlip] 📈 Selling position at +${position.pnlPct.toFixed(2)}% gross (+${netProfitPct.toFixed(2)}% net after fees): ${position.marketId}`,
+          `[QuickFlip] 📈 Selling position at +${position.pnlPct.toFixed(2)}% gross (+${netProfitPct.toFixed(2)}% net after fees), profit: $${absoluteProfitUsd.toFixed(2)}: ${position.marketId}`,
         );
 
         try {
@@ -339,12 +355,14 @@ export class QuickFlipStrategy {
     enabled: boolean;
     targetPct: number;
     stopLossPct: number;
+    minProfitUsd: number;
   } {
     return {
       trackedPositions: this.positionEntryTimes.size,
       enabled: this.config.enabled,
       targetPct: this.config.targetPct,
       stopLossPct: this.config.stopLossPct,
+      minProfitUsd: this.config.minProfitUsd ?? MIN_QUICK_FLIP_PROFIT_USD,
     };
   }
 }
