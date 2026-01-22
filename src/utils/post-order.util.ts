@@ -349,6 +349,8 @@ async function postOrderClob(
   }
 
   // Check if order was filled (remaining amount is negligible)
+  // Orders are considered successful when remaining <= MIN_REMAINING_USD (0.01)
+  // because sub-cent amounts can't be practically filled due to price precision
   if (remaining <= ORDER_EXECUTION.MIN_REMAINING_USD) {
     return { status: "submitted" };
   }
