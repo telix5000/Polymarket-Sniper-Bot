@@ -193,7 +193,6 @@ export class TradeExecutorService {
     multiplier: number;
     maxSize: number;
     wasCapped: boolean;
-    cappedByEndgame: boolean;
     effectiveMinOrderUsd: number;
     usedFixedSize: boolean;
   } {
@@ -220,7 +219,6 @@ export class TradeExecutorService {
     // - wasCapped: FRONTRUN_MAX_SIZE_USD is the limiting factor (without MAX_POSITION_USD being more restrictive)
     const usedFixedSize = hasEndgameCap && endgameMax < calculatedSize && endgameMax <= frontrunMax;
     const wasCapped = calculatedSize > frontrunMax && !usedFixedSize;
-    const cappedByEndgame = hasEndgameCap && endgameMax < frontrunMax;
     
     const size = Math.min(calculatedSize, maxSize);
 
@@ -230,7 +228,7 @@ export class TradeExecutorService {
     const effectiveMinOrderUsd =
       configuredMinOrderUsd > maxSize ? maxSize : configuredMinOrderUsd;
 
-    return { size, multiplier, maxSize, wasCapped, cappedByEndgame, effectiveMinOrderUsd, usedFixedSize };
+    return { size, multiplier, maxSize, wasCapped, effectiveMinOrderUsd, usedFixedSize };
   }
 
   // Keep copyTrade for backward compatibility, but redirect to frontrun
