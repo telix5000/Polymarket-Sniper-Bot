@@ -29,15 +29,15 @@ export interface StrategyOrchestratorConfig {
 
 /**
  * Strategy Orchestrator
- * 
+ *
  * MULTI-STRATEGY SYSTEM - Runs ALL strategies in PARALLEL for maximum throughput
- * 
+ *
  * As you compound money and positions grow, the system scales:
  * - All strategies execute concurrently (not sequentially)
  * - Position tracking refreshes every 5 seconds
  * - Strategy execution every 2 seconds
  * - Parallel sell execution for Quick Flip / Auto-Sell
- * 
+ *
  * Strategy Priority (for capital allocation, but execution is parallel):
  * 1. Auto-Redeem - Claim resolved positions (capital recovery)
  * 2. Risk-Free Arb - YES + NO < $1.00 (runs in ARB engine loop)
@@ -45,7 +45,7 @@ export interface StrategyOrchestratorConfig {
  * 4. Auto-Sell - Sell at threshold (free up capital)
  * 5. Quick Flip - Take profits at target %
  * 6. Whale Copy - Follow whale trades (runs in Monitor loop)
- * 
+ *
  * The ARB engine and Monitor service run in their own continuous loops
  * alongside this orchestrator for maximum parallelism.
  */
@@ -133,16 +133,22 @@ export class StrategyOrchestrator {
   /**
    * Initialize performance tracking for dynamic allocation
    */
-  private initializePerformanceTracking(config: StrategyOrchestratorConfig): void {
+  private initializePerformanceTracking(
+    config: StrategyOrchestratorConfig,
+  ): void {
     const tracker = getPerformanceTracker();
-    
+
     // Register each strategy with base allocation
     // Allocations are percentages that will be dynamically adjusted based on ROI
     if (config.autoRedeemConfig.enabled) {
       tracker.registerStrategy("auto-redeem", 20, 100);
     }
     if (config.endgameSweepConfig.enabled) {
-      tracker.registerStrategy("endgame-sweep", 30, config.endgameSweepConfig.maxPositionUsd);
+      tracker.registerStrategy(
+        "endgame-sweep",
+        30,
+        config.endgameSweepConfig.maxPositionUsd,
+      );
     }
     if (config.autoSellConfig.enabled) {
       tracker.registerStrategy("auto-sell", 20, 100);
@@ -151,7 +157,9 @@ export class StrategyOrchestrator {
       tracker.registerStrategy("quick-flip", 30, 100);
     }
 
-    this.logger.info("[Orchestrator] 📊 Performance tracking initialized for dynamic allocation");
+    this.logger.info(
+      "[Orchestrator] 📊 Performance tracking initialized for dynamic allocation",
+    );
   }
 
   /**
@@ -180,14 +188,17 @@ export class StrategyOrchestrator {
     }, this.executionIntervalMs);
 
     // Log performance summary periodically
-    setInterval(() => {
-      const tracker = getPerformanceTracker();
-      const summary = tracker.getSummary();
-      if (summary !== "No strategies tracked") {
-        this.logger.info(`[Orchestrator] 📊 Performance:\n${summary}`);
-      }
-      tracker.pruneHistory(); // Clean up old data
-    }, 5 * 60 * 1000); // Every 5 minutes
+    setInterval(
+      () => {
+        const tracker = getPerformanceTracker();
+        const summary = tracker.getSummary();
+        if (summary !== "No strategies tracked") {
+          this.logger.info(`[Orchestrator] 📊 Performance:\n${summary}`);
+        }
+        tracker.pruneHistory(); // Clean up old data
+      },
+      5 * 60 * 1000,
+    ); // Every 5 minutes
 
     this.logger.info(
       `[Orchestrator] ✅ Started (execution interval: ${this.executionIntervalMs}ms)`,
@@ -217,10 +228,10 @@ export class StrategyOrchestrator {
 
   /**
    * Execute all strategies in priority order
-   * 
+   *
    * For HFT with many positions, we run strategies in PARALLEL
    * to maximize throughput and catch opportunities faster.
-   * 
+   *
    * Priority still matters for capital allocation, but execution is concurrent.
    */
   private async executeStrategies(): Promise<void> {
@@ -237,7 +248,7 @@ export class StrategyOrchestrator {
           () => this.autoRedeemStrategy.execute(),
           this.autoRedeemStrategy.getStats().enabled,
         ),
-        
+
         // Priority 3: Endgame Sweep (buy high-probability positions)
         this.executeWithLogging(
           "Endgame Sweep",
@@ -245,7 +256,7 @@ export class StrategyOrchestrator {
           () => this.endgameSweepStrategy.execute(),
           this.endgameSweepStrategy.getStats().enabled,
         ),
-        
+
         // Priority 4: Auto-Sell (free up capital at threshold)
         this.executeWithLogging(
           "Auto-Sell",
@@ -253,7 +264,7 @@ export class StrategyOrchestrator {
           () => this.autoSellStrategy.execute(),
           this.autoSellStrategy.getStats().enabled,
         ),
-        
+
         // Priority 5: Quick Flip (take profits at target)
         this.executeWithLogging(
           "Quick Flip",
@@ -274,9 +285,9 @@ export class StrategyOrchestrator {
 
       // Log summary
       const totalExecuted = results.filter(
-        (r) => r.status === "fulfilled" && (r.value as number) > 0
+        (r) => r.status === "fulfilled" && (r.value as number) > 0,
       ).length;
-      
+
       if (totalExecuted > 0) {
         this.logger.debug(
           `[Orchestrator] ${totalExecuted} strategies executed trades`,
@@ -287,7 +298,6 @@ export class StrategyOrchestrator {
       this.logger.debug(
         `[Orchestrator] ARB=${this.arbEnabled ? "active" : "off"} Monitor=${this.monitorEnabled ? "active" : "off"}`,
       );
-
     } catch (err) {
       this.logger.error(
         "[Orchestrator] Error during strategy execution",
@@ -306,7 +316,9 @@ export class StrategyOrchestrator {
     enabled: boolean,
   ): Promise<number> {
     if (!enabled) {
-      this.logger.debug(`[Orchestrator] ${name} is disabled (Priority ${priority})`);
+      this.logger.debug(
+        `[Orchestrator] ${name} is disabled (Priority ${priority})`,
+      );
       return 0;
     }
 

@@ -1100,6 +1100,7 @@ export type StrategyConfig = {
   quickFlipTargetPct: number;
   quickFlipStopLossPct: number;
   quickFlipMinHoldSeconds: number;
+  quickFlipMinProfitUsd: number; // Minimum absolute profit in USD per trade
   autoSellEnabled: boolean;
   autoSellThreshold: number;
   autoSellMinHoldSeconds: number;
@@ -1161,6 +1162,16 @@ export function loadStrategyConfig(
     quickFlipTargetPct: preset.QUICK_FLIP_TARGET_PCT ?? 5,
     quickFlipStopLossPct: preset.QUICK_FLIP_STOP_LOSS_PCT ?? 3,
     quickFlipMinHoldSeconds: preset.QUICK_FLIP_MIN_HOLD_SECONDS ?? 30,
+    // QUICK_FLIP_MIN_PROFIT_USD: minimum absolute profit per trade
+    // Ensures trades are worthwhile even on small positions
+    // Default: $0.25 (5% on $5 position)
+    quickFlipMinProfitUsd:
+      parseNumber(readEnv("QUICK_FLIP_MIN_PROFIT_USD", overrides) ?? "") ??
+      ("QUICK_FLIP_MIN_PROFIT_USD" in preset
+        ? (preset as { QUICK_FLIP_MIN_PROFIT_USD: number })
+            .QUICK_FLIP_MIN_PROFIT_USD
+        : undefined) ??
+      0.25, // Default $0.25 minimum profit per trade
     autoSellEnabled: preset.AUTO_SELL_ENABLED ?? false,
     autoSellThreshold: preset.AUTO_SELL_THRESHOLD ?? 0.99,
     autoSellMinHoldSeconds: preset.AUTO_SELL_MIN_HOLD_SECONDS ?? 120,
