@@ -5,6 +5,10 @@ import { QuickFlipStrategy } from "./quick-flip";
 import { AutoSellStrategy } from "./auto-sell";
 import { EndgameSweepStrategy } from "./endgame-sweep";
 import { AutoRedeemStrategy } from "./auto-redeem";
+import {
+  UniversalStopLossStrategy,
+  type UniversalStopLossConfig,
+} from "./universal-stop-loss";
 import { getPerformanceTracker } from "./strategy-performance";
 import type { QuickFlipConfig } from "./quick-flip";
 import type { AutoSellConfig } from "./auto-sell";
@@ -24,6 +28,7 @@ export interface StrategyOrchestratorConfig {
   autoSellConfig: AutoSellConfig;
   endgameSweepConfig: EndgameSweepConfig;
   autoRedeemConfig: AutoRedeemConfig;
+  universalStopLossConfig?: UniversalStopLossConfig;
   executionIntervalMs?: number;
 }
 
@@ -53,6 +58,7 @@ export class StrategyOrchestrator {
   private client: ClobClient;
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
+  private universalStopLossStrategy: UniversalStopLossStrategy;
   private quickFlipStrategy: QuickFlipStrategy;
   private autoSellStrategy: AutoSellStrategy;
   private endgameSweepStrategy: EndgameSweepStrategy;
@@ -77,6 +83,26 @@ export class StrategyOrchestrator {
       logger: config.logger,
       refreshIntervalMs: POSITION_TRACKER_REFRESH_INTERVAL_MS,
     });
+
+    // Initialize Universal Stop-Loss (SAFETY NET - runs on ALL positions)
+    // Default config if not provided: enabled, 25% max stop-loss, dynamic tiers ON
+    const universalStopLossConfig = config.universalStopLossConfig ?? {
+      enabled: true,
+      maxStopLossPct: 25,
+      useDynamicTiers: true,
+    };
+    this.universalStopLossStrategy = new UniversalStopLossStrategy({
+      client: config.client,
+      logger: config.logger,
+      positionTracker: this.positionTracker,
+      config: universalStopLossConfig,
+    });
+
+    if (universalStopLossConfig.enabled) {
+      this.logger.info(
+        `[Orchestrator] 🛡️ Universal Stop-Loss: ENABLED (max: ${universalStopLossConfig.maxStopLossPct}%, dynamic tiers: ${universalStopLossConfig.useDynamicTiers ? "ON" : "OFF"})`,
+      );
+    }
 
     // Initialize strategies
     this.quickFlipStrategy = new QuickFlipStrategy({
@@ -110,6 +136,7 @@ export class StrategyOrchestrator {
       client: config.client,
       logger: config.logger,
       config: config.endgameSweepConfig,
+      positionTracker: this.positionTracker, // Pass position tracker to check existing positions
     });
 
     // Initialize auto-redeem strategy (claims resolved positions)
@@ -249,6 +276,14 @@ export class StrategyOrchestrator {
           this.autoRedeemStrategy.getStats().enabled,
         ),
 
+        // Priority 2: Universal Stop-Loss (SAFETY NET - protects ALL positions from excessive losses)
+        this.executeWithLogging(
+          "Universal Stop-Loss",
+          2,
+          () => this.universalStopLossStrategy.execute(),
+          this.universalStopLossStrategy.getStats().enabled,
+        ),
+
         // Priority 3: Endgame Sweep (buy high-probability positions)
         this.executeWithLogging(
           "Endgame Sweep",
@@ -343,6 +378,7 @@ export class StrategyOrchestrator {
     isRunning: boolean;
     arbEnabled: boolean;
     monitorEnabled: boolean;
+    universalStopLossStats: ReturnType<UniversalStopLossStrategy["getStats"]>;
     quickFlipStats: ReturnType<QuickFlipStrategy["getStats"]>;
     autoSellStats: ReturnType<AutoSellStrategy["getStats"]>;
     endgameSweepStats: ReturnType<EndgameSweepStrategy["getStats"]>;
@@ -353,6 +389,7 @@ export class StrategyOrchestrator {
       isRunning: this.isRunning,
       arbEnabled: this.arbEnabled,
       monitorEnabled: this.monitorEnabled,
+      universalStopLossStats: this.universalStopLossStrategy.getStats(),
       quickFlipStats: this.quickFlipStrategy.getStats(),
       autoSellStats: this.autoSellStrategy.getStats(),
       endgameSweepStats: this.endgameSweepStrategy.getStats(),
