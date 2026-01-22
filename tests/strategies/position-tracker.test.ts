@@ -5,6 +5,9 @@ import { test, describe } from "node:test";
  * Unit tests for PositionTracker settlement price calculation logic
  */
 
+// Shared constant matching PositionTracker.WINNER_THRESHOLD
+const WINNER_THRESHOLD = 0.5;
+
 describe("PositionTracker Settlement Price Logic", () => {
   test("Settlement price calculation - winning position", () => {
     // Simulate a winning position: YES position when market resolved to YES
@@ -349,7 +352,6 @@ describe("PositionTracker Gamma API Outcome Parsing", () => {
 
     let winnerIndex = -1;
     let highestPrice = 0;
-    const WINNER_THRESHOLD = 0.5;
 
     for (let i = 0; i < prices.length; i++) {
       const price = parseFloat(prices[i]);
@@ -411,7 +413,6 @@ describe("PositionTracker Gamma API Outcome Parsing", () => {
 
     let winnerIndex = -1;
     let highestPrice = 0;
-    const WINNER_THRESHOLD = 0.5;
 
     for (let i = 0; i < prices.length; i++) {
       const price = parseFloat(prices[i]);
@@ -434,7 +435,6 @@ describe("PositionTracker Gamma API Outcome Parsing", () => {
 
     let winnerIndex = -1;
     let highestPrice = 0;
-    const WINNER_THRESHOLD = 0.5;
 
     for (let i = 0; i < prices.length; i++) {
       const price = parseFloat(prices[i]);
@@ -456,7 +456,6 @@ describe("PositionTracker Gamma API Outcome Parsing", () => {
 
     let winnerIndex = -1;
     let highestPrice = 0;
-    const WINNER_THRESHOLD = 0.5;
 
     for (let i = 0; i < prices.length; i++) {
       const price = parseFloat(prices[i]);

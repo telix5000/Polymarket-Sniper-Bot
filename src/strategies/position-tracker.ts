@@ -41,6 +41,10 @@ export class PositionTracker {
 
   // API timeout constant for external API calls
   private static readonly API_TIMEOUT_MS = 10000; // 10 seconds
+  
+  // Threshold for determining market winner from outcomePrices
+  // Price > 0.5 indicates the likely winner in resolved markets
+  private static readonly WINNER_THRESHOLD = 0.5;
 
   constructor(config: PositionTrackerConfig) {
     this.client = config.client;
@@ -485,6 +489,14 @@ export class PositionTracker {
   private async fetchMarketOutcome(
     tokenId: string,
   ): Promise<string | null> {
+    // Validate tokenId input
+    if (!tokenId || typeof tokenId !== 'string' || tokenId.trim() === '') {
+      this.logger.debug(
+        `[PositionTracker] Invalid tokenId provided to fetchMarketOutcome: ${tokenId}`,
+      );
+      return null;
+    }
+
     try {
       const { httpGet } = await import("../utils/fetch-data.util");
       const { POLYMARKET_API } =
@@ -508,7 +520,7 @@ export class PositionTracker {
       }
 
       // Encode tokenId for URL safety
-      const encodedTokenId = encodeURIComponent(tokenId);
+      const encodedTokenId = encodeURIComponent(tokenId.trim());
       const url = `${POLYMARKET_API.GAMMA_API_BASE_URL}/markets?clob_token_ids=${encodedTokenId}`;
 
       this.logger.debug(
@@ -539,7 +551,6 @@ export class PositionTracker {
             // Find the index with price closest to 1 (winner)
             let winnerIndex = -1;
             let highestPrice = 0;
-            const WINNER_THRESHOLD = 0.5; // Price > 0.5 indicates likely winner
 
             for (let i = 0; i < prices.length; i++) {
               const price = parseFloat(prices[i]);
@@ -550,7 +561,7 @@ export class PositionTracker {
             }
 
             // Only consider it a winner if price is significantly above threshold
-            if (winnerIndex >= 0 && highestPrice > WINNER_THRESHOLD) {
+            if (winnerIndex >= 0 && highestPrice > PositionTracker.WINNER_THRESHOLD) {
               const winner = outcomes[winnerIndex].trim();
               this.logger.debug(
                 `[PositionTracker] Resolved market for tokenId ${tokenId}: winner="${winner}" (price=${highestPrice.toFixed(4)})`,
