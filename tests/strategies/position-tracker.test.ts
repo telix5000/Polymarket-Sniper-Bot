@@ -5,7 +5,8 @@ import { test, describe } from "node:test";
  * Unit tests for PositionTracker settlement price calculation logic
  */
 
-// Shared constant matching PositionTracker.WINNER_THRESHOLD
+// Test-only mirror of PositionTracker.WINNER_THRESHOLD (private static readonly)
+// IMPORTANT: Keep in sync manually if production threshold changes
 const WINNER_THRESHOLD = 0.5;
 
 describe("PositionTracker Settlement Price Logic", () => {
@@ -451,17 +452,14 @@ describe("PositionTracker Gamma API Outcome Parsing", () => {
 
   test("No clear winner when all prices are near 0", () => {
     // Simulates Gamma API response where market is closed but not yet resolved
-    const outcomes = JSON.parse('["Yes", "No"]');
     const prices = JSON.parse('["0", "0"]');
 
-    let winnerIndex = -1;
     let highestPrice = 0;
 
     for (let i = 0; i < prices.length; i++) {
       const price = parseFloat(prices[i]);
       if (Number.isFinite(price) && price > highestPrice) {
         highestPrice = price;
-        winnerIndex = i;
       }
     }
 

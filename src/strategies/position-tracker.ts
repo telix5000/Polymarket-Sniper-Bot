@@ -281,12 +281,13 @@ export class PositionTracker {
 
               if (isRedeemable) {
                 // Market is resolved - fetch the actual market outcome to determine settlement price
-                // Use tokenId as cache key since we query by clob_token_ids
-                let winningOutcome = this.marketOutcomeCache.get(tokenId);
+                // Use marketId as cache key since all tokens in the same market share the same outcome
+                // This avoids redundant Gamma API calls for multi-outcome markets
+                let winningOutcome = this.marketOutcomeCache.get(marketId);
                 
                 if (winningOutcome === undefined) {
                   winningOutcome = await this.fetchMarketOutcome(tokenId);
-                  this.marketOutcomeCache.set(tokenId, winningOutcome);
+                  this.marketOutcomeCache.set(marketId, winningOutcome);
                 }
 
                 if (!winningOutcome) {
