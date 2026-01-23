@@ -910,6 +910,9 @@ export class SmartHedgingStrategy {
 
     // Dynamic threshold: lower the min profit requirement when facing severe losses
     // If we have positions with >emergencyLossThresholdPct loss, accept ANY profitable position
+    // Note: pnlPct is negative for losses (e.g., -35% means 35% loss)
+    // Math.min returns the most negative value = worst loss (e.g., -48% is worse than -20%)
+    // emergencyLossThresholdPct is a positive number (e.g., 30), so we check: worstLoss <= -30
     const worstLoss = Math.min(...potentialHedgePositions.map((pos) => pos.pnlPct));
     const hasEmergencyLoss = worstLoss <= -this.config.emergencyLossThresholdPct;
     const effectiveMinProfitPct = hasEmergencyLoss ? 0.1 : this.config.reserveSellMinProfitPct;
