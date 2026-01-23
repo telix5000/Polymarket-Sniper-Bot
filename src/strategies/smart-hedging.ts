@@ -404,6 +404,13 @@ export class SmartHedgingStrategy {
   private static readonly RESERVE_SELL_COOLDOWN_MS = 300000; // 5 minutes
 
   /**
+   * Slippage tolerances for order execution
+   */
+  private static readonly HEDGE_SLIPPAGE_PCT = 0.05; // 5% slippage for hedge buys
+  private static readonly SELL_SLIPPAGE_PCT = 0.10; // 10% slippage for emergency sells
+  private static readonly SWAP_FEE_BUFFER_PCT = 0.02; // 2% buffer for swap fees
+
+  /**
    * Price history for timing optimization
    * Key: tokenId, Value: array of price entries (most recent first)
    */
@@ -656,30 +663,31 @@ export class SmartHedgingStrategy {
             continue;
           }
 
-          // Both failed - fall through to liquidation
-          this.logger.warn(`[SmartHedging] ⚠️ Hedge and swap failed - falling back to liquidation`);
+          // Both hedge and swap failed - must liquidate to stop bleeding
+          this.logger.warn(`[SmartHedging] ⚠️ Hedge and swap both failed - must liquidate`);
         }
 
-        if (analysis.action === "SELL" || analysis.action === "HEDGE") {
-          // Either SELL was the best action, or HEDGE failed - liquidate now
-          this.logger.info(
-            `[SmartHedging] 📊 DECISION: SELL (liquidate to stop losses)` +
-              `\n  Reason: ${analysis.action === "SELL" ? analysis.reason : "Hedge attempts failed"}` +
-              `\n  Salvaging: ~$${currentValue.toFixed(2)} before further decay`,
-          );
+        // If we reach here, either:
+        // 1. analysis.action === "SELL" (hedging wasn't viable, sell is best option)
+        // 2. analysis.action === "HEDGE" but both hedge and swap failed (must liquidate)
+        // In both cases, we need to liquidate to stop losses
+        this.logger.info(
+          `[SmartHedging] 📊 EXECUTING LIQUIDATION:` +
+            `\n  Reason: ${analysis.action === "SELL" ? analysis.reason : "All hedge attempts failed"}` +
+            `\n  Salvaging: ~$${currentValue.toFixed(2)} before further decay`,
+        );
 
-          const liquidated = await this.liquidatePosition(position, "FORCE_LIQUIDATION");
-          if (liquidated) {
-            actionsCount++;
-            this.positionFirstSeenLosing.delete(positionKey);
-            this.logger.info(
-              `[SmartHedging] ✅ LIQUIDATED - Salvaged $${currentValue.toFixed(2)} (saved from going to $0)`,
-            );
-          } else {
-            this.logger.error(
-              `[SmartHedging] ❌ FAILED TO LIQUIDATE - Position still at risk!`,
-            );
-          }
+        const liquidated = await this.liquidatePosition(position, "FORCE_LIQUIDATION");
+        if (liquidated) {
+          actionsCount++;
+          this.positionFirstSeenLosing.delete(positionKey);
+          this.logger.info(
+            `[SmartHedging] ✅ LIQUIDATED - Salvaged $${currentValue.toFixed(2)} (saved from going to $0)`,
+          );
+        } else {
+          this.logger.error(
+            `[SmartHedging] ❌ FAILED TO LIQUIDATE - Position still at risk!`,
+          );
         }
       } catch (err) {
         this.logger.error(
@@ -976,7 +984,7 @@ export class SmartHedgingStrategy {
         outcome: originalSide === "YES" ? "NO" : "YES",
         side: "BUY",
         sizeUsd: hedgeUsd,
-        maxAcceptablePrice: opposingPrice * 1.05, // 5% slippage
+        maxAcceptablePrice: opposingPrice * (1 + SmartHedgingStrategy.HEDGE_SLIPPAGE_PCT),
         logger: this.logger,
         priority: true,
         skipDuplicatePrevention: true,
@@ -1077,7 +1085,7 @@ export class SmartHedgingStrategy {
         outcome: originalSide,
         side: "SELL",
         sizeUsd: sellProceeds,
-        maxAcceptablePrice: bestBid * 0.9, // Accept 10% slippage
+        maxAcceptablePrice: bestBid * (1 - SmartHedgingStrategy.SELL_SLIPPAGE_PCT),
         logger: this.logger,
         priority: true,
         skipDuplicatePrevention: true,
@@ -1105,7 +1113,7 @@ export class SmartHedgingStrategy {
 
       // Use the sell proceeds to buy the opposite side
       // Keep a small buffer for fees
-      const buyAmount = sellProceeds * 0.98; // 2% buffer for fees/slippage
+      const buyAmount = sellProceeds * (1 - SmartHedgingStrategy.SWAP_FEE_BUFFER_PCT);
 
       this.logger.info(
         `[SmartHedging] 📥 SWAP STEP 2: Buying ${originalSide === "YES" ? "NO" : "YES"}` +
@@ -1120,7 +1128,7 @@ export class SmartHedgingStrategy {
         outcome: originalSide === "YES" ? "NO" : "YES",
         side: "BUY",
         sizeUsd: buyAmount,
-        maxAcceptablePrice: opposingPrice * 1.05,
+        maxAcceptablePrice: opposingPrice * (1 + SmartHedgingStrategy.HEDGE_SLIPPAGE_PCT),
         logger: this.logger,
         priority: true,
         skipDuplicatePrevention: true,
@@ -1696,7 +1704,7 @@ export class SmartHedgingStrategy {
         outcome: position.side as "YES" | "NO",
         side: "SELL",
         sizeUsd,
-        maxAcceptablePrice: bestBid * 0.9, // Accept up to 10% slippage for emergency liquidation
+        maxAcceptablePrice: bestBid * (1 - SmartHedgingStrategy.SELL_SLIPPAGE_PCT),
         logger: this.logger,
         priority: true, // High priority for liquidation
         skipDuplicatePrevention: true, // Must bypass duplicate prevention
