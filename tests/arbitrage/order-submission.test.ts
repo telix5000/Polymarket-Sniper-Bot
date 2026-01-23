@@ -308,8 +308,8 @@ test("malformed response with empty string amounts is handled correctly", async 
     authCooldownMs: 1000,
   });
 
-  // Empty strings should parse to NaN, which should allow the order to proceed
-  // because we can't determine if it was killed or not
+  // Empty strings are expected to parse to NaN (malformed response).
+  // Since we can't determine if the order was killed or filled, we allow it to proceed.
   const result = await controller.submit({
     sizeUsd: 50,
     marketId: "market-malformed",
@@ -323,7 +323,7 @@ test("malformed response with empty string amounts is handled correctly", async 
     }),
   });
 
-  // With empty strings parsing to NaN, the order should proceed as submitted
+  // With empty strings parsing to NaN, the order proceeds as submitted
   assert.equal(result.status, "submitted");
   assert.equal(result.orderId, "order-malformed");
 });
