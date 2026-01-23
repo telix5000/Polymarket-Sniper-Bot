@@ -18,6 +18,16 @@ export type OrderSubmissionResult = {
   transactionHash?: string; // For on-chain mode
   statusCode?: number;
   blockedUntil?: number;
+  /**
+   * Fill information for FOK/FAK orders.
+   * For FOK orders, check if takingAmount or makingAmount > 0 to verify actual fill.
+   * If both are "0", the order was killed (no fill).
+   */
+  fillInfo?: {
+    takingAmount: string;
+    makingAmount: string;
+    status?: string;
+  };
 };
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -164,8 +174,36 @@ export class OrderSubmissionController {
       }
       const orderId = extractOrderId(response);
       const accepted = isOrderAccepted(response);
+      const fillInfo = extractFillInfo(response);
+      
       if ((statusCode === 200 || statusCode === 201) && accepted) {
-        return { status: "submitted", orderId, statusCode };
+        // Check if FOK order was actually filled (not killed)
+        // A killed FOK order has takingAmount=0 and makingAmount=0
+        if (fillInfo) {
+          const takingAmount = parseFloat(fillInfo.takingAmount) || 0;
+          const makingAmount = parseFloat(fillInfo.makingAmount) || 0;
+          
+          if (takingAmount === 0 && makingAmount === 0) {
+            // FOK order was killed - no fill occurred
+            params.logger.warn(
+              `[CLOB] FOK order killed (no fill): orderId=${orderId ?? "unknown"} takingAmount=${fillInfo.takingAmount} makingAmount=${fillInfo.makingAmount} status=${fillInfo.status ?? "unknown"}`,
+            );
+            return {
+              status: "failed",
+              reason: "FOK_ORDER_KILLED",
+              orderId,
+              statusCode,
+              fillInfo,
+            };
+          }
+          
+          // Log fill info for successful orders (diagnostic)
+          params.logger.debug(
+            `[CLOB] Order filled: orderId=${orderId ?? "unknown"} takingAmount=${fillInfo.takingAmount} makingAmount=${fillInfo.makingAmount}`,
+          );
+        }
+        
+        return { status: "submitted", orderId, statusCode, fillInfo };
       }
 
       if (statusCode === 401) {
@@ -547,18 +585,65 @@ function normalizeReason(reason: string): string {
 function extractOrderId(response: unknown): string | undefined {
   const candidate = response as {
     order?: { id?: string; hash?: string };
+    orderID?: string;
   } | null;
-  return candidate?.order?.id ?? candidate?.order?.hash;
+  return candidate?.order?.id ?? candidate?.order?.hash ?? candidate?.orderID;
+}
+
+/**
+ * Extract fill information from an order response.
+ * For FOK orders, this tells us if the order was actually filled or killed.
+ * @returns Object with filled amounts, or undefined if not available
+ */
+export function extractFillInfo(response: unknown): {
+  takingAmount: string;
+  makingAmount: string;
+  status?: string;
+} | undefined {
+  const candidate = response as {
+    takingAmount?: string;
+    makingAmount?: string;
+    status?: string;
+  } | null;
+  
+  if (candidate?.takingAmount !== undefined || candidate?.makingAmount !== undefined) {
+    return {
+      takingAmount: candidate?.takingAmount ?? "0",
+      makingAmount: candidate?.makingAmount ?? "0",
+      status: candidate?.status,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Check if a FOK order was actually filled (not killed).
+ * FOK orders that are killed have takingAmount=0 and makingAmount=0.
+ * @returns true if the order appears to have been filled, false if killed
+ */
+function isFokOrderFilled(response: unknown): boolean {
+  const fillInfo = extractFillInfo(response);
+  if (!fillInfo) {
+    // No fill info available - assume filled for backwards compatibility
+    return true;
+  }
+  
+  const takingAmount = parseFloat(fillInfo.takingAmount) || 0;
+  const makingAmount = parseFloat(fillInfo.makingAmount) || 0;
+  
+  // Order is filled if either amount is > 0
+  return takingAmount > 0 || makingAmount > 0;
 }
 
 function isOrderAccepted(response: unknown): boolean {
   const candidate = response as {
     success?: boolean;
     order?: { id?: string; hash?: string; status?: string };
+    orderID?: string;
   } | null;
   if (candidate?.success === false) return false;
   return Boolean(
-    candidate?.order?.id || candidate?.order?.hash || candidate?.order?.status,
+    candidate?.order?.id || candidate?.order?.hash || candidate?.order?.status || candidate?.orderID,
   );
 }
 

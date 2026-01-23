@@ -1053,7 +1053,16 @@ export class SmartHedgingStrategy {
         orderConfig: { minOrderUsd: 0 },
       });
 
-      return result.status === "submitted";
+      if (result.status === "submitted") {
+        return true;
+      } else if (result.reason === "FOK_ORDER_KILLED") {
+        // FOK order was submitted but killed (no fill) - market has insufficient liquidity
+        this.logger.warn(
+          `[SmartHedging] ⚠️ Reserve sell not filled (FOK killed) - market has insufficient liquidity`,
+        );
+        return false;
+      }
+      return false;
     } catch (err) {
       this.logger.error(
         `[SmartHedging] ❌ Failed to sell for reserves: ${err instanceof Error ? err.message : String(err)}`,
@@ -1327,6 +1336,12 @@ export class SmartHedgingStrategy {
             `\n  Best case: ${bestCaseProfit >= 0 ? "+" : ""}$${bestCaseProfit.toFixed(2)} | Worst case: ${maxLoss >= 0 ? "+" : ""}$${maxLoss.toFixed(2)}`,
         );
         return true;
+      } else if (result.reason === "FOK_ORDER_KILLED") {
+        // FOK order was submitted but killed (no fill) - market has insufficient liquidity
+        this.logger.warn(
+          `[SmartHedging] ⚠️ Hedge order not filled (FOK killed) - market has insufficient liquidity`,
+        );
+        return false;
       } else {
         this.logger.warn(
           `[SmartHedging] ⏭️ Hedge order ${result.status}: ${result.reason ?? "unknown"}`,

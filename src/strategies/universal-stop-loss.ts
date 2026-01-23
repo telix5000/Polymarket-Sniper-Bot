@@ -291,6 +291,12 @@ export class UniversalStopLossStrategy {
           `[UniversalStopLoss] ⏭️ Stop-loss sell skipped: ${result.reason ?? "unknown"}`,
         );
         return false;
+      } else if (result.reason === "FOK_ORDER_KILLED") {
+        // FOK order was submitted but killed (no fill) - market has insufficient liquidity
+        this.logger.warn(
+          `[UniversalStopLoss] ⚠️ Stop-loss sell not filled (FOK killed) - market has insufficient liquidity`,
+        );
+        return false;
       } else {
         this.logger.error(
           `[UniversalStopLoss] ❌ Stop-loss sell failed: ${result.reason ?? "unknown"}`,
