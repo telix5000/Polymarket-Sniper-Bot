@@ -12,7 +12,7 @@
 
 import type { ClobClient } from "@polymarket/clob-client";
 import type { ConsoleLogger } from "../utils/logger.util";
-import type { MarketData, CooldownEntry } from "./types";
+import type { MarketData, CooldownEntry } from "./risk-types";
 import { httpGet } from "../utils/fetch-data.util";
 import { POLYMARKET_API } from "../constants/polymarket.constants";
 

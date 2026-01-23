@@ -45,7 +45,6 @@ export class QuickFlipStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: QuickFlipConfig;
-  private positionEntryTimes: Map<string, number> = new Map();
   // Track tokens with no liquidity to suppress repeated warnings
   private noLiquidityTokens: Set<string> = new Set();
 
@@ -64,9 +63,6 @@ export class QuickFlipStrategy {
     if (!this.config.enabled) {
       return 0;
     }
-
-    // Clean up entry times for positions that no longer exist
-    this.cleanupStaleEntries();
 
     let soldCount = 0;
 
@@ -197,23 +193,29 @@ export class QuickFlipStrategy {
 
   /**
    * Check if position should be sold based on hold time
-   * Records entry time on first detection, checks hold time on subsequent calls
+   * Uses position tracker's entry time (when position was first detected)
+   * This prevents selling positions immediately after they appear
    */
   private shouldSell(marketId: string, tokenId: string): boolean {
-    const key = `${marketId}-${tokenId}`;
-
-    // Check if we already have an entry time tracked
-    let entryTime = this.positionEntryTimes.get(key);
+    // Get entry time from position tracker (authoritative source)
+    const entryTime = this.positionTracker.getPositionEntryTime(marketId, tokenId);
 
     if (!entryTime) {
-      // Record current time as entry time (first time seeing this position)
-      entryTime = Date.now();
-      this.positionEntryTimes.set(key, entryTime);
-      return false; // Don't sell on first detection
+      // Position not yet tracked - don't sell
+      return false;
     }
 
     const holdTimeSeconds = (Date.now() - entryTime) / 1000;
-    return holdTimeSeconds >= this.config.minHoldSeconds;
+    
+    // Only sell if we've held for the minimum required time
+    if (holdTimeSeconds < this.config.minHoldSeconds) {
+      this.logger.debug(
+        `[QuickFlip] ⏳ Hold time ${holdTimeSeconds.toFixed(0)}s < min ${this.config.minHoldSeconds}s for ${marketId}`,
+      );
+      return false;
+    }
+
+    return true;
   }
 
   /**
@@ -340,37 +342,18 @@ export class QuickFlipStrategy {
         `[QuickFlip] ❌ Failed to sell position: ${err instanceof Error ? err.message : String(err)}`,
       );
       throw err;
-    } finally {
-      // Always remove from entry times after attempt (success or failure)
-      const key = `${marketId}-${tokenId}`;
-      this.positionEntryTimes.delete(key);
     }
   }
 
   /**
-   * Clean up entry times for positions that no longer exist
+   * Clean up stale entries for positions that no longer exist
    * Prevents memory leak from tracking sold/closed positions
    */
   private cleanupStaleEntries(): void {
     const currentPositions = this.positionTracker.getPositions();
-    const currentKeys = new Set(
-      currentPositions.map((pos) => `${pos.marketId}-${pos.tokenId}`),
-    );
     const currentTokenIds = new Set(currentPositions.map((pos) => pos.tokenId));
 
-    let cleanedCount = 0;
-    const keysToDelete: string[] = [];
-    for (const key of this.positionEntryTimes.keys()) {
-      if (!currentKeys.has(key)) {
-        keysToDelete.push(key);
-      }
-    }
-    for (const key of keysToDelete) {
-      this.positionEntryTimes.delete(key);
-      cleanedCount++;
-    }
-
-    // Also clean up no-liquidity cache for tokens we no longer hold
+    // Clean up no-liquidity cache for tokens we no longer hold
     const tokensToRemove: string[] = [];
     for (const tokenId of this.noLiquidityTokens) {
       if (!currentTokenIds.has(tokenId)) {
@@ -380,19 +363,12 @@ export class QuickFlipStrategy {
     for (const tokenId of tokensToRemove) {
       this.noLiquidityTokens.delete(tokenId);
     }
-
-    if (cleanedCount > 0) {
-      this.logger.debug(
-        `[QuickFlip] Cleaned up ${cleanedCount} stale position entries`,
-      );
-    }
   }
 
   /**
    * Get strategy statistics
    */
   getStats(): {
-    trackedPositions: number;
     enabled: boolean;
     targetPct: number;
     stopLossPct: number;
@@ -400,7 +376,6 @@ export class QuickFlipStrategy {
     dynamicTargets: boolean;
   } {
     return {
-      trackedPositions: this.positionEntryTimes.size,
       enabled: this.config.enabled,
       targetPct: this.config.targetPct,
       stopLossPct: this.config.stopLossPct,

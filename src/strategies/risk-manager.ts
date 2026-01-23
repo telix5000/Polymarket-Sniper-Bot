@@ -1,20 +1,14 @@
 /**
- * Risk Manager - Enterprise Grade Risk Engine
+ * Risk Manager - Centralized Risk Control
  *
- * Centralized risk management with:
- * - Portfolio exposure limits (total, per-market, per-category)
- * - Circuit breakers (consecutive rejects, API health, drawdown)
- * - Hard cooldownUntil cache (per token_id + side) - NO RETRY SPAM
- * - Kill switch support (global and per-strategy)
- * - 3-layer stop logic (local, volatility, portfolio)
- * - PANIC override: liquidation allowed regardless of tier when loss >= PANIC_LOSS_PCT
- * - DUST/RESOLVED position state exclusion from risk calculations
- * - Accounting reconciliation with PnL conflict detection
- * - Idempotency/in-flight locks to prevent stacking and flip-flopping
- * - Per-strategy attribution and kill switches
+ * Integrated risk management for all trading strategies:
+ * - Portfolio exposure limits (total, per-market)
+ * - Circuit breakers (consecutive failures, drawdown protection)
+ * - In-flight order tracking to prevent stacking
+ * - Kill switch support
+ * - PANIC liquidation override for catastrophic losses
  *
  * All orders MUST pass through RiskManager.evaluate() before execution.
- * This includes stop-loss and hedging orders.
  */
 
 import * as fs from "fs";
@@ -32,7 +26,7 @@ import type {
   AllowanceInfo,
   TokenType,
   OrderSide,
-} from "./types";
+} from "./risk-types";
 
 /**
  * Risk Manager Configuration

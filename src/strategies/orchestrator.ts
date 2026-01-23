@@ -23,6 +23,11 @@ import {
   POSITION_TRACKER_REFRESH_INTERVAL_MS,
   STRATEGY_EXECUTION_INTERVAL_MS,
 } from "./constants";
+// === INTEGRATED ENTERPRISE COMPONENTS ===
+import { RiskManager, createRiskManager } from "./risk-manager";
+import { PnLLedger } from "./pnl-ledger";
+import { ExecutionEngine, createExecutionEngine } from "./execution-engine";
+import { MarketSelector, createMarketSelector } from "./market-selector";
 
 /**
  * Default Universal Stop-Loss configuration
@@ -47,12 +52,23 @@ export interface StrategyOrchestratorConfig {
   universalStopLossConfig?: UniversalStopLossConfig;
   smartHedgingConfig?: SmartHedgingConfig;
   executionIntervalMs?: number;
+  /**
+   * Risk management preset - uses enterprise RiskManager for centralized risk control
+   * If not provided, a default "balanced" RiskManager is created
+   */
+  riskPreset?: "conservative" | "balanced" | "aggressive";
 }
 
 /**
  * Strategy Orchestrator
  *
- * MULTI-STRATEGY SYSTEM - Hybrid sequential + parallel execution
+ * UNIFIED TRADING SYSTEM with integrated enterprise-grade risk management
+ *
+ * KEY FEATURES:
+ * - Centralized RiskManager: ALL orders go through risk evaluation
+ * - MAX_POSITION_USD enforcement: Per-market exposure limits
+ * - Circuit breakers: Auto-halt on consecutive failures or drawdown
+ * - In-flight tracking: Prevents order stacking race conditions
  *
  * EXECUTION MODEL:
  * - Phase 1 (Sequential): Capital-critical strategies that need guaranteed funds
@@ -60,35 +76,34 @@ export interface StrategyOrchestratorConfig {
  *   - Smart Hedging: Sells positions AND buys hedges atomically
  * - Phase 2 (Parallel): All other strategies compete for available capital
  *
- * This prevents race conditions where Smart Hedging sells positions to free up
- * capital for hedges, but other strategies "steal" that capital before the hedge executes.
- *
- * As you compound money and positions grow, the system scales:
- * - Position tracking refreshes every 5 seconds
- * - Strategy execution every 2 seconds
- * - Parallel sell execution for Quick Flip / Auto-Sell
- *
  * Strategy Priority:
  * 1. Auto-Redeem - Claim resolved positions (capital recovery) [SEQUENTIAL]
  * 2. Smart Hedging - Hedge risky positions (sells + buys atomically) [SEQUENTIAL]
- * 3. Universal Stop-Loss - Protect higher-tier positions [PARALLEL]
- * 4. Endgame Sweep - Buy 75-92¢ positions (scalping range) [PARALLEL]
- * 5. Auto-Sell - Sell at threshold (free up capital) [PARALLEL]
- * 6. Quick Flip - Take profits at target % [PARALLEL]
- *
- * The ARB engine and Monitor service run in their own continuous loops
- * alongside this orchestrator for maximum parallelism.
+ * 3. Universal Stop-Loss - Protect higher-tier positions [SEQUENTIAL]
+ * 4. Endgame Sweep - Buy high-confidence positions [SEQUENTIAL]
+ * 5. Auto-Sell - Sell at threshold (free up capital) [SEQUENTIAL]
+ * 6. Quick Flip - Take profits at target % [SEQUENTIAL]
  */
 export class StrategyOrchestrator {
   private client: ClobClient;
   private logger: ConsoleLogger;
+
+  // === CORE ENTERPRISE COMPONENTS ===
+  private riskManager: RiskManager;
+  private pnlLedger: PnLLedger;
+  private executionEngine: ExecutionEngine;
+  private marketSelector: MarketSelector;
   private positionTracker: PositionTracker;
+
+  // === STRATEGIES ===
   private universalStopLossStrategy: UniversalStopLossStrategy;
   private smartHedgingStrategy: SmartHedgingStrategy;
   private quickFlipStrategy: QuickFlipStrategy;
   private autoSellStrategy: AutoSellStrategy;
   private endgameSweepStrategy: EndgameSweepStrategy;
   private autoRedeemStrategy: AutoRedeemStrategy;
+
+  // === STATE ===
   private arbEnabled: boolean;
   private monitorEnabled: boolean;
   private executionIntervalMs: number;
@@ -102,6 +117,41 @@ export class StrategyOrchestrator {
     this.monitorEnabled = config.monitorEnabled;
     this.executionIntervalMs =
       config.executionIntervalMs ?? STRATEGY_EXECUTION_INTERVAL_MS;
+
+    // === INITIALIZE ENTERPRISE CORE COMPONENTS ===
+    const riskPreset = config.riskPreset ?? "balanced";
+    const maxPositionUsd = config.endgameSweepConfig.maxPositionUsd;
+
+    // 1. Risk Manager - ALL orders go through this for approval
+    this.riskManager = createRiskManager(riskPreset, this.logger, {
+      maxExposurePerMarketUsd: maxPositionUsd,
+      maxExposureUsd: maxPositionUsd * 10,
+    });
+
+    // 2. PnL Ledger - Track all profits and losses
+    this.pnlLedger = new PnLLedger(this.logger);
+
+    // 3. Execution Engine - Handles order execution with retries
+    this.executionEngine = createExecutionEngine(
+      this.client,
+      this.logger,
+      this.riskManager,
+      riskPreset,
+    );
+
+    // 4. Market Selector - Filters markets by quality
+    this.marketSelector = createMarketSelector(
+      this.client,
+      this.logger,
+      riskPreset,
+    );
+
+    this.logger.info(
+      `[Orchestrator] 🏢 Enterprise components initialized: RiskManager(${riskPreset}), PnLLedger, ExecutionEngine, MarketSelector`,
+    );
+    this.logger.info(
+      `[Orchestrator] 💰 Position limits: maxPerMarket=$${maxPositionUsd}, maxTotal=$${maxPositionUsd * 10}`,
+    );
 
     // Initialize position tracker
     this.positionTracker = new PositionTracker({
@@ -314,6 +364,16 @@ export class StrategyOrchestrator {
           this.logger.info(`[Orchestrator] 📊 Performance:\n${summary}`);
         }
         tracker.pruneHistory(); // Clean up old data
+
+        // Also log PnL summary
+        const pnlSummary = this.pnlLedger.getSummary();
+        this.logger.info(
+          `[Orchestrator] 💰 PnL: realized=$${pnlSummary.totalRealizedPnl.toFixed(2)}, ` +
+            `unrealized=$${pnlSummary.totalUnrealizedPnl.toFixed(2)}, ` +
+            `fees=$${pnlSummary.totalFees.toFixed(2)}, ` +
+            `net=$${pnlSummary.netPnl.toFixed(2)}, ` +
+            `winRate=${(pnlSummary.winRate * 100).toFixed(1)}%`,
+        );
       },
       5 * 60 * 1000,
     ); // Every 5 minutes
@@ -329,6 +389,38 @@ export class StrategyOrchestrator {
    */
   getPositionTracker(): PositionTracker {
     return this.positionTracker;
+  }
+
+  /**
+   * Get the risk manager instance
+   * Used for centralized risk evaluation across all strategies
+   */
+  getRiskManager(): RiskManager {
+    return this.riskManager;
+  }
+
+  /**
+   * Get the PnL ledger instance
+   * Used for tracking profits and losses
+   */
+  getPnLLedger(): PnLLedger {
+    return this.pnlLedger;
+  }
+
+  /**
+   * Get the execution engine instance
+   * Used for executing orders with risk checks
+   */
+  getExecutionEngine(): ExecutionEngine {
+    return this.executionEngine;
+  }
+
+  /**
+   * Get the market selector instance
+   * Used for filtering markets by quality criteria
+   */
+  getMarketSelector(): MarketSelector {
+    return this.marketSelector;
   }
 
   /**
@@ -361,17 +453,14 @@ export class StrategyOrchestrator {
    *   - Smart Hedging: Sells positions AND buys hedges (needs capital reservation)
    * - Phase 2 (Parallel): All other strategies that compete for available capital
    *
-   * This prevents race conditions where Smart Hedging sells positions to free up
-   * capital for hedges, but other strategies "steal" that capital before the hedge executes.
+   * ALL SEQUENTIAL - No parallel execution to prevent race conditions and order stacking
    */
   private async executeStrategies(): Promise<void> {
-    this.logger.debug(
-      "[Orchestrator] Executing strategies (sequential + parallel phases)",
-    );
+    this.logger.debug("[Orchestrator] Executing strategies (all sequential)");
 
     try {
-      // PHASE 1: Sequential execution for capital-critical strategies
-      // These strategies need to complete atomically (sell + buy) without interference
+      // ALL strategies run sequentially to prevent race conditions
+      // This ensures position checks are accurate before each strategy runs
       // Each strategy is wrapped in try-catch to prevent blocking subsequent execution
 
       // Priority 1: Auto-Redeem (claim resolved positions - highest priority for capital recovery)
@@ -389,8 +478,6 @@ export class StrategyOrchestrator {
       }
 
       // Priority 2: Smart Hedging (HEDGE risky tier positions instead of selling at loss)
-      // MUST run sequentially: sells positions to free capital, then immediately uses it for hedges
-      // Running in parallel would allow other strategies to "steal" the freed capital
       try {
         await this.executeWithLogging(
           "Smart Hedging",
@@ -404,69 +491,63 @@ export class StrategyOrchestrator {
         );
       }
 
-      // PHASE 2: Parallel execution for remaining strategies
-      // These can safely compete for available capital
-      // Each strategy is wrapped with its name for proper error logging
-      const parallelStrategies = [
-        {
-          name: "Universal Stop-Loss",
-          priority: 3,
-          execute: () => this.universalStopLossStrategy.execute(),
-          enabled: this.universalStopLossStrategy.getStats().enabled,
-        },
-        {
-          name: "Endgame Sweep",
-          priority: 4,
-          execute: () => this.endgameSweepStrategy.execute(),
-          enabled: this.endgameSweepStrategy.getStats().enabled,
-        },
-        {
-          name: "Auto-Sell",
-          priority: 5,
-          execute: () => this.autoSellStrategy.execute(),
-          enabled: this.autoSellStrategy.getStats().enabled,
-        },
-        {
-          name: "Quick Flip",
-          priority: 6,
-          execute: () => this.quickFlipStrategy.execute(),
-          enabled: this.quickFlipStrategy.getStats().enabled,
-        },
-      ];
-
-      const results = await Promise.allSettled(
-        parallelStrategies.map((strategy) =>
-          this.executeWithLogging(
-            strategy.name,
-            strategy.priority,
-            strategy.execute,
-            strategy.enabled,
-          ),
-        ),
-      );
-
-      // Log any failures with strategy names
-      results.forEach((result, index) => {
-        if (result.status === "rejected") {
-          const strategyName = parallelStrategies[index].name;
-          this.logger.error(
-            `[Orchestrator] ${strategyName} failed: ${result.reason}`,
-          );
-        }
-      });
-
-      // Log summary
-      const totalExecuted = results.filter(
-        (r) => r.status === "fulfilled" && (r.value as number) > 0,
-      ).length;
-
-      if (totalExecuted > 0) {
-        this.logger.debug(
-          `[Orchestrator] ${totalExecuted} strategies executed trades`,
+      // Priority 3: Universal Stop-Loss (protect positions from excessive loss)
+      try {
+        await this.executeWithLogging(
+          "Universal Stop-Loss",
+          3,
+          () => this.universalStopLossStrategy.execute(),
+          this.universalStopLossStrategy.getStats().enabled,
+        );
+      } catch (err) {
+        this.logger.error(
+          `[Orchestrator] Universal Stop-Loss failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
 
-      // Note: ARB engine (Priority 2) and Monitor (Priority 6) run in their own loops
+      // Priority 4: Endgame Sweep (buy high-confidence positions)
+      try {
+        await this.executeWithLogging(
+          "Endgame Sweep",
+          4,
+          () => this.endgameSweepStrategy.execute(),
+          this.endgameSweepStrategy.getStats().enabled,
+        );
+      } catch (err) {
+        this.logger.error(
+          `[Orchestrator] Endgame Sweep failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      // Priority 5: Auto-Sell (sell positions near resolution)
+      try {
+        await this.executeWithLogging(
+          "Auto-Sell",
+          5,
+          () => this.autoSellStrategy.execute(),
+          this.autoSellStrategy.getStats().enabled,
+        );
+      } catch (err) {
+        this.logger.error(
+          `[Orchestrator] Auto-Sell failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      // Priority 6: Quick Flip (take profits on winning positions)
+      try {
+        await this.executeWithLogging(
+          "Quick Flip",
+          6,
+          () => this.quickFlipStrategy.execute(),
+          this.quickFlipStrategy.getStats().enabled,
+        );
+      } catch (err) {
+        this.logger.error(
+          `[Orchestrator] Quick Flip failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      // Note: ARB engine and Monitor run in their own loops alongside this orchestrator
       this.logger.debug(
         `[Orchestrator] ARB=${this.arbEnabled ? "active" : "off"} Monitor=${this.monitorEnabled ? "active" : "off"}`,
       );

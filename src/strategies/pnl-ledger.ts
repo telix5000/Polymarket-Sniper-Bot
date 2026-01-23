@@ -9,7 +9,7 @@
  */
 
 import type { ConsoleLogger } from "../utils/logger.util";
-import type { StrategyId, OrderSide } from "./types";
+import type { StrategyId, OrderSide } from "./risk-types";
 
 export interface Trade {
   timestamp: number;

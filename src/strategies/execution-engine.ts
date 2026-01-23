@@ -22,7 +22,7 @@ import type {
   RiskDecision,
   TradeLogEntry,
   CooldownEntry,
-} from "./types";
+} from "./risk-types";
 
 /**
  * Execution engine configuration

@@ -16,7 +16,6 @@ import { startWireguard } from "../utils/wireguard.util";
 import { startOpenvpn } from "../utils/openvpn.util";
 import {
   formatClobCredsChecklist,
-  isApiKeyCreds,
 } from "../utils/clob-credentials.util";
 import { ensureTradingReady } from "../polymarket/preflight";
 import { getContextAwareWarnings } from "../utils/auth-diagnostic.util";
@@ -26,7 +25,6 @@ import {
 } from "../strategies/orchestrator";
 import { DEFAULT_SMART_HEDGING_CONFIG } from "../strategies/smart-hedging";
 import { isLiveTradingEnabled } from "../utils/live-trading.util";
-import { createEnterpriseOrchestrator } from "../enterprise";
 
 async function main(): Promise<void> {
   const logger = new ConsoleLogger();
@@ -146,10 +144,28 @@ async function main(): Promise<void> {
         ...DEFAULT_UNIVERSAL_STOP_LOSS_CONFIG,
         minHoldSeconds: strategyConfig.stopLossMinHoldSeconds, // Prevent immediate sells after buying
       },
+      // Pass risk preset for enterprise-grade risk management
+      riskPreset: strategyConfig.presetName as "conservative" | "balanced" | "aggressive",
     });
 
     await orchestrator.start();
     logger.info("✅ Strategy orchestrator started successfully");
+
+    // Set session start balance for accurate drawdown calculation in RiskManager
+    try {
+      const mempoolEnv = loadMonitorConfig(cliOverrides);
+      const usdcBalance = await getUsdBalanceApprox(
+        client.wallet,
+        mempoolEnv.collateralTokenAddress,
+        mempoolEnv.collateralTokenDecimals,
+      );
+      orchestrator.getRiskManager().setSessionStartBalance(usdcBalance);
+      logger.info(`💰 Session start balance: $${usdcBalance.toFixed(2)}`);
+    } catch (err) {
+      logger.warn(
+        `[Orchestrator] Could not set session balance: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     // Log auto-redeem check interval for user clarity
     if (strategyConfig.autoRedeemEnabled) {
@@ -157,49 +173,6 @@ async function main(): Promise<void> {
       logger.info(
         `💵 Auto-Redeem: Checking for redeemable positions every ${intervalSec} seconds`,
       );
-    }
-
-    // === ENTERPRISE ORCHESTRATOR ===
-    // Start the enterprise system alongside existing strategies
-    // Uses the same preset mode for consistent configuration
-    const enterpriseMode = strategyConfig.presetName as
-      | "conservative"
-      | "balanced"
-      | "aggressive";
-    if (
-      enterpriseMode === "conservative" ||
-      enterpriseMode === "balanced" ||
-      enterpriseMode === "aggressive"
-    ) {
-      logger.info(
-        `🏢 Starting Enterprise Orchestrator (mode: ${enterpriseMode})`,
-      );
-
-      const enterpriseOrchestrator = createEnterpriseOrchestrator(
-        client,
-        logger,
-        enterpriseMode,
-      );
-
-      // Set session start balance for accurate drawdown calculation
-      try {
-        const mempoolEnv = loadMonitorConfig(cliOverrides);
-        const usdcBalance = await getUsdBalanceApprox(
-          client.wallet,
-          mempoolEnv.collateralTokenAddress,
-          mempoolEnv.collateralTokenDecimals,
-        );
-        enterpriseOrchestrator
-          .getRiskManager()
-          .setSessionStartBalance(usdcBalance);
-      } catch (err) {
-        logger.warn(
-          `[Enterprise] Could not set session balance: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-
-      await enterpriseOrchestrator.start();
-      logger.info("✅ Enterprise orchestrator started successfully");
     }
   } else if (strategyConfig && !strategyConfig.enabled) {
     logger.info(

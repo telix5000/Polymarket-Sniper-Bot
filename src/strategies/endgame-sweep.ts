@@ -75,6 +75,15 @@ export class EndgameSweepStrategy {
   private purchaseTimestamps: Map<string, number> = new Map(); // Track when markets were purchased
   private getReservedBalance?: () => number;
 
+  /**
+   * Track in-flight BUY orders per market to prevent concurrent buys from exceeding limits.
+   * Key: marketId, Value: { amountUsd, startTime }
+   * Entries expire after 60 seconds if not cleaned up properly.
+   */
+  private inFlightBuys: Map<string, { amountUsd: number; startTime: number }> =
+    new Map();
+  private static readonly IN_FLIGHT_TTL_MS = 60_000; // 60 second timeout
+
   constructor(strategyConfig: EndgameSweepStrategyConfig) {
     this.client = strategyConfig.client;
     this.logger = strategyConfig.logger;
@@ -123,22 +132,27 @@ export class EndgameSweepStrategy {
         continue;
       }
 
-      // === CHECK EXISTING POSITION SIZE ===
-      // Prevent exceeding max position size by checking current exposure
+      // === CHECK EXISTING POSITION SIZE + IN-FLIGHT BUYS ===
+      // Prevent exceeding max position size by checking:
+      // 1. Current confirmed positions from position tracker
+      // 2. In-flight buys that haven't completed yet
       const existingPositionUsd = this.getExistingPositionSize(
         market.id,
         market.tokenId,
       );
-      if (existingPositionUsd >= this.config.maxPositionUsd) {
+      const inFlightUsd = this.getInFlightAmount(market.id);
+      const totalExposureUsd = existingPositionUsd + inFlightUsd;
+
+      if (totalExposureUsd >= this.config.maxPositionUsd) {
         this.logger.debug(
-          `[EndgameSweep] Skipping ${market.id}: already at max position ($${existingPositionUsd.toFixed(2)} >= $${this.config.maxPositionUsd})`,
+          `[EndgameSweep] Skipping ${market.id}: at max position ($${existingPositionUsd.toFixed(2)} confirmed + $${inFlightUsd.toFixed(2)} in-flight >= $${this.config.maxPositionUsd})`,
         );
         continue;
       }
 
       // Calculate remaining capacity for this position
       const remainingCapacityUsd =
-        this.config.maxPositionUsd - existingPositionUsd;
+        this.config.maxPositionUsd - totalExposureUsd;
       if (remainingCapacityUsd < 1) {
         // Less than $1 remaining capacity, skip
         this.logger.debug(
@@ -423,10 +437,11 @@ export class EndgameSweepStrategy {
   }
 
   /**
-   * Get existing position size in USD for a market/token
+   * Get existing position size in USD for a market (ALL tokens in that market)
+   * This ensures MAX_POSITION_USD applies to total market exposure, not per-token
    * Returns 0 if no position exists or positionTracker is not available
    */
-  private getExistingPositionSize(marketId: string, tokenId: string): number {
+  private getExistingPositionSize(marketId: string, _tokenId: string): number {
     if (!this.positionTracker) {
       return 0;
     }
@@ -435,15 +450,57 @@ export class EndgameSweepStrategy {
     let totalExposureUsd = 0;
 
     for (const pos of positions) {
-      // Check for the same market AND token to avoid summing unrelated positions
-      // A position matches if it's in the same market with the same token
-      if (pos.marketId === marketId && pos.tokenId === tokenId) {
+      // Check for ANY position in the same market (not just same token)
+      // This ensures MAX_POSITION_USD is respected per MARKET, not per token
+      // Example: If we have $3 on YES and try to buy $5 on NO, total would be $8
+      if (pos.marketId === marketId) {
         // Position value = size * entry price (what we paid)
         totalExposureUsd += pos.size * pos.entryPrice;
       }
     }
 
     return totalExposureUsd;
+  }
+
+  /**
+   * Get in-flight buy amount for a market (orders submitted but not yet confirmed)
+   * Automatically cleans up stale entries older than IN_FLIGHT_TTL_MS
+   */
+  private getInFlightAmount(marketId: string): number {
+    const entry = this.inFlightBuys.get(marketId);
+    if (!entry) return 0;
+
+    // Check if expired
+    if (Date.now() - entry.startTime > EndgameSweepStrategy.IN_FLIGHT_TTL_MS) {
+      this.inFlightBuys.delete(marketId);
+      return 0;
+    }
+
+    return entry.amountUsd;
+  }
+
+  /**
+   * Mark a buy as in-flight (before submitting order)
+   */
+  private markBuyInFlight(marketId: string, amountUsd: number): void {
+    const existing = this.inFlightBuys.get(marketId);
+    if (existing) {
+      // Add to existing in-flight amount
+      existing.amountUsd += amountUsd;
+      existing.startTime = Date.now();
+    } else {
+      this.inFlightBuys.set(marketId, {
+        amountUsd,
+        startTime: Date.now(),
+      });
+    }
+  }
+
+  /**
+   * Clear in-flight tracking for a market (after order completes or fails)
+   */
+  private clearInFlight(marketId: string): void {
+    this.inFlightBuys.delete(marketId);
   }
 
   /**
@@ -611,42 +668,52 @@ export class EndgameSweepStrategy {
         `[EndgameSweep] 🛒 Executing buy: ${positionSize.toFixed(2)} shares at ${(bestAsk * 100).toFixed(1)}¢ ($${sizeUsd.toFixed(2)}, expected profit: $${expectedProfit.toFixed(2)} / ${expectedProfitPct.toFixed(2)}%)`,
       );
 
-      // Execute buy order
-      const result = await postOrder({
-        client: this.client,
-        wallet,
-        marketId: market.id,
-        tokenId: market.tokenId,
-        outcome: market.side,
-        side: "BUY",
-        sizeUsd,
-        maxAcceptablePrice: bestAsk * 1.02, // Accept up to 2% slippage for endgame positions
-        logger: this.logger,
-        priority: false,
-      });
+      // === MARK IN-FLIGHT BEFORE SUBMITTING ===
+      // This prevents concurrent buys from exceeding the limit
+      this.markBuyInFlight(market.id, sizeUsd);
 
-      if (result.status === "submitted") {
-        this.logger.info(
-          `[EndgameSweep] ✅ Bought ${positionSize.toFixed(2)} shares at ${(bestAsk * 100).toFixed(1)}¢ (expected profit: $${expectedProfit.toFixed(2)})`,
-        );
-      } else if (result.status === "skipped") {
-        this.logger.warn(
-          `[EndgameSweep] ⏭️ Buy order skipped: ${result.reason ?? "unknown reason"}`,
-        );
-        throw new Error(`Buy order skipped: ${result.reason ?? "unknown"}`);
-      } else if (result.reason === "FOK_ORDER_KILLED") {
-        // FOK order was submitted but killed (no fill) - market has insufficient liquidity
-        this.logger.warn(
-          `[EndgameSweep] ⚠️ Buy order not filled (FOK killed): ${positionSize.toFixed(2)} shares at ${(bestAsk * 100).toFixed(1)}¢ - market has insufficient liquidity`,
-        );
-        throw new Error(
-          `Buy order not filled: market has insufficient liquidity`,
-        );
-      } else {
-        this.logger.error(
-          `[EndgameSweep] ❌ Buy order failed: ${result.reason ?? "unknown reason"}`,
-        );
-        throw new Error(`Buy order failed: ${result.reason ?? "unknown"}`);
+      try {
+        // Execute buy order
+        const result = await postOrder({
+          client: this.client,
+          wallet,
+          marketId: market.id,
+          tokenId: market.tokenId,
+          outcome: market.side,
+          side: "BUY",
+          sizeUsd,
+          maxAcceptablePrice: bestAsk * 1.02, // Accept up to 2% slippage for endgame positions
+          logger: this.logger,
+          priority: false,
+        });
+
+        if (result.status === "submitted") {
+          this.logger.info(
+            `[EndgameSweep] ✅ Bought ${positionSize.toFixed(2)} shares at ${(bestAsk * 100).toFixed(1)}¢ (expected profit: $${expectedProfit.toFixed(2)})`,
+          );
+        } else if (result.status === "skipped") {
+          this.logger.warn(
+            `[EndgameSweep] ⏭️ Buy order skipped: ${result.reason ?? "unknown reason"}`,
+          );
+          throw new Error(`Buy order skipped: ${result.reason ?? "unknown"}`);
+        } else if (result.reason === "FOK_ORDER_KILLED") {
+          // FOK order was submitted but killed (no fill) - market has insufficient liquidity
+          this.logger.warn(
+            `[EndgameSweep] ⚠️ Buy order not filled (FOK killed): ${positionSize.toFixed(2)} shares at ${(bestAsk * 100).toFixed(1)}¢ - market has insufficient liquidity`,
+          );
+          throw new Error(
+            `Buy order not filled: market has insufficient liquidity`,
+          );
+        } else {
+          this.logger.error(
+            `[EndgameSweep] ❌ Buy order failed: ${result.reason ?? "unknown reason"}`,
+          );
+          throw new Error(`Buy order failed: ${result.reason ?? "unknown"}`);
+        }
+      } finally {
+        // Always clear in-flight tracking when order completes (success or failure)
+        // Position tracker will pick up successful orders on next refresh
+        this.clearInFlight(market.id);
       }
     } catch (err) {
       // Re-throw error for caller to handle
