@@ -972,13 +972,19 @@ export class PositionTracker {
    * knowing when positions were actually bought, strategies might incorrectly
    * assume positions are "new" and trigger stop-loss or hedging immediately.
    *
-   * IMPORTANT: This method paginates through ALL trade history to find the
-   * actual purchase date for each position. Without pagination, only the most
-   * recent trades would be fetched, causing older positions to use container
-   * start time instead of actual purchase date.
+   * IMPORTANT: This method paginates through the user's BUY trade history up to a
+   * configured safety cap (TRADES_MAX_PAGES, currently ~20 pages / ~10k trades)
+   * to find the earliest purchase date for each position. Without pagination, only
+   * the most recent trades would be fetched, causing older positions to use container
+   * start time (or first-seen time) instead of actual purchase date.
+   *
+   * If the safety cap is hit before the wallet's full history is exhausted, very old
+   * positions whose BUY trades fall before the earliest fetched page may not have an
+   * accurate historical entry time and will fall back to the tracker's default behavior
+   * (treating them as newly seen). A warning is logged when this occurs.
    *
    * Uses the /trades endpoint with side=BUY filter, which directly queries
-   * your wallet's purchase history on the blockchain.
+   * your wallet's purchase history on the blockchain up to the configured cap.
    */
   private async loadHistoricalEntryTimes(): Promise<void> {
     try {
@@ -1074,6 +1080,18 @@ export class PositionTracker {
 
         // Move to next page
         offset += PositionTracker.TRADES_PAGE_LIMIT;
+      }
+
+      // Warn if we hit the max pages limit (may have truncated history)
+      if (
+        pageCount >= PositionTracker.TRADES_MAX_PAGES &&
+        totalTrades > 0 &&
+        totalTrades % PositionTracker.TRADES_PAGE_LIMIT === 0
+      ) {
+        this.logger.warn(
+          `[PositionTracker] ⚠️ Hit max pages limit (${PositionTracker.TRADES_MAX_PAGES} pages / ${totalTrades} trades). ` +
+            `Very old positions may not have accurate entry times. Consider increasing TRADES_MAX_PAGES if needed.`,
+        );
       }
 
       if (totalTrades === 0) {

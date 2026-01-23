@@ -127,12 +127,20 @@ export interface ScalpTakeProfitConfig {
 
   /**
    * Price threshold for "low price" volatile scalping mode
-   * Positions with entry price below this take ANY profit immediately
+   * Positions with entry price at or below this take ANY profit immediately
    * Set to 0 to disable low-price scalping mode
    * Default: 0 (disabled) - set via SCALP_LOW_PRICE_THRESHOLD env
-   * Example: 0.20 (20¢) - positions bought below 20¢ take any profit
+   * Example: 0.20 (20¢) - positions bought at or below 20¢ take any profit
    */
   lowPriceThreshold: number;
+
+  /**
+   * Maximum hold time (minutes) for low-price positions before cutting losses
+   * If a low-price position hasn't profited within this window, exit at breakeven or trailing stop
+   * This prevents holding volatile positions forever when they drop
+   * Set to 0 to disable (hold indefinitely). Default: 30 minutes
+   */
+  lowPriceMaxHoldMinutes: number;
 }
 
 /**
@@ -201,7 +209,8 @@ export const DEFAULT_SCALP_TAKE_PROFIT_CONFIG: ScalpTakeProfitConfig = {
   suddenSpikeThresholdPct: 15.0, // 15% spike in short window = take it
   suddenSpikeWindowMinutes: 10,
   // Low-price instant profit mode (disabled by default)
-  lowPriceThreshold: 0, // Set via SCALP_LOW_PRICE_THRESHOLD to enable (e.g., 0.20 for 20¢)
+  lowPriceThreshold: 0, // Set via SCALP_LOW_PRICE_THRESHOLD to enable (e.g., 0.20 for ≤20¢)
+  lowPriceMaxHoldMinutes: 30, // Don't hold volatile low-price positions forever
 };
 
 /**
@@ -393,17 +402,46 @@ export class ScalpTakeProfitStrategy {
 
     const holdMinutes = (now - entryTime) / (60 * 1000);
 
-    // === LOW-PRICE INSTANT PROFIT MODE ===
-    // For volatile low-price positions, take ANY profit immediately
-    // Set SCALP_LOW_PRICE_THRESHOLD=0.20 to enable for positions bought below 20¢
-    if (
+    // === LOW-PRICE SCALPING MODE ===
+    // For volatile low-price positions, special handling:
+    // 1. Take ANY profit immediately (no waiting)
+    // 2. If held too long without profit, exit to avoid holding losers forever
+    const isLowPricePosition =
       this.config.lowPriceThreshold > 0 &&
-      position.entryPrice < this.config.lowPriceThreshold &&
-      position.pnlPct > 0
-    ) {
+      position.entryPrice <= this.config.lowPriceThreshold;
+
+    if (isLowPricePosition) {
+      // Take ANY profit immediately
+      if (position.pnlPct > 0) {
+        return {
+          shouldExit: true,
+          reason: `⚡ LOW-PRICE INSTANT PROFIT: Entry ${(position.entryPrice * 100).toFixed(1)}¢ ≤ ${(this.config.lowPriceThreshold * 100).toFixed(0)}¢ threshold, taking +${position.pnlPct.toFixed(1)}% profit immediately`,
+        };
+      }
+
+      // Time window for low-price positions - don't hold losers forever
+      // After maxHoldMinutes, try to exit at breakeven or small loss
+      if (
+        this.config.lowPriceMaxHoldMinutes > 0 &&
+        holdMinutes >= this.config.lowPriceMaxHoldMinutes
+      ) {
+        // If loss is small (< 10%), exit to cut losses on volatile position
+        if (position.pnlPct > -10) {
+          return {
+            shouldExit: true,
+            reason: `⏱️ LOW-PRICE TIME LIMIT: Held ${holdMinutes.toFixed(0)}min ≥ ${this.config.lowPriceMaxHoldMinutes}min, exiting at ${position.pnlPct.toFixed(1)}% to avoid holding volatile loser`,
+          };
+        }
+        // If loss is large, log but don't force exit (stop-loss will handle)
+        this.logger.debug(
+          `[ScalpTakeProfit] Low-price position at ${position.pnlPct.toFixed(1)}% loss after ${holdMinutes.toFixed(0)}min - stop-loss will handle`,
+        );
+      }
+
+      // Still in window, waiting for profit opportunity
       return {
-        shouldExit: true,
-        reason: `⚡ LOW-PRICE INSTANT PROFIT: Entry ${(position.entryPrice * 100).toFixed(1)}¢ < ${(this.config.lowPriceThreshold * 100).toFixed(0)}¢ threshold, taking +${position.pnlPct.toFixed(1)}% profit immediately`,
+        shouldExit: false,
+        reason: `Low-price position waiting for profit (${holdMinutes.toFixed(0)}/${this.config.lowPriceMaxHoldMinutes}min)`,
       };
     }
 
