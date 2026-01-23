@@ -26,6 +26,13 @@ import {
 import { readApprovalsConfig } from "../../polymarket/preflight";
 import { isLiveTradingEnabled } from "../../utils/live-trading.util";
 
+/**
+ * Minimum price for ARB trades to prevent buying extreme loser positions.
+ * ARB buys BOTH sides, but if one leg fails, you're stuck with a loser.
+ * 5¢ minimum: allows arb on 5¢/95¢ spreads but blocks 3¢/97¢ extremes.
+ */
+const ARB_MIN_BUY_PRICE = 0.05;
+
 const ERC20_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
   "function approve(address spender, uint256 amount) returns (bool)",
@@ -165,6 +172,19 @@ export class ArbTradeExecutor implements TradeExecutor {
 
     if (!this.config.collateralTokenAddress) {
       return { status: "failed", reason: "missing_collateral_token" };
+    }
+
+    // === MINIMUM PRICE CHECK ===
+    // Prevent buying extreme loser positions. If one leg fails, you're stuck with a loser.
+    // Block trades where either side is below the minimum (e.g., 3¢ positions are almost certain losers)
+    if (plan.yesAsk < ARB_MIN_BUY_PRICE || plan.noAsk < ARB_MIN_BUY_PRICE) {
+      const loserSide = plan.yesAsk < ARB_MIN_BUY_PRICE ? "YES" : "NO";
+      const loserPrice = plan.yesAsk < ARB_MIN_BUY_PRICE ? plan.yesAsk : plan.noAsk;
+      this.logger.warn(
+        `[ARB] 🚫 Skipping trade - ${loserSide} price ${(loserPrice * 100).toFixed(1)}¢ < ${(ARB_MIN_BUY_PRICE * 100).toFixed(0)}¢ min. ` +
+          `Positions this cheap are almost certain losers if the other leg fails.`,
+      );
+      return { status: "failed", reason: "loser_position_price_too_low" };
     }
 
     try {
