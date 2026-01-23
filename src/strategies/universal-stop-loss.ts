@@ -114,9 +114,13 @@ export class UniversalStopLossStrategy {
     // Risky tier = entry price < 60¢ (SPECULATIVE_MIN threshold)
     if (this.config.skipRiskyTierForHedging) {
       const riskyThreshold = PRICE_TIERS.SPECULATIVE_MIN; // 0.6 = 60¢
-      const riskyCount = activePositions.filter((pos) => pos.entryPrice < riskyThreshold).length;
-      activePositions = activePositions.filter((pos) => pos.entryPrice >= riskyThreshold);
-      
+      const riskyCount = activePositions.filter(
+        (pos) => pos.entryPrice < riskyThreshold,
+      ).length;
+      activePositions = activePositions.filter(
+        (pos) => pos.entryPrice >= riskyThreshold,
+      );
+
       if (riskyCount > 0) {
         this.logger.debug(
           `[UniversalStopLoss] Skipping ${riskyCount} risky tier position(s) - smart hedging will handle them`,

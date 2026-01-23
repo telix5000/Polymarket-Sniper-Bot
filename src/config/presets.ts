@@ -362,12 +362,12 @@ export const STRATEGY_PRESETS = {
 
     /**
      * SMART HEDGING - Aggressive settings
-     * 
+     *
      * REPLACES stop-loss for risky tier positions (<60¢ entry)
      * Instead of selling at a 20% loss, hedge by buying the opposing side
      * This caps maximum loss to the spread paid, not the full position
-     * 
-     * Example: Buy YES at 50¢, drops to 30¢ 
+     *
+     * Example: Buy YES at 50¢, drops to 30¢
      * - Old way: Sell at 30¢ = -40% loss
      * - New way: Buy NO at 70¢, ONE side ALWAYS pays $1
      * - Max loss is capped at the spread (~10-20%) vs full loss

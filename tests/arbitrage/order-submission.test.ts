@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { OrderSubmissionController, extractFillInfo } from "../../src/utils/order-submission.util";
+import {
+  OrderSubmissionController,
+  extractFillInfo,
+} from "../../src/utils/order-submission.util";
 
 const createLogger = () => {
   const logs: string[] = [];

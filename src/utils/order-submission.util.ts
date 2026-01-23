@@ -175,7 +175,7 @@ export class OrderSubmissionController {
       const orderId = extractOrderId(response);
       const accepted = isOrderAccepted(response);
       const fillInfo = extractFillInfo(response);
-      
+
       if ((statusCode === 200 || statusCode === 201) && accepted) {
         // Check if FOK order was actually filled (not killed)
         // A killed FOK order has takingAmount=0 and makingAmount=0
@@ -184,12 +184,17 @@ export class OrderSubmissionController {
           // Empty strings will become NaN, allowing malformed response detection
           const takingAmount = parseFloat(fillInfo.takingAmount);
           const makingAmount = parseFloat(fillInfo.makingAmount);
-          
+
           // Check for NaN (malformed response) - treat as unknown and allow order to proceed
           const hasTaking = !isNaN(takingAmount) && takingAmount > 0;
           const hasMaking = !isNaN(makingAmount) && makingAmount > 0;
-          
-          if (!hasTaking && !hasMaking && !isNaN(takingAmount) && !isNaN(makingAmount)) {
+
+          if (
+            !hasTaking &&
+            !hasMaking &&
+            !isNaN(takingAmount) &&
+            !isNaN(makingAmount)
+          ) {
             // Both amounts are valid numbers but zero - FOK order was killed
             params.logger.warn(
               `[CLOB] FOK order killed (no fill): orderId=${orderId ?? "unknown"} takingAmount=${fillInfo.takingAmount} makingAmount=${fillInfo.makingAmount} status=${fillInfo.status ?? "unknown"}`,
@@ -202,13 +207,13 @@ export class OrderSubmissionController {
               fillInfo,
             };
           }
-          
+
           // Log fill info for successful orders (diagnostic)
           params.logger.debug(
             `[CLOB] Order filled: orderId=${orderId ?? "unknown"} takingAmount=${fillInfo.takingAmount} makingAmount=${fillInfo.makingAmount}`,
           );
         }
-        
+
         return { status: "submitted", orderId, statusCode, fillInfo };
       }
 
@@ -601,18 +606,23 @@ function extractOrderId(response: unknown): string | undefined {
  * For FOK orders, this tells us if the order was actually filled or killed.
  * @returns Object with filled amounts, or undefined if not available
  */
-export function extractFillInfo(response: unknown): {
-  takingAmount: string;
-  makingAmount: string;
-  status?: string;
-} | undefined {
+export function extractFillInfo(response: unknown):
+  | {
+      takingAmount: string;
+      makingAmount: string;
+      status?: string;
+    }
+  | undefined {
   const candidate = response as {
     takingAmount?: string;
     makingAmount?: string;
     status?: string;
   } | null;
-  
-  if (candidate?.takingAmount !== undefined || candidate?.makingAmount !== undefined) {
+
+  if (
+    candidate?.takingAmount !== undefined ||
+    candidate?.makingAmount !== undefined
+  ) {
     return {
       takingAmount: candidate?.takingAmount ?? "0",
       makingAmount: candidate?.makingAmount ?? "0",
@@ -630,7 +640,10 @@ function isOrderAccepted(response: unknown): boolean {
   } | null;
   if (candidate?.success === false) return false;
   return Boolean(
-    candidate?.order?.id || candidate?.order?.hash || candidate?.order?.status || candidate?.orderID,
+    candidate?.order?.id ||
+    candidate?.order?.hash ||
+    candidate?.order?.status ||
+    candidate?.orderID,
   );
 }
 

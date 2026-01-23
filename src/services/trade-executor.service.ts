@@ -57,7 +57,9 @@ export class TradeExecutorService {
     // Check if we already own this exact token (prevents stacking/duplicate buys)
     // NOTE: This does NOT block hedging - hedges buy a different tokenId (opposite outcome)
     if (signal.side === "BUY" && positionTracker) {
-      const existingPosition = positionTracker.getPositionByTokenId(signal.tokenId);
+      const existingPosition = positionTracker.getPositionByTokenId(
+        signal.tokenId,
+      );
       if (existingPosition && existingPosition.size > 0) {
         logger.info(
           `[Frontrun] ⏭️ Skipping BUY - already own ${existingPosition.size.toFixed(2)} shares of token ${signal.tokenId.slice(0, 8)}... (prevents stacking)`,

@@ -1331,7 +1331,9 @@ export function loadStrategyConfig(
      * Default: 30%
      */
     smartHedgingEmergencyLossPct:
-      parseNumber(readEnv("SMART_HEDGING_EMERGENCY_LOSS_PCT", overrides) ?? "") ??
+      parseNumber(
+        readEnv("SMART_HEDGING_EMERGENCY_LOSS_PCT", overrides) ?? "",
+      ) ??
       ("SMART_HEDGING_EMERGENCY_LOSS_PCT" in preset
         ? (preset as { SMART_HEDGING_EMERGENCY_LOSS_PCT: number })
             .SMART_HEDGING_EMERGENCY_LOSS_PCT

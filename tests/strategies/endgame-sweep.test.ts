@@ -3,7 +3,7 @@ import { test, describe } from "node:test";
 
 /**
  * Unit tests for EndgameSweep strategy conflicting position detection logic
- * 
+ *
  * These tests verify the logic that prevents the bot from buying a different
  * outcome in a market when the user already has a winning position on another
  * outcome in that same market. This applies to:
@@ -73,7 +73,11 @@ describe("EndgameSweep Conflicting Position Detection", () => {
     );
 
     assert.ok(conflict !== null, "Should detect conflicting position");
-    assert.strictEqual(conflict?.side, "YES", "Conflicting position should be YES");
+    assert.strictEqual(
+      conflict?.side,
+      "YES",
+      "Conflicting position should be YES",
+    );
     assert.strictEqual(conflict?.pnlPct, 15, "P&L should be 15%");
     assert.strictEqual(conflict?.size, 100, "Size should be 100");
   });
@@ -101,7 +105,11 @@ describe("EndgameSweep Conflicting Position Detection", () => {
     );
 
     assert.ok(conflict !== null, "Should detect conflicting position");
-    assert.strictEqual(conflict?.side, "NO", "Conflicting position should be NO");
+    assert.strictEqual(
+      conflict?.side,
+      "NO",
+      "Conflicting position should be NO",
+    );
     assert.strictEqual(conflict?.pnlPct, 50, "P&L should be 50%");
   });
 
@@ -216,7 +224,10 @@ describe("EndgameSweep Conflicting Position Detection", () => {
       "no-token-breakeven",
     );
 
-    assert.ok(conflict !== null, "Should block buying inverse of breakeven position");
+    assert.ok(
+      conflict !== null,
+      "Should block buying inverse of breakeven position",
+    );
     assert.strictEqual(conflict?.pnlPct, 0, "P&L should be 0%");
   });
 
@@ -229,7 +240,11 @@ describe("EndgameSweep Conflicting Position Detection", () => {
       "any-token",
     );
 
-    assert.strictEqual(conflict, null, "Should return null for empty positions");
+    assert.strictEqual(
+      conflict,
+      null,
+      "Should return null for empty positions",
+    );
   });
 
   test("Should handle multiple positions in different markets", () => {
@@ -268,16 +283,28 @@ describe("EndgameSweep Conflicting Position Detection", () => {
     ];
 
     // Try to buy NO in market-1 - should be blocked (winning YES exists)
-    const conflict1 = getConflictingPosition(positions, "market-1", "no-token-1");
+    const conflict1 = getConflictingPosition(
+      positions,
+      "market-1",
+      "no-token-1",
+    );
     assert.ok(conflict1 !== null, "Should block NO in market-1");
     assert.strictEqual(conflict1?.side, "YES");
 
     // Try to buy YES in market-2 - should NOT be blocked (NO is losing)
-    const conflict2 = getConflictingPosition(positions, "market-2", "yes-token-2");
+    const conflict2 = getConflictingPosition(
+      positions,
+      "market-2",
+      "yes-token-2",
+    );
     assert.strictEqual(conflict2, null, "Should allow YES in market-2");
 
     // Try to buy NO in market-3 - should be blocked (winning YES exists)
-    const conflict3 = getConflictingPosition(positions, "market-3", "no-token-3");
+    const conflict3 = getConflictingPosition(
+      positions,
+      "market-3",
+      "no-token-3",
+    );
     assert.ok(conflict3 !== null, "Should block NO in market-3");
     assert.strictEqual(conflict3?.side, "YES");
     assert.strictEqual(conflict3?.pnlPct, 100);
