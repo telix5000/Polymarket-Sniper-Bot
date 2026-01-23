@@ -988,6 +988,7 @@ export class SmartHedgingStrategy {
         logger: this.logger,
         priority: true,
         skipDuplicatePrevention: true,
+        skipMinBuyPriceCheck: true, // Hedge buys are intentional at any price
         orderConfig: { minOrderUsd: 0 },
       });
 
@@ -1132,6 +1133,7 @@ export class SmartHedgingStrategy {
         logger: this.logger,
         priority: true,
         skipDuplicatePrevention: true,
+        skipMinBuyPriceCheck: true, // Swap buys are intentional at any price
         orderConfig: { minOrderUsd: 0 },
       });
 
@@ -1992,6 +1994,7 @@ export class SmartHedgingStrategy {
         logger: this.logger,
         priority: true, // High priority for hedging
         skipDuplicatePrevention: true, // Hedging must bypass duplicate prevention
+        skipMinBuyPriceCheck: true, // Hedge buys are intentional at any price
         orderConfig: { minOrderUsd: 0 }, // Bypass minimum for hedging
       });
 
