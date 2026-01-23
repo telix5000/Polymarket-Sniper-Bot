@@ -68,6 +68,7 @@ const inFlightBuys = new Map<
 export const isInFlightOrCooldown = (
   tokenId: string,
   side: "BUY" | "SELL",
+  nowOverride?: number,
 ): { blocked: boolean; reason?: string; remainingMs?: number } => {
   // Only track BUY orders - SELL doesn't stack losses
   if (side !== "BUY") {
@@ -76,7 +77,7 @@ export const isInFlightOrCooldown = (
 
   const key = `${tokenId}:BUY`;
   const entry = inFlightBuys.get(key);
-  const now = Date.now();
+  const now = nowOverride ?? Date.now();
 
   if (!entry) {
     return { blocked: false };
@@ -90,10 +91,11 @@ export const isInFlightOrCooldown = (
       inFlightBuys.delete(key);
       return { blocked: false };
     }
+    // For in-flight buys, there is no defined "remaining time" until a new buy is allowed.
+    // The only timer here is the stale timeout, after which this entry is discarded.
     return {
       blocked: true,
       reason: "IN_FLIGHT_BUY",
-      remainingMs: Math.max(0, STALE_IN_FLIGHT_TIMEOUT_MS - elapsed),
     };
   }
 
@@ -114,10 +116,24 @@ export const isInFlightOrCooldown = (
 
 /**
  * Mark a buy order as in-flight (starting).
+ * Returns true if successfully marked, false if another buy is already in-flight
+ * (prevents race condition where two threads both pass the check before either marks).
  */
-export const markBuyInFlight = (tokenId: string): void => {
+export const markBuyInFlight = (tokenId: string): boolean => {
   const key = `${tokenId}:BUY`;
-  inFlightBuys.set(key, { startedAt: Date.now() });
+  const existing = inFlightBuys.get(key);
+  const now = Date.now();
+
+  // If there's an existing in-flight entry that is not stale yet, do not overwrite it
+  if (existing && !existing.completedAt) {
+    const elapsed = now - existing.startedAt;
+    if (elapsed <= STALE_IN_FLIGHT_TIMEOUT_MS) {
+      return false; // Another buy is already in-flight
+    }
+  }
+
+  inFlightBuys.set(key, { startedAt: now });
+  return true;
 };
 
 /**
@@ -129,6 +145,20 @@ export const markBuyCompleted = (tokenId: string): void => {
   if (entry) {
     entry.completedAt = Date.now();
   }
+};
+
+/**
+ * Reset in-flight buy tracking state (for testing).
+ */
+export const resetInFlightBuys = (): void => {
+  inFlightBuys.clear();
+};
+
+/**
+ * Reset log deduplication state (for testing).
+ */
+export const resetBalanceCheckWarnDedup = (): void => {
+  balanceCheckWarnDedup.clear();
 };
 
 /**

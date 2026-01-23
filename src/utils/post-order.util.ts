@@ -187,8 +187,17 @@ async function postOrderClob(
         reason: inFlightStatus.reason ?? "IN_FLIGHT_BUY",
       };
     }
-    // Mark this buy as in-flight
-    markBuyInFlight(tokenId);
+    // Mark this buy as in-flight (returns false if race condition detected)
+    const marked = markBuyInFlight(tokenId);
+    if (!marked) {
+      logger.warn(
+        `[CLOB] Order skipped (IN_FLIGHT_BUY): BUY on token ${tokenId.slice(0, 8)}... race condition detected (prevents buy stacking)`,
+      );
+      return {
+        status: "skipped",
+        reason: "IN_FLIGHT_BUY",
+      };
+    }
   }
 
   // Wrap the rest in try/finally to ensure we mark completion
