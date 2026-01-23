@@ -530,7 +530,7 @@ export class PositionTracker {
               // Fetch market end time for active positions (needed for near-close hedging)
               // Skip for redeemable positions since they're already resolved
               let marketEndTime: number | undefined;
-              if (!isRedeemable) {
+              if (!finalRedeemable) {
                 marketEndTime = await this.fetchMarketEndTime(tokenId);
               }
 
@@ -543,7 +543,7 @@ export class PositionTracker {
                 currentPrice,
                 pnlPct,
                 pnlUsd,
-                redeemable: isRedeemable,
+                redeemable: finalRedeemable,
                 marketEndTime,
               };
             } catch (err) {
