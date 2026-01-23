@@ -107,6 +107,13 @@ async function main(): Promise<void> {
         absoluteMaxUsd: strategyConfig.smartHedgingAbsoluteMaxUsd,
         allowExceedMax: strategyConfig.smartHedgingAllowExceedMax,
         forceLiquidationPct: strategyConfig.smartHedgingForceLiquidationLossPct,
+        // Near-close hedging behavior
+        nearCloseWindowMinutes:
+          strategyConfig.smartHedgingNearCloseWindowMinutes,
+        nearClosePriceDropCents:
+          strategyConfig.smartHedgingNearClosePriceDropCents,
+        nearCloseLossPct: strategyConfig.smartHedgingNearCloseLossPct,
+        noHedgeWindowMinutes: strategyConfig.smartHedgingNoHedgeWindowMinutes,
       },
       // Pass quick flip config
       quickFlipConfig: {
