@@ -18,10 +18,25 @@ export interface UniversalStopLossConfig {
    */
   useDynamicTiers: boolean;
   /**
-   * Skip risky tier positions (entry < 60¢) - let smart hedging handle them
+   * Skip positions that Smart Hedging will handle (entry < hedgingMaxEntryPrice).
+   * When enabled, Universal Stop-Loss defers to Smart Hedging for low-entry positions.
+   * 
    * Default: true when smart hedging is enabled
    */
-  skipRiskyTierForHedging?: boolean;
+  skipForSmartHedging?: boolean;
+  /**
+   * Entry price threshold for determining which strategy handles a position.
+   * Should match Smart Hedging's maxEntryPrice (default: 1.0 = 100¢).
+   * 
+   * When skipForSmartHedging is true:
+   * - Positions with entry < this threshold: Handled by Smart Hedging (skipped by Stop-Loss)
+   * - Positions with entry >= this threshold: Handled by Universal Stop-Loss
+   * 
+   * This matches Smart Hedging's logic which skips positions where entry >= maxEntryPrice.
+   * 
+   * Default: 1.0 (100¢) - matches Smart Hedging default (handles ALL positions)
+   */
+  hedgingMaxEntryPrice?: number;
   /**
    * Minimum time (in seconds) a position must be held before stop-loss can trigger.
    * This prevents selling positions immediately after buying due to bid-ask spread.
@@ -54,13 +69,14 @@ export interface UniversalStopLossStrategyConfig {
  * - Quality tier (80-90¢): 5% stop-loss
  * - Standard tier (70-80¢): 8% stop-loss
  * - Speculative tier (60-70¢): 12% stop-loss
- * - Risky tier (< 60¢): 20% stop-loss (SKIPPED if smart hedging enabled)
+ * - Risky tier (< 60¢): 20% stop-loss
  *
  * The maxStopLossPct acts as an absolute ceiling (default 25%).
  *
- * NOTE: When Smart Hedging is enabled (default), risky tier positions (<60¢ entry)
- * are SKIPPED by this strategy. Smart Hedging handles them by buying the opposing
- * side instead of selling at a loss, which can turn losers into winners.
+ * NOTE: When Smart Hedging is enabled (skipForSmartHedging=true), positions with
+ * entry price below hedgingMaxEntryPrice (default 75¢) are SKIPPED by this strategy.
+ * Smart Hedging handles them by buying the opposing side instead of selling at a loss,
+ * which can turn losers into winners.
  *
  * This strategy is designed to catch positions from:
  * - ARB trades (which have no built-in stop-loss)
@@ -122,20 +138,21 @@ export class UniversalStopLossStrategy {
     // Skip resolved/redeemable positions (they can't be sold, only redeemed)
     let activePositions = allPositions.filter((pos) => !pos.redeemable);
 
-    // Skip risky tier positions if smart hedging is handling them
-    // Risky tier = entry price < 60¢ (SPECULATIVE_MIN threshold)
-    if (this.config.skipRiskyTierForHedging) {
-      const riskyThreshold = PRICE_TIERS.SPECULATIVE_MIN; // 0.6 = 60¢
-      const riskyCount = activePositions.filter(
-        (pos) => pos.entryPrice < riskyThreshold,
+    // Skip positions that Smart Hedging will handle
+    // When skipForSmartHedging is true, defer to Smart Hedging for ALL positions
+    if (this.config.skipForSmartHedging) {
+      // Use configured threshold or default to 100¢ (matches Smart Hedging default - handles ALL positions)
+      const hedgingThreshold = this.config.hedgingMaxEntryPrice ?? 1.0;
+      const skippedCount = activePositions.filter(
+        (pos) => pos.entryPrice < hedgingThreshold,
       ).length;
       activePositions = activePositions.filter(
-        (pos) => pos.entryPrice >= riskyThreshold,
+        (pos) => pos.entryPrice >= hedgingThreshold,
       );
 
-      if (riskyCount > 0) {
+      if (skippedCount > 0) {
         this.logger.debug(
-          `[UniversalStopLoss] Skipping ${riskyCount} risky tier position(s) - smart hedging will handle them`,
+          `[UniversalStopLoss] Skipping ${skippedCount} position(s) with entry < ${(hedgingThreshold * 100).toFixed(1)}¢ - smart hedging will handle them`,
         );
       }
     }
