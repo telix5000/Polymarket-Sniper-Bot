@@ -8,8 +8,9 @@
  * 1. Auto-Redeem - Claim resolved positions (HIGHEST PRIORITY - get money back!)
  * 2. Smart Hedging - Hedge losing positions
  * 3. Universal Stop-Loss - Sell positions at max loss
- * 4. Endgame Sweep - Buy high-confidence positions
- * 5. Quick Flip - Take profits
+ * 4. Scalp Take-Profit - Time-based profit taking with momentum checks
+ * 5. Endgame Sweep - Buy high-confidence positions
+ * 6. Quick Flip - Take profits (larger % targets)
  */
 
 import type { ClobClient } from "@polymarket/clob-client";
@@ -30,6 +31,11 @@ import {
   type SimpleQuickFlipConfig,
   DEFAULT_SIMPLE_QUICKFLIP_CONFIG,
 } from "./quick-flip-simple";
+import {
+  ScalpTakeProfitStrategy,
+  type ScalpTakeProfitConfig,
+  DEFAULT_SCALP_TAKE_PROFIT_CONFIG,
+} from "./scalp-take-profit";
 import { AutoRedeemStrategy, type AutoRedeemConfig } from "./auto-redeem";
 import {
   UniversalStopLossStrategy,
@@ -49,6 +55,7 @@ export interface SimpleOrchestratorConfig {
   hedgingConfig?: Partial<SimpleSmartHedgingConfig>;
   endgameConfig?: Partial<SimpleEndgameSweepConfig>;
   quickFlipConfig?: Partial<SimpleQuickFlipConfig>;
+  scalpConfig?: Partial<ScalpTakeProfitConfig>;
   autoRedeemConfig?: Partial<AutoRedeemConfig>;
   stopLossConfig?: Partial<UniversalStopLossConfig>;
 }
@@ -64,6 +71,7 @@ export class SimpleOrchestrator {
   private autoRedeemStrategy: AutoRedeemStrategy;
   private hedgingStrategy: SimpleSmartHedgingStrategy;
   private stopLossStrategy: UniversalStopLossStrategy;
+  private scalpStrategy: ScalpTakeProfitStrategy;
   private endgameStrategy: SimpleEndgameSweepStrategy;
   private quickFlipStrategy: SimpleQuickFlipStrategy;
 
@@ -148,7 +156,21 @@ export class SimpleOrchestrator {
       },
     });
 
-    // 5. Quick Flip - Take profits
+    // 5. Scalp Take-Profit - Time-and-momentum-based profit taking
+    // Enabled by default - takes profits on positions after holding 45-90 min
+    // with 5%+ profit, or captures sudden spikes (15%+ in 10 min)
+    // CRITICAL: Never forces time-exit on ≤60¢ entries that reach 90¢+
+    this.scalpStrategy = new ScalpTakeProfitStrategy({
+      client: config.client,
+      logger: config.logger,
+      positionTracker: this.positionTracker,
+      config: {
+        ...DEFAULT_SCALP_TAKE_PROFIT_CONFIG,
+        ...config.scalpConfig,
+      },
+    });
+
+    // 6. Quick Flip - Take profits (larger % targets)
     this.quickFlipStrategy = new SimpleQuickFlipStrategy({
       client: config.client,
       logger: config.logger,
@@ -206,10 +228,16 @@ export class SimpleOrchestrator {
       // 3. Universal Stop-Loss - sell positions exceeding max loss threshold
       await this.runStrategy("StopLoss", () => this.stopLossStrategy.execute());
 
-      // 4. Endgame Sweep - buy high-confidence positions (85-99¢)
+      // 4. Scalp Take-Profit - time-based profit taking with momentum checks
+      // Runs before QuickFlip to capture positions at lower % thresholds
+      await this.runStrategy("ScalpTakeProfit", () =>
+        this.scalpStrategy.execute(),
+      );
+
+      // 5. Endgame Sweep - buy high-confidence positions (85-99¢)
       await this.runStrategy("Endgame", () => this.endgameStrategy.execute());
 
-      // 5. Quick Flip - take profits when target reached
+      // 6. Quick Flip - take profits when larger target reached
       await this.runStrategy("QuickFlip", () =>
         this.quickFlipStrategy.execute(),
       );
