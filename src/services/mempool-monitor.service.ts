@@ -365,11 +365,21 @@ export class MempoolMonitorService {
           continue;
         }
 
+        // === BLOCK COPY TRADING SELL ORDERS (early filter) ===
+        // Copy trading SELL orders is dangerous - you don't know the target's entry price.
+        // Only copy BUY orders; use your own exit strategies for sells.
+        const isBuy = activity.side.toUpperCase() === "BUY";
+        if (!isBuy) {
+          stats.skippedOtherTrades += 1;
+          logger.debug(
+            `[Monitor] Skipping SELL copy trade on market ${activity.conditionId} - only BUY orders are copied`,
+          );
+          continue;
+        }
+
         // === MINIMUM BUY PRICE CHECK (early filter) ===
         // Skip BUY trades for extremely low-probability positions (e.g., 3¢)
         // This prevents copying trades into positions that are almost certain to lose.
-        // Only applies to BUY - SELL orders can exit at any price.
-        const isBuy = activity.side.toUpperCase() === "BUY";
         if (isBuy) {
           const minBuyPrice = env.minBuyPrice ?? DEFAULT_CONFIG.MIN_BUY_PRICE;
           if (activity.price < minBuyPrice) {

@@ -380,7 +380,7 @@ test("frontrun skips BUY trade when price is below MIN_BUY_PRICE threshold", asy
   );
 });
 
-test("frontrun allows SELL trade even when price is below MIN_BUY_PRICE threshold", async () => {
+test("frontrun blocks SELL copy trades - only BUY orders are copied", async () => {
   const logs: string[] = [];
   const logger = {
     info: (message: string) => logs.push(message),
@@ -398,7 +398,7 @@ test("frontrun allows SELL trade even when price is below MIN_BUY_PRICE threshol
     balanceUtils as { getPolBalance: typeof balanceUtils.getPolBalance }
   ).getPolBalance = async () => 5;
 
-  // Mock postOrder - SHOULD be called for SELL even at low price
+  // Mock postOrder - should NOT be called for SELL (blocked)
   let postOrderCalled = false;
   (postOrderUtils as { postOrder: typeof postOrderUtils.postOrder }).postOrder =
     async () => {
@@ -413,30 +413,35 @@ test("frontrun allows SELL trade even when price is below MIN_BUY_PRICE threshol
   const executor = new TradeExecutorService({
     client: { wallet: {} } as never,
     proxyWallet: "0x" + "11".repeat(20),
-    env: { ...baseEnv, minBuyPrice: 0.15 }, // 15¢ minimum (only for BUY)
+    env: { ...baseEnv, minBuyPrice: 0.15 },
     logger,
   });
 
-  // SELL at 3¢ (0.03) - this should be ALLOWED (only BUY is blocked)
+  // SELL trade - should be BLOCKED (we only copy BUY orders)
   await executor.frontrunTrade({
     trader: "0xabc",
-    marketId: "market-loser",
-    tokenId: "token-loser",
+    marketId: "market-sell",
+    tokenId: "token-sell",
     outcome: "YES",
     side: "SELL",
     sizeUsd: 100,
-    price: 0.03, // 3¢ - SELL should still be allowed
+    price: 0.85, // Good price, but SELL should still be blocked
     timestamp: Date.now(),
   });
 
-  // Verify the SELL order was executed
+  // Verify the SELL order was BLOCKED
   assert.ok(
-    !logs.some((line) => line.includes("is below minimum")),
-    "Should NOT block SELL orders based on price",
+    logs.some((line) => line.includes("Skipping SELL copy trade")),
+    "Should log that SELL copy trades are blocked",
   );
   assert.ok(
+    logs.some((line) => line.includes("only BUY orders are copied")),
+    "Should explain that only BUY orders are copied",
+  );
+  assert.equal(
     postOrderCalled,
-    "postOrder should be called for SELL orders at any price",
+    false,
+    "postOrder should NOT be called for SELL copy trades",
   );
 });
 

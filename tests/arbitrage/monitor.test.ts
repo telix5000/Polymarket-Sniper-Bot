@@ -339,20 +339,20 @@ test("monitor skips low-price BUY trades and increments skippedLowPriceTrades", 
   assert.equal(detected.length, 0, "Should not call onDetectedTrade for low-price BUY");
 });
 
-test("monitor allows SELL trades even when price is below minBuyPrice", async () => {
+test("monitor blocks SELL copy trades - only BUY orders are copied", async () => {
   const now = Math.floor(Date.now() / 1000);
   const activities = [
     {
       type: "TRADE",
       timestamp: now,
-      conditionId: "market-sell-low",
-      asset: "token-sell-low",
+      conditionId: "market-sell",
+      asset: "token-sell",
       size: 1000,
       usdcSize: 120, // Above minTradeSizeUsd
-      price: 0.03, // 3¢ - below minBuyPrice, but this is a SELL
-      side: "sell", // SELL should be allowed at any price
+      price: 0.85, // 85¢ - good price, but this is a SELL
+      side: "sell", // SELL should be BLOCKED for copy trading
       outcomeIndex: 0,
-      transactionHash: "0xhash-sell-low",
+      transactionHash: "0xhash-sell",
     },
   ];
 
@@ -394,8 +394,8 @@ test("monitor allows SELL trades even when price is below minBuyPrice", async ()
     }
   ).checkRecentActivity(baseEnv.targetAddresses[0], stats);
 
-  // SELL should be allowed regardless of price
-  assert.equal(stats.skippedLowPriceTrades, 0, "Should NOT skip SELL trades based on price");
-  assert.equal(stats.eligibleTrades, 1, "SELL trade should be eligible");
-  assert.equal(detected.length, 1, "Should call onDetectedTrade for SELL");
+  // SELL should be BLOCKED - we only copy BUY orders
+  assert.equal(stats.skippedOtherTrades, 1, "Should skip SELL trades");
+  assert.equal(stats.eligibleTrades, 0, "SELL trade should NOT be eligible");
+  assert.equal(detected.length, 0, "Should NOT call onDetectedTrade for SELL");
 });
