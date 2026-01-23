@@ -289,6 +289,12 @@ export class AutoSellStrategy {
           `[AutoSell] Sell order skipped: ${result.reason ?? "unknown reason"}`,
         );
         return false;
+      } else if (result.reason === "FOK_ORDER_KILLED") {
+        // FOK order was submitted but killed (no fill) - market has insufficient liquidity
+        this.logger.warn(
+          `[AutoSell] ⚠️ Sell order not filled (FOK killed): ${size.toFixed(2)} shares at ~${(bestBid * 100).toFixed(1)}¢ - market has insufficient liquidity`,
+        );
+        return false;
       } else {
         this.logger.error(
           `[AutoSell] Sell order failed: ${result.reason ?? "unknown reason"}`,

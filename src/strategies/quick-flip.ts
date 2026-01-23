@@ -321,6 +321,15 @@ export class QuickFlipStrategy {
           `[QuickFlip] ⏭️ Sell order skipped: ${result.reason ?? "unknown reason"}`,
         );
         return false;
+      } else if (result.reason === "FOK_ORDER_KILLED") {
+        // FOK order was submitted but killed (no fill) - this is common for illiquid markets
+        // Don't throw an error, just return false to avoid log spam
+        this.logger.warn(
+          `[QuickFlip] ⚠️ Sell order not filled (FOK killed): ${size.toFixed(2)} shares at ~${(bestBid * 100).toFixed(1)}¢ - market has insufficient liquidity or bid disappeared`,
+        );
+        // Mark this token as no-liquidity to suppress repeated attempts
+        this.noLiquidityTokens.add(tokenId);
+        return false;
       } else {
         this.logger.error(
           `[QuickFlip] ❌ Sell order failed: ${result.reason ?? "unknown reason"}`,

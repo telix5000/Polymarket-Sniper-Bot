@@ -388,6 +388,14 @@ async function postOrderClobInner(
       return result;
     }
 
+    // Handle FOK order killed (no fill) - this is a market liquidity issue
+    if (result.reason === "FOK_ORDER_KILLED") {
+      logger.warn(
+        `[CLOB] FOK order killed (no liquidity): required=${orderValue.toFixed(2)} signer=${signerAddress} - market may have insufficient liquidity or price moved`,
+      );
+      return result;
+    }
+
     if (result.statusCode === 403) {
       logger.warn(
         `[CLOB] Order failed (403): required=${orderValue.toFixed(2)} signer=${signerAddress} collateral=${collateralLabel}`,

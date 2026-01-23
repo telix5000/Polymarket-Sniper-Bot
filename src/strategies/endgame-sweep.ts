@@ -584,6 +584,12 @@ export class EndgameSweepStrategy {
           `[EndgameSweep] ⏭️ Buy order skipped: ${result.reason ?? "unknown reason"}`,
         );
         throw new Error(`Buy order skipped: ${result.reason ?? "unknown"}`);
+      } else if (result.reason === "FOK_ORDER_KILLED") {
+        // FOK order was submitted but killed (no fill) - market has insufficient liquidity
+        this.logger.warn(
+          `[EndgameSweep] ⚠️ Buy order not filled (FOK killed): ${positionSize.toFixed(2)} shares at ${(bestAsk * 100).toFixed(1)}¢ - market has insufficient liquidity`,
+        );
+        throw new Error(`Buy order not filled: market has insufficient liquidity`);
       } else {
         this.logger.error(
           `[EndgameSweep] ❌ Buy order failed: ${result.reason ?? "unknown reason"}`,
