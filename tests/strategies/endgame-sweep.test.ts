@@ -4,8 +4,11 @@ import { test, describe } from "node:test";
 /**
  * Unit tests for EndgameSweep strategy conflicting position detection logic
  * 
- * These tests verify the logic that prevents the bot from buying the opposite
- * outcome of a market when the user already has a winning position on one side.
+ * These tests verify the logic that prevents the bot from buying a different
+ * outcome in a market when the user already has a winning position on another
+ * outcome in that same market. This applies to:
+ * - Binary markets (YES/NO): Won't buy NO if winning on YES
+ * - Multi-outcome markets: Won't buy PlayerB if winning on PlayerA
  */
 
 // Mock Position interface matching position-tracker.ts

@@ -446,11 +446,11 @@ export class EndgameSweepStrategy {
   /**
    * Check if there's a conflicting position in the same market (different outcome).
    * Returns the conflicting position if:
-   * 1. We have a position in the same market but different tokenId (opposite outcome)
+   * 1. We have a position in the same market but different tokenId (different outcome)
    * 2. That position is winning (positive P&L)
    * 
    * This prevents the bot from betting against its own winning positions.
-   * For example, if we have YES at +20% profit, we shouldn't buy NO.
+   * Works for both binary markets (YES/NO) and multi-outcome markets (PlayerA/PlayerB/etc).
    */
   private getConflictingPosition(
     marketId: string,
