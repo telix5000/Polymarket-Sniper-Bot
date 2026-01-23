@@ -284,6 +284,9 @@ export class EnterpriseOrchestrator {
           const sellAmount = Math.min(position.currentValue, exposureToReduce);
           if (sellAmount < 1) continue; // Skip if too small
 
+          // Guard against division by zero
+          if (position.currentPrice <= 0) continue;
+
           // Create sell order
           const sellRequest: OrderRequest = {
             strategyId: "ICC",
@@ -558,12 +561,20 @@ export class EnterpriseOrchestrator {
         if (entryDepth < 50) continue; // Need sufficient depth
 
         // Calculate entry price with slippage protection
+        // For BUY: use bestAsk with slippage cap (don't pay more than bestAsk + slippage)
+        // For SELL: use bestBid with slippage floor (don't accept less than bestBid - slippage)
         const entryPrice = isLongSignal
-          ? Math.min(market.bestAsk, market.midPrice + SLIPPAGE_MAX_CENTS / 100)
+          ? Math.min(
+              market.bestAsk + SLIPPAGE_MAX_CENTS / 100,
+              market.bestAsk,
+            ) // Cap at bestAsk
           : Math.max(
+              market.bestBid - SLIPPAGE_MAX_CENTS / 100,
               market.bestBid,
-              market.midPrice - SLIPPAGE_MAX_CENTS / 100,
-            );
+            ); // Floor at bestBid
+
+        // Guard against invalid prices
+        if (entryPrice <= 0 || entryPrice >= 1) continue;
 
         // Calculate position size (conservative)
         const positionSizeUsd = Math.min(
