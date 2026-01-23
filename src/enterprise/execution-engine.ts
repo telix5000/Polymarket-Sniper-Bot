@@ -117,26 +117,27 @@ export class ExecutionEngine {
   ): Promise<OrderResult> {
     this.stats.totalOrders++;
 
-    // 1. Check cooldown cache first (fast path)
-    const cooldown = this.cooldownCache.get(request.tokenId);
+    // 1. Check cooldown cache first (fast path) - per token + side
+    const cooldownKey = `${request.tokenId}:${request.side}`;
+    const cooldown = this.cooldownCache.get(cooldownKey);
     if (cooldown && Date.now() < cooldown.cooldownUntil) {
       this.stats.cooldownHits++;
       const result: OrderResult = {
         success: false,
         status: "rejected",
-        rejectCode: "COOLDOWN_CACHED",
-        rejectReason: `Cooldown until ${new Date(cooldown.cooldownUntil).toISOString()}`,
+        rejectCode: "COOLDOWN_HARD",
+        rejectReason: `Cooldown until ${new Date(cooldown.cooldownUntil).toISOString()} (${cooldown.attempts} attempts)`,
         cooldownUntil: cooldown.cooldownUntil,
       };
       this.logTrade(
         request,
-        { approved: false, reason: "COOLDOWN_CACHED" },
+        { approved: false, reason: "COOLDOWN_HARD" },
         result,
       );
       return result;
     }
 
-    // 2. Risk evaluation
+    // 2. Risk evaluation (RiskManager gates ALL orders including stop-loss/hedging)
     const riskDecision = this.riskManager.evaluate(request, category);
     if (!riskDecision.approved) {
       this.stats.rejectedOrders++;
@@ -172,10 +173,11 @@ export class ExecutionEngine {
           break;
         }
 
-        // Handle cooldown from response
+        // Handle cooldown from response - per token + side
         if (lastResult.cooldownUntil) {
           this.setCooldown(
             request.tokenId,
+            request.side,
             lastResult.cooldownUntil,
             lastResult.rejectCode ?? "UNKNOWN",
           );
@@ -395,19 +397,26 @@ export class ExecutionEngine {
   }
 
   /**
-   * Set cooldown for a token
+   * Set cooldown for a token + side combination
    */
-  setCooldown(tokenId: string, until: number, reason: string): void {
-    const existing = this.cooldownCache.get(tokenId);
-    this.cooldownCache.set(tokenId, {
+  setCooldown(
+    tokenId: string,
+    side: "BUY" | "SELL",
+    until: number,
+    reason: string,
+  ): void {
+    const key = `${tokenId}:${side}`;
+    const existing = this.cooldownCache.get(key);
+    this.cooldownCache.set(key, {
       tokenId,
+      side,
       cooldownUntil: until,
       reason,
       attempts: (existing?.attempts ?? 0) + 1,
     });
 
     this.logger.debug(
-      `[ExecutionEngine] Cooldown set for ${tokenId}: ${reason} until ${new Date(until).toISOString()}`,
+      `[ExecutionEngine] Cooldown set for ${key}: ${reason} until ${new Date(until).toISOString()}`,
     );
   }
 
@@ -432,9 +441,9 @@ export class ExecutionEngine {
    */
   cleanupCooldowns(): void {
     const now = Date.now();
-    for (const [tokenId, entry] of this.cooldownCache) {
+    for (const [key, entry] of this.cooldownCache) {
       if (entry.cooldownUntil <= now) {
-        this.cooldownCache.delete(tokenId);
+        this.cooldownCache.delete(key);
       }
     }
   }

@@ -191,22 +191,22 @@ export const STRATEGY_PRESETS = {
     // Combines ARB + MONITOR settings
     ARB_ENABLED: true,
     MONITOR_ENABLED: true,
-    
+
     /**
      * ENTERPRISE RISK MANAGEMENT - Integrated
-     * 
+     *
      * All presets now use the enterprise system with:
      * - Centralized RiskManager (gates all orders)
      * - Market selection filter (liquidity, spread, activity)
      * - Sequential execution (prevents stack issues)
      * - Circuit breakers (consecutive rejects, API health, drawdown)
      */
-    
+
     // === ENTERPRISE RISK LIMITS ===
     MAX_EXPOSURE_USD: 200, // Total portfolio exposure (conservative)
     MAX_EXPOSURE_PER_MARKET_USD: 50, // Per-market limit
     MAX_DRAWDOWN_PCT: 10, // Circuit breaker triggers at 10% drawdown
-    
+
     // === ENTERPRISE STRATEGIES ===
     ENTERPRISE_MODE: "conservative",
     ENTERPRISE_ENABLE_MM: true, // Market Making (spread capture)
@@ -266,22 +266,22 @@ export const STRATEGY_PRESETS = {
     // Combines ARB + MONITOR settings
     ARB_ENABLED: true,
     MONITOR_ENABLED: true,
-    
+
     /**
      * ENTERPRISE RISK MANAGEMENT - Integrated
-     * 
+     *
      * All presets now use the enterprise system with:
      * - Centralized RiskManager (gates all orders)
      * - Market selection filter (liquidity, spread, activity)
      * - Sequential execution (prevents stack issues)
      * - Circuit breakers (consecutive rejects, API health, drawdown)
      */
-    
+
     // === ENTERPRISE RISK LIMITS ===
     MAX_EXPOSURE_USD: 500, // Total portfolio exposure (balanced)
     MAX_EXPOSURE_PER_MARKET_USD: 100, // Per-market limit
     MAX_DRAWDOWN_PCT: 15, // Circuit breaker triggers at 15% drawdown
-    
+
     // === ENTERPRISE STRATEGIES ===
     ENTERPRISE_MODE: "balanced",
     ENTERPRISE_ENABLE_MM: true, // Market Making (spread capture)
@@ -356,19 +356,19 @@ export const STRATEGY_PRESETS = {
 
     /**
      * ENTERPRISE RISK MANAGEMENT - Integrated
-     * 
+     *
      * All presets now use the enterprise system with:
      * - Centralized RiskManager (gates all orders)
      * - Market selection filter (liquidity, spread, activity)
      * - Sequential execution (prevents stack issues)
      * - Circuit breakers (consecutive rejects, API health, drawdown)
      */
-    
+
     // === ENTERPRISE RISK LIMITS ===
     MAX_EXPOSURE_USD: 2000, // Total portfolio exposure
     MAX_EXPOSURE_PER_MARKET_USD: 200, // Per-market limit
     MAX_DRAWDOWN_PCT: 25, // Circuit breaker triggers at 25% drawdown
-    
+
     // === ENTERPRISE STRATEGIES ===
     ENTERPRISE_MODE: "aggressive",
     ENTERPRISE_ENABLE_MM: true, // Market Making (spread capture)

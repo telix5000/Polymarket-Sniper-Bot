@@ -6,8 +6,20 @@
 
 /**
  * Position lifecycle states
+ * - OPEN: Active position with value above dust threshold
+ * - PARTIAL: Partially filled/closed position
+ * - CLOSING: Position being closed (sell order pending)
+ * - CLOSED: Position fully closed
+ * - DUST: Position below dust threshold (excluded from risk calculations)
+ * - RESOLVED: Market has resolved (waiting for redemption)
  */
-export type PositionState = "OPEN" | "PARTIAL" | "CLOSING" | "CLOSED" | "DUST";
+export type PositionState =
+  | "OPEN"
+  | "PARTIAL"
+  | "CLOSING"
+  | "CLOSED"
+  | "DUST"
+  | "RESOLVED";
 
 /**
  * Strategy identifiers
@@ -22,11 +34,19 @@ export type StrategyId =
   | "AUTO_SELL"
   | "STOP_LOSS"
   | "HEDGE"
+  | "PANIC_LIQUIDATION"
   | "MANUAL";
 
 export type OrderSide = "BUY" | "SELL";
 export type OrderType = "LIMIT" | "POST_ONLY" | "IOC" | "FOK" | "MARKET";
 export type OrderOutcome = "YES" | "NO";
+
+/**
+ * Token type for allowance handling
+ * - COLLATERAL: USDC (ERC20)
+ * - CONDITIONAL: Outcome tokens (ERC1155)
+ */
+export type TokenType = "COLLATERAL" | "CONDITIONAL";
 
 export interface RiskDecision {
   approved: boolean;
@@ -95,11 +115,81 @@ export interface CircuitBreakerState {
   consecutiveApiErrors: number;
 }
 
+/**
+ * Cooldown entry with side awareness
+ * Key is `${tokenId}:${side}` for per-token, per-side cooldowns
+ */
 export interface CooldownEntry {
   tokenId: string;
+  side: OrderSide;
   cooldownUntil: number;
   reason: string;
   attempts: number;
+}
+
+/**
+ * In-flight order lock to prevent stacking/flip-flopping
+ */
+export interface InFlightLock {
+  tokenId: string;
+  side: OrderSide;
+  strategyId: StrategyId;
+  startedAt: number;
+  completedAt?: number;
+}
+
+/**
+ * Position with state tracking for DUST/RESOLVED exclusion
+ */
+export interface TrackedPosition {
+  tokenId: string;
+  marketId: string;
+  outcome: OrderOutcome;
+  state: PositionState;
+  size: number;
+  costBasis: number;
+  currentPrice: number;
+  currentValue: number;
+  unrealizedPnl: number;
+  unrealizedPnlPct: number;
+  bestBid: number; // For executable value reconciliation
+  entryTime: number;
+  lastUpdate: number;
+}
+
+/**
+ * Allowance tracking with token type awareness
+ */
+export interface AllowanceInfo {
+  tokenType: TokenType;
+  tokenId?: string; // For CONDITIONAL tokens
+  allowance: number;
+  balance: number;
+  lastCheck: number;
+  lastRejectReason?: string;
+}
+
+/**
+ * Strategy kill switch state
+ */
+export interface StrategyKillSwitch {
+  strategyId: StrategyId;
+  killed: boolean;
+  reason?: string;
+  killedAt?: number;
+}
+
+/**
+ * PnL reconciliation result
+ */
+export interface ReconciliationResult {
+  tokenId: string;
+  reportedPnl: number;
+  executableValue: number; // bestBid * size
+  discrepancy: number;
+  discrepancyPct: number;
+  flagged: boolean;
+  halted: boolean;
 }
 
 export interface TradeLogEntry {
@@ -113,4 +203,5 @@ export interface TradeLogEntry {
   sizeUsd: number;
   riskDecision: RiskDecision;
   result: OrderResult;
+  allowancePath?: string; // COLLATERAL or CONDITIONAL path used
 }

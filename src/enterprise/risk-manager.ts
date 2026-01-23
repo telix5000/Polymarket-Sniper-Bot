@@ -4,11 +4,17 @@
  * Centralized risk management with:
  * - Portfolio exposure limits (total, per-market, per-category)
  * - Circuit breakers (consecutive rejects, API health, drawdown)
- * - Cooldown awareness and caching
- * - Kill switch support
+ * - Hard cooldownUntil cache (per token_id + side) - NO RETRY SPAM
+ * - Kill switch support (global and per-strategy)
  * - 3-layer stop logic (local, volatility, portfolio)
+ * - PANIC override: liquidation allowed regardless of tier when loss >= PANIC_LOSS_PCT
+ * - DUST/RESOLVED position state exclusion from risk calculations
+ * - Accounting reconciliation with PnL conflict detection
+ * - Idempotency/in-flight locks to prevent stacking and flip-flopping
+ * - Per-strategy attribution and kill switches
  *
  * All orders MUST pass through RiskManager.evaluate() before execution.
+ * This includes stop-loss and hedging orders.
  */
 
 import * as fs from "fs";
@@ -19,6 +25,13 @@ import type {
   CircuitBreakerState,
   CooldownEntry,
   StrategyId,
+  InFlightLock,
+  TrackedPosition,
+  StrategyKillSwitch,
+  ReconciliationResult,
+  AllowanceInfo,
+  TokenType,
+  OrderSide,
 } from "./types";
 
 /**
@@ -40,6 +53,10 @@ export interface RiskManagerConfig {
   /** Session starting balance for drawdown calc */
   sessionStartBalanceUsd?: number;
 
+  // === PANIC Liquidation ===
+  /** Loss % threshold for PANIC liquidation override (default: 30%) */
+  panicLossPct?: number;
+
   // === Circuit Breakers ===
   /** Consecutive order rejects before pause (default: 5) */
   maxConsecutiveRejects?: number;
@@ -57,6 +74,18 @@ export interface RiskManagerConfig {
   dustThresholdUsd?: number;
   /** Max slippage in cents (default: 2¢) */
   maxSlippageCents?: number;
+
+  // === In-Flight Lock Settings ===
+  /** In-flight lock timeout in ms (default: 60000) */
+  inFlightLockTimeoutMs?: number;
+  /** Cooldown after order completion in ms (default: 15000) */
+  postOrderCooldownMs?: number;
+
+  // === Reconciliation ===
+  /** PnL discrepancy % threshold to flag (default: 10%) */
+  reconciliationThresholdPct?: number;
+  /** Halt market on discrepancy (default: true) */
+  haltOnReconciliationFailure?: boolean;
 
   // === Kill Switch ===
   /** File path - if exists, all trading stops */
@@ -77,6 +106,7 @@ const DEFAULT_CONFIG: Required<RiskManagerConfig> = {
   maxExposurePerCategoryUsd: 200,
   maxDrawdownPct: 20,
   sessionStartBalanceUsd: 0,
+  panicLossPct: 30,
   maxConsecutiveRejects: 5,
   maxConsecutiveApiErrors: 3,
   maxApiUnhealthySeconds: 60,
@@ -84,6 +114,10 @@ const DEFAULT_CONFIG: Required<RiskManagerConfig> = {
   minOrderUsd: 1,
   dustThresholdUsd: 0.5,
   maxSlippageCents: 2,
+  inFlightLockTimeoutMs: 60000,
+  postOrderCooldownMs: 15000,
+  reconciliationThresholdPct: 10,
+  haltOnReconciliationFailure: true,
   killSwitchFile: "",
   verboseLogging: false,
 };
@@ -99,14 +133,29 @@ export class RiskManager {
     consecutiveApiErrors: 0,
   };
 
-  // Exposure tracking
+  // Exposure tracking (excludes DUST/RESOLVED positions)
   private exposureByMarket: Map<string, number> = new Map();
   private exposureByCategory: Map<string, number> = new Map();
   private exposureByStrategy: Map<StrategyId, number> = new Map();
   private totalExposure: number = 0;
 
-  // Cooldown cache
+  // Hard cooldown cache: key = `${tokenId}:${side}` - NO RETRY SPAM
   private cooldownCache: Map<string, CooldownEntry> = new Map();
+
+  // In-flight locks: key = `${tokenId}:${side}` - prevents stacking/flip-flopping
+  private inFlightLocks: Map<string, InFlightLock> = new Map();
+
+  // Per-strategy kill switches
+  private strategyKillSwitches: Map<StrategyId, StrategyKillSwitch> = new Map();
+
+  // Position tracking for DUST/RESOLVED exclusion
+  private trackedPositions: Map<string, TrackedPosition> = new Map();
+
+  // Halted markets (from reconciliation failures)
+  private haltedMarkets: Set<string> = new Set();
+
+  // Allowance tracking
+  private allowanceCache: Map<string, AllowanceInfo> = new Map();
 
   // PnL tracking
   private sessionPnl: number = 0;
@@ -123,18 +172,47 @@ export class RiskManager {
     this.logger.info(
       `[RiskManager] Initialized: maxExposure=$${this.config.maxExposureUsd}, ` +
         `maxPerMarket=$${this.config.maxExposurePerMarketUsd}, ` +
-        `maxDrawdown=${this.config.maxDrawdownPct}%`,
+        `maxDrawdown=${this.config.maxDrawdownPct}%, panicLoss=${this.config.panicLossPct}%`,
     );
   }
 
   /**
-   * Evaluate an order request against all risk rules
-   * Returns approval decision with reason
+   * Evaluate an order request against all risk rules.
+   * ALL orders MUST pass through this gate, including stop-loss and hedging.
+   *
+   * Returns approval decision with reason.
+   *
+   * PANIC Override: If position loss >= PANIC_LOSS_PCT, liquidation is allowed
+   * regardless of tier; hedging cannot block it.
    */
-  evaluate(request: OrderRequest, category?: string): RiskDecision {
+  evaluate(
+    request: OrderRequest,
+    category?: string,
+    positionLossPct?: number,
+  ): RiskDecision {
     const warnings: string[] = [];
+    const cooldownKey = `${request.tokenId}:${request.side}`;
 
-    // 1. Kill switch check
+    // === PANIC LIQUIDATION OVERRIDE ===
+    // If loss >= PANIC_LOSS_PCT and this is a SELL (liquidation), allow immediately
+    const isPanicLiquidation =
+      request.side === "SELL" &&
+      request.strategyId === "PANIC_LIQUIDATION" &&
+      positionLossPct !== undefined &&
+      positionLossPct >= this.config.panicLossPct;
+
+    if (isPanicLiquidation) {
+      this.logger.warn(
+        `[RiskManager] 🚨 PANIC LIQUIDATION OVERRIDE: ${request.tokenId} at ${positionLossPct.toFixed(1)}% loss`,
+      );
+      return {
+        approved: true,
+        reason: `PANIC_LIQUIDATION: ${positionLossPct.toFixed(1)}% >= ${this.config.panicLossPct}%`,
+        warnings: ["PANIC override - hedging cannot block this liquidation"],
+      };
+    }
+
+    // 1. Global kill switch check
     if (this.isKillSwitchActive()) {
       return {
         approved: false,
@@ -142,7 +220,26 @@ export class RiskManager {
       };
     }
 
-    // 2. Circuit breaker check
+    // 2. Per-strategy kill switch check
+    const strategyKillSwitch = this.strategyKillSwitches.get(
+      request.strategyId,
+    );
+    if (strategyKillSwitch?.killed) {
+      return {
+        approved: false,
+        reason: `STRATEGY_KILLED: ${request.strategyId} - ${strategyKillSwitch.reason ?? "manually disabled"}`,
+      };
+    }
+
+    // 3. Market halt check (from reconciliation failures)
+    if (this.haltedMarkets.has(request.marketId)) {
+      return {
+        approved: false,
+        reason: `MARKET_HALTED: ${request.marketId} - reconciliation failure`,
+      };
+    }
+
+    // 4. Circuit breaker check
     if (this.circuitBreaker.triggered) {
       if (this.shouldResetCircuitBreaker()) {
         this.resetCircuitBreaker();
@@ -154,16 +251,25 @@ export class RiskManager {
       }
     }
 
-    // 3. Cooldown check for this token
-    const cooldown = this.cooldownCache.get(request.tokenId);
+    // 5. HARD cooldown check (per token_id + side) - NO RETRY SPAM
+    const cooldown = this.cooldownCache.get(cooldownKey);
     if (cooldown && Date.now() < cooldown.cooldownUntil) {
       return {
         approved: false,
-        reason: `COOLDOWN_ACTIVE: ${cooldown.reason} until ${new Date(cooldown.cooldownUntil).toISOString()}`,
+        reason: `COOLDOWN_HARD: ${cooldown.reason} until ${new Date(cooldown.cooldownUntil).toISOString()} (${cooldown.attempts} attempts)`,
       };
     }
 
-    // 4. Minimum order size
+    // 6. In-flight lock check - prevents stacking and flip-flopping
+    const inFlightCheck = this.checkInFlightLock(request.tokenId, request.side);
+    if (inFlightCheck.blocked) {
+      return {
+        approved: false,
+        reason: `IN_FLIGHT_LOCKED: ${inFlightCheck.reason}`,
+      };
+    }
+
+    // 7. Minimum order size
     if (request.sizeUsd < this.config.minOrderUsd) {
       return {
         approved: false,
@@ -171,7 +277,7 @@ export class RiskManager {
       };
     }
 
-    // 5. Slippage check
+    // 8. Slippage check
     if (
       request.expectedSlippage !== undefined &&
       request.expectedSlippage > this.config.maxSlippageCents
@@ -182,7 +288,7 @@ export class RiskManager {
       };
     }
 
-    // 6. Total exposure check (only for BUY orders)
+    // 9. Total exposure check (only for BUY orders)
     if (request.side === "BUY") {
       const projectedExposure = this.totalExposure + request.sizeUsd;
       if (projectedExposure > this.config.maxExposureUsd) {
@@ -206,7 +312,7 @@ export class RiskManager {
         };
       }
 
-      // 7. Per-market exposure check
+      // 10. Per-market exposure check
       const currentMarketExposure =
         this.exposureByMarket.get(request.marketId) ?? 0;
       const projectedMarketExposure = currentMarketExposure + request.sizeUsd;
@@ -230,7 +336,7 @@ export class RiskManager {
         };
       }
 
-      // 8. Per-category exposure check
+      // 11. Per-category exposure check
       if (category) {
         const currentCategoryExposure =
           this.exposureByCategory.get(category) ?? 0;
@@ -245,7 +351,7 @@ export class RiskManager {
       }
     }
 
-    // 9. Drawdown check
+    // 12. Drawdown check
     if (this.config.sessionStartBalanceUsd > 0) {
       const drawdownPct =
         (Math.abs(Math.min(0, this.sessionPnl)) /
@@ -260,7 +366,9 @@ export class RiskManager {
       }
     }
 
-    // All checks passed
+    // All checks passed - set in-flight lock
+    this.setInFlightLock(request.tokenId, request.side, request.strategyId);
+
     if (this.config.verboseLogging) {
       this.logger.debug(
         `[RiskManager] APPROVED: ${request.strategyId} ${request.side} ` +
@@ -276,14 +384,90 @@ export class RiskManager {
   }
 
   /**
+   * Check in-flight lock status
+   */
+  private checkInFlightLock(
+    tokenId: string,
+    side: OrderSide,
+  ): { blocked: boolean; reason?: string } {
+    const key = `${tokenId}:${side}`;
+    const lock = this.inFlightLocks.get(key);
+    const now = Date.now();
+
+    if (!lock) {
+      return { blocked: false };
+    }
+
+    // Check if still in-flight (no completion time)
+    if (!lock.completedAt) {
+      const elapsed = now - lock.startedAt;
+      // If it's been more than the timeout, assume it's stale
+      if (elapsed > this.config.inFlightLockTimeoutMs) {
+        this.inFlightLocks.delete(key);
+        return { blocked: false };
+      }
+      return {
+        blocked: true,
+        reason: `${lock.strategyId} order in-flight since ${new Date(lock.startedAt).toISOString()}`,
+      };
+    }
+
+    // Check cooldown after completion
+    const timeSinceCompletion = now - lock.completedAt;
+    if (timeSinceCompletion < this.config.postOrderCooldownMs) {
+      return {
+        blocked: true,
+        reason: `POST_ORDER_COOLDOWN: ${Math.ceil((this.config.postOrderCooldownMs - timeSinceCompletion) / 1000)}s remaining`,
+      };
+    }
+
+    // Cooldown expired, clean up
+    this.inFlightLocks.delete(key);
+    return { blocked: false };
+  }
+
+  /**
+   * Set in-flight lock
+   */
+  private setInFlightLock(
+    tokenId: string,
+    side: OrderSide,
+    strategyId: StrategyId,
+  ): void {
+    const key = `${tokenId}:${side}`;
+    this.inFlightLocks.set(key, {
+      tokenId,
+      side,
+      strategyId,
+      startedAt: Date.now(),
+    });
+  }
+
+  /**
+   * Release in-flight lock (mark as completed)
+   */
+  releaseInFlightLock(tokenId: string, side: OrderSide): void {
+    const key = `${tokenId}:${side}`;
+    const lock = this.inFlightLocks.get(key);
+    if (lock) {
+      lock.completedAt = Date.now();
+    }
+  }
+
+  /**
    * Record order result to update state
+   * Also releases the in-flight lock
    */
   recordOrderResult(
     request: OrderRequest,
     success: boolean,
     rejectCode?: string,
     cooldownUntil?: number,
+    allowancePath?: string,
   ): void {
+    // Always release in-flight lock
+    this.releaseInFlightLock(request.tokenId, request.side);
+
     if (success) {
       // Reset consecutive failures
       this.circuitBreaker.consecutiveRejects = 0;
@@ -313,17 +497,26 @@ export class RiskManager {
       // Track failure
       this.circuitBreaker.consecutiveRejects++;
 
-      // Cache cooldown if provided
+      // HARD cooldown cache if provided - per token_id + side
       if (cooldownUntil) {
-        const existing = this.cooldownCache.get(request.tokenId);
-        this.cooldownCache.set(request.tokenId, {
+        const cooldownKey = `${request.tokenId}:${request.side}`;
+        const existing = this.cooldownCache.get(cooldownKey);
+        this.cooldownCache.set(cooldownKey, {
           tokenId: request.tokenId,
+          side: request.side,
           cooldownUntil,
           reason: rejectCode ?? "UNKNOWN",
           attempts: (existing?.attempts ?? 0) + 1,
         });
         this.logger.warn(
-          `[RiskManager] Cooldown cached for ${request.tokenId}: ${rejectCode} until ${new Date(cooldownUntil).toISOString()}`,
+          `[RiskManager] HARD cooldown set: ${cooldownKey} - ${rejectCode} until ${new Date(cooldownUntil).toISOString()}`,
+        );
+      }
+
+      // Log allowance path on reject for debugging
+      if (allowancePath && rejectCode?.includes("ALLOWANCE")) {
+        this.logger.error(
+          `[RiskManager] Allowance reject on ${allowancePath} path: ${rejectCode} for ${request.tokenId}`,
         );
       }
 
@@ -456,6 +649,234 @@ export class RiskManager {
     this.resetCircuitBreaker();
   }
 
+  // ============================================================
+  // POSITION STATE TRACKING (DUST/RESOLVED exclusion)
+  // ============================================================
+
+  /**
+   * Update tracked position state
+   * DUST and RESOLVED positions are excluded from risk calculations
+   */
+  updatePosition(position: TrackedPosition): void {
+    const { tokenId, state, currentValue } = position;
+
+    // Determine state based on value and market status
+    let effectiveState = state;
+    if (state !== "RESOLVED" && currentValue < this.config.dustThresholdUsd) {
+      effectiveState = "DUST";
+    }
+
+    position.state = effectiveState;
+    this.trackedPositions.set(tokenId, position);
+
+    // Update exposure - exclude DUST and RESOLVED
+    if (effectiveState === "DUST" || effectiveState === "RESOLVED") {
+      // Remove from exposure calculations
+      const marketExp = this.exposureByMarket.get(position.marketId) ?? 0;
+      this.exposureByMarket.set(
+        position.marketId,
+        Math.max(0, marketExp - currentValue),
+      );
+      this.totalExposure = Math.max(0, this.totalExposure - currentValue);
+
+      if (this.config.verboseLogging) {
+        this.logger.debug(
+          `[RiskManager] Position ${tokenId} marked ${effectiveState}, excluded from risk calcs`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Mark position as RESOLVED (market has resolved)
+   */
+  markPositionResolved(tokenId: string): void {
+    const position = this.trackedPositions.get(tokenId);
+    if (position) {
+      position.state = "RESOLVED";
+      this.trackedPositions.set(tokenId, position);
+      this.logger.info(`[RiskManager] Position ${tokenId} marked RESOLVED`);
+    }
+  }
+
+  /**
+   * Check if position is DUST or RESOLVED (excluded from worst-loss calc)
+   */
+  isPositionExcluded(tokenId: string): boolean {
+    const position = this.trackedPositions.get(tokenId);
+    if (!position) return false;
+    return position.state === "DUST" || position.state === "RESOLVED";
+  }
+
+  /**
+   * Get worst loss positions (excludes DUST/RESOLVED)
+   */
+  getWorstLossPositions(limit: number = 5): TrackedPosition[] {
+    const active = Array.from(this.trackedPositions.values()).filter(
+      (p) => p.state !== "DUST" && p.state !== "RESOLVED" && p.size > 0,
+    );
+    return active
+      .sort((a, b) => a.unrealizedPnlPct - b.unrealizedPnlPct)
+      .slice(0, limit);
+  }
+
+  // ============================================================
+  // PNL RECONCILIATION
+  // ============================================================
+
+  /**
+   * Reconcile reported PnL with executable best-bid value
+   * If discrepancy exceeds threshold, flag and optionally halt market
+   */
+  reconcilePnL(
+    tokenId: string,
+    reportedPnl: number,
+    bestBid: number,
+    positionSize: number,
+  ): ReconciliationResult {
+    const executableValue = bestBid * positionSize;
+    const position = this.trackedPositions.get(tokenId);
+    const costBasis = position?.costBasis ?? 0;
+
+    // Calculate what PnL should be based on executable value
+    const expectedPnl = executableValue - costBasis;
+    const discrepancy = Math.abs(reportedPnl - expectedPnl);
+    const discrepancyPct =
+      costBasis > 0
+        ? (discrepancy / costBasis) * 100
+        : discrepancy > 0
+          ? 100
+          : 0;
+
+    const flagged = discrepancyPct >= this.config.reconciliationThresholdPct;
+    let halted = false;
+
+    if (flagged) {
+      this.logger.error(
+        `[RiskManager] 🚨 PnL RECONCILIATION FAILURE: ${tokenId} ` +
+          `reported=$${reportedPnl.toFixed(2)} vs executable=$${expectedPnl.toFixed(2)} ` +
+          `(${discrepancyPct.toFixed(1)}% discrepancy)`,
+      );
+
+      if (this.config.haltOnReconciliationFailure && position) {
+        this.haltedMarkets.add(position.marketId);
+        halted = true;
+        this.logger.error(
+          `[RiskManager] Market ${position.marketId} HALTED due to reconciliation failure`,
+        );
+      }
+    }
+
+    return {
+      tokenId,
+      reportedPnl,
+      executableValue,
+      discrepancy,
+      discrepancyPct,
+      flagged,
+      halted,
+    };
+  }
+
+  /**
+   * Unhalt a market (operator action)
+   */
+  unhaltMarket(marketId: string): void {
+    this.haltedMarkets.delete(marketId);
+    this.logger.info(`[RiskManager] Market ${marketId} unhalted`);
+  }
+
+  // ============================================================
+  // PER-STRATEGY KILL SWITCHES
+  // ============================================================
+
+  /**
+   * Kill a specific strategy
+   */
+  killStrategy(strategyId: StrategyId, reason?: string): void {
+    this.strategyKillSwitches.set(strategyId, {
+      strategyId,
+      killed: true,
+      reason,
+      killedAt: Date.now(),
+    });
+    this.logger.warn(
+      `[RiskManager] Strategy ${strategyId} KILLED: ${reason ?? "manual"}`,
+    );
+  }
+
+  /**
+   * Revive a killed strategy
+   */
+  reviveStrategy(strategyId: StrategyId): void {
+    this.strategyKillSwitches.delete(strategyId);
+    this.logger.info(`[RiskManager] Strategy ${strategyId} revived`);
+  }
+
+  /**
+   * Check if strategy is killed
+   */
+  isStrategyKilled(strategyId: StrategyId): boolean {
+    return this.strategyKillSwitches.get(strategyId)?.killed ?? false;
+  }
+
+  /**
+   * Get all killed strategies
+   */
+  getKilledStrategies(): StrategyKillSwitch[] {
+    return Array.from(this.strategyKillSwitches.values()).filter(
+      (s) => s.killed,
+    );
+  }
+
+  // ============================================================
+  // ALLOWANCE TRACKING
+  // ============================================================
+
+  /**
+   * Record allowance info for a token type
+   * Used to log exact allowance path on rejects
+   */
+  recordAllowanceInfo(
+    tokenType: TokenType,
+    tokenId: string | undefined,
+    allowance: number,
+    balance: number,
+    rejectReason?: string,
+  ): void {
+    const key = tokenType === "COLLATERAL" ? "COLLATERAL" : `COND:${tokenId}`;
+    this.allowanceCache.set(key, {
+      tokenType,
+      tokenId,
+      allowance,
+      balance,
+      lastCheck: Date.now(),
+      lastRejectReason: rejectReason,
+    });
+
+    if (rejectReason) {
+      this.logger.error(
+        `[RiskManager] Allowance reject on ${tokenType} path: ${rejectReason} ` +
+          `(allowance=$${allowance.toFixed(2)}, balance=$${balance.toFixed(2)})`,
+      );
+    }
+  }
+
+  /**
+   * Get allowance info
+   */
+  getAllowanceInfo(
+    tokenType: TokenType,
+    tokenId?: string,
+  ): AllowanceInfo | undefined {
+    const key = tokenType === "COLLATERAL" ? "COLLATERAL" : `COND:${tokenId}`;
+    return this.allowanceCache.get(key);
+  }
+
+  // ============================================================
+  // STATE GETTERS
+  // ============================================================
+
   /**
    * Get current risk state for monitoring
    */
@@ -467,7 +888,19 @@ export class RiskManager {
     maxDrawdown: number;
     apiHealthy: boolean;
     activeCooldowns: number;
+    activeInFlightLocks: number;
+    killedStrategies: number;
+    haltedMarkets: number;
+    dustPositions: number;
+    resolvedPositions: number;
   } {
+    const dustCount = Array.from(this.trackedPositions.values()).filter(
+      (p) => p.state === "DUST",
+    ).length;
+    const resolvedCount = Array.from(this.trackedPositions.values()).filter(
+      (p) => p.state === "RESOLVED",
+    ).length;
+
     return {
       circuitBreaker: { ...this.circuitBreaker },
       totalExposure: this.totalExposure,
@@ -476,6 +909,11 @@ export class RiskManager {
       maxDrawdown: this.maxSessionDrawdown,
       apiHealthy: this.apiHealthy,
       activeCooldowns: this.cooldownCache.size,
+      activeInFlightLocks: this.inFlightLocks.size,
+      killedStrategies: this.getKilledStrategies().length,
+      haltedMarkets: this.haltedMarkets.size,
+      dustPositions: dustCount,
+      resolvedPositions: resolvedCount,
     };
   }
 
