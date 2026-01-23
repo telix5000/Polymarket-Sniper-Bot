@@ -142,14 +142,20 @@ export class SimpleSmartHedgingStrategy {
         position.marketId,
         position.tokenId,
       );
-      if (entryTime) {
-        const holdSeconds = (now - entryTime) / 1000;
-        if (holdSeconds < this.config.minHoldSeconds) {
-          this.logger.debug(
-            `[SimpleHedging] ⏳ Position losing ${Math.abs(position.pnlPct).toFixed(1)}% but held only ${holdSeconds.toFixed(0)}s (need ${this.config.minHoldSeconds}s) - waiting`,
-          );
-          continue;
-        }
+      if (!entryTime) {
+        // If we don't have an entry time, be conservative and skip this position
+        this.logger.debug(
+          `[SimpleHedging] ⏳ Skipping position without entryTime for min-hold check (marketId=${position.marketId}, tokenId=${position.tokenId})`,
+        );
+        continue;
+      }
+
+      const holdSeconds = (now - entryTime) / 1000;
+      if (holdSeconds < this.config.minHoldSeconds) {
+        this.logger.debug(
+          `[SimpleHedging] ⏳ Position losing ${Math.abs(position.pnlPct).toFixed(1)}% but held only ${holdSeconds.toFixed(0)}s (need ${this.config.minHoldSeconds}s) - waiting`,
+        );
+        continue;
       }
 
       const lossPct = Math.abs(position.pnlPct);

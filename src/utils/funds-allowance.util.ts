@@ -71,7 +71,7 @@ const inFlightBuys = new Map<
 /**
  * Market-level cooldown to prevent stacked buys on the SAME MARKET.
  * This prevents buying multiple outcomes (YES/NO) of the same market in rapid succession.
- * Key format: `${marketId}:MARKET_BUY`
+ * Key format: `${marketId}` (marketId-only key)
  * 
  * CRITICAL FIX: The token-level cooldown wasn't enough because different outcomes
  * of the same market have different tokenIds, allowing stacked buys like:

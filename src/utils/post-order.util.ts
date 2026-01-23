@@ -254,17 +254,17 @@ async function postOrderClob(
   // Wrap the rest in try/finally to ensure we mark completion
   try {
     const result = await postOrderClobInner(input);
-    
-    // Mark market cooldown on successful BUY (only if marketId is provided)
-    if (!input.skipDuplicatePrevention && side === "BUY" && marketId && result.status === "submitted") {
-      markMarketBuyCompleted(marketId);
-    }
-    
     return result;
   } finally {
-    // Always mark completion for BUY orders
+    // Always mark completion for BUY orders (regardless of success/failure)
+    // This prevents rapid-fire retry attempts on the same token/market
     if (!input.skipDuplicatePrevention && side === "BUY") {
       markBuyCompleted(tokenId);
+      // Mark market cooldown regardless of submission success
+      // The intent was to buy on this market, so apply cooldown even if order fails
+      if (marketId) {
+        markMarketBuyCompleted(marketId);
+      }
     }
   }
 }
