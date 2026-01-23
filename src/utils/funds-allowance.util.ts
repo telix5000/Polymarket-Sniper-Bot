@@ -55,6 +55,7 @@ const balanceCheckWarnDedup = new Map<
  * Key format: `${tokenId}:BUY` - we only track BUYs since those stack losses.
  */
 const IN_FLIGHT_COOLDOWN_MS = 10_000; // 10 second cooldown between buys on same token
+const STALE_IN_FLIGHT_TIMEOUT_MS = 60_000; // 60s timeout for stale in-flight entries
 const inFlightBuys = new Map<
   string,
   { startedAt: number; completedAt?: number }
@@ -84,15 +85,15 @@ export const isInFlightOrCooldown = (
   // Check if still in-flight (no completion time)
   if (!entry.completedAt) {
     const elapsed = now - entry.startedAt;
-    // If it's been more than 60s without completion, assume it's stale
-    if (elapsed > 60_000) {
+    // If it's been more than the stale timeout without completion, assume it's stale
+    if (elapsed > STALE_IN_FLIGHT_TIMEOUT_MS) {
       inFlightBuys.delete(key);
       return { blocked: false };
     }
     return {
       blocked: true,
       reason: "IN_FLIGHT_BUY",
-      remainingMs: Math.max(0, 60_000 - elapsed),
+      remainingMs: Math.max(0, STALE_IN_FLIGHT_TIMEOUT_MS - elapsed),
     };
   }
 
