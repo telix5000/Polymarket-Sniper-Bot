@@ -6,10 +6,14 @@ A complete, risk-managed trading system for Polymarket designed for maximizing r
 
 The enterprise trading system is now **integrated into all strategy presets** (conservative, balanced, aggressive). Every preset provides:
 
-- **Centralized RiskManager**: Gates all orders with exposure limits and circuit breakers
-- **Market selection filter**: Only trades liquid, tight-spread markets
+- **Centralized RiskManager**: Gates ALL orders (including stop-loss and hedging) with exposure limits and circuit breakers
+- **Hard cooldown cache**: Per token_id + side - NO RETRY SPAM
+- **In-flight locks**: Prevents order stacking and flip-flopping
+- **PANIC liquidation override**: When loss >= PANIC_LOSS_PCT, liquidation allowed regardless of tier
+- **DUST/RESOLVED exclusion**: Small and resolved positions excluded from risk calculations
+- **PnL reconciliation**: Detects discrepancies between reported and executable value
+- **Per-strategy kill switches**: Fine-grained control over strategy execution
 - **Sequential execution**: Prevents stack issues and race conditions
-- **Deterministic PnL accounting**: Real-time tracking of realized/unrealized P&L
 
 ## Quick Start
 
