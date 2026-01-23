@@ -180,9 +180,10 @@ export class OrderSubmissionController {
         // Check if FOK order was actually filled (not killed)
         // A killed FOK order has takingAmount=0 and makingAmount=0
         if (fillInfo) {
-          // Use explicit null checks to avoid masking NaN from malformed responses
-          const takingAmount = fillInfo.takingAmount ? parseFloat(fillInfo.takingAmount) : 0;
-          const makingAmount = fillInfo.makingAmount ? parseFloat(fillInfo.makingAmount) : 0;
+          // Parse amounts directly - extractFillInfo guarantees strings (defaulting to "0")
+          // Empty strings will become NaN, allowing malformed response detection
+          const takingAmount = parseFloat(fillInfo.takingAmount);
+          const makingAmount = parseFloat(fillInfo.makingAmount);
           
           // Check for NaN (malformed response) - treat as unknown and allow order to proceed
           const hasTaking = !isNaN(takingAmount) && takingAmount > 0;

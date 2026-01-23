@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { OrderSubmissionController } from "../../src/utils/order-submission.util";
+import { OrderSubmissionController, extractFillInfo } from "../../src/utils/order-submission.util";
 
 const createLogger = () => {
   const logs: string[] = [];
@@ -145,4 +145,214 @@ test("401 auth failure triggers cooldown backoff", async () => {
   assert.equal(secondResult.reason, "AUTH_BLOCK");
   assert.equal(submitCalls, 1);
   assert.ok(logs.some((line) => line.includes("auth failure")));
+});
+
+// Tests for extractFillInfo function
+test("extractFillInfo extracts both takingAmount and makingAmount", () => {
+  const response = {
+    takingAmount: "100.5",
+    makingAmount: "50.25",
+    status: "MATCHED",
+  };
+  const result = extractFillInfo(response);
+  assert.deepEqual(result, {
+    takingAmount: "100.5",
+    makingAmount: "50.25",
+    status: "MATCHED",
+  });
+});
+
+test("extractFillInfo defaults missing makingAmount to 0", () => {
+  const response = {
+    takingAmount: "100.5",
+  };
+  const result = extractFillInfo(response);
+  assert.deepEqual(result, {
+    takingAmount: "100.5",
+    makingAmount: "0",
+    status: undefined,
+  });
+});
+
+test("extractFillInfo defaults missing takingAmount to 0", () => {
+  const response = {
+    makingAmount: "50.25",
+  };
+  const result = extractFillInfo(response);
+  assert.deepEqual(result, {
+    takingAmount: "0",
+    makingAmount: "50.25",
+    status: undefined,
+  });
+});
+
+test("extractFillInfo returns undefined when neither field is present", () => {
+  const response = {
+    orderID: "abc123",
+  };
+  const result = extractFillInfo(response);
+  assert.equal(result, undefined);
+});
+
+test("extractFillInfo handles empty response", () => {
+  const result = extractFillInfo({});
+  assert.equal(result, undefined);
+});
+
+// Tests for FOK order detection
+test("FOK order with takingAmount=0 and makingAmount=0 is identified as killed", async () => {
+  const { logs, logger } = createLogger();
+  const controller = new OrderSubmissionController({
+    minOrderUsd: 1,
+    minIntervalMs: 0,
+    maxPerHour: 100,
+    marketCooldownMs: 0,
+    duplicatePreventionMs: 0,
+    cloudflareCooldownMs: 1000,
+    authCooldownMs: 1000,
+  });
+
+  const result = await controller.submit({
+    sizeUsd: 50,
+    marketId: "market-fok",
+    logger,
+    now: 10000,
+    submit: async () => ({
+      status: 200, // HTTP status code
+      order: { id: "order123" }, // Required for isOrderAccepted
+      takingAmount: "0",
+      makingAmount: "0",
+    }),
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.reason, "FOK_ORDER_KILLED");
+  assert.equal(result.orderId, "order123");
+  assert.ok(result.fillInfo);
+  assert.equal(result.fillInfo?.takingAmount, "0");
+  assert.equal(result.fillInfo?.makingAmount, "0");
+  assert.ok(logs.some((line) => line.includes("FOK order killed")));
+});
+
+test("FOK order with non-zero takingAmount is treated as successful", async () => {
+  const { logs, logger } = createLogger();
+  const controller = new OrderSubmissionController({
+    minOrderUsd: 1,
+    minIntervalMs: 0,
+    maxPerHour: 100,
+    marketCooldownMs: 0,
+    duplicatePreventionMs: 0,
+    cloudflareCooldownMs: 1000,
+    authCooldownMs: 1000,
+  });
+
+  const result = await controller.submit({
+    sizeUsd: 50,
+    marketId: "market-fok-success",
+    logger,
+    now: 11000,
+    submit: async () => ({
+      status: 200, // HTTP status code
+      order: { id: "order456" },
+      takingAmount: "100.5",
+      makingAmount: "50.25",
+    }),
+  });
+
+  assert.equal(result.status, "submitted");
+  assert.equal(result.orderId, "order456");
+  assert.ok(result.fillInfo);
+  assert.equal(result.fillInfo?.takingAmount, "100.5");
+  assert.equal(result.fillInfo?.makingAmount, "50.25");
+  assert.ok(logs.some((line) => line.includes("Order filled")));
+});
+
+test("FOK order with non-zero makingAmount only is treated as successful", async () => {
+  const { logger } = createLogger();
+  const controller = new OrderSubmissionController({
+    minOrderUsd: 1,
+    minIntervalMs: 0,
+    maxPerHour: 100,
+    marketCooldownMs: 0,
+    duplicatePreventionMs: 0,
+    cloudflareCooldownMs: 1000,
+    authCooldownMs: 1000,
+  });
+
+  const result = await controller.submit({
+    sizeUsd: 50,
+    marketId: "market-fok-making",
+    logger,
+    now: 12000,
+    submit: async () => ({
+      status: 200,
+      order: { id: "order789" },
+      takingAmount: "0",
+      makingAmount: "50.25",
+    }),
+  });
+
+  assert.equal(result.status, "submitted");
+  assert.equal(result.orderId, "order789");
+});
+
+test("malformed response with empty string amounts is handled correctly", async () => {
+  const { logger } = createLogger();
+  const controller = new OrderSubmissionController({
+    minOrderUsd: 1,
+    minIntervalMs: 0,
+    maxPerHour: 100,
+    marketCooldownMs: 0,
+    duplicatePreventionMs: 0,
+    cloudflareCooldownMs: 1000,
+    authCooldownMs: 1000,
+  });
+
+  // Empty strings should parse to NaN, which should allow the order to proceed
+  // because we can't determine if it was killed or not
+  const result = await controller.submit({
+    sizeUsd: 50,
+    marketId: "market-malformed",
+    logger,
+    now: 13000,
+    submit: async () => ({
+      status: 200,
+      order: { id: "order-malformed" },
+      takingAmount: "",
+      makingAmount: "",
+    }),
+  });
+
+  // With empty strings parsing to NaN, the order should proceed as submitted
+  assert.equal(result.status, "submitted");
+  assert.equal(result.orderId, "order-malformed");
+});
+
+test("response without fill info is handled correctly", async () => {
+  const { logger } = createLogger();
+  const controller = new OrderSubmissionController({
+    minOrderUsd: 1,
+    minIntervalMs: 0,
+    maxPerHour: 100,
+    marketCooldownMs: 0,
+    duplicatePreventionMs: 0,
+    cloudflareCooldownMs: 1000,
+    authCooldownMs: 1000,
+  });
+
+  // Response without takingAmount/makingAmount should proceed as submitted
+  const result = await controller.submit({
+    sizeUsd: 50,
+    marketId: "market-no-fill-info",
+    logger,
+    now: 14000,
+    submit: async () => ({
+      status: 200,
+      order: { id: "order-no-fill" },
+    }),
+  });
+
+  assert.equal(result.status, "submitted");
+  assert.equal(result.orderId, "order-no-fill");
+  assert.equal(result.fillInfo, undefined);
 });
