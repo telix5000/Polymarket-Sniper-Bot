@@ -114,9 +114,9 @@ test("in-flight buy tracking", async (t) => {
     const tokenId = "test-token-stale";
     markBuyInFlight(tokenId);
 
-    // Simulate time passing beyond stale timeout (60s) using nowOverride
+    // Simulate time passing beyond stale timeout (120s) using nowOverride
     const now = Date.now();
-    const staleTime = now + 61_000; // 61 seconds later
+    const staleTime = now + 121_000; // 121 seconds later (> 120s stale timeout)
 
     const result = isInFlightOrCooldown(tokenId, "BUY", staleTime);
     assert.equal(result.blocked, false); // Should be allowed after stale timeout
@@ -128,9 +128,9 @@ test("in-flight buy tracking", async (t) => {
     markBuyInFlight(tokenId);
     markBuyCompleted(tokenId);
 
-    // Simulate time passing beyond cooldown (15s) using nowOverride
+    // Simulate time passing beyond cooldown (60s) using nowOverride
     const now = Date.now();
-    const afterCooldown = now + 16_000; // 16 seconds later (> 15s cooldown)
+    const afterCooldown = now + 61_000; // 61 seconds later (> 60s cooldown)
 
     const result = isInFlightOrCooldown(tokenId, "BUY", afterCooldown);
     assert.equal(result.blocked, false); // Should be allowed after cooldown

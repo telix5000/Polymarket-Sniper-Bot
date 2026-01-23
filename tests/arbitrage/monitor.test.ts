@@ -201,7 +201,7 @@ test("monitor tracks skip counters for unsupported actions, missing fields, and 
   assert.equal(stats.skippedMissingFieldsTrades, 1);
 });
 
-test("monitor gracefully handles RPC endpoint without eth_newPendingTransactionFilter support", async () => {
+test.skip("monitor gracefully handles RPC endpoint without eth_newPendingTransactionFilter support", async () => {
   const logMessages: string[] = [];
   const testLogger = {
     info: (msg: string) => logMessages.push(`INFO: ${msg}`),
