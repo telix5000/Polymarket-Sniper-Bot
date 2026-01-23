@@ -105,14 +105,7 @@ test("UniversalStopLoss triggers stop-loss after minHoldSeconds elapsed", async 
     },
   });
 
-  // Execute should find the position exceeding threshold
-  // Note: actual sell will fail due to mock client, but the position should be identified
-  const warnMessage = mockLogger.messages.find((m) =>
-    m.includes("exceeding stop-loss threshold"),
-  );
-
-  // Since we can't mock the sell, we just verify the position was identified for stop-loss
-  // The warn log indicates stop-loss was triggered (not skipped due to hold time)
+  // Execute the strategy
   await strategy.execute();
 
   // Should NOT have the waiting message (since hold time is satisfied)
@@ -123,6 +116,15 @@ test("UniversalStopLoss triggers stop-loss after minHoldSeconds elapsed", async 
     waitMessage,
     undefined,
     "Should not log waiting message when hold time is satisfied",
+  );
+
+  // Should have the stop-loss threshold warning (position was identified for stop-loss)
+  const warnMessage = mockLogger.messages.find((m) =>
+    m.includes("exceeding stop-loss threshold"),
+  );
+  assert.ok(
+    warnMessage,
+    "Should identify position as exceeding stop-loss threshold when hold time is satisfied",
   );
 });
 
