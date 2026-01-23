@@ -54,6 +54,32 @@ export class TradeExecutorService {
       return;
     }
 
+    // === BLOCK COPY TRADING SELL ORDERS ===
+    // Copy trading SELL orders is dangerous because:
+    // 1. You don't know the target's entry price - they might be taking profit while you'd be taking a loss
+    // 2. The target may have info you don't (e.g., inside knowledge the position will lose)
+    // 3. Your other strategies (quick-flip, auto-sell) should handle exits based on YOUR profit targets
+    if (signal.side === "SELL") {
+      logger.info(
+        `[Frontrun] ⏭️ Skipping SELL copy trade - only BUY orders are copied. Use your own exit strategies. Market: ${signal.marketId}`,
+      );
+      return;
+    }
+
+    // === MINIMUM BUY PRICE CHECK ===
+    // Prevents buying extremely low-probability "loser" positions (e.g., 3¢ positions)
+    // This protects against copying trades into positions that are almost certain to lose.
+    // Default: 0.50 (50¢) - configurable via MIN_BUY_PRICE environment variable
+    if (signal.side === "BUY") {
+      const minBuyPrice = env.minBuyPrice ?? DEFAULT_CONFIG.MIN_BUY_PRICE;
+      if (signal.price < minBuyPrice) {
+        logger.warn(
+          `[Frontrun] 🚫 Skipping BUY - price ${(signal.price * 100).toFixed(1)}¢ is below minimum ${(minBuyPrice * 100).toFixed(1)}¢ (prevents buying loser positions). Market: ${signal.marketId}`,
+        );
+        return;
+      }
+    }
+
     // Check if we already own this exact token (prevents stacking/duplicate buys)
     // NOTE: This does NOT block hedging - hedges buy a different tokenId (opposite outcome)
     if (signal.side === "BUY" && positionTracker) {
