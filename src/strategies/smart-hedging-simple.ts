@@ -158,9 +158,9 @@ export class SimpleSmartHedgingStrategy {
         continue;
       }
 
-      // Skip if not YES/NO (can't hedge)
+      // Skip if no side defined (can't hedge without knowing the outcome)
       const side = position.side?.toUpperCase();
-      if (side !== "YES" && side !== "NO") {
+      if (!side || side.trim() === "") {
         continue;
       }
 
@@ -281,22 +281,25 @@ export class SimpleSmartHedgingStrategy {
 
   /**
    * Execute a hedge - buy the opposite side
+   * Supports all binary market types: YES/NO, Over/Under, Team A/Team B, etc.
    */
   private async executeHedge(position: Position): Promise<boolean> {
-    const side = position.side?.toUpperCase() as "YES" | "NO";
-    const oppositeSide = side === "YES" ? "NO" : "YES";
+    const currentSide = position.side?.toUpperCase();
 
-    // Get the opposite token
-    const oppositeTokenId = await this.getOppositeToken(
+    // Get the opposite token (works for any binary market)
+    const oppositeInfo = await this.getOppositeToken(
       position.marketId,
       position.tokenId,
-      side,
     );
 
-    if (!oppositeTokenId) {
-      this.logger.warn(`[SimpleHedging] Could not find opposite token`);
+    if (!oppositeInfo) {
+      this.logger.warn(
+        `[SimpleHedging] Could not find opposite token for ${currentSide}`,
+      );
       return false;
     }
+
+    const { tokenId: oppositeTokenId, outcome: oppositeSide } = oppositeInfo;
 
     // Get opposite side price
     let oppositePrice: number;
@@ -352,7 +355,7 @@ export class SimpleSmartHedgingStrategy {
 
     this.logger.info(
       `[SimpleHedging] 🔄 HEDGING: Buy ${hedgeShares.toFixed(2)} ${oppositeSide} @ ${(oppositePrice * 100).toFixed(1)}¢ = $${hedgeUsd.toFixed(2)}` +
-        `\n  If ${side} wins: ${ifOriginalWins >= 0 ? "+" : ""}$${ifOriginalWins.toFixed(2)}` +
+        `\n  If ${currentSide} wins: ${ifOriginalWins >= 0 ? "+" : ""}$${ifOriginalWins.toFixed(2)}` +
         `\n  If ${oppositeSide} wins: ${ifHedgeWins >= 0 ? "+" : ""}$${ifHedgeWins.toFixed(2)}`,
     );
 
@@ -364,12 +367,15 @@ export class SimpleSmartHedgingStrategy {
     }
 
     try {
+      // Normalize the outcome to YES/NO for the order API (tokenId identifies the actual outcome)
+      const orderOutcome = this.normalizeOutcomeForOrder(oppositeSide);
+
       const result = await postOrder({
         client: this.client,
         wallet,
         marketId: position.marketId,
         tokenId: oppositeTokenId,
-        outcome: oppositeSide,
+        outcome: orderOutcome,
         side: "BUY",
         sizeUsd: hedgeUsd,
         maxAcceptablePrice: oppositePrice * 1.02,
@@ -396,7 +402,30 @@ export class SimpleSmartHedgingStrategy {
   }
 
   /**
+   * Normalize an outcome string to the OrderOutcome type expected by postOrder.
+   *
+   * IMPORTANT: The CLOB API uses tokenId (not outcome) to identify the specific
+   * outcome token for order execution. The outcome field is primarily for logging
+   * and internal bookkeeping. For non-YES/NO markets, we use "YES" as a placeholder
+   * since the tokenId is what actually determines which side is being traded.
+   *
+   * @param outcome - The outcome string from the position (e.g., "YES", "NO", "Over", "Under", "Team A")
+   * @returns "YES" or "NO" for the order API
+   */
+  private normalizeOutcomeForOrder(outcome: string): "YES" | "NO" {
+    const upper = outcome.toUpperCase();
+    if (upper === "YES" || upper === "NO") {
+      return upper as "YES" | "NO";
+    }
+    // For non-YES/NO markets (Over/Under, Team A/Team B, etc.), we use "YES" as a
+    // placeholder. The tokenId is what the CLOB API uses to identify the specific
+    // outcome token - the outcome field is just metadata for logging.
+    return "YES";
+  }
+
+  /**
    * Sell a position to stop losses
+   * Supports all binary market types: YES/NO, Over/Under, Team A/Team B, etc.
    */
   private async sellPosition(position: Position): Promise<boolean> {
     const wallet = (this.client as { wallet?: Wallet }).wallet;
@@ -405,19 +434,31 @@ export class SimpleSmartHedgingStrategy {
       return false;
     }
 
+    // The execute() method already filters out positions without a side,
+    // but check again as a safety measure
+    if (!position.side || position.side.trim() === "") {
+      this.logger.warn(
+        `[SimpleHedging] Position has no side defined - cannot sell (tokenId=${position.tokenId})`,
+      );
+      return false;
+    }
+
     const currentValue = position.size * position.currentPrice;
 
     this.logger.info(
-      `[SimpleHedging] 💸 SELLING to salvage $${currentValue.toFixed(2)}`,
+      `[SimpleHedging] 💸 SELLING ${position.side} to salvage $${currentValue.toFixed(2)}`,
     );
 
     try {
+      // Normalize the outcome for the order (tokenId is what matters for execution)
+      const orderOutcome = this.normalizeOutcomeForOrder(position.side);
+
       const result = await postOrder({
         client: this.client,
         wallet,
         marketId: position.marketId,
         tokenId: position.tokenId,
-        outcome: position.side as "YES" | "NO",
+        outcome: orderOutcome,
         side: "SELL",
         sizeUsd: currentValue,
         logger: this.logger,
@@ -442,13 +483,18 @@ export class SimpleSmartHedgingStrategy {
   }
 
   /**
-   * Get the opposite token ID for hedging
+   * Get the opposite token ID for hedging in any binary market.
+   * Works for YES/NO, Over/Under, Team A/Team B, or any other two-outcome market.
+   *
+   * For binary markets, there are always exactly 2 tokens. We find the one
+   * that is NOT the current position's token.
+   *
+   * @returns Object with tokenId and outcome name, or null if not found
    */
   private async getOppositeToken(
     marketId: string,
     currentTokenId: string,
-    currentSide: "YES" | "NO",
-  ): Promise<string | null> {
+  ): Promise<{ tokenId: string; outcome: string } | null> {
     try {
       const market = await this.client.getMarket(marketId);
       if (!market) return null;
@@ -456,16 +502,26 @@ export class SimpleSmartHedgingStrategy {
       const tokens = (
         market as { tokens?: Array<{ token_id: string; outcome: string }> }
       ).tokens;
-      if (!tokens || tokens.length < 2) return null;
+      // Ensure this is truly a binary market: must have exactly 2 tokens
+      if (!tokens || tokens.length !== 2) return null;
 
-      const oppositeSide = currentSide === "YES" ? "NO" : "YES";
-      const oppositeToken = tokens.find(
-        (t) =>
-          t.outcome?.toUpperCase() === oppositeSide &&
-          t.token_id !== currentTokenId,
-      );
+      // For any binary market, find the token that is NOT the current one
+      const oppositeToken = tokens.find((t) => t.token_id !== currentTokenId);
 
-      return oppositeToken?.token_id ?? null;
+      if (!oppositeToken) return null;
+
+      // Outcome should always be defined for valid market tokens.
+      // If missing, log a warning but continue - the tokenId is what matters for execution.
+      if (!oppositeToken.outcome) {
+        this.logger.warn(
+          `[SimpleHedging] Opposite token has no outcome defined (marketId=${marketId}, tokenId=${oppositeToken.token_id})`,
+        );
+      }
+
+      return {
+        tokenId: oppositeToken.token_id,
+        outcome: oppositeToken.outcome ?? "Unknown",
+      };
     } catch {
       return null;
     }
