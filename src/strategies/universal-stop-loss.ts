@@ -25,9 +25,14 @@ export interface UniversalStopLossConfig {
    */
   skipForSmartHedging?: boolean;
   /**
-   * Maximum entry price threshold for skipping positions when skipForSmartHedging is true.
+   * Entry price threshold for determining which strategy handles a position.
    * Should match Smart Hedging's maxEntryPrice (default: 0.75 = 75¢).
-   * Positions with entry price BELOW this are skipped and handled by Smart Hedging.
+   * 
+   * When skipForSmartHedging is true:
+   * - Positions with entry < this threshold: Handled by Smart Hedging (skipped by Stop-Loss)
+   * - Positions with entry >= this threshold: Handled by Universal Stop-Loss
+   * 
+   * This matches Smart Hedging's logic which skips positions where entry >= maxEntryPrice.
    * 
    * Default: 0.75 (75¢) - matches Smart Hedging default
    */
@@ -147,7 +152,7 @@ export class UniversalStopLossStrategy {
 
       if (skippedCount > 0) {
         this.logger.debug(
-          `[UniversalStopLoss] Skipping ${skippedCount} position(s) below ${(hedgingThreshold * 100).toFixed(0)}¢ - smart hedging will handle them`,
+          `[UniversalStopLoss] Skipping ${skippedCount} position(s) with entry < ${(hedgingThreshold * 100).toFixed(1)}¢ - smart hedging will handle them`,
         );
       }
     }
