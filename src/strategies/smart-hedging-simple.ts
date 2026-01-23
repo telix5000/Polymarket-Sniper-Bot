@@ -285,8 +285,7 @@ export class SimpleSmartHedgingStrategy {
     }
 
     try {
-      // Determine the outcome type for the order
-      // For standard YES/NO markets, use the literal; otherwise use the token's outcome
+      // Normalize the outcome to YES/NO for the order API (tokenId identifies the actual outcome)
       const orderOutcome = this.normalizeOutcomeForOrder(oppositeSide);
 
       const result = await postOrder({
@@ -421,7 +420,8 @@ export class SimpleSmartHedgingStrategy {
       const tokens = (
         market as { tokens?: Array<{ token_id: string; outcome: string }> }
       ).tokens;
-      if (!tokens || tokens.length < 2) return null;
+      // Ensure this is truly a binary market: must have exactly 2 tokens
+      if (!tokens || tokens.length !== 2) return null;
 
       // For any binary market, find the token that is NOT the current one
       const oppositeToken = tokens.find((t) => t.token_id !== currentTokenId);
