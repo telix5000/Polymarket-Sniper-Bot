@@ -1177,15 +1177,21 @@ export class SmartHedgingStrategy {
       // X > originalInvestment / (1 - opposingPrice)
       // We add 10% buffer to ensure actual profit, not just break-even
       const hedgeProfit = 1 - opposingPrice; // Profit per hedge share if hedge wins
+
+      // Guard: if opposingPrice >= 1, hedgeProfit <= 0 and hedge math breaks down
+      // This means the opposing side is too expensive (or invalid) to hedge
+      if (hedgeProfit <= 0) {
+        this.logger.warn(
+          `[SmartHedging] ⚠️ Cannot hedge - opposing price ${(opposingPrice * 100).toFixed(1)}¢ is too high (>= $1)`,
+        );
+        return false;
+      }
+
       const breakEvenHedgeShares = originalInvestment / hedgeProfit;
       const breakEvenHedgeUsd = breakEvenHedgeShares * opposingPrice;
       // Add 10% buffer to ensure we PROFIT, not just break even
       const profitableHedgeShares = breakEvenHedgeShares * 1.1;
       const profitableHedgeUsd = profitableHedgeShares * opposingPrice;
-
-      // Symmetric hedge (match original shares for balanced outcomes):
-      const symmetricHedgeShares = position.size;
-      const symmetricHedgeUsd = symmetricHedgeShares * opposingPrice;
 
       // Determine actual hedge size based on strategy
       // KEY INSIGHT: We want to create an inverse trade UP TO THE CEILING to undo loss damage
