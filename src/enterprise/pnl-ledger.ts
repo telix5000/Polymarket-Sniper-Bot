@@ -201,9 +201,18 @@ export class PnLLedger {
   }
 
   /**
-   * Get summary of all PnL
+   * Get summary of all PnL.
+   *
+   * Optionally accepts a map of current prices to refresh unrealized PnL
+   * before computing the summary. If no prices are provided, the existing
+   * unrealized PnL values are used as-is.
    */
-  getSummary(): LedgerSummary {
+  getSummary(currentPrices?: Map<string, number>): LedgerSummary {
+    // Refresh unrealized PnL if current prices are provided
+    if (currentPrices !== undefined) {
+      this.updateUnrealizedPnl(currentPrices);
+    }
+
     // Calculate totals
     let totalUnrealizedPnl = 0;
     const byStrategy = new Map<

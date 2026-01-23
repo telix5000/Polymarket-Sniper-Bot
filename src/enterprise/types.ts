@@ -34,6 +34,7 @@ export type StrategyId =
   | "AUTO_SELL"
   | "STOP_LOSS"
   | "HEDGE"
+  | "SMART_HEDGE"
   | "PANIC_LIQUIDATION"
   | "MANUAL";
 

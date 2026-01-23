@@ -8,6 +8,7 @@
  * - MarketSelector for universe filtering (liquidity, spread, activity)
  * - ExecutionEngine with cooldown awareness and retry logic
  * - PnLLedger for deterministic accounting
+ * - EnterpriseSmartHedge for capital-aware, non-blocking hedging
  * - Sequential orchestration (no stack issues)
  *
  * Usage:
@@ -53,6 +54,18 @@ export {
   type PositionPnL,
   type LedgerSummary,
 } from "./pnl-ledger";
+
+// Smart Hedge
+export {
+  EnterpriseSmartHedge,
+  DEFAULT_SMART_HEDGE_CONFIG,
+  loadSmartHedgeConfigFromEnv,
+  type EnterpriseSmartHedgeConfig,
+  type HedgeDecision,
+  type HedgeReason,
+  type HedgeOutcome,
+  type MarketConditions,
+} from "./smart-hedge";
 
 // Configuration
 export {

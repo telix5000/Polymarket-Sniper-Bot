@@ -11,6 +11,7 @@
  */
 
 import type { ClobClient } from "@polymarket/clob-client";
+import type { Wallet } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { RiskManager } from "./risk-manager";
 import { postOrder } from "../utils/post-order.util";
@@ -78,6 +79,7 @@ export class ExecutionEngine {
   private config: Required<ExecutionEngineConfig>;
   private logger: ConsoleLogger;
   private client: ClobClient;
+  private wallet?: Wallet; // Optional wallet for on-chain mode
   private riskManager: RiskManager;
 
   // Cooldown cache: tokenId -> cooldown until timestamp
@@ -101,11 +103,13 @@ export class ExecutionEngine {
     logger: ConsoleLogger,
     riskManager: RiskManager,
     config?: ExecutionEngineConfig,
+    wallet?: Wallet, // Optional wallet for on-chain mode
   ) {
     this.client = client;
     this.logger = logger;
     this.riskManager = riskManager;
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.wallet = wallet;
   }
 
   /**
@@ -250,6 +254,7 @@ export class ExecutionEngine {
       // Use the existing postOrder utility which handles all the complexity
       const response: OrderSubmissionResult = await postOrder({
         client: this.client,
+        wallet: this.wallet, // Pass wallet for on-chain mode support
         tokenId: request.tokenId,
         marketId: request.marketId,
         outcome: request.outcome, // Use outcome from request (YES or NO)
@@ -524,10 +529,11 @@ export function createExecutionEngine(
   riskManager: RiskManager,
   preset: "conservative" | "balanced" | "aggressive",
   overrides?: Partial<ExecutionEngineConfig>,
+  wallet?: Wallet, // Optional wallet for on-chain mode
 ): ExecutionEngine {
   const config = {
     ...EXECUTION_PRESETS[preset],
     ...overrides,
   };
-  return new ExecutionEngine(client, logger, riskManager, config);
+  return new ExecutionEngine(client, logger, riskManager, config, wallet);
 }

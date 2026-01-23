@@ -114,10 +114,14 @@ export class MarketSelector {
       // Fetch markets from Gamma API
       const markets = await this.fetchMarkets();
 
-      // Update cache
+      // Update cache - store by both marketId and tokenId for flexible lookup
       this.marketCache.clear();
       for (const market of markets) {
         this.marketCache.set(market.marketId, market);
+        // Also cache by tokenId if different
+        if (market.tokenId && market.tokenId !== market.marketId) {
+          this.marketCache.set(market.tokenId, market);
+        }
       }
       this.lastCacheUpdate = Date.now();
 
@@ -210,7 +214,12 @@ export class MarketSelector {
         isHealthy: bestBid > 0 && bestAsk < 1 && spread < 50, // Basic sanity check
       };
 
+      // Cache by tokenId for callers using the trading token identifier
       this.marketCache.set(tokenId, market);
+      // Also cache by marketId to stay consistent with other cache usages
+      if (marketId && marketId !== tokenId) {
+        this.marketCache.set(marketId, market);
+      }
       return market;
     } catch (err) {
       this.logger.debug(

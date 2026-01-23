@@ -352,11 +352,14 @@ export class RiskManager {
     }
 
     // 12. Drawdown check
-    if (this.config.sessionStartBalanceUsd > 0) {
-      const drawdownPct =
-        (Math.abs(Math.min(0, this.sessionPnl)) /
-          this.config.sessionStartBalanceUsd) *
-        100;
+    // Use sessionStartBalanceUsd if set, otherwise use maxExposureUsd as baseline
+    const drawdownBaseline =
+      this.config.sessionStartBalanceUsd > 0
+        ? this.config.sessionStartBalanceUsd
+        : this.config.maxExposureUsd;
+
+    if (drawdownBaseline > 0 && this.sessionPnl < 0) {
+      const drawdownPct = (Math.abs(this.sessionPnl) / drawdownBaseline) * 100;
       if (drawdownPct >= this.config.maxDrawdownPct) {
         this.triggerCircuitBreaker("MAX_DRAWDOWN_EXCEEDED");
         return {
@@ -558,6 +561,19 @@ export class RiskManager {
       (sum, v) => sum + v,
       0,
     );
+  }
+
+  /**
+   * Set session start balance for accurate drawdown calculation
+   * Call this at startup with the initial wallet balance
+   */
+  setSessionStartBalance(balanceUsd: number): void {
+    if (balanceUsd > 0) {
+      this.config.sessionStartBalanceUsd = balanceUsd;
+      this.logger.info(
+        `[RiskManager] Session start balance set: $${balanceUsd.toFixed(2)}`,
+      );
+    }
   }
 
   /**
