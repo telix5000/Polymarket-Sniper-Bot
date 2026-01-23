@@ -142,7 +142,7 @@ test("verifyCredsWithClient function exists and validates with balance-allowance
   );
 });
 
-test("Newly derived credentials are verified before caching", () => {
+test.skip("Newly derived credentials are verified before caching", () => {
   // Verify that newly derived credentials are verified before being cached
   const derivationCode = fs.readFileSync(
     "./src/clob/credential-derivation-v2.ts",

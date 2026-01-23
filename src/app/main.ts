@@ -16,17 +16,14 @@ import { startWireguard } from "../utils/wireguard.util";
 import { startOpenvpn } from "../utils/openvpn.util";
 import {
   formatClobCredsChecklist,
-  isApiKeyCreds,
 } from "../utils/clob-credentials.util";
 import { ensureTradingReady } from "../polymarket/preflight";
 import { getContextAwareWarnings } from "../utils/auth-diagnostic.util";
 import {
-  StrategyOrchestrator,
-  DEFAULT_UNIVERSAL_STOP_LOSS_CONFIG,
-} from "../strategies/orchestrator";
-import { DEFAULT_SMART_HEDGING_CONFIG } from "../strategies/smart-hedging";
+  SimpleOrchestrator,
+  createSimpleOrchestrator,
+} from "../strategies/orchestrator-simple";
 import { isLiveTradingEnabled } from "../utils/live-trading.util";
-import { createEnterpriseOrchestrator } from "../enterprise";
 
 async function main(): Promise<void> {
   const logger = new ConsoleLogger();
@@ -83,123 +80,65 @@ async function main(): Promise<void> {
   });
 
   // Start unified strategy orchestrator if STRATEGY_PRESET is configured
-  // Hoist orchestrator variable so its position tracker can be shared with TradeExecutorService
-  let orchestrator: StrategyOrchestrator | undefined;
+  // Uses SIMPLIFIED strategies for reliable, easy-to-debug trading
+  let orchestrator: SimpleOrchestrator | undefined;
   if (strategyConfig && strategyConfig.enabled && !tradingReady.detectOnly) {
     logger.info(
-      `🎯 Starting unified strategy orchestrator (preset: ${strategyConfig.presetName})`,
+      `🎯 Starting SIMPLIFIED strategy orchestrator (preset: ${strategyConfig.presetName})`,
+    );
+    logger.info(
+      `📊 Config: MAX_POSITION_USD=$${strategyConfig.endgameMaxPositionUsd}, ` +
+        `SMART_HEDGING=${strategyConfig.smartHedgingEnabled ? "ON" : "OFF"}, ` +
+        `ABSOLUTE_MAX=$${strategyConfig.smartHedgingAbsoluteMaxUsd}`,
     );
 
-    orchestrator = new StrategyOrchestrator({
+    // Create simplified orchestrator with user's config
+    orchestrator = new SimpleOrchestrator({
       client,
       logger,
-      arbEnabled: strategyConfig.arbEnabled,
-      monitorEnabled: strategyConfig.monitorEnabled,
-      quickFlipConfig: {
-        enabled: strategyConfig.quickFlipEnabled,
-        targetPct: strategyConfig.quickFlipTargetPct,
-        stopLossPct: strategyConfig.quickFlipStopLossPct,
-        minHoldSeconds: strategyConfig.quickFlipMinHoldSeconds,
-        minOrderUsd: strategyConfig.minOrderUsd,
-        minProfitUsd: strategyConfig.quickFlipMinProfitUsd,
-        dynamicTargets: strategyConfig.quickFlipDynamicTargets,
-      },
-      autoSellConfig: {
-        enabled: strategyConfig.autoSellEnabled,
-        threshold: strategyConfig.autoSellThreshold,
-        minHoldSeconds: strategyConfig.autoSellMinHoldSeconds,
-        minOrderUsd: strategyConfig.minOrderUsd,
-        // Dispute window exit - sell at 99.9¢ to exit positions in dispute hold
-        disputeWindowExitEnabled: true, // Always enabled for faster capital recovery
-        disputeWindowExitPrice: 0.999, // Sell at 99.9¢ (others are doing this)
-      },
-      endgameSweepConfig: {
-        enabled: strategyConfig.endgameSweepEnabled,
-        minPrice: strategyConfig.endgameMinPrice,
-        maxPrice: strategyConfig.endgameMaxPrice,
-        maxPositionUsd: strategyConfig.endgameMaxPositionUsd,
-      },
-      autoRedeemConfig: {
-        enabled: strategyConfig.autoRedeemEnabled,
-        minPositionUsd: strategyConfig.autoRedeemMinPositionUsd,
-        checkIntervalMs: strategyConfig.autoRedeemCheckIntervalMs,
-      },
-      smartHedgingConfig: {
-        // Start with defaults to avoid drift if DEFAULT_SMART_HEDGING_CONFIG changes
-        ...DEFAULT_SMART_HEDGING_CONFIG,
-        // Override with env/preset-driven fields
+      maxPositionUsd: strategyConfig.endgameMaxPositionUsd,
+      riskPreset: strategyConfig.presetName as "conservative" | "balanced" | "aggressive",
+      // Pass hedging config from env
+      hedgingConfig: {
         enabled: strategyConfig.smartHedgingEnabled,
         triggerLossPct: strategyConfig.smartHedgingTriggerLossPct,
         maxHedgeUsd: strategyConfig.smartHedgingMaxHedgeUsd,
-        minHedgeUsd: strategyConfig.smartHedgingMinHedgeUsd,
-        reservePct: strategyConfig.smartHedgingReservePct,
-        allowExceedMaxForProtection: strategyConfig.smartHedgingAllowExceedMax,
-        absoluteMaxHedgeUsd: strategyConfig.smartHedgingAbsoluteMaxUsd,
-        emergencyLossThresholdPct: strategyConfig.smartHedgingEmergencyLossPct,
-        enableFallbackLiquidation: strategyConfig.smartHedgingEnableFallbackLiquidation,
-        forceLiquidationLossPct: strategyConfig.smartHedgingForceLiquidationLossPct,
-        // Sell positions with minimal positive profit for reserves (avoid break-even)
-        reserveSellMinProfitPct: 0.01,
+        absoluteMaxUsd: strategyConfig.smartHedgingAbsoluteMaxUsd,
+        allowExceedMax: strategyConfig.smartHedgingAllowExceedMax,
+        forceLiquidationPct: strategyConfig.smartHedgingForceLiquidationLossPct,
       },
-      // Universal Stop-Loss config - spread defaults and only override minHoldSeconds
-      universalStopLossConfig: {
-        ...DEFAULT_UNIVERSAL_STOP_LOSS_CONFIG,
-        minHoldSeconds: strategyConfig.stopLossMinHoldSeconds, // Prevent immediate sells after buying
+      // Pass quick flip config
+      quickFlipConfig: {
+        enabled: strategyConfig.quickFlipEnabled,
+        targetPct: strategyConfig.quickFlipTargetPct,
+        minHoldSeconds: strategyConfig.quickFlipMinHoldSeconds,
+        minProfitUsd: strategyConfig.quickFlipMinProfitUsd,
+      },
+      // Pass endgame config
+      endgameConfig: {
+        enabled: strategyConfig.endgameSweepEnabled,
+        minPrice: strategyConfig.endgameMinPrice,
+        maxPrice: strategyConfig.endgameMaxPrice,
       },
     });
 
     await orchestrator.start();
-    logger.info("✅ Strategy orchestrator started successfully");
+    logger.info("✅ Simplified strategy orchestrator started successfully");
 
-    // Log auto-redeem check interval for user clarity
-    if (strategyConfig.autoRedeemEnabled) {
-      const intervalSec = strategyConfig.autoRedeemCheckIntervalMs / 1000;
-      logger.info(
-        `💵 Auto-Redeem: Checking for redeemable positions every ${intervalSec} seconds`,
+    // Set session start balance for accurate drawdown calculation
+    try {
+      const mempoolEnv = loadMonitorConfig(cliOverrides);
+      const usdcBalance = await getUsdBalanceApprox(
+        client.wallet,
+        mempoolEnv.collateralTokenAddress,
+        mempoolEnv.collateralTokenDecimals,
       );
-    }
-
-    // === ENTERPRISE ORCHESTRATOR ===
-    // Start the enterprise system alongside existing strategies
-    // Uses the same preset mode for consistent configuration
-    const enterpriseMode = strategyConfig.presetName as
-      | "conservative"
-      | "balanced"
-      | "aggressive";
-    if (
-      enterpriseMode === "conservative" ||
-      enterpriseMode === "balanced" ||
-      enterpriseMode === "aggressive"
-    ) {
-      logger.info(
-        `🏢 Starting Enterprise Orchestrator (mode: ${enterpriseMode})`,
+      orchestrator.getRiskManager().setSessionStartBalance(usdcBalance);
+      logger.info(`💰 Session start balance: $${usdcBalance.toFixed(2)}`);
+    } catch (err) {
+      logger.warn(
+        `[Orchestrator] Could not set session balance: ${err instanceof Error ? err.message : String(err)}`,
       );
-
-      const enterpriseOrchestrator = createEnterpriseOrchestrator(
-        client,
-        logger,
-        enterpriseMode,
-      );
-
-      // Set session start balance for accurate drawdown calculation
-      try {
-        const mempoolEnv = loadMonitorConfig(cliOverrides);
-        const usdcBalance = await getUsdBalanceApprox(
-          client.wallet,
-          mempoolEnv.collateralTokenAddress,
-          mempoolEnv.collateralTokenDecimals,
-        );
-        enterpriseOrchestrator
-          .getRiskManager()
-          .setSessionStartBalance(usdcBalance);
-      } catch (err) {
-        logger.warn(
-          `[Enterprise] Could not set session balance: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-
-      await enterpriseOrchestrator.start();
-      logger.info("✅ Enterprise orchestrator started successfully");
     }
   } else if (strategyConfig && !strategyConfig.enabled) {
     logger.info(
