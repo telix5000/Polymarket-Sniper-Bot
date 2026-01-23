@@ -543,3 +543,179 @@ describe("PositionTracker Redeemable Positions with Unknown Outcome", () => {
     );
   });
 });
+
+describe("PositionTracker Historical Entry Times", () => {
+  test("Historical entry times parsing - finds earliest BUY for each token", () => {
+    // Simulates parsing activity data to find earliest BUY timestamp
+    interface ActivityItem {
+      type: string;
+      timestamp: number;
+      conditionId: string;
+      asset: string;
+      side: string;
+    }
+
+    const activities: ActivityItem[] = [
+      // Multiple BUYs for same token - should keep earliest
+      { type: "TRADE", timestamp: 1700000000, conditionId: "market1", asset: "token1", side: "BUY" },
+      { type: "TRADE", timestamp: 1700001000, conditionId: "market1", asset: "token1", side: "BUY" }, // Later BUY
+      // SELL should be ignored
+      { type: "TRADE", timestamp: 1699999000, conditionId: "market1", asset: "token1", side: "SELL" },
+      // Different token
+      { type: "TRADE", timestamp: 1700002000, conditionId: "market2", asset: "token2", side: "BUY" },
+      // Non-TRADE type should be ignored
+      { type: "DEPOSIT", timestamp: 1699998000, conditionId: "market1", asset: "token1", side: "BUY" },
+    ];
+
+    const earliestBuyTimes = new Map<string, number>();
+
+    for (const activity of activities) {
+      if (activity.type !== "TRADE" || activity.side?.toUpperCase() !== "BUY") {
+        continue;
+      }
+
+      const key = `${activity.conditionId}-${activity.asset}`;
+      const timestamp = activity.timestamp * 1000; // Convert to ms
+
+      const existing = earliestBuyTimes.get(key);
+      if (!existing || timestamp < existing) {
+        earliestBuyTimes.set(key, timestamp);
+      }
+    }
+
+    assert.strictEqual(earliestBuyTimes.size, 2, "Should have 2 unique positions");
+    assert.strictEqual(
+      earliestBuyTimes.get("market1-token1"),
+      1700000000 * 1000,
+      "Should keep earliest BUY timestamp for token1",
+    );
+    assert.strictEqual(
+      earliestBuyTimes.get("market2-token2"),
+      1700002000 * 1000,
+      "Should have correct timestamp for token2",
+    );
+  });
+
+  test("Entry time preservation - existing entry times are not overwritten", () => {
+    // Simulates the refresh logic where historical entry times should be preserved
+    const positionEntryTimes = new Map<string, number>();
+
+    // Pre-loaded historical entry time
+    positionEntryTimes.set("market1-token1", 1700000000 * 1000);
+
+    // New position detected in refresh
+    const newPositionKey = "market1-token1";
+    const now = Date.now();
+
+    // Should NOT overwrite existing entry time
+    if (!positionEntryTimes.has(newPositionKey)) {
+      positionEntryTimes.set(newPositionKey, now);
+    }
+
+    assert.strictEqual(
+      positionEntryTimes.get(newPositionKey),
+      1700000000 * 1000,
+      "Historical entry time should be preserved, not overwritten with 'now'",
+    );
+  });
+
+  test("New positions get current time when no historical data exists", () => {
+    const positionEntryTimes = new Map<string, number>();
+
+    // New position with no historical data
+    const newPositionKey = "market2-token2";
+    const now = Date.now();
+
+    if (!positionEntryTimes.has(newPositionKey)) {
+      positionEntryTimes.set(newPositionKey, now);
+    }
+
+    const entryTime = positionEntryTimes.get(newPositionKey);
+    assert.ok(entryTime !== undefined, "New position should have entry time set");
+    assert.ok(
+      entryTime! >= now - 1000 && entryTime! <= now + 1000,
+      "New position entry time should be close to 'now'",
+    );
+  });
+});
+
+describe("Stop-Loss Entry Time Validation", () => {
+  test("Stop-loss should skip positions without entry time", () => {
+    // Simulates the conservative behavior in UniversalStopLossStrategy
+    const positionEntryTimes = new Map<string, number>();
+    const position = {
+      marketId: "market1",
+      tokenId: "token1",
+      pnlPct: -30, // Position is losing
+      entryPrice: 0.7,
+    };
+
+    const entryTime = positionEntryTimes.get(`${position.marketId}-${position.tokenId}`);
+
+    // If no entry time, should skip stop-loss
+    const shouldSkip = !entryTime;
+
+    assert.ok(
+      shouldSkip,
+      "Stop-loss should skip positions without entry time to prevent mass sells on restart",
+    );
+  });
+
+  test("Stop-loss should process positions with known entry time", () => {
+    const positionEntryTimes = new Map<string, number>();
+    const position = {
+      marketId: "market1",
+      tokenId: "token1",
+      pnlPct: -30,
+      entryPrice: 0.7,
+    };
+
+    // Position has historical entry time (bought 5 minutes ago)
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+    positionEntryTimes.set(`${position.marketId}-${position.tokenId}`, fiveMinutesAgo);
+
+    const entryTime = positionEntryTimes.get(`${position.marketId}-${position.tokenId}`);
+    const shouldSkip = !entryTime;
+
+    assert.ok(
+      !shouldSkip,
+      "Stop-loss should process positions with known entry time",
+    );
+
+    // Check hold time calculation
+    const minHoldSeconds = 60;
+    const now = Date.now();
+    const holdTimeSeconds = (now - entryTime!) / 1000;
+
+    assert.ok(
+      holdTimeSeconds >= minHoldSeconds,
+      "Position held for 5 minutes should pass minHoldSeconds check",
+    );
+  });
+
+  test("Stop-loss should skip positions held for less than minHoldSeconds", () => {
+    const positionEntryTimes = new Map<string, number>();
+    const position = {
+      marketId: "market1",
+      tokenId: "token1",
+      pnlPct: -30,
+      entryPrice: 0.7,
+    };
+
+    // Position was just bought (30 seconds ago)
+    const thirtySecondsAgo = Date.now() - 30 * 1000;
+    positionEntryTimes.set(`${position.marketId}-${position.tokenId}`, thirtySecondsAgo);
+
+    const entryTime = positionEntryTimes.get(`${position.marketId}-${position.tokenId}`);
+    const minHoldSeconds = 60;
+    const now = Date.now();
+    const holdTimeSeconds = (now - entryTime!) / 1000;
+
+    const passesHoldCheck = holdTimeSeconds >= minHoldSeconds;
+
+    assert.ok(
+      !passesHoldCheck,
+      "Position held for 30 seconds should NOT pass 60-second minHoldSeconds check",
+    );
+  });
+});

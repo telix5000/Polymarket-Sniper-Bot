@@ -51,6 +51,10 @@ export class PositionTracker {
     skipped: number;
   } = { resolved: 0, active: 0, skipped: 0 }; // Track stats for summary logging
 
+  // Flag to track whether historical entry times have been loaded from API
+  // This prevents immediate sells on container restart by ensuring we know actual entry times
+  private historicalEntryTimesLoaded: boolean = false;
+
   // API timeout constant for external API calls
   private static readonly API_TIMEOUT_MS = 10000; // 10 seconds
 
@@ -66,11 +70,23 @@ export class PositionTracker {
 
   /**
    * Start tracking positions
-   * Note: Initial refresh runs in background to avoid blocking trading startup.
-   * Strategies will see empty/partial position data until first refresh completes.
+   * On startup, fetches historical entry times from the activity API to prevent
+   * mass sells on container restart. Without historical data, we don't know when
+   * positions were actually acquired and might trigger stop-loss/hedging immediately.
    */
   async start(): Promise<void> {
     this.logger.info("[PositionTracker] Starting position tracking");
+
+    // Fetch historical entry times from activity API on startup
+    // This runs synchronously on startup to ensure we have entry times before strategies run
+    try {
+      await this.loadHistoricalEntryTimes();
+    } catch (err) {
+      this.logger.warn(
+        `[PositionTracker] Failed to load historical entry times: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      // Continue without historical data - strategies will be conservative (skip positions without entry time)
+    }
 
     // Start initial refresh in background (non-blocking) to allow trading to start immediately
     // This prevents slow API calls from delaying the entire orchestrator startup
@@ -151,9 +167,13 @@ export class PositionTracker {
         newPositions.set(key, position);
         this.positionLastSeen.set(key, now);
 
-        // Preserve entry time if position already existed
+        // Preserve entry time if position already existed (from historical data or previous refresh)
+        // Only set to "now" for genuinely new positions (bought after startup)
         if (!this.positionEntryTimes.has(key)) {
           this.positionEntryTimes.set(key, now);
+          this.logger.debug(
+            `[PositionTracker] New position detected (no historical entry time): ${key.slice(0, 30)}...`,
+          );
         }
       }
 
@@ -810,6 +830,112 @@ export class PositionTracker {
   getPositionEntryTime(marketId: string, tokenId: string): number | undefined {
     const key = `${marketId}-${tokenId}`;
     return this.positionEntryTimes.get(key);
+  }
+
+  /**
+   * Check if historical entry times have been loaded from the API.
+   * Strategies should check this before triggering sells on startup.
+   */
+  hasLoadedHistoricalEntryTimes(): boolean {
+    return this.historicalEntryTimesLoaded;
+  }
+
+  /**
+   * Load historical entry times from the Polymarket activity API.
+   * This fetches the user's trade history and finds the earliest BUY timestamp
+   * for each position, which represents when the position was acquired.
+   * 
+   * This is critical for preventing mass sells on container restart - without
+   * knowing when positions were actually bought, strategies might incorrectly
+   * assume positions are "new" and trigger stop-loss or hedging immediately.
+   */
+  private async loadHistoricalEntryTimes(): Promise<void> {
+    try {
+      const { resolveSignerAddress } = await import("../utils/funds-allowance.util");
+      const walletAddress = resolveSignerAddress(this.client);
+
+      this.logger.info(
+        `[PositionTracker] Loading historical entry times from activity API for ${walletAddress.slice(0, 10)}...`,
+      );
+
+      // Fetch user's activity/trade history
+      interface ActivityItem {
+        type: string;
+        timestamp: number | string;
+        conditionId: string; // Market ID
+        asset: string; // Token ID
+        side: string; // "BUY" or "SELL"
+        size: number;
+        price: number;
+      }
+
+      const activities = await httpGet<ActivityItem[]>(
+        POLYMARKET_API.ACTIVITY_ENDPOINT(walletAddress),
+        { timeout: PositionTracker.API_TIMEOUT_MS },
+      );
+
+      if (!activities || activities.length === 0) {
+        this.logger.info("[PositionTracker] No historical activities found");
+        this.historicalEntryTimesLoaded = true;
+        return;
+      }
+
+      // Build a map of earliest BUY timestamp per token
+      // Key: "marketId-tokenId", Value: earliest BUY timestamp in ms
+      const earliestBuyTimes = new Map<string, number>();
+      let buyCount = 0;
+
+      for (const activity of activities) {
+        // Only process BUY trades (these are when we acquired positions)
+        if (activity.type !== "TRADE" || activity.side?.toUpperCase() !== "BUY") {
+          continue;
+        }
+
+        const marketId = activity.conditionId;
+        const tokenId = activity.asset;
+
+        if (!marketId || !tokenId) {
+          continue;
+        }
+
+        const key = `${marketId}-${tokenId}`;
+        const timestamp = typeof activity.timestamp === "number"
+          ? activity.timestamp * 1000 // Convert seconds to ms if needed
+          : new Date(activity.timestamp).getTime();
+
+        // Keep the earliest (oldest) BUY timestamp
+        const existing = earliestBuyTimes.get(key);
+        if (!existing || timestamp < existing) {
+          earliestBuyTimes.set(key, timestamp);
+          buyCount++;
+        }
+      }
+
+      // Populate positionEntryTimes with historical data
+      for (const [key, timestamp] of earliestBuyTimes) {
+        // Only set if we don't already have an entry time
+        // (shouldn't happen on startup, but be safe)
+        if (!this.positionEntryTimes.has(key)) {
+          this.positionEntryTimes.set(key, timestamp);
+        }
+      }
+
+      this.historicalEntryTimesLoaded = true;
+
+      this.logger.info(
+        `[PositionTracker] ✅ Loaded ${earliestBuyTimes.size} historical entry times from ${activities.length} activities (${buyCount} BUY trades)`,
+      );
+
+    } catch (err) {
+      // Log the error but don't fail - strategies will be conservative without historical data
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `[PositionTracker] ⚠️ Could not load historical entry times: ${errMsg}`,
+      );
+      // Still mark as "loaded" so we don't block forever, but strategies should check entry times
+      this.historicalEntryTimesLoaded = true;
+      throw err; // Re-throw so caller knows it failed
+    }
   }
 
   /**
