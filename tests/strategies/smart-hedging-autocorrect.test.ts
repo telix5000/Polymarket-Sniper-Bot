@@ -38,9 +38,11 @@ test("SmartHedgingStrategy auto-corrects maxHedgeUsd when absoluteMaxHedgeUsd is
     config: userConfig,
   });
 
-  // Verify the config was auto-corrected
+  // Verify the config was auto-corrected via getStats()
   const stats = strategy.getStats();
-  // Note: getStats() doesn't expose maxHedgeUsd, so we verify via the logged message
+  assert.equal(stats.maxHedgeUsd, 25, "maxHedgeUsd should be auto-corrected to absoluteMaxHedgeUsd");
+  
+  // Also verify via the logged message
   const autoAdjustMessage = mockLogger.messages.find(m => m.includes("Auto-adjusting maxHedgeUsd"));
   assert.ok(autoAdjustMessage, "Should log auto-adjustment message");
   assert.ok(autoAdjustMessage.includes("from $50 to $25"), "Should show correct values in message");
@@ -56,7 +58,7 @@ test("SmartHedgingStrategy does not auto-correct when absoluteMaxHedgeUsd is alr
     absoluteMaxHedgeUsd: 100,
   };
 
-  const strategy = new SmartHedgingStrategy({
+  new SmartHedgingStrategy({
     client: {} as any,
     logger: mockLogger as any,
     positionTracker: mockPositionTracker,
@@ -87,7 +89,11 @@ test("SmartHedgingStrategy auto-corrects minHedgeUsd when it exceeds auto-correc
     config: userConfig,
   });
 
-  // Verify both values were auto-corrected
+  // Verify both values were auto-corrected via getStats()
+  const stats = strategy.getStats();
+  assert.equal(stats.maxHedgeUsd, 25, "maxHedgeUsd should be auto-corrected to absoluteMaxHedgeUsd");
+  
+  // Verify log messages
   const maxAdjustMessage = mockLogger.messages.find(m => m.includes("Auto-adjusting maxHedgeUsd"));
   const minAdjustMessage = mockLogger.messages.find(m => m.includes("Auto-adjusting minHedgeUsd"));
   
@@ -96,4 +102,45 @@ test("SmartHedgingStrategy auto-corrects minHedgeUsd when it exceeds auto-correc
   
   assert.ok(minAdjustMessage, "Should log minHedgeUsd auto-adjustment message");
   assert.ok(minAdjustMessage.includes("from $30 to $25"), "Should show correct minHedgeUsd values");
+});
+
+test("SmartHedgingStrategy throws error when absoluteMaxHedgeUsd is negative or zero", () => {
+  const mockLogger = createMockLogger();
+  
+  // Invalid config with negative absoluteMaxHedgeUsd
+  const invalidConfig = {
+    ...DEFAULT_SMART_HEDGING_CONFIG,
+    maxHedgeUsd: 10,
+    absoluteMaxHedgeUsd: -1,  // Invalid: negative value
+  };
+
+  // Should throw error for negative absoluteMaxHedgeUsd
+  assert.throws(
+    () => new SmartHedgingStrategy({
+      client: {} as any,
+      logger: mockLogger as any,
+      positionTracker: mockPositionTracker,
+      config: invalidConfig,
+    }),
+    /absoluteMaxHedgeUsd must be > 0/,
+    "Should throw error for negative absoluteMaxHedgeUsd"
+  );
+
+  // Also test with zero
+  const zeroConfig = {
+    ...DEFAULT_SMART_HEDGING_CONFIG,
+    maxHedgeUsd: 10,
+    absoluteMaxHedgeUsd: 0,  // Invalid: zero value
+  };
+
+  assert.throws(
+    () => new SmartHedgingStrategy({
+      client: {} as any,
+      logger: mockLogger as any,
+      positionTracker: mockPositionTracker,
+      config: zeroConfig,
+    }),
+    /absoluteMaxHedgeUsd must be > 0/,
+    "Should throw error for zero absoluteMaxHedgeUsd"
+  );
 });

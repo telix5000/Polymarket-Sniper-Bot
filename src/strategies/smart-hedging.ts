@@ -437,6 +437,13 @@ export class SmartHedgingStrategy {
       );
     }
 
+    // Validate absoluteMaxHedgeUsd > 0 before using it for auto-correction
+    if (config.absoluteMaxHedgeUsd <= 0) {
+      throw new Error(
+        `SmartHedgingConfig.absoluteMaxHedgeUsd must be > 0, received ${config.absoluteMaxHedgeUsd}`,
+      );
+    }
+
     // Auto-correct maxHedgeUsd if absoluteMaxHedgeUsd is lower
     // This respects user intent: if they set an absolute cap, maxHedgeUsd should not exceed it
     if (config.absoluteMaxHedgeUsd < config.maxHedgeUsd) {
