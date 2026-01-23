@@ -28,8 +28,19 @@ import { isLiveTradingEnabled } from "../../utils/live-trading.util";
 
 /**
  * Minimum price for ARB trades to prevent buying extreme loser positions.
- * ARB buys BOTH sides, but if one leg fails, you're stuck with a loser.
- * 5¢ minimum: allows arb on 5¢/95¢ spreads but blocks 3¢/97¢ extremes.
+ *
+ * ARB buys BOTH sides of a market, but if one leg fails to fill or is later
+ * cancelled, you're potentially stuck holding a very low-probability loser.
+ *
+ * This executor intentionally uses a LOWER minimum (5¢) than the global
+ * trading utilities, which enforce a 10¢ minimum buy price. The lower
+ * threshold here allows capturing additional arbitrage on 5¢/95¢ spreads
+ * while still blocking more extreme 3¢/97¢ type positions.
+ *
+ * IMPORTANT: If ARB order placement is ever refactored to use the shared
+ * `postOrder` helper (with its 10¢ minimum), you must either:
+ *   - raise ARB_MIN_BUY_PRICE to 0.10 for full consistency, OR
+ *   - explicitly preserve this special 5¢ behavior in that helper.
  */
 const ARB_MIN_BUY_PRICE = 0.05;
 

@@ -637,8 +637,26 @@ export class SmartHedgingStrategy {
             `\n  ═══════════════════════════════════════`,
         );
 
-        // Analyze the best action
-        const analysis = await this.analyzeHedgeVsSell(position);
+        // Check if loss exceeds forceLiquidationLossPct - skip hedge analysis and force liquidation
+        let analysis: Awaited<ReturnType<typeof this.analyzeHedgeVsSell>>;
+        if (
+          this.config.forceLiquidationLossPct !== undefined &&
+          lossPct >= this.config.forceLiquidationLossPct
+        ) {
+          // Force liquidation once loss exceeds configured threshold,
+          // skipping hedge analysis even if hedging might be viable.
+          this.logger.warn(
+            `[SmartHedging] 🚨 LOSS ${lossPct.toFixed(1)}% >= forceLiquidationLossPct=${this.config.forceLiquidationLossPct.toFixed(1)}% - forcing liquidation instead of hedging`,
+          );
+          analysis = {
+            action: "SELL",
+            reason: `Loss ${lossPct.toFixed(1)}% exceeded forceLiquidationLossPct=${this.config.forceLiquidationLossPct}%`,
+            expectedOutcome: "Immediate liquidation to cap further losses",
+          };
+        } else {
+          // Analyze the best action
+          analysis = await this.analyzeHedgeVsSell(position);
+        }
 
         if (analysis.action === "HEDGE") {
           this.logger.info(
@@ -1106,8 +1124,12 @@ export class SmartHedgingStrategy {
     try {
       const orderbook = await this.client.getOrderBook(opposingTokenId);
       if (!orderbook.asks || orderbook.asks.length === 0) {
-        this.logger.warn(`[SmartHedging] No asks for ${originalSide === "YES" ? "NO" : "YES"} - cannot complete swap`);
-        return false; // We already sold, but can't buy - this is unfortunate but at least we stopped the bleeding
+        this.logger.warn(
+          `[SmartHedging] ⚠️ PARTIAL SWAP: Sold ${originalSide} but no liquidity for ${originalSide === "YES" ? "NO" : "YES"}. ` +
+            `Bleeding stopped - position closed.`,
+        );
+        // Return true because the main goal (stop bleeding) was achieved
+        return true;
       }
 
       const opposingPrice = parseFloat(orderbook.asks[0].price);
@@ -1144,12 +1166,19 @@ export class SmartHedgingStrategy {
         return true;
       }
 
-      this.logger.warn(`[SmartHedging] Buy failed after sell: ${buyResult.reason ?? "unknown"}`);
-      // We sold but couldn't buy - at least we stopped the bleeding
-      return false;
+      this.logger.warn(
+        `[SmartHedging] ⚠️ PARTIAL SWAP: Sold ${originalSide} but buy failed: ${buyResult.reason ?? "unknown"}. ` +
+          `Bleeding stopped - position closed.`,
+      );
+      // Return true because the main goal (stop bleeding) was achieved
+      return true;
     } catch (err) {
-      this.logger.error(`[SmartHedging] Buy error after sell: ${err instanceof Error ? err.message : String(err)}`);
-      return false;
+      this.logger.warn(
+        `[SmartHedging] ⚠️ PARTIAL SWAP: Sold ${originalSide} but buy error: ${err instanceof Error ? err.message : String(err)}. ` +
+          `Bleeding stopped - position closed.`,
+      );
+      // Return true because the main goal (stop bleeding) was achieved
+      return true;
     }
   }
 
