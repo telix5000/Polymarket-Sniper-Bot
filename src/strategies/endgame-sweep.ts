@@ -1,5 +1,6 @@
 import type { ClobClient } from "@polymarket/clob-client";
 import type { Wallet } from "ethers";
+import { Contract, formatUnits } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker } from "./position-tracker";
 import {
@@ -9,6 +10,10 @@ import {
 } from "./constants";
 import { isLiveTradingEnabled } from "../utils/live-trading.util";
 import { assessTradeQuality, SPREAD_TIERS } from "./trade-quality";
+import { resolvePolymarketContracts } from "../polymarket/contracts";
+
+// Minimum spendable balance (in USD) required to execute a buy
+const MIN_SPENDABLE_BALANCE_USD = 1;
 
 export interface EndgameSweepConfig {
   enabled: boolean;
@@ -452,8 +457,6 @@ export class EndgameSweepStrategy {
         const wallet = (this.client as { wallet?: Wallet }).wallet;
         if (wallet?.provider) {
           try {
-            const { resolvePolymarketContracts } = await import("../polymarket/contracts");
-            const { Contract, formatUnits } = await import("ethers");
             const contracts = resolvePolymarketContracts();
             const usdcContract = new Contract(
               contracts.usdcAddress,
@@ -464,7 +467,7 @@ export class EndgameSweepStrategy {
             const availableBalance = parseFloat(formatUnits(balanceRaw, 6));
             const spendableBalance = availableBalance - reservedBalance;
             
-            if (spendableBalance < 1) {
+            if (spendableBalance < MIN_SPENDABLE_BALANCE_USD) {
               this.logger.debug(
                 `[EndgameSweep] Skipping purchase: insufficient balance after reserve ` +
                 `(available: $${availableBalance.toFixed(2)}, reserved: $${reservedBalance.toFixed(2)}, spendable: $${spendableBalance.toFixed(2)})`,
