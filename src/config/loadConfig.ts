@@ -1223,22 +1223,22 @@ export type StrategyConfig = {
   scalpMaxHoldMinutes: number;
   /**
    * Minimum profit % to consider scalp exit (after min hold)
-   * Default: 3% (balanced), 2% (aggressive), 5% (conservative)
+   * Default: 5% (balanced), 4% (aggressive), 8% (conservative)
    */
   scalpMinProfitPct: number;
   /**
    * Target profit % - when reached AND momentum fading, exit
-   * Default: 5% (balanced), 3% (aggressive), 8% (conservative)
+   * Default: 8% (balanced), 6% (aggressive), 12% (conservative)
    */
   scalpTargetProfitPct: number;
   /**
    * Minimum profit in USD for scalp exit
-   * Default: $0.50 (balanced), $0.25 (aggressive), $1.00 (conservative)
+   * Default: $1.00 (balanced), $0.50 (aggressive), $2.00 (conservative)
    */
   scalpMinProfitUsd: number;
   /**
    * Entry price threshold for resolution exclusion safeguard
-   * CRITICAL: Never time-exit positions ≤ this price with increasing probability
+   * CRITICAL: Never time-exit positions ≤ this price that reach 90¢+ (near resolution)
    * Default: 0.60 (60¢) - these are potential $1.00 winners
    */
   scalpResolutionExclusionPrice: number;
