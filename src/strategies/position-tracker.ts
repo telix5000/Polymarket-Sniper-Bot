@@ -58,7 +58,7 @@ export class PositionTracker {
 
   // Cache market end times (Unix timestamp ms). Market end times are fetched from Gamma API
   // and cached to avoid redundant API calls on every 30-second refresh cycle.
-  // Unlike outcomes, end times can change, so we refresh them more liberally.
+  // End times can change, so callers should be prepared to refetch or invalidate entries as needed.
   private marketEndTimeCache: Map<string, number> = new Map();
   private static readonly MAX_END_TIME_CACHE_SIZE = 1000;
 
