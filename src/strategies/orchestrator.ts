@@ -188,6 +188,11 @@ export class StrategyOrchestrator {
       logger: config.logger,
       config: config.endgameSweepConfig,
       positionTracker: this.positionTracker, // Pass position tracker to check existing positions
+      // Pass callback to get reserved balance from Smart Hedging
+      // This ensures Endgame Sweep doesn't spend capital that Smart Hedging needs for hedges
+      getReservedBalance: smartHedgingConfig.enabled
+        ? () => this.smartHedgingStrategy.getRequiredReserve()
+        : undefined,
     });
 
     // Initialize auto-redeem strategy (claims resolved positions)
@@ -336,24 +341,37 @@ export class StrategyOrchestrator {
     try {
       // PHASE 1: Sequential execution for capital-critical strategies
       // These strategies need to complete atomically (sell + buy) without interference
+      // Each strategy is wrapped in try-catch to prevent blocking subsequent execution
       
       // Priority 1: Auto-Redeem (claim resolved positions - highest priority for capital recovery)
-      await this.executeWithLogging(
-        "Auto-Redeem",
-        1,
-        () => this.autoRedeemStrategy.execute(),
-        this.autoRedeemStrategy.getStats().enabled,
-      );
+      try {
+        await this.executeWithLogging(
+          "Auto-Redeem",
+          1,
+          () => this.autoRedeemStrategy.execute(),
+          this.autoRedeemStrategy.getStats().enabled,
+        );
+      } catch (err) {
+        this.logger.error(
+          `[Orchestrator] Auto-Redeem failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
 
       // Priority 2: Smart Hedging (HEDGE risky tier positions instead of selling at loss)
       // MUST run sequentially: sells positions to free capital, then immediately uses it for hedges
       // Running in parallel would allow other strategies to "steal" the freed capital
-      await this.executeWithLogging(
-        "Smart Hedging",
-        2,
-        () => this.smartHedgingStrategy.execute(),
-        this.smartHedgingStrategy.getStats().enabled,
-      );
+      try {
+        await this.executeWithLogging(
+          "Smart Hedging",
+          2,
+          () => this.smartHedgingStrategy.execute(),
+          this.smartHedgingStrategy.getStats().enabled,
+        );
+      } catch (err) {
+        this.logger.error(
+          `[Orchestrator] Smart Hedging failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
 
       // PHASE 2: Parallel execution for remaining strategies
       // These can safely compete for available capital

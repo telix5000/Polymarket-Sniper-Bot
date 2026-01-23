@@ -520,7 +520,6 @@ describe("PositionTracker Redeemable Positions with Unknown Outcome", () => {
   test("Redeemable position with known winning outcome uses 1.0", () => {
     const winningOutcome = "Over";
     const side = "Over";
-    const entryPrice = 0.97;
 
     const currentPrice = side === winningOutcome ? 1.0 : 0.0;
 
@@ -534,7 +533,6 @@ describe("PositionTracker Redeemable Positions with Unknown Outcome", () => {
   test("Redeemable position with known losing outcome uses 0.0", () => {
     const winningOutcome = "Under";
     const side = "Over";
-    const entryPrice = 0.97;
 
     const currentPrice = side === winningOutcome ? 1.0 : 0.0;
 
