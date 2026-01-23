@@ -21,6 +21,7 @@ import {
 import { ensureTradingReady } from "../polymarket/preflight";
 import { getContextAwareWarnings } from "../utils/auth-diagnostic.util";
 import { StrategyOrchestrator } from "../strategies/orchestrator";
+import { DEFAULT_SMART_HEDGING_CONFIG } from "../strategies/smart-hedging";
 import { isLiveTradingEnabled } from "../utils/live-trading.util";
 
 async function main(): Promise<void> {
@@ -118,6 +119,20 @@ async function main(): Promise<void> {
         enabled: strategyConfig.autoRedeemEnabled,
         minPositionUsd: strategyConfig.autoRedeemMinPositionUsd,
         checkIntervalMs: strategyConfig.autoRedeemCheckIntervalMs,
+      },
+      smartHedgingConfig: {
+        // Start with defaults to avoid drift if DEFAULT_SMART_HEDGING_CONFIG changes
+        ...DEFAULT_SMART_HEDGING_CONFIG,
+        // Override with env/preset-driven fields
+        enabled: strategyConfig.smartHedgingEnabled,
+        triggerLossPct: strategyConfig.smartHedgingTriggerLossPct,
+        maxHedgeUsd: strategyConfig.smartHedgingMaxHedgeUsd,
+        reservePct: strategyConfig.smartHedgingReservePct,
+        allowExceedMaxForProtection: strategyConfig.smartHedgingAllowExceedMax,
+        absoluteMaxHedgeUsd: strategyConfig.smartHedgingAbsoluteMaxUsd,
+        emergencyLossThresholdPct: strategyConfig.smartHedgingEmergencyLossPct,
+        // Sell positions with minimal positive profit for reserves (avoid break-even)
+        reserveSellMinProfitPct: 0.01,
       },
     });
 
