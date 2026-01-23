@@ -12,7 +12,7 @@ export interface AutoSellConfig {
    * DISPUTE WINDOW EXIT SETTINGS
    * Positions near resolution ($0.99+) can get stuck in a 2-hour dispute window
    * Better to sell at 99.9¢ and free up capital than wait 2 hours for settlement
-   * 
+   *
    * When enabled, the strategy will:
    * 1. Look for positions at 99.9¢ or higher (dispute hold price)
    * 2. Sell immediately to exit without waiting for settlement

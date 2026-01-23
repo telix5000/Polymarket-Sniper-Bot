@@ -136,7 +136,7 @@ export class StrategyOrchestrator {
     // When smart hedging is enabled, skip risky tier positions (they'll be hedged instead)
     const universalStopLossConfig =
       config.universalStopLossConfig ?? DEFAULT_UNIVERSAL_STOP_LOSS_CONFIG;
-    
+
     // Auto-configure: skip risky tier if smart hedging is enabled
     const stopLossConfigWithHedging = {
       ...universalStopLossConfig,
@@ -151,8 +151,8 @@ export class StrategyOrchestrator {
     });
 
     if (universalStopLossConfig.enabled) {
-      const hedgingNote = smartHedgingConfig.enabled 
-        ? " (risky tier → smart hedging)" 
+      const hedgingNote = smartHedgingConfig.enabled
+        ? " (risky tier → smart hedging)"
         : "";
       this.logger.info(
         `[Orchestrator] 🛡️ Universal Stop-Loss: ENABLED (max: ${universalStopLossConfig.maxStopLossPct}%, dynamic tiers: ${universalStopLossConfig.useDynamicTiers ? "ON" : "OFF"})${hedgingNote}`,
@@ -163,7 +163,9 @@ export class StrategyOrchestrator {
     // Auto-configure: skip risky tier if smart hedging is enabled (same as Universal Stop-Loss)
     // Use nullish coalescing to allow explicit override, but default to smart hedging status
     // Also ensure skipRiskyTierForHedging cannot be true when smart hedging is disabled
-    const skipRiskyTier = config.quickFlipConfig.skipRiskyTierForHedging ?? smartHedgingConfig.enabled;
+    const skipRiskyTier =
+      config.quickFlipConfig.skipRiskyTierForHedging ??
+      smartHedgingConfig.enabled;
     const quickFlipConfigWithHedging = {
       ...config.quickFlipConfig,
       skipRiskyTierForHedging: skipRiskyTier && smartHedgingConfig.enabled,
@@ -176,7 +178,10 @@ export class StrategyOrchestrator {
       config: quickFlipConfigWithHedging,
     });
 
-    if (config.quickFlipConfig.enabled && quickFlipConfigWithHedging.skipRiskyTierForHedging) {
+    if (
+      config.quickFlipConfig.enabled &&
+      quickFlipConfigWithHedging.skipRiskyTierForHedging
+    ) {
       this.logger.info(
         `[Orchestrator] 🛡️ QuickFlip: risky-tier stop-loss deferred to Smart Hedging when eligible (may hedge instead of selling at loss)`,
       );
@@ -249,7 +254,11 @@ export class StrategyOrchestrator {
     const smartHedgingConfig =
       config.smartHedgingConfig ?? DEFAULT_SMART_HEDGING_CONFIG;
     if (smartHedgingConfig.enabled) {
-      tracker.registerStrategy("smart-hedging", 25, smartHedgingConfig.maxHedgeUsd);
+      tracker.registerStrategy(
+        "smart-hedging",
+        25,
+        smartHedgingConfig.maxHedgeUsd,
+      );
     }
     if (config.endgameSweepConfig.enabled) {
       tracker.registerStrategy(
@@ -355,13 +364,15 @@ export class StrategyOrchestrator {
    * capital for hedges, but other strategies "steal" that capital before the hedge executes.
    */
   private async executeStrategies(): Promise<void> {
-    this.logger.debug("[Orchestrator] Executing strategies (sequential + parallel phases)");
+    this.logger.debug(
+      "[Orchestrator] Executing strategies (sequential + parallel phases)",
+    );
 
     try {
       // PHASE 1: Sequential execution for capital-critical strategies
       // These strategies need to complete atomically (sell + buy) without interference
       // Each strategy is wrapped in try-catch to prevent blocking subsequent execution
-      
+
       // Priority 1: Auto-Redeem (claim resolved positions - highest priority for capital recovery)
       try {
         await this.executeWithLogging(

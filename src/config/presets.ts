@@ -191,6 +191,28 @@ export const STRATEGY_PRESETS = {
     // Combines ARB + MONITOR settings
     ARB_ENABLED: true,
     MONITOR_ENABLED: true,
+
+    /**
+     * ENTERPRISE RISK MANAGEMENT - Integrated
+     *
+     * All presets now use the enterprise system with:
+     * - Centralized RiskManager (gates all orders)
+     * - Market selection filter (liquidity, spread, activity)
+     * - Sequential execution (prevents stack issues)
+     * - Circuit breakers (consecutive rejects, API health, drawdown)
+     */
+
+    // === ENTERPRISE RISK LIMITS ===
+    MAX_EXPOSURE_USD: 200, // Total portfolio exposure (conservative)
+    MAX_EXPOSURE_PER_MARKET_USD: 50, // Per-market limit
+    MAX_DRAWDOWN_PCT: 10, // Circuit breaker triggers at 10% drawdown
+
+    // === ENTERPRISE STRATEGIES ===
+    ENTERPRISE_MODE: "conservative",
+    ENTERPRISE_ENABLE_MM: true, // Market Making (spread capture)
+    ENTERPRISE_ENABLE_FF: false, // Flow Following disabled (too aggressive for conservative)
+    ENTERPRISE_ENABLE_ICC: true, // Inventory & Correlation Controller
+
     // Quick Flip settings - aim for substantial profits to justify trades
     // Don't trade unless you're making real money
     QUICK_FLIP_ENABLED: true,
@@ -229,7 +251,7 @@ export const STRATEGY_PRESETS = {
     ARB_MAX_SPREAD_BPS: 300,
     ARB_TRADE_BASE_USD: 3,
     ARB_MAX_POSITION_USD: 15,
-    ARB_MAX_WALLET_EXPOSURE_USD: 50,
+    ARB_MAX_WALLET_EXPOSURE_USD: 200, // Managed by enterprise RiskManager
     ARB_MAX_TRADES_PER_HOUR: 2000,
     ARB_MAX_CONCURRENT_TRADES: 8,
     ARB_MARKET_COOLDOWN_SECONDS: 10,
@@ -244,6 +266,28 @@ export const STRATEGY_PRESETS = {
     // Combines ARB + MONITOR settings
     ARB_ENABLED: true,
     MONITOR_ENABLED: true,
+
+    /**
+     * ENTERPRISE RISK MANAGEMENT - Integrated
+     *
+     * All presets now use the enterprise system with:
+     * - Centralized RiskManager (gates all orders)
+     * - Market selection filter (liquidity, spread, activity)
+     * - Sequential execution (prevents stack issues)
+     * - Circuit breakers (consecutive rejects, API health, drawdown)
+     */
+
+    // === ENTERPRISE RISK LIMITS ===
+    MAX_EXPOSURE_USD: 500, // Total portfolio exposure (balanced)
+    MAX_EXPOSURE_PER_MARKET_USD: 100, // Per-market limit
+    MAX_DRAWDOWN_PCT: 15, // Circuit breaker triggers at 15% drawdown
+
+    // === ENTERPRISE STRATEGIES ===
+    ENTERPRISE_MODE: "balanced",
+    ENTERPRISE_ENABLE_MM: true, // Market Making (spread capture)
+    ENTERPRISE_ENABLE_FF: true, // Flow Following (momentum)
+    ENTERPRISE_ENABLE_ICC: true, // Inventory & Correlation Controller
+
     // Quick Flip settings - aim for substantial profits
     // Every trade should be worth your time
     QUICK_FLIP_ENABLED: true,
@@ -286,7 +330,7 @@ export const STRATEGY_PRESETS = {
     ARB_SLIPPAGE_BPS: 20,
     ARB_FEE_BPS: 1, // Correct: 0.01% per trade
     ARB_MAX_POSITION_USD: 25,
-    ARB_MAX_WALLET_EXPOSURE_USD: 150,
+    ARB_MAX_WALLET_EXPOSURE_USD: 500, // Managed by enterprise RiskManager
     ARB_MAX_TRADES_PER_HOUR: 20000,
     ARB_MARKET_COOLDOWN_SECONDS: 2,
     ARB_MAX_CONSECUTIVE_FAILURES: 10,
@@ -309,6 +353,28 @@ export const STRATEGY_PRESETS = {
     STRATEGY_ENABLED: true,
     ARB_ENABLED: true,
     MONITOR_ENABLED: true,
+
+    /**
+     * ENTERPRISE RISK MANAGEMENT - Integrated
+     *
+     * All presets now use the enterprise system with:
+     * - Centralized RiskManager (gates all orders)
+     * - Market selection filter (liquidity, spread, activity)
+     * - Sequential execution (prevents stack issues)
+     * - Circuit breakers (consecutive rejects, API health, drawdown)
+     */
+
+    // === ENTERPRISE RISK LIMITS ===
+    MAX_EXPOSURE_USD: 2000, // Total portfolio exposure
+    MAX_EXPOSURE_PER_MARKET_USD: 200, // Per-market limit
+    MAX_DRAWDOWN_PCT: 25, // Circuit breaker triggers at 25% drawdown
+
+    // === ENTERPRISE STRATEGIES ===
+    ENTERPRISE_MODE: "aggressive",
+    ENTERPRISE_ENABLE_MM: true, // Market Making (spread capture)
+    ENTERPRISE_ENABLE_FF: true, // Flow Following (momentum)
+    ENTERPRISE_ENABLE_ICC: true, // Inventory & Correlation Controller
+
     /**
      * PROFITABLE SCALPING STRATEGY (v2 - Optimized)
      *
@@ -354,7 +420,7 @@ export const STRATEGY_PRESETS = {
     ENDGAME_SWEEP_ENABLED: true,
     ENDGAME_MIN_PRICE: 0.85, // Buy at 85¢+ only (safer entries, better scalp success)
     ENDGAME_MAX_PRICE: 0.94, // Up to 94¢ (room for quick exits)
-    MAX_POSITION_USD: 50, // Moderate positions - less risk per trade
+    MAX_POSITION_USD: 100, // Per-position limit (also enforced by RiskManager)
 
     // Auto-redeem resolved positions
     AUTO_REDEEM_ENABLED: true,
@@ -362,19 +428,19 @@ export const STRATEGY_PRESETS = {
 
     /**
      * SMART HEDGING - Aggressive settings
-     * 
+     *
      * REPLACES stop-loss for risky tier positions (<60¢ entry)
      * Instead of selling at a 20% loss, hedge by buying the opposing side
      * This caps maximum loss to the spread paid, not the full position
-     * 
-     * Example: Buy YES at 50¢, drops to 30¢ 
+     *
+     * Example: Buy YES at 50¢, drops to 30¢
      * - Old way: Sell at 30¢ = -40% loss
      * - New way: Buy NO at 70¢, ONE side ALWAYS pays $1
      * - Max loss is capped at the spread (~10-20%) vs full loss
      */
     SMART_HEDGING_ENABLED: true, // ENABLED BY DEFAULT - make money, not lose it!
     SMART_HEDGING_TRIGGER_LOSS_PCT: 20, // Hedge when position drops 20%
-    SMART_HEDGING_MAX_HEDGE_USD: 25, // Max $25 per hedge (aggressive)
+    SMART_HEDGING_MAX_HEDGE_USD: 50, // Max $50 per hedge (aggressive)
     SMART_HEDGING_RESERVE_PCT: 15, // Keep 15% reserve for hedging (less conservative)
 
     /**
@@ -398,7 +464,7 @@ export const STRATEGY_PRESETS = {
     ARB_SLIPPAGE_BPS: 20, // Account for 0.2% slippage
     ARB_TRADE_BASE_USD: 15, // Smaller base size for more controlled risk
     ARB_MAX_POSITION_USD: 100, // Reduced from 200 - less risk per position
-    ARB_MAX_WALLET_EXPOSURE_USD: 500, // Reduced from 2000 - better risk management
+    ARB_MAX_WALLET_EXPOSURE_USD: 2000, // Managed by enterprise RiskManager
     ARB_MAX_TRADES_PER_HOUR: 50000, // Reduced - focus on quality
     ARB_MARKET_COOLDOWN_SECONDS: 1, // Small cooldown to avoid overtrading one market
     ARB_MAX_CONSECUTIVE_FAILURES: 10, // Lower tolerance - don't chase losses
@@ -408,7 +474,7 @@ export const STRATEGY_PRESETS = {
     // Monitor settings - fast scanning
     FETCH_INTERVAL: 1,
     MIN_TRADE_SIZE_USD: 5, // Higher minimum to filter noise
-    MIN_ORDER_USD: 5, // Match trade size minimum
+    MIN_ORDER_USD: 1, // Match trade size minimum
     FRONTRUN_MAX_SIZE_USD: 200, // Reduced from 500
     MONITOR_REQUIRE_CONFIRMED: false,
   },

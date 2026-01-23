@@ -111,11 +111,14 @@ export class EndgameSweepStrategy {
       // === CHECK FOR CONFLICTING POSITIONS ===
       // CRITICAL: Don't buy the opposite outcome if we already have a winning position in the same market.
       // This prevents the bot from betting against itself (e.g., buying NO when we have a winning YES).
-      const conflictingPosition = this.getConflictingPosition(market.id, market.tokenId);
+      const conflictingPosition = this.getConflictingPosition(
+        market.id,
+        market.tokenId,
+      );
       if (conflictingPosition) {
         this.logger.info(
           `[EndgameSweep] ⏭️ Skipping ${market.id} (${market.side}): already have ${conflictingPosition.side} position ` +
-            `at ${(conflictingPosition.pnlPct >= 0 ? "+" : "")}${conflictingPosition.pnlPct.toFixed(1)}% P&L - won't bet against own position`,
+            `at ${conflictingPosition.pnlPct >= 0 ? "+" : ""}${conflictingPosition.pnlPct.toFixed(1)}% P&L - won't bet against own position`,
         );
         continue;
       }
@@ -448,7 +451,7 @@ export class EndgameSweepStrategy {
    * Returns the conflicting position if:
    * 1. We have a position in the same market but different tokenId (different outcome)
    * 2. That position is winning (positive P&L)
-   * 
+   *
    * This prevents the bot from betting against its own winning positions.
    * Works for both binary markets (YES/NO) and multi-outcome markets (PlayerA/PlayerB/etc).
    */
@@ -487,10 +490,7 @@ export class EndgameSweepStrategy {
    * @param market - Market opportunity to buy
    * @param maxBuyUsd - Maximum USD to spend (respects existing position limits)
    */
-  private async buyPosition(
-    market: Market,
-    maxBuyUsd?: number,
-  ): Promise<void> {
+  private async buyPosition(market: Market, maxBuyUsd?: number): Promise<void> {
     // Validate market price before calculations
     if (market.price <= 0) {
       this.logger.warn(
@@ -516,15 +516,15 @@ export class EndgameSweepStrategy {
             const balanceRaw = await usdcContract.balanceOf(wallet.address);
             const availableBalance = parseFloat(formatUnits(balanceRaw, 6));
             const spendableBalance = availableBalance - reservedBalance;
-            
+
             if (spendableBalance < MIN_SPENDABLE_BALANCE_USD) {
               this.logger.debug(
                 `[EndgameSweep] Skipping purchase: insufficient balance after reserve ` +
-                `(available: $${availableBalance.toFixed(2)}, reserved: $${reservedBalance.toFixed(2)}, spendable: $${spendableBalance.toFixed(2)})`,
+                  `(available: $${availableBalance.toFixed(2)}, reserved: $${reservedBalance.toFixed(2)}, spendable: $${spendableBalance.toFixed(2)})`,
               );
               return;
             }
-            
+
             // Reduce maxBuyUsd to respect reserve
             if (maxBuyUsd === undefined || maxBuyUsd > spendableBalance) {
               this.logger.debug(
@@ -639,7 +639,9 @@ export class EndgameSweepStrategy {
         this.logger.warn(
           `[EndgameSweep] ⚠️ Buy order not filled (FOK killed): ${positionSize.toFixed(2)} shares at ${(bestAsk * 100).toFixed(1)}¢ - market has insufficient liquidity`,
         );
-        throw new Error(`Buy order not filled: market has insufficient liquidity`);
+        throw new Error(
+          `Buy order not filled: market has insufficient liquidity`,
+        );
       } else {
         this.logger.error(
           `[EndgameSweep] ❌ Buy order failed: ${result.reason ?? "unknown reason"}`,

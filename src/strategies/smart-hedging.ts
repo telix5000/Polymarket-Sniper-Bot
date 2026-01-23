@@ -634,7 +634,8 @@ export class SmartHedgingStrategy {
     position: Position,
   ): Promise<HedgeTimingAnalysis> {
     const positionKey = `${position.marketId}-${position.tokenId}`;
-    const firstSeenTime = this.positionFirstSeenLosing.get(positionKey) ?? Date.now();
+    const firstSeenTime =
+      this.positionFirstSeenLosing.get(positionKey) ?? Date.now();
     const holdTimeSeconds = (Date.now() - firstSeenTime) / 1000;
 
     // Get opposing token info
@@ -683,7 +684,10 @@ export class SmartHedgingStrategy {
       }
       opposingPrice = parseFloat(orderbook.asks[0].price);
     } catch {
-      return { ...defaultAnalysis, reason: "Failed to fetch opposing orderbook" };
+      return {
+        ...defaultAnalysis,
+        reason: "Failed to fetch opposing orderbook",
+      };
     }
 
     const totalSpread = position.currentPrice + opposingPrice;
@@ -773,7 +777,8 @@ export class SmartHedgingStrategy {
       opposingPrice <= this.config.optimalOpposingPriceMax;
 
     // Check 5: Momentum confirmation
-    const hasDownwardMomentum = consecutiveDrops >= this.config.minConsecutiveDrops;
+    const hasDownwardMomentum =
+      consecutiveDrops >= this.config.minConsecutiveDrops;
     const hasVolumeSurge = volumeTrend === "surging";
 
     // === DECISION LOGIC ===
@@ -800,7 +805,10 @@ export class SmartHedgingStrategy {
       confidence = 85;
     }
     // Scenario D: Long hold time + still losing = HEDGE (avoid further loss)
-    else if (holdTimeSeconds > this.config.minHoldBeforeHedgeSeconds * 3 && position.pnlPct <= -this.config.triggerLossPct * 1.5) {
+    else if (
+      holdTimeSeconds > this.config.minHoldBeforeHedgeSeconds * 3 &&
+      position.pnlPct <= -this.config.triggerLossPct * 1.5
+    ) {
       shouldHedgeNow = true;
       reason = `Extended hold (${(holdTimeSeconds / 60).toFixed(1)} min) at ${position.pnlPct.toFixed(1)}% loss - hedge to cap loss`;
       confidence = 75;
@@ -843,7 +851,10 @@ export class SmartHedgingStrategy {
     // Only add if enough time has passed since last entry
     if (history.length > 0) {
       const lastEntry = history[0];
-      if (now - lastEntry.timestamp < SmartHedgingStrategy.PRICE_HISTORY_INTERVAL_MS) {
+      if (
+        now - lastEntry.timestamp <
+        SmartHedgingStrategy.PRICE_HISTORY_INTERVAL_MS
+      ) {
         return; // Too soon
       }
     }
@@ -899,7 +910,7 @@ export class SmartHedgingStrategy {
 
   /**
    * Manage reserves by selling profitable positions when needed to fund hedges
-   * 
+   *
    * This ensures funds are always available for hedging by:
    * 1. Calculating how much we need for potential hedges
    * 2. Checking if we have enough reserves
@@ -927,20 +938,28 @@ export class SmartHedgingStrategy {
     const effectiveMaxHedge = this.config.allowExceedMaxForProtection
       ? this.config.absoluteMaxHedgeUsd
       : this.config.maxHedgeUsd;
-    const estimatedHedgeFundsNeeded = potentialHedgePositions.reduce((sum, pos) => {
-      const positionValue = pos.size * pos.entryPrice;
-      // Estimate hedge cost as position value (worst case), capped at effective max
-      return sum + Math.min(positionValue, effectiveMaxHedge);
-    }, 0);
+    const estimatedHedgeFundsNeeded = potentialHedgePositions.reduce(
+      (sum, pos) => {
+        const positionValue = pos.size * pos.entryPrice;
+        // Estimate hedge cost as position value (worst case), capped at effective max
+        return sum + Math.min(positionValue, effectiveMaxHedge);
+      },
+      0,
+    );
 
     // Dynamic threshold: lower the min profit requirement when facing severe losses
     // If we have positions with >emergencyLossThresholdPct loss, accept ANY profitable position
     // Note: pnlPct is negative for losses (e.g., -35% means 35% loss)
     // Math.min returns the most negative value = worst loss (e.g., -48% is worse than -20%)
     // emergencyLossThresholdPct is a positive number (e.g., 30), so we check: worstLoss <= -30
-    const worstLoss = Math.min(...potentialHedgePositions.map((pos) => pos.pnlPct));
-    const hasEmergencyLoss = worstLoss <= -this.config.emergencyLossThresholdPct;
-    const effectiveMinProfitPct = hasEmergencyLoss ? 0.1 : this.config.reserveSellMinProfitPct;
+    const worstLoss = Math.min(
+      ...potentialHedgePositions.map((pos) => pos.pnlPct),
+    );
+    const hasEmergencyLoss =
+      worstLoss <= -this.config.emergencyLossThresholdPct;
+    const effectiveMinProfitPct = hasEmergencyLoss
+      ? 0.1
+      : this.config.reserveSellMinProfitPct;
 
     if (hasEmergencyLoss) {
       this.logger.debug(
@@ -988,7 +1007,8 @@ export class SmartHedgingStrategy {
     }
 
     // Calculate how much we should have in reserve
-    const targetReserve = estimatedHedgeFundsNeeded * (this.config.reservePct / 100);
+    const targetReserve =
+      estimatedHedgeFundsNeeded * (this.config.reservePct / 100);
 
     // Sell profitable positions until we have enough reserves
     let soldCount = 0;
@@ -1196,8 +1216,9 @@ export class SmartHedgingStrategy {
       // Determine actual hedge size based on strategy
       // KEY INSIGHT: We want to create an inverse trade UP TO THE CEILING to undo loss damage
       // NOT micro-trades that match the original tiny position size
-      const isEmergency = position.pnlPct <= -this.config.emergencyLossThresholdPct;
-      
+      const isEmergency =
+        position.pnlPct <= -this.config.emergencyLossThresholdPct;
+
       let targetHedgeUsd: number;
       let hedgeSizeReason: string;
 
@@ -1229,7 +1250,7 @@ export class SmartHedgingStrategy {
           hedgeSizeReason = isEmergency
             ? `🚨 EMERGENCY MAX HEDGE - using full $${this.config.absoluteMaxHedgeUsd} ceiling (${position.pnlPct.toFixed(1)}% loss)`
             : `📊 MAX HEDGE - using full $${this.config.absoluteMaxHedgeUsd} ceiling to maximize protection`;
-          
+
           this.logger.info(
             `[SmartHedging] ℹ️ Smart hedge exceeds ceiling:` +
               `\n  Smart hedge needed: $${profitableHedgeUsd.toFixed(2)} (to profit from upside)` +
@@ -1373,7 +1394,7 @@ export class SmartHedgingStrategy {
 
         const key = `${position.marketId}-${position.tokenId}`;
         this.hedgedPositions.set(key, hedgedPosition);
-        
+
         // Track hedge token ID to avoid "hedge-ception" (hedging hedges)
         this.hedgeTokenIds.add(opposingTokenId);
 
@@ -1454,12 +1475,10 @@ export class SmartHedgingStrategy {
         const clobMarket = await this.client.getMarket(marketId);
         if (clobMarket?.tokens && Array.isArray(clobMarket.tokens)) {
           const yesToken = clobMarket.tokens.find(
-            (t: { outcome?: string }) =>
-              t.outcome?.toUpperCase() === "YES",
+            (t: { outcome?: string }) => t.outcome?.toUpperCase() === "YES",
           );
           const noToken = clobMarket.tokens.find(
-            (t: { outcome?: string }) =>
-              t.outcome?.toUpperCase() === "NO",
+            (t: { outcome?: string }) => t.outcome?.toUpperCase() === "NO",
           );
 
           if (yesToken?.token_id && noToken?.token_id) {
@@ -1467,9 +1486,7 @@ export class SmartHedgingStrategy {
               yesTokenId: yesToken.token_id,
               noTokenId: noToken.token_id,
             });
-            return currentSide === "YES"
-              ? noToken.token_id
-              : yesToken.token_id;
+            return currentSide === "YES" ? noToken.token_id : yesToken.token_id;
           }
         }
         return null;
@@ -1633,7 +1650,7 @@ export class SmartHedgingStrategy {
   /**
    * Calculate the required reserve amount for potential hedges
    * This should be respected by other strategies to ensure hedging can occur
-   * 
+   *
    * @returns Required reserve in USD, or 0 if hedging is disabled or no positions need hedging
    */
   getRequiredReserve(): number {
@@ -1642,7 +1659,7 @@ export class SmartHedgingStrategy {
     }
 
     const allPositions = this.positionTracker.getPositions();
-    
+
     // Find positions that might need hedging soon
     const potentialHedgePositions = allPositions.filter((pos) => {
       const key = `${pos.marketId}-${pos.tokenId}`;
@@ -1664,10 +1681,13 @@ export class SmartHedgingStrategy {
       ? this.config.absoluteMaxHedgeUsd
       : this.config.maxHedgeUsd;
 
-    const estimatedHedgeFundsNeeded = potentialHedgePositions.reduce((sum, pos) => {
-      const positionValue = pos.size * pos.entryPrice;
-      return sum + Math.min(positionValue, effectiveMaxHedge);
-    }, 0);
+    const estimatedHedgeFundsNeeded = potentialHedgePositions.reduce(
+      (sum, pos) => {
+        const positionValue = pos.size * pos.entryPrice;
+        return sum + Math.min(positionValue, effectiveMaxHedge);
+      },
+      0,
+    );
 
     // Return the target reserve amount
     return estimatedHedgeFundsNeeded * (this.config.reservePct / 100);
