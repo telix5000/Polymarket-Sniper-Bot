@@ -42,6 +42,42 @@ const approvalForAllCache = new Map<
   { approved: boolean; fetchedAt: number }
 >();
 
+// Deduplication for balance/allowance check failure warnings
+const BALANCE_CHECK_WARN_DEDUP_WINDOW_MS = 5_000;
+const balanceCheckWarnDedup = new Map<
+  string,
+  { lastLogged: number; count: number }
+>();
+
+/**
+ * Deduplicated warning logger for balance/allowance check failures.
+ * Prevents log spam when multiple concurrent checks fail.
+ */
+const logBalanceCheckWarn = (
+  logger: Logger,
+  signerAddress: string,
+  message: string,
+): void => {
+  const now = Date.now();
+  const key = `${signerAddress}:balance-check`;
+  const entry = balanceCheckWarnDedup.get(key);
+
+  if (entry && now - entry.lastLogged < BALANCE_CHECK_WARN_DEDUP_WINDOW_MS) {
+    // Suppress - within dedup window
+    entry.count++;
+    return;
+  }
+
+  // Log full message, include suppressed count if any
+  if (entry && entry.count > 0) {
+    logger.warn(`${message} (suppressed ${entry.count} similar warnings)`);
+    balanceCheckWarnDedup.set(key, { lastLogged: now, count: 0 });
+  } else {
+    logger.warn(message);
+    balanceCheckWarnDedup.set(key, { lastLogged: now, count: 0 });
+  }
+};
+
 export type FundsAllowanceParams = {
   client: ClobClient;
   sizeUsd: number;
