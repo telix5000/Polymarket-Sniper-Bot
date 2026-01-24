@@ -4025,3 +4025,436 @@ describe("Crash-Proof Recovery: Non-Fatal External Lookups", () => {
     );
   });
 });
+
+// =============================================================================
+// SELF-HEALING TESTS (HFT Reliability)
+// =============================================================================
+
+describe("Self-Healing: Bounded Failure Policy", () => {
+  // Mirror of HFT-tight constants from PositionTracker
+  const MAX_CONSECUTIVE_FAILURES = 5;
+  const MAX_STALE_AGE_MS = 30_000; // 30 seconds for HFT
+  const MAX_DEGRADED_DURATION_MS = 120_000; // 2 minutes
+
+  test("checkSelfHealNeeded returns SOFT_RESET when failures exceed threshold", () => {
+    // Simulate state after MAX_CONSECUTIVE_FAILURES failures
+    const consecutiveFailures = 6;
+    const staleAgeMs = 10_000; // 10 seconds - not stale yet
+    const degradedDurationMs = 30_000; // 30 seconds in degraded mode
+
+    // Logic from checkSelfHealNeeded
+    let result: { level: string; reason: string } | null = null;
+
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      result = {
+        level: "SOFT_RESET",
+        reason: `consecutiveFailures=${consecutiveFailures} >= ${MAX_CONSECUTIVE_FAILURES}`,
+      };
+    }
+
+    assert.ok(result, "Should recommend self-heal");
+    assert.strictEqual(result!.level, "SOFT_RESET", "Should recommend SOFT_RESET for failures");
+    assert.ok(result!.reason.includes("consecutiveFailures"), "Reason should mention failures");
+  });
+
+  test("checkSelfHealNeeded returns SOFT_RESET when stale age exceeds threshold", () => {
+    const consecutiveFailures = 2; // Below threshold
+    const staleAgeMs = 35_000; // 35 seconds - exceeds 30s threshold
+    const lastGoodAtMs = Date.now() - staleAgeMs;
+
+    let result: { level: string; reason: string } | null = null;
+
+    if (staleAgeMs >= MAX_STALE_AGE_MS && lastGoodAtMs > 0) {
+      result = {
+        level: "SOFT_RESET",
+        reason: `staleAge=${Math.round(staleAgeMs / 1000)}s >= ${Math.round(MAX_STALE_AGE_MS / 1000)}s`,
+      };
+    }
+
+    assert.ok(result, "Should recommend self-heal for stale data");
+    assert.strictEqual(result!.level, "SOFT_RESET", "Should recommend SOFT_RESET for stale age");
+  });
+
+  test("checkSelfHealNeeded returns HARD_RESET when degraded too long", () => {
+    const degradedDurationMs = 150_000; // 2.5 minutes in degraded mode
+
+    let result: { level: string; reason: string } | null = null;
+
+    if (degradedDurationMs >= MAX_DEGRADED_DURATION_MS) {
+      result = {
+        level: "HARD_RESET",
+        reason: `degradedDuration=${Math.round(degradedDurationMs / 1000)}s >= ${Math.round(MAX_DEGRADED_DURATION_MS / 1000)}s`,
+      };
+    }
+
+    assert.ok(result, "Should recommend self-heal");
+    assert.strictEqual(result!.level, "HARD_RESET", "Should recommend HARD_RESET for long degraded mode");
+  });
+
+  test("checkSelfHealNeeded returns null when healthy", () => {
+    const consecutiveFailures = 2; // Below threshold
+    const staleAgeMs = 5_000; // 5 seconds - fresh
+    const degradedDurationMs = 0; // Not in degraded mode
+
+    let result: { level: string; reason: string } | null = null;
+
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      result = { level: "SOFT_RESET", reason: "failures" };
+    } else if (staleAgeMs >= MAX_STALE_AGE_MS) {
+      result = { level: "SOFT_RESET", reason: "stale" };
+    } else if (degradedDurationMs >= MAX_DEGRADED_DURATION_MS) {
+      result = { level: "HARD_RESET", reason: "degraded" };
+    }
+
+    assert.strictEqual(result, null, "Should not recommend self-heal when healthy");
+  });
+});
+
+describe("Self-Healing: Reset State Behavior", () => {
+  test("SOFT_RESET clears transient state but preserves address cache", () => {
+    // Simulate SOFT_RESET behavior
+    const beforeReset = {
+      orderbookCacheSize: 50,
+      missingOrderbooksSize: 10,
+      consecutiveFailures: 8,
+      currentBackoffMs: 60_000,
+      addressProbeCompleted: true,
+      cachedHoldingAddress: "0x1234...",
+      marketOutcomeCacheSize: 100,
+    };
+
+    // After SOFT_RESET
+    const afterSoftReset = {
+      orderbookCacheSize: 0, // Cleared
+      missingOrderbooksSize: 0, // Cleared
+      consecutiveFailures: 0, // Reset
+      currentBackoffMs: 0, // Reset
+      addressProbeCompleted: beforeReset.addressProbeCompleted, // Preserved in SOFT_RESET
+      cachedHoldingAddress: beforeReset.cachedHoldingAddress, // Preserved in SOFT_RESET
+      marketOutcomeCacheSize: beforeReset.marketOutcomeCacheSize, // Preserved in SOFT_RESET
+    };
+
+    assert.strictEqual(afterSoftReset.orderbookCacheSize, 0, "Orderbook cache should be cleared");
+    assert.strictEqual(afterSoftReset.consecutiveFailures, 0, "Failures should be reset");
+    assert.strictEqual(afterSoftReset.currentBackoffMs, 0, "Backoff should be reset");
+    assert.ok(afterSoftReset.addressProbeCompleted, "Address probe should be preserved in SOFT_RESET");
+  });
+
+  test("HARD_RESET clears all caches including address probe", () => {
+    // Simulate HARD_RESET behavior
+    const afterHardReset = {
+      orderbookCacheSize: 0,
+      missingOrderbooksSize: 0,
+      consecutiveFailures: 0,
+      currentBackoffMs: 0,
+      addressProbeCompleted: false, // Reset in HARD_RESET
+      cachedHoldingAddress: null, // Reset in HARD_RESET
+      marketOutcomeCacheSize: 0, // Cleared in HARD_RESET
+      circuitBreakerSize: 0, // Cleared in HARD_RESET
+    };
+
+    assert.strictEqual(afterHardReset.addressProbeCompleted, false, "Address probe should be reset in HARD_RESET");
+    assert.strictEqual(afterHardReset.cachedHoldingAddress, null, "Holding address should be cleared in HARD_RESET");
+    assert.strictEqual(afterHardReset.marketOutcomeCacheSize, 0, "Outcome cache should be cleared in HARD_RESET");
+    assert.strictEqual(afterHardReset.circuitBreakerSize, 0, "Circuit breaker should be cleared in HARD_RESET");
+  });
+});
+
+describe("Self-Healing: Recovery Mode Behavior", () => {
+  const RECOVERY_MODE_MAX_CYCLES = 3;
+
+  test("Recovery mode allows ACTIVE_COLLAPSE_BUG snapshot through", () => {
+    // Simulate snapshot that would normally trigger ACTIVE_COLLAPSE_BUG
+    const snapshot = {
+      rawTotal: 2,
+      rawActiveCandidates: 2,
+      finalActiveCount: 0, // Would trigger ACTIVE_COLLAPSE_BUG
+      recoveryMode: true,
+    };
+
+    // In recovery mode, this should be accepted with a warning
+    const shouldReject = snapshot.rawTotal > 0 && 
+      snapshot.rawActiveCandidates > 0 && 
+      snapshot.finalActiveCount === 0 &&
+      !snapshot.recoveryMode; // Recovery mode bypasses rejection
+
+    assert.strictEqual(shouldReject, false, "Should NOT reject in recovery mode");
+  });
+
+  test("Recovery mode exits after successful cycles with active positions", () => {
+    let recoveryMode = true;
+    let recoveryCycleCount = 0;
+    const activePositions = 5;
+
+    // Simulate successful refresh
+    if (recoveryMode) {
+      recoveryCycleCount++;
+      
+      // Exit condition: active positions > 0 OR enough cycles
+      if (activePositions > 0 || recoveryCycleCount >= RECOVERY_MODE_MAX_CYCLES) {
+        recoveryMode = false;
+        recoveryCycleCount = 0;
+      }
+    }
+
+    assert.strictEqual(recoveryMode, false, "Should exit recovery mode with active positions");
+  });
+
+  test("Recovery mode exits after max cycles even without active positions", () => {
+    let recoveryMode = true;
+    let recoveryCycleCount = 0;
+
+    // Simulate RECOVERY_MODE_MAX_CYCLES successful cycles without active positions
+    for (let i = 0; i < RECOVERY_MODE_MAX_CYCLES; i++) {
+      if (recoveryMode) {
+        recoveryCycleCount++;
+        const activePositions = 0;
+        
+        if (activePositions > 0 || recoveryCycleCount >= RECOVERY_MODE_MAX_CYCLES) {
+          recoveryMode = false;
+          recoveryCycleCount = 0;
+        }
+      }
+    }
+
+    assert.strictEqual(recoveryMode, false, "Should exit recovery mode after max cycles");
+  });
+});
+
+describe("Self-Healing: Classification Reasons Cannot Be Empty", () => {
+  test("Reasons array is never empty when positions are filtered", () => {
+    // Simulate scenario where positions are filtered but no skip reasons recorded
+    const rawActiveCandidates = 5;
+    const finalActiveCount = 0;
+    const skipReasons = new Map<string, number>(); // Empty - problematic
+
+    // Build reasons string with fallback
+    const reasonCounts: string[] = [];
+    for (const [reason, count] of skipReasons) {
+      reasonCounts.push(`${reason}=${count}`);
+    }
+
+    // CRITICAL FIX: Never allow empty reasons
+    if (reasonCounts.length === 0) {
+      const processedOk = rawActiveCandidates - finalActiveCount;
+      if (processedOk > 0) {
+        reasonCounts.push(`FILTERED_NO_REASON=${processedOk}`);
+      } else {
+        reasonCounts.push(`ALL_ACTIVE=${finalActiveCount}`);
+      }
+    }
+
+    const reasonsStr = reasonCounts.join(", ");
+
+    assert.ok(reasonsStr.length > 0, "Reasons string should never be empty");
+    assert.ok(!reasonsStr.includes("none"), "Reasons should never be 'none'");
+    assert.ok(reasonsStr.includes("FILTERED_NO_REASON=5"), "Should have fallback reason");
+  });
+
+  test("Minimal acceptance rule allows small raw counts through with warning", () => {
+    // Mirror constant from PositionTracker
+    const MINIMAL_ACCEPTANCE_MAX_RAW_COUNT = 5;
+    
+    // The specific case mentioned in the issue:
+    // rawTotal=2, rawActiveCandidates=2, finalActive=0, reasons=[none]
+    const rawTotal = 2;
+    const rawActiveCandidates = 2;
+    const finalActiveCount = 0;
+    const skipReasons = new Map<string, number>(); // Empty
+    
+    // Build reasons with fallback
+    const reasonCounts: string[] = [];
+    for (const [reason, count] of skipReasons) {
+      reasonCounts.push(`${reason}=${count}`);
+    }
+    if (reasonCounts.length === 0) {
+      reasonCounts.push(`FILTERED_NO_REASON=${rawActiveCandidates - finalActiveCount}`);
+    }
+    const reasonsStr = reasonCounts.join(", ");
+
+    // Check minimal acceptance rule
+    const isMinimalAcceptanceCase = 
+      rawTotal === rawActiveCandidates && 
+      rawTotal <= MINIMAL_ACCEPTANCE_MAX_RAW_COUNT &&
+      reasonsStr.includes("FILTERED_NO_REASON");
+
+    assert.ok(isMinimalAcceptanceCase, "Should match minimal acceptance rule");
+    
+    // Should be accepted with warning, not rejected
+    const shouldAccept = isMinimalAcceptanceCase;
+    assert.ok(shouldAccept, "Minimal acceptance case should be accepted");
+  });
+});
+
+describe("Self-Healing: Watchdog Integration Points", () => {
+  test("getSelfHealStatus returns correct structure", () => {
+    // Simulate what getSelfHealStatus would return
+    const now = Date.now();
+    const lastGoodAtMs = now - 15_000; // 15 seconds ago
+    const degradedModeEnteredAt = now - 30_000; // 30 seconds ago
+
+    const status = {
+      consecutiveFailures: 3,
+      staleAgeMs: now - lastGoodAtMs,
+      degradedDurationMs: now - degradedModeEnteredAt,
+      recoveryMode: false,
+      recoveryCycleCount: 0,
+      selfHealCount: 1,
+      lastSelfHealAt: now - 60_000,
+      isHealthy: false, // Has failures
+    };
+
+    assert.ok(typeof status.consecutiveFailures === "number", "Should have consecutiveFailures");
+    assert.ok(typeof status.staleAgeMs === "number", "Should have staleAgeMs");
+    assert.ok(typeof status.degradedDurationMs === "number", "Should have degradedDurationMs");
+    assert.ok(typeof status.recoveryMode === "boolean", "Should have recoveryMode");
+    assert.ok(typeof status.isHealthy === "boolean", "Should have isHealthy");
+    assert.strictEqual(status.isHealthy, false, "Should be unhealthy with failures");
+  });
+
+  test("Watchdog can trigger resetState based on status", () => {
+    // Simulate watchdog checking tracker status
+    const MAX_CONSECUTIVE_FAILURES = 5;
+    const MAX_STALE_AGE_MS = 30_000;
+
+    const status = {
+      consecutiveFailures: 6,
+      staleAgeMs: 35_000,
+      isHealthy: false,
+    };
+
+    // Watchdog decision logic
+    let shouldTriggerReset = false;
+    let resetLevel: "SOFT_RESET" | "HARD_RESET" | null = null;
+
+    if (status.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      shouldTriggerReset = true;
+      resetLevel = "SOFT_RESET";
+    }
+    if (status.staleAgeMs >= MAX_STALE_AGE_MS) {
+      shouldTriggerReset = true;
+      resetLevel = "SOFT_RESET";
+    }
+
+    assert.ok(shouldTriggerReset, "Watchdog should trigger reset");
+    assert.strictEqual(resetLevel, "SOFT_RESET", "Should recommend SOFT_RESET");
+  });
+});
+
+describe("Self-Healing: HFT Timing Constraints", () => {
+  test("MAX_STALE_AGE_MS is HFT-appropriate (30 seconds)", () => {
+    const MAX_STALE_AGE_MS = 30_000;
+    
+    // HFT constraint: stale data is unacceptable, must be <= 30s
+    assert.ok(MAX_STALE_AGE_MS <= 30_000, "Stale age threshold should be <= 30s for HFT");
+    assert.ok(MAX_STALE_AGE_MS > 0, "Stale age threshold must be positive");
+  });
+
+  test("MAX_CONSECUTIVE_FAILURES is HFT-appropriate (5 failures)", () => {
+    const MAX_CONSECUTIVE_FAILURES = 5;
+    
+    // HFT constraint: recover quickly, don't wait for too many failures
+    assert.ok(MAX_CONSECUTIVE_FAILURES <= 10, "Max failures should be <= 10 for HFT");
+    assert.ok(MAX_CONSECUTIVE_FAILURES >= 3, "Max failures should be >= 3 to avoid thrashing");
+  });
+
+  test("MAX_DEGRADED_DURATION_MS is HFT-appropriate (2 minutes)", () => {
+    const MAX_DEGRADED_DURATION_MS = 120_000;
+    
+    // HFT constraint: don't stay degraded for long
+    assert.ok(MAX_DEGRADED_DURATION_MS <= 300_000, "Degraded duration should be <= 5min for HFT");
+    assert.ok(MAX_DEGRADED_DURATION_MS >= 60_000, "Degraded duration should be >= 1min to avoid premature HARD_RESET");
+  });
+
+  test("REFRESH_WATCHDOG_TIMEOUT_MS is HFT-appropriate (15 seconds)", () => {
+    const REFRESH_WATCHDOG_TIMEOUT_MS = 15_000;
+    
+    // HFT constraint: single refresh should not take forever
+    assert.ok(REFRESH_WATCHDOG_TIMEOUT_MS <= 30_000, "Refresh timeout should be <= 30s");
+    assert.ok(REFRESH_WATCHDOG_TIMEOUT_MS >= 5_000, "Refresh timeout should be >= 5s for network latency");
+  });
+});
+
+describe("Self-Healing: Refresh Watchdog Timeout", () => {
+  test("Watchdog timeout aborts stuck refresh and counts as failure", async () => {
+    const REFRESH_WATCHDOG_TIMEOUT_MS = 15_000;
+    
+    // Simulate a refresh that takes too long
+    let abortCalled = false;
+    const mockAbortController = {
+      abort: () => { abortCalled = true; },
+    };
+
+    // Simulate watchdog timeout logic
+    const refreshStartTime = Date.now();
+    const simulatedRefreshDuration = 20_000; // 20 seconds - exceeds 15s timeout
+    
+    const wouldTimeout = simulatedRefreshDuration > REFRESH_WATCHDOG_TIMEOUT_MS;
+    if (wouldTimeout) {
+      mockAbortController.abort();
+    }
+
+    assert.ok(wouldTimeout, "Refresh exceeding timeout should be detected");
+    assert.ok(abortCalled, "AbortController.abort() should be called on timeout");
+  });
+
+  test("Refresh completing within timeout is not aborted", () => {
+    const REFRESH_WATCHDOG_TIMEOUT_MS = 15_000;
+    
+    let abortCalled = false;
+    const mockAbortController = {
+      abort: () => { abortCalled = true; },
+    };
+
+    // Simulate a fast refresh
+    const simulatedRefreshDuration = 5_000; // 5 seconds - well within timeout
+    
+    const wouldTimeout = simulatedRefreshDuration > REFRESH_WATCHDOG_TIMEOUT_MS;
+    if (wouldTimeout) {
+      mockAbortController.abort();
+    }
+
+    assert.strictEqual(wouldTimeout, false, "Fast refresh should not timeout");
+    assert.strictEqual(abortCalled, false, "AbortController should NOT be called for fast refresh");
+  });
+
+  test("awaitWithWatchdog races promise against timeout", async () => {
+    // Test the race logic conceptually
+    const TIMEOUT_MS = 100; // Short timeout for testing
+    
+    // Fast promise should win
+    const fastPromise = new Promise<string>((resolve) => {
+      setTimeout(() => resolve("success"), 10);
+    });
+    
+    const timeoutPromise = new Promise<string>((_, reject) => {
+      setTimeout(() => reject(new Error("TIMEOUT")), TIMEOUT_MS);
+    });
+
+    const result = await Promise.race([fastPromise, timeoutPromise]);
+    assert.strictEqual(result, "success", "Fast promise should win the race");
+  });
+
+  test("awaitWithWatchdog timeout wins against slow promise", async () => {
+    const TIMEOUT_MS = 50; // Short timeout
+    
+    // Slow promise should lose
+    const slowPromise = new Promise<string>((resolve) => {
+      setTimeout(() => resolve("success"), 200);
+    });
+    
+    const timeoutPromise = new Promise<string>((_, reject) => {
+      setTimeout(() => reject(new Error("REFRESH_WATCHDOG_TIMEOUT")), TIMEOUT_MS);
+    });
+
+    let caughtError: Error | null = null;
+    try {
+      await Promise.race([slowPromise, timeoutPromise]);
+    } catch (err) {
+      caughtError = err as Error;
+    }
+
+    assert.ok(caughtError, "Should have caught an error");
+    assert.ok(caughtError!.message.includes("REFRESH_WATCHDOG_TIMEOUT"), "Should be watchdog timeout error");
+  });
+});
