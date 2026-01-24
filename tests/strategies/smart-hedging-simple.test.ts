@@ -630,7 +630,18 @@ describe("Smart Hedging Liquidation Candidate Filtering", () => {
     redeemable?: boolean;
   }
 
-  // Helper function to simulate the getLiquidationCandidates logic in smart hedging
+  /**
+   * Helper function to simulate the getLiquidationCandidates logic in SimpleSmartHedgingStrategy.
+   * Filters positions to find candidates suitable for liquidation, excluding already hedged
+   * positions and positions in cooldown.
+   *
+   * @param positions - Array of positions to filter
+   * @param entryTimes - Map of position keys to entry timestamps
+   * @param hedgedPositions - Set of position keys that have already been hedged
+   * @param cooldownPositions - Map of position keys to cooldown expiration timestamps
+   * @param config - Configuration with triggerLossPct and minHoldSeconds thresholds
+   * @returns Array of positions suitable for liquidation, sorted by worst loss first
+   */
   function filterLiquidationCandidates(
     positions: TestPosition[],
     entryTimes: Map<string, number>,

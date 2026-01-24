@@ -19,6 +19,11 @@ export interface Position {
 // Price display constants
 const PRICE_TO_CENTS_MULTIPLIER = 100;
 
+// Default thresholds for liquidation candidate filtering
+// Used by getLiquidationCandidates and getLiquidationCandidatesValue methods
+export const DEFAULT_LIQUIDATION_MIN_LOSS_PCT = 10;
+export const DEFAULT_LIQUIDATION_MIN_HOLD_SECONDS = 60;
+
 export interface PositionTrackerConfig {
   client: ClobClient;
   logger: ConsoleLogger;
@@ -335,11 +340,14 @@ export class PositionTracker {
    * Returns active losing positions sorted by loss percentage (worst losses first),
    * filtered to only include positions with valid side info (required for selling).
    *
-   * @param minLossPct - Minimum loss percentage to consider for liquidation (default: 10)
-   * @param minHoldSeconds - Minimum hold time in seconds before a position can be liquidated (default: 60)
+   * @param minLossPct - Minimum loss percentage to consider for liquidation (default: DEFAULT_LIQUIDATION_MIN_LOSS_PCT)
+   * @param minHoldSeconds - Minimum hold time in seconds before a position can be liquidated (default: DEFAULT_LIQUIDATION_MIN_HOLD_SECONDS)
    * @returns Array of positions suitable for liquidation, sorted by worst loss first
    */
-  getLiquidationCandidates(minLossPct = 10, minHoldSeconds = 60): Position[] {
+  getLiquidationCandidates(
+    minLossPct = DEFAULT_LIQUIDATION_MIN_LOSS_PCT,
+    minHoldSeconds = DEFAULT_LIQUIDATION_MIN_HOLD_SECONDS,
+  ): Position[] {
     const now = Date.now();
 
     return (
@@ -380,11 +388,14 @@ export class PositionTracker {
    * This represents the approximate funds that could be recovered by liquidating
    * losing positions.
    *
-   * @param minLossPct - Minimum loss percentage to consider for liquidation (default: 10)
-   * @param minHoldSeconds - Minimum hold time before a position can be liquidated (default: 60)
+   * @param minLossPct - Minimum loss percentage to consider for liquidation (default: DEFAULT_LIQUIDATION_MIN_LOSS_PCT)
+   * @param minHoldSeconds - Minimum hold time before a position can be liquidated (default: DEFAULT_LIQUIDATION_MIN_HOLD_SECONDS)
    * @returns Total USD value that could be recovered from liquidation candidates
    */
-  getLiquidationCandidatesValue(minLossPct = 10, minHoldSeconds = 60): number {
+  getLiquidationCandidatesValue(
+    minLossPct = DEFAULT_LIQUIDATION_MIN_LOSS_PCT,
+    minHoldSeconds = DEFAULT_LIQUIDATION_MIN_HOLD_SECONDS,
+  ): number {
     const candidates = this.getLiquidationCandidates(
       minLossPct,
       minHoldSeconds,

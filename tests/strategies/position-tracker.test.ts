@@ -1136,7 +1136,16 @@ describe("Liquidation Candidates Logic", () => {
     redeemable?: boolean;
   }
 
-  // Helper function to simulate the filtering logic in getLiquidationCandidates
+  /**
+   * Helper function to simulate the filtering logic in PositionTracker.getLiquidationCandidates.
+   * Filters positions to find candidates suitable for liquidation when funds are insufficient.
+   *
+   * @param positions - Array of positions to filter
+   * @param entryTimes - Map of position keys to entry timestamps
+   * @param minLossPct - Minimum loss percentage to consider for liquidation
+   * @param minHoldSeconds - Minimum hold time in seconds before a position can be liquidated
+   * @returns Array of positions suitable for liquidation, sorted by worst loss first
+   */
   function getLiquidationCandidates(
     positions: TestPosition[],
     entryTimes: Map<string, number>,
