@@ -101,10 +101,35 @@ export const DEFAULT_SIMPLE_HEDGING_CONFIG: SimpleSmartHedgingConfig = {
 
 /**
  * Cooldown duration for failed liquidation attempts (5 minutes).
- * After a sell/hedge fails, the position is skipped for this duration
- * to prevent repeated attempts that spam logs and waste resources.
+ * 
+ * RATIONALE:
+ * - After a sell/hedge fails (due to insufficient balance, allowance, or liquidity),
+ *   retrying immediately will almost certainly fail again.
+ * - 5 minutes is long enough for external conditions to potentially change
+ *   (e.g., deposits, approvals, or liquidity improvements).
+ * - This prevents repeated attempts that spam logs, waste resources, and may
+ *   trigger rate limits.
+ * 
+ * WHEN APPLIED:
+ * - When a sell order fails after hedge fails (both attempts exhausted)
+ * - When a liquidation order fails in force-liquidation scenario
+ * - When a liquidation fails in no-hedge window
  */
 const FAILED_LIQUIDATION_COOLDOWN_MS = 5 * 60 * 1000;
+
+/**
+ * Threshold for detecting essentially resolved markets.
+ * When the opposite side price >= this threshold, the market is
+ * considered resolved and liquidation is skipped in favor of redemption.
+ */
+const MARKET_RESOLVED_THRESHOLD = 0.95;
+
+/**
+ * Threshold for determining hedge is too expensive.
+ * When the opposite side price >= this threshold but < MARKET_RESOLVED_THRESHOLD,
+ * hedging is skipped but liquidation may still be attempted.
+ */
+const HEDGE_TOO_EXPENSIVE_THRESHOLD = 0.9;
 
 /**
  * Simple Smart Hedging Strategy
@@ -376,14 +401,14 @@ export class SimpleSmartHedgingStrategy {
 
     // If opposite is too expensive (>90¢), our side is probably losing - just sell
     // EXCEPTION: If opposite is >= 95¢, market is essentially resolved - don't try to sell
-    if (oppositePrice >= 0.95) {
+    if (oppositePrice >= MARKET_RESOLVED_THRESHOLD) {
       this.logger.info(
         `[SimpleHedging] ${oppositeSide} at ${(oppositePrice * 100).toFixed(0)}¢ - market essentially resolved, skipping (await redemption)`,
       );
       // Return special indicator that this is a resolved market, not a hedge failure
       return { success: false, reason: "MARKET_RESOLVED" };
     }
-    if (oppositePrice >= 0.9) {
+    if (oppositePrice >= HEDGE_TOO_EXPENSIVE_THRESHOLD) {
       this.logger.warn(
         `[SimpleHedging] ${oppositeSide} at ${(oppositePrice * 100).toFixed(0)}¢ - too expensive to hedge`,
       );
