@@ -3,6 +3,7 @@ import type { Logger } from "../../utils/logger.util";
 import { OrderbookNotFoundError } from "../../errors/app.errors";
 import type { MarketDataProvider, MarketSummary, OrderBookTop } from "../types";
 import { TTLCache } from "../../utils/parallel-utils";
+import { extractOrderbookPrices } from "../../utils/post-order.util";
 
 const OUTCOME_YES = new Set(["yes", "y", "true"]);
 const OUTCOME_NO = new Set(["no", "n", "false"]);
@@ -339,8 +340,20 @@ export class PolymarketMarketDataProvider implements MarketDataProvider {
 
     try {
       const book = await this.client.getOrderBook(tokenId);
-      const bestAsk = book.asks?.length ? Number(book.asks[0].price) : 0;
-      const bestBid = book.bids?.length ? Number(book.bids[0].price) : 0;
+      // Use safe extraction to ensure bestBid = max(bids), bestAsk = min(asks)
+      const priceExtraction = extractOrderbookPrices(book);
+      const bestAsk = priceExtraction.bestAsk ?? 0;
+      const bestBid = priceExtraction.bestBid ?? 0;
+
+      // If anomaly detected, return 0s to signal invalid data
+      // This prevents arbitrage strategies from using corrupted prices
+      if (priceExtraction.hasAnomaly) {
+        this.logger.debug(
+          `[ARB] Orderbook anomaly for tokenId=${tokenId.slice(0, 16)}...: ${priceExtraction.anomalyReason} - returning 0s`,
+        );
+        return { bestAsk: 0, bestBid: 0 };
+      }
+
       const result = {
         bestAsk: Number.isFinite(bestAsk) ? bestAsk : 0,
         bestBid: Number.isFinite(bestBid) ? bestBid : 0,
