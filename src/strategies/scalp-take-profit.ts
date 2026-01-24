@@ -334,6 +334,22 @@ export class ScalpTakeProfitStrategy {
     // Update price history for all positions
     await this.updatePriceHistory(positions);
 
+    // Log position summary for diagnostics
+    const profitable = positions.filter((p) => p.pnlPct > 0 && !p.redeemable);
+    const targetProfit = positions.filter(
+      (p) => p.pnlPct >= this.config.targetProfitPct && !p.redeemable,
+    );
+    if (profitable.length > 0) {
+      this.logger.debug(
+        `[ScalpTakeProfit] 📊 Positions: ${positions.length} total, ${profitable.length} profitable (>0%), ${targetProfit.length} at target (>=${this.config.targetProfitPct}%)`,
+      );
+    }
+    if (targetProfit.length > 0) {
+      this.logger.info(
+        `[ScalpTakeProfit] 💰 Found ${targetProfit.length} position(s) at target profit: ${targetProfit.map((p) => `${p.tokenId.slice(0, 8)}...+${p.pnlPct.toFixed(1)}%`).join(", ")}`,
+      );
+    }
+
     for (const position of positions) {
       const positionKey = `${position.marketId}-${position.tokenId}`;
 
@@ -342,8 +358,16 @@ export class ScalpTakeProfitStrategy {
         continue;
       }
 
-      // Skip resolved positions (handled by auto-redeem)
+      // STRATEGY GATE: Skip resolved positions - route to AutoRedeem only
+      // Resolved markets cannot be sold on the CLOB; they must be redeemed on-chain
       if (position.redeemable) {
+        continue;
+      }
+
+      // EARLY SKIP: Skip positions in the red (negative profit) - this is a profit-taking strategy
+      // These positions should be handled by Smart Hedging or Universal Stop-Loss, not ScalpTakeProfit
+      // This avoids unnecessary debug logging and evaluateScalpExit() processing for losing positions
+      if (position.pnlPct < 0) {
         continue;
       }
 
@@ -396,7 +420,20 @@ export class ScalpTakeProfitStrategy {
       position.tokenId,
     );
 
+    // If no entry time is available, we can still scalp clearly profitable positions
+    // The hold time check is mainly to prevent immediate flip after buying
+    // If position meets target profit AND min USD, allow selling even without entry time
+    // This handles positions bought via on-chain wallet where historical data might be missing
     if (!entryTime) {
+      if (
+        position.pnlPct >= this.config.targetProfitPct &&
+        position.pnlUsd >= this.config.minProfitUsd
+      ) {
+        return {
+          shouldExit: true,
+          reason: `Target profit +${position.pnlPct.toFixed(1)}% reached (no entry time - likely external purchase)`,
+        };
+      }
       return { shouldExit: false, reason: "No entry time available" };
     }
 

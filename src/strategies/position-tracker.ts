@@ -101,14 +101,32 @@ export class PositionTracker {
     // Note: loadHistoricalEntryTimes handles errors internally and does not throw
     await this.loadHistoricalEntryTimes();
 
-    // Start initial refresh in background (non-blocking) to allow trading to start immediately
-    // This prevents slow API calls from delaying the entire orchestrator startup
-    this.refresh().catch((err) => {
+    // Start initial refresh synchronously to ensure positions are available before strategies run
+    // This is critical - without positions loaded, strategies can't identify what to sell/redeem
+    try {
+      await this.refresh();
+      
+      // Log positions without entry times (critical diagnostic)
+      const positions = this.getPositions();
+      const withoutEntryTime = positions.filter((p) => {
+        const key = `${p.marketId}-${p.tokenId}`;
+        return !this.positionEntryTimes.has(key);
+      });
+      
+      if (withoutEntryTime.length > 0) {
+        this.logger.warn(
+          `[PositionTracker] ⚠️ ${withoutEntryTime.length} position(s) have NO entry time (external purchases?): ${withoutEntryTime.map((p) => `${p.tokenId.slice(0, 8)}...${p.pnlPct >= 0 ? "+" : ""}${p.pnlPct.toFixed(1)}%`).join(", ")}`,
+        );
+        this.logger.info(
+          `[PositionTracker] ℹ️ Positions without entry times will still be sold if profitable (entry time check bypassed for profitable positions)`,
+        );
+      }
+    } catch (err) {
       this.logger.error(
         "[PositionTracker] Initial refresh failed",
         err as Error,
       );
-    });
+    }
 
     this.refreshTimer = setInterval(() => {
       this.refresh().catch((err) => {
@@ -596,6 +614,46 @@ export class PositionTracker {
           // Quieter log for steady-state operation (all markets already cached)
           this.logger.debug(
             `[PositionTracker] ✓ Processed ${successCount} positions (${resolvedCount} resolved, ${activeCount} active) - all outcomes cached`,
+          );
+        }
+
+        // CRITICAL: Log position P&L summary for diagnostics
+        // Sort by P&L% descending to show most profitable first
+        const sortedByPnl = [...positions].sort((a, b) => b.pnlPct - a.pnlPct);
+        const profitable = sortedByPnl.filter((p) => p.pnlPct > 0);
+        const redeemablePositions = sortedByPnl.filter((p) => p.redeemable);
+        const losing = sortedByPnl.filter((p) => p.pnlPct < 0 && !p.redeemable);
+
+        // Always log P&L summary at INFO level so user can see their positions
+        this.logger.info(
+          `[PositionTracker] 📊 P&L Summary: ${profitable.length} profitable, ${losing.length} losing, ${redeemablePositions.length} redeemable`,
+        );
+
+        // Log profitable positions (most important for scalping/quick-flip)
+        if (profitable.length > 0) {
+          const profitSummary = profitable
+            .slice(0, 10) // Top 10 profitable
+            .map(
+              (p) =>
+                `${p.tokenId.slice(0, 8)}...+${p.pnlPct.toFixed(1)}%/$${p.pnlUsd.toFixed(2)}`,
+            )
+            .join(", ");
+          this.logger.info(
+            `[PositionTracker] 💰 Profitable (${profitable.length}): ${profitSummary}${profitable.length > 10 ? "..." : ""}`,
+          );
+        }
+
+        // Log redeemable positions (critical for redemption)
+        if (redeemablePositions.length > 0) {
+          const redeemSummary = redeemablePositions
+            .slice(0, 5)
+            .map(
+              (p) =>
+                `${p.tokenId.slice(0, 8)}...(${p.currentPrice > 0 ? "WIN" : "LOSS"})`,
+            )
+            .join(", ");
+          this.logger.info(
+            `[PositionTracker] 🎯 Redeemable (${redeemablePositions.length}): ${redeemSummary}${redeemablePositions.length > 5 ? "..." : ""}`,
           );
         }
       }
