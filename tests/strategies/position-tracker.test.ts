@@ -1556,7 +1556,7 @@ describe("PositionTracker P&L Calculation with BEST BID", () => {
     const entryPrice = 0.51;
     const bestBid = 0.51;
     const bestAsk = 0.55;
-    const size = 100;
+    const _size = 100; // Documented for context, not used in P&L% calc
 
     // Old buggy calculation (mid-price):
     const midPrice = (bestBid + bestAsk) / 2; // 0.53
@@ -1813,7 +1813,7 @@ describe("PositionTracker Gated Redeemable Detection", () => {
     // and Gamma confirms the market is resolved
     const apiRedeemable = true;
     const gammaResolved = true;
-    const hasOrderbook = false;
+    const _hasOrderbook = false; // Documented - not relevant when Gamma confirms resolution
 
     // Logic: If API says redeemable AND Gamma confirms resolved, keep as redeemable
     const isRedeemable = apiRedeemable && gammaResolved;
@@ -1834,7 +1834,8 @@ describe("PositionTracker Gated Redeemable Detection", () => {
 
     // Logic: If API says redeemable and no orderbook, treat as redeemable
     // even if Gamma hasn't confirmed (market may be in transition)
-    const isRedeemable = apiRedeemable && (!gammaResolved ? !hasOrderbook : true);
+    const isRedeemable =
+      apiRedeemable && (!gammaResolved ? !hasOrderbook : true);
 
     assert.strictEqual(
       isRedeemable,
@@ -1853,8 +1854,7 @@ describe("PositionTracker Gated Redeemable Detection", () => {
     // Logic: Override API's redeemable flag - keep as ACTIVE
     // This is the key fix: don't trust API alone when orderbook exists
     const isRedeemable =
-      apiRedeemable &&
-      (gammaResolved || (!gammaResolved && !hasOrderbook));
+      apiRedeemable && (gammaResolved || (!gammaResolved && !hasOrderbook));
 
     assert.strictEqual(
       isRedeemable,
@@ -1865,9 +1865,9 @@ describe("PositionTracker Gated Redeemable Detection", () => {
 
   test("Position with apiPos.redeemable=false should remain active regardless of Gamma status", () => {
     // If API doesn't mark position as redeemable, it should stay active
-    const apiRedeemable = false;
-    const gammaResolved = true; // Even if Gamma says resolved
-    const hasOrderbook = true;
+    const _apiRedeemable = false; // Documented here - not used in logic intentionally
+    const _gammaResolved = true; // Even if Gamma says resolved (not checked)
+    const _hasOrderbook = true; // Not checked when API says not redeemable
 
     // We only check Gamma when apiPos.redeemable === true
     // If API says not redeemable, keep as active (existing fallback detection handles edge cases)
@@ -1887,8 +1887,7 @@ describe("PositionTracker Gated Redeemable Detection", () => {
     const hasOrderbook = true;
 
     // This condition should trigger the warning log
-    const shouldLogOverride =
-      apiRedeemable && !gammaResolved && hasOrderbook;
+    const shouldLogOverride = apiRedeemable && !gammaResolved && hasOrderbook;
 
     assert.strictEqual(
       shouldLogOverride,
@@ -2007,8 +2006,7 @@ describe("PositionTracker Active/Resolved Count Accounting", () => {
     const hasOrderbook = true;
 
     const isRedeemable =
-      apiRedeemable &&
-      (gammaResolved || (!gammaResolved && !hasOrderbook));
+      apiRedeemable && (gammaResolved || (!gammaResolved && !hasOrderbook));
 
     if (isRedeemable) {
       resolvedCount++;
@@ -2026,7 +2024,7 @@ describe("PositionTracker Active/Resolved Count Accounting", () => {
 
     const apiRedeemable = true;
     const gammaResolved = true;
-    const hasOrderbook = false;
+    const _hasOrderbook = false; // Documented - not relevant when Gamma confirms
 
     const isRedeemable = apiRedeemable && gammaResolved;
 
@@ -2056,8 +2054,16 @@ describe("PositionTracker Active/Resolved Count Accounting", () => {
     const activeLosing = active.filter((p) => p.pnlPct < 0);
 
     assert.strictEqual(active.length, 3, "Should have 3 active positions");
-    assert.strictEqual(redeemable.length, 2, "Should have 2 redeemable positions");
-    assert.strictEqual(activeProfitable.length, 1, "Should have 1 active profitable");
+    assert.strictEqual(
+      redeemable.length,
+      2,
+      "Should have 2 redeemable positions",
+    );
+    assert.strictEqual(
+      activeProfitable.length,
+      1,
+      "Should have 1 active profitable",
+    );
     assert.strictEqual(activeLosing.length, 1, "Should have 1 active losing");
   });
 });

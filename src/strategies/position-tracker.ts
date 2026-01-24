@@ -741,10 +741,8 @@ export class PositionTracker {
 
               if (apiRedeemable) {
                 // API claims position is redeemable - verify with Gamma
-                const resolutionStatus = await this.verifyMarketResolutionStatus(
-                  tokenId,
-                  marketId,
-                );
+                const resolutionStatus =
+                  await this.verifyMarketResolutionStatus(tokenId, marketId);
 
                 if (resolutionStatus.isResolved) {
                   // Gamma confirms market is resolved - trust redeemable flag
@@ -774,8 +772,10 @@ export class PositionTracker {
 
                 // Use verified winning outcome or fetch from cache/API
                 let winningOutcome: string | null | undefined =
-                  verifiedWinningOutcome ?? this.marketOutcomeCache.get(marketId);
-                const wasCached = winningOutcome !== undefined && winningOutcome !== null;
+                  verifiedWinningOutcome ??
+                  this.marketOutcomeCache.get(marketId);
+                const wasCached =
+                  winningOutcome !== undefined && winningOutcome !== null;
 
                 if (!wasCached && !verifiedWinningOutcome) {
                   winningOutcome = await this.fetchMarketOutcome(tokenId);
@@ -797,13 +797,19 @@ export class PositionTracker {
                     this.marketOutcomeCache.set(marketId, winningOutcome);
                     newlyCachedMarkets++;
                   }
-                } else if (verifiedWinningOutcome && !this.marketOutcomeCache.has(marketId)) {
+                } else if (
+                  verifiedWinningOutcome &&
+                  !this.marketOutcomeCache.has(marketId)
+                ) {
                   // Cache the verified outcome from resolution check
                   if (
                     this.marketOutcomeCache.size <
                     PositionTracker.MAX_OUTCOME_CACHE_SIZE
                   ) {
-                    this.marketOutcomeCache.set(marketId, verifiedWinningOutcome);
+                    this.marketOutcomeCache.set(
+                      marketId,
+                      verifiedWinningOutcome,
+                    );
                     newlyCachedMarkets++;
                   }
                 }
@@ -1603,8 +1609,9 @@ export class PositionTracker {
               result.isResolved = true;
             }
           }
-        } catch {
+        } catch (_parseErr) {
           // Parse error, continue to other methods
+          // Don't log here as this is an expected case for malformed API data
         }
       }
 
@@ -1626,7 +1633,11 @@ export class PositionTracker {
       }
 
       // Method 3: Check tokens for winner flag
-      if (!result.winningOutcome && market.tokens && Array.isArray(market.tokens)) {
+      if (
+        !result.winningOutcome &&
+        market.tokens &&
+        Array.isArray(market.tokens)
+      ) {
         for (const token of market.tokens) {
           if (token.winner === true && token.outcome) {
             const trimmed = token.outcome.trim();
@@ -1991,7 +2002,8 @@ export class PositionTracker {
    * @returns Array of ACTIVE positions with entry metadata fields populated
    */
   async enrichPositionsWithEntryMeta(): Promise<Position[]> {
-    const { resolveSignerAddress } = await import("../utils/funds-allowance.util");
+    const { resolveSignerAddress } =
+      await import("../utils/funds-allowance.util");
     const walletAddress = resolveSignerAddress(this.client);
 
     // Validate wallet address
@@ -2069,7 +2081,8 @@ export class PositionTracker {
    * Call this after a trade fill to ensure fresh entry data on next lookup.
    */
   async invalidateEntryMetaCache(tokenId: string): Promise<void> {
-    const { resolveSignerAddress } = await import("../utils/funds-allowance.util");
+    const { resolveSignerAddress } =
+      await import("../utils/funds-allowance.util");
     const walletAddress = resolveSignerAddress(this.client);
     this.entryMetaResolver.invalidateCache(walletAddress, tokenId);
   }
