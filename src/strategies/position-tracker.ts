@@ -2,8 +2,12 @@ import type { ClobClient } from "@polymarket/clob-client";
 import type { ConsoleLogger } from "../utils/logger.util";
 import { httpGet } from "../utils/fetch-data.util";
 import { POLYMARKET_API } from "../constants/polymarket.constants";
-import { EntryMetaResolver, type EntryMeta } from "./entry-meta-resolver";
-import { LogDeduper, SKIP_LOG_TTL_MS, HEARTBEAT_INTERVAL_MS } from "../utils/log-deduper.util";
+import { EntryMetaResolver } from "./entry-meta-resolver";
+import {
+  LogDeduper,
+  HEARTBEAT_INTERVAL_MS,
+  TRACKER_HEARTBEAT_MS,
+} from "../utils/log-deduper.util";
 
 /**
  * Position status indicating tradability
@@ -17,24 +21,24 @@ export type PositionStatus =
 
 /**
  * P&L Classification for strategy decision-making.
- * 
+ *
  * CRITICAL: Strategies MUST NOT act on positions with UNKNOWN classification.
  * The classification is ONLY valid when pnlTrusted === true.
  */
-export type PnLClassification = 
-  | "PROFITABLE"   // pnlTrusted && pnlPct > 0
-  | "LOSING"       // pnlTrusted && pnlPct < 0
-  | "NEUTRAL"      // pnlTrusted && pnlPct === 0
-  | "UNKNOWN";     // pnlTrusted === false (missing cost basis or mark price)
+export type PnLClassification =
+  | "PROFITABLE" // pnlTrusted && pnlPct > 0
+  | "LOSING" // pnlTrusted && pnlPct < 0
+  | "NEUTRAL" // pnlTrusted && pnlPct === 0
+  | "UNKNOWN"; // pnlTrusted === false (missing cost basis or mark price)
 
 /**
  * Source of P&L data indicating where the values came from.
  * Used to understand data quality and debugging.
  */
-export type PnLSource = 
-  | "DATA_API"           // P&L from Data API (cashPnl, percentPnl) - matches UI
-  | "EXECUTABLE_BOOK"    // P&L computed from CLOB best bid (executable mark)
-  | "FALLBACK";          // P&L from fallback price API (less accurate)
+export type PnLSource =
+  | "DATA_API" // P&L from Data API (cashPnl, percentPnl) - matches UI
+  | "EXECUTABLE_BOOK" // P&L computed from CLOB best bid (executable mark)
+  | "FALLBACK"; // P&L from fallback price API (less accurate)
 
 /**
  * Cached outcome data for a tokenId
@@ -112,12 +116,12 @@ export interface Position {
 
   /**
    * Whether the P&L calculation can be trusted for decision-making.
-   * 
+   *
    * P&L is UNTRUSTED (false) when:
    * - Cost basis cannot be determined from trade history
    * - No orderbook bids available (mark price unknown)
    * - Price data is stale or contradictory
-   * 
+   *
    * CRITICAL: SmartHedging, ScalpTakeProfit, and StopLoss MUST skip
    * positions where pnlTrusted === false.
    */
@@ -126,7 +130,7 @@ export interface Position {
   /**
    * The classification of this position for strategy routing.
    * ONLY VALID when pnlTrusted === true.
-   * 
+   *
    * - PROFITABLE: pnlPct > 0 (candidate for ScalpTakeProfit)
    * - LOSING: pnlPct < 0 (candidate for SmartHedging, StopLoss)
    * - NEUTRAL: pnlPct === 0 (breakeven)
@@ -196,9 +200,9 @@ export interface Position {
    * P&L values from Data API (when available).
    * These match what Polymarket UI shows and should be treated as UI-truth.
    */
-  dataApiPnlUsd?: number;     // cashPnl from Data API
-  dataApiPnlPct?: number;     // percentPnl from Data API
-  dataApiCurPrice?: number;   // curPrice from Data API (current market price)
+  dataApiPnlUsd?: number; // cashPnl from Data API
+  dataApiPnlPct?: number; // percentPnl from Data API
+  dataApiCurPrice?: number; // curPrice from Data API (current market price)
   dataApiCurrentValue?: number; // currentValue from Data API (size * curPrice)
   dataApiInitialValue?: number; // initialValue from Data API (size * avgPrice)
 
@@ -310,6 +314,15 @@ export class PositionTracker {
   // Track last logged position counts for change detection
   private lastLoggedPositionCount = -1;
 
+  // === CYCLE-AWARE LOG DEDUPLICATION ===
+  // Prevents logging more than once per orchestrator cycle
+  private lastProcessedLogCycleId: number = -1;
+  private lastProcessedLogFingerprint: string | null = null;
+  private lastProcessedLoggedAt: number = 0;
+  // Track last cycle ID for single-flight refresh within same cycle
+  private lastRefreshCycleId: number = -1;
+  private lastRefreshCyclePromise: Promise<void> | null = null;
+
   /**
    * Orderbook cache with TTL for accurate P&L calculation
    * Stores best bid/ask per tokenId with timestamp for staleness detection
@@ -364,7 +377,13 @@ export class PositionTracker {
 
   // Rate-limit P&L summary logging to avoid log spam (refreshes every 5s)
   private lastPnlSummaryLogAt = 0;
-  private lastLoggedPnlCounts = { profitable: 0, losing: 0, neutral: 0, unknown: 0, redeemable: 0 };
+  private lastLoggedPnlCounts = {
+    profitable: 0,
+    losing: 0,
+    neutral: 0,
+    unknown: 0,
+    redeemable: 0,
+  };
   private static readonly PNL_SUMMARY_LOG_INTERVAL_MS = 60_000; // Log at most once per minute
 
   // EntryMetaResolver for stateless entry metadata from trade history
@@ -390,20 +409,21 @@ export class PositionTracker {
 
   /**
    * Resolve the holding address for positions.
-   * 
+   *
    * On Polymarket, positions and USDC are held by a PROXY WALLET, not the EOA.
    * This method fetches the proxy wallet address from the Gamma public profile API
    * and uses it as the holding address for all position fetching.
-   * 
+   *
    * NON-NEGOTIABLE RULE #1: Address correctness (proxy-first)
    * - Determine holding address every refresh
    * - Call Gamma public profile endpoint to fetch proxy wallet for EOA
    * - holdingAddress = proxyAddress ?? wallet.address
-   * 
+   *
    * @returns The holding address (proxy wallet if available, otherwise EOA)
    */
   async resolveHoldingAddress(): Promise<string> {
-    const { resolveSignerAddress } = await import("../utils/funds-allowance.util");
+    const { resolveSignerAddress } =
+      await import("../utils/funds-allowance.util");
     const signerAddress = resolveSignerAddress(this.client);
 
     // Validate signer address
@@ -419,7 +439,8 @@ export class PositionTracker {
     const now = Date.now();
     if (
       this.cachedHoldingAddress &&
-      now - this.holdingAddressCacheMs < PositionTracker.HOLDING_ADDRESS_CACHE_TTL_MS
+      now - this.holdingAddressCacheMs <
+        PositionTracker.HOLDING_ADDRESS_CACHE_TTL_MS
     ) {
       return this.cachedHoldingAddress;
     }
@@ -437,7 +458,8 @@ export class PositionTracker {
       });
 
       const proxyWallet = profile?.proxyWallet;
-      const isValidProxy = proxyWallet && /^0x[a-fA-F0-9]{40}$/.test(proxyWallet);
+      const isValidProxy =
+        proxyWallet && /^0x[a-fA-F0-9]{40}$/.test(proxyWallet);
 
       if (isValidProxy) {
         // Cache and use proxy wallet
@@ -445,7 +467,13 @@ export class PositionTracker {
         this.holdingAddressCacheMs = now;
 
         // Log only on first resolution or change
-        if (this.logDeduper.shouldLog("Tracker:holding_address", HEARTBEAT_INTERVAL_MS, proxyWallet)) {
+        if (
+          this.logDeduper.shouldLog(
+            "Tracker:holding_address",
+            HEARTBEAT_INTERVAL_MS,
+            proxyWallet,
+          )
+        ) {
           this.logger.info(
             `[PositionTracker] Resolved holding address: proxy=${proxyWallet.slice(0, 10)}... (EOA=${signerAddress.slice(0, 10)}...)`,
           );
@@ -457,7 +485,12 @@ export class PositionTracker {
       this.cachedHoldingAddress = signerAddress;
       this.holdingAddressCacheMs = now;
 
-      if (this.logDeduper.shouldLog("Tracker:holding_address_eoa", HEARTBEAT_INTERVAL_MS)) {
+      if (
+        this.logDeduper.shouldLog(
+          "Tracker:holding_address_eoa",
+          HEARTBEAT_INTERVAL_MS,
+        )
+      ) {
         this.logger.debug(
           `[PositionTracker] No proxy wallet found, using EOA: ${signerAddress.slice(0, 10)}...`,
         );
@@ -620,19 +653,47 @@ export class PositionTracker {
   }
 
   /**
+   * Cycle-aware version of awaitCurrentRefresh.
+   * If called multiple times within the same orchestrator cycle, returns the same promise
+   * without re-running the refresh (single-flight per cycle).
+   *
+   * @param cycleId Current orchestrator cycle ID
+   * @returns Promise that resolves when refresh completes
+   */
+  async awaitCurrentRefreshForCycle(cycleId: number): Promise<void> {
+    // If we already refreshed in this cycle, return the cached promise
+    if (this.lastRefreshCycleId === cycleId && this.lastRefreshCyclePromise) {
+      return this.lastRefreshCyclePromise;
+    }
+
+    // Start a new refresh for this cycle
+    this.lastRefreshCycleId = cycleId;
+    this.lastRefreshCyclePromise = this.awaitCurrentRefresh().finally(() => {
+      // Don't clear - keep promise cached for same cycle
+    });
+
+    return this.lastRefreshCyclePromise;
+  }
+
+  /**
    * Refresh positions from API
    *
    * SINGLE-FLIGHT: Only one refresh runs at a time.
    * If called while refresh is in progress, returns immediately.
    * Callers wanting to await the current refresh should use awaitCurrentRefresh().
-   * 
+   *
    * MIN REFRESH INTERVAL: Enforces minimum time between refreshes to prevent API hammering.
    */
   async refresh(): Promise<void> {
     // Prevent concurrent refreshes (race condition protection)
     if (this.isRefreshing) {
       // Rate-limit the "refresh already in progress" log using LogDeduper
-      if (this.logDeduper.shouldLog("Tracker:skip_refresh_in_progress", PositionTracker.SKIP_REFRESH_LOG_INTERVAL_MS)) {
+      if (
+        this.logDeduper.shouldLog(
+          "Tracker:skip_refresh_in_progress",
+          PositionTracker.SKIP_REFRESH_LOG_INTERVAL_MS,
+        )
+      ) {
         this.logger.debug(
           "[PositionTracker] Refresh already in progress, skipping",
         );
@@ -642,9 +703,17 @@ export class PositionTracker {
 
     // Enforce minimum refresh interval to prevent API hammering
     const timeSinceLastRefresh = Date.now() - this.lastRefreshCompletedAt;
-    if (timeSinceLastRefresh < PositionTracker.MIN_REFRESH_INTERVAL_MS && this.lastRefreshCompletedAt > 0) {
+    if (
+      timeSinceLastRefresh < PositionTracker.MIN_REFRESH_INTERVAL_MS &&
+      this.lastRefreshCompletedAt > 0
+    ) {
       // Rate-limit this log too - only log when skipping starts or periodically
-      if (this.logDeduper.shouldLog("Tracker:skip_refresh_interval", PositionTracker.SKIP_REFRESH_LOG_INTERVAL_MS)) {
+      if (
+        this.logDeduper.shouldLog(
+          "Tracker:skip_refresh_interval",
+          PositionTracker.SKIP_REFRESH_LOG_INTERVAL_MS,
+        )
+      ) {
         this.logger.debug(
           `[PositionTracker] Skipping refresh - throttled (min interval: ${PositionTracker.MIN_REFRESH_INTERVAL_MS}ms)`,
         );
@@ -809,7 +878,7 @@ export class PositionTracker {
 
   /**
    * Get active positions with TRUSTED P&L.
-   * 
+   *
    * CRITICAL: Strategies should use this to ensure they only act on positions
    * where the P&L calculation can be verified.
    */
@@ -823,7 +892,7 @@ export class PositionTracker {
    */
   getActiveTrustedProfitablePositions(): Position[] {
     return this.getActivePositions().filter(
-      (pos) => pos.pnlTrusted && pos.pnlClassification === "PROFITABLE"
+      (pos) => pos.pnlTrusted && pos.pnlClassification === "PROFITABLE",
     );
   }
 
@@ -833,7 +902,7 @@ export class PositionTracker {
    */
   getActiveTrustedLosingPositions(): Position[] {
     return this.getActivePositions().filter(
-      (pos) => pos.pnlTrusted && pos.pnlClassification === "LOSING"
+      (pos) => pos.pnlTrusted && pos.pnlClassification === "LOSING",
     );
   }
 
@@ -989,10 +1058,10 @@ export class PositionTracker {
   /**
    * Get a summary of position counts for logging
    * Provides consistent breakdown across all strategies
-   * 
+   *
    * FORMAT (required by enterprise spec):
    * ACTIVE: total=N (prof=X lose=Y neutral=Z unknown=W) | REDEEMABLE: M
-   * 
+   *
    * CRITICAL: If ACTIVE > 0, we MUST have prof + lose + neutral + unknown = total
    * Otherwise there's a BUG in P&L classification.
    */
@@ -1008,12 +1077,18 @@ export class PositionTracker {
     const positions = this.getPositions();
     const active = positions.filter((p) => !p.redeemable);
     const redeemable = positions.filter((p) => p.redeemable);
-    
+
     // Use pnlClassification for proper categorization
-    const activeProfitable = active.filter((p) => p.pnlClassification === "PROFITABLE");
+    const activeProfitable = active.filter(
+      (p) => p.pnlClassification === "PROFITABLE",
+    );
     const activeLosing = active.filter((p) => p.pnlClassification === "LOSING");
-    const activeBreakeven = active.filter((p) => p.pnlClassification === "NEUTRAL");
-    const activeUnknown = active.filter((p) => p.pnlClassification === "UNKNOWN");
+    const activeBreakeven = active.filter(
+      (p) => p.pnlClassification === "NEUTRAL",
+    );
+    const activeUnknown = active.filter(
+      (p) => p.pnlClassification === "UNKNOWN",
+    );
 
     return {
       total: positions.length,
@@ -1039,12 +1114,12 @@ export class PositionTracker {
   /**
    * Fetch positions from Polymarket API
    * Fetches user positions from Data API and enriches with current prices
-   * 
+   *
    * OPTIMIZATIONS:
    * - Batches Gamma API calls for outcome fetching (reduces per-token requests)
    * - Uses outcomeCache with TTL management
    * - Logs only on state changes (prevents log spam)
-   * 
+   *
    * DATA-API-DRIVEN P&L (Jan 2025 Refactor):
    * - Uses Data API P&L fields (cashPnl, percentPnl, currentValue, curPrice) as primary source
    * - These fields match what Polymarket UI shows to users (UI-truth)
@@ -1080,9 +1155,9 @@ export class PositionTracker {
 
         // === Data-API P&L fields (UI-TRUTH) ===
         // These fields match what Polymarket UI shows
-        cashPnl?: string | number;      // Unrealized P&L in USD
-        percentPnl?: string | number;   // Unrealized P&L percentage
-        curPrice?: string | number;     // Current market price (0-1 scale)
+        cashPnl?: string | number; // Unrealized P&L in USD
+        percentPnl?: string | number; // Unrealized P&L percentage
+        curPrice?: string | number; // Current market price (0-1 scale)
         currentValue?: string | number; // Current position value (size * curPrice)
         initialValue?: string | number; // Initial cost (size * avgPrice)
 
@@ -1103,15 +1178,28 @@ export class PositionTracker {
 
       if (!apiPositions || apiPositions.length === 0) {
         // Rate-limit "no positions" log
-        if (this.logDeduper.shouldLog("Tracker:no_positions", HEARTBEAT_INTERVAL_MS)) {
-          this.logger.debug(`[PositionTracker] No positions found for ${holdingAddress.slice(0, 10)}...`);
+        if (
+          this.logDeduper.shouldLog(
+            "Tracker:no_positions",
+            HEARTBEAT_INTERVAL_MS,
+          )
+        ) {
+          this.logger.debug(
+            `[PositionTracker] No positions found for ${holdingAddress.slice(0, 10)}...`,
+          );
         }
         return [];
       }
 
       // Rate-limit "fetched N positions" log - log on count change or heartbeat
       const countFingerprint = String(apiPositions.length);
-      if (this.logDeduper.shouldLog("Tracker:fetched_count", HEARTBEAT_INTERVAL_MS, countFingerprint)) {
+      if (
+        this.logDeduper.shouldLog(
+          "Tracker:fetched_count",
+          HEARTBEAT_INTERVAL_MS,
+          countFingerprint,
+        )
+      ) {
         this.logger.debug(
           `[PositionTracker] Fetched ${apiPositions.length} positions from Data API (addr=${holdingAddress.slice(0, 10)}...)`,
         );
@@ -1227,8 +1315,10 @@ export class PositionTracker {
       // PHASE 2: Batch fetch outcomes from Gamma API for all tokenIds needing outcome
       let batchedOutcomes = new Map<string, string | null>();
       if (tokenIdsNeedingOutcome.length > 0) {
-        batchedOutcomes = await this.fetchMarketOutcomesBatch(tokenIdsNeedingOutcome);
-        
+        batchedOutcomes = await this.fetchMarketOutcomesBatch(
+          tokenIdsNeedingOutcome,
+        );
+
         // Update caches with fetched results
         const now = Date.now();
         for (const [tokenId, winner] of batchedOutcomes) {
@@ -1241,11 +1331,14 @@ export class PositionTracker {
               lastCheckedMs: now,
               status: "RESOLVED",
             });
-            
+
             // Also store in legacy cache by marketId for backward compatibility
-            const parsed = parsedPositions.find(p => p.tokenId === tokenId);
+            const parsed = parsedPositions.find((p) => p.tokenId === tokenId);
             if (parsed) {
-              if (this.marketOutcomeCache.size >= PositionTracker.MAX_OUTCOME_CACHE_SIZE) {
+              if (
+                this.marketOutcomeCache.size >=
+                PositionTracker.MAX_OUTCOME_CACHE_SIZE
+              ) {
                 const firstKey = this.marketOutcomeCache.keys().next().value;
                 if (firstKey) {
                   this.marketOutcomeCache.delete(firstKey);
@@ -1271,11 +1364,20 @@ export class PositionTracker {
         const batchResults = await Promise.allSettled(
           batch.map(async (parsed) => {
             try {
-              const { 
-                tokenId, marketId, conditionId, size, entryPrice, side, apiPos,
+              const {
+                tokenId,
+                marketId,
+                conditionId,
+                size,
+                entryPrice,
+                side,
+                apiPos,
                 // Data-API P&L fields (UI-truth)
-                dataApiPnlUsd, dataApiPnlPct, dataApiCurPrice, 
-                dataApiCurrentValue, dataApiInitialValue,
+                dataApiPnlUsd,
+                dataApiPnlPct,
+                dataApiCurPrice,
+                dataApiCurrentValue,
+                dataApiInitialValue,
               } = parsed;
 
               // Skip orderbook fetch for resolved/closed markets (no orderbook available)
@@ -1284,7 +1386,7 @@ export class PositionTracker {
               let bestAskPrice: number | undefined;
               let positionStatus: PositionStatus = "ACTIVE";
               let cacheAgeMs: number | undefined;
-              
+
               // P&L source tracking: where did the P&L values come from?
               let pnlSource: PnLSource = "FALLBACK";
               const apiRedeemable = apiPos.redeemable === true;
@@ -1429,7 +1531,13 @@ export class PositionTracker {
                   resolvedCount++;
 
                   // Log only on state change (prevents repeated "Detected resolved position" logs)
-                  this.logResolvedPositionIfChanged(tokenId, side, winningOutcome, currentPrice, "RESOLVED");
+                  this.logResolvedPositionIfChanged(
+                    tokenId,
+                    side,
+                    winningOutcome,
+                    currentPrice,
+                    "RESOLVED",
+                  );
                 }
               } else {
                 // Active market - fetch current orderbook with fallback to price API
@@ -1583,8 +1691,11 @@ export class PositionTracker {
                   // Already resolved, use cached outcome
                   finalRedeemable = true;
                   const normalizedSide = side.toLowerCase().trim();
-                  const normalizedWinner = (existingCacheEntry.winner ?? "").toLowerCase().trim();
-                  currentPrice = normalizedSide === normalizedWinner ? 1.0 : 0.0;
+                  const normalizedWinner = (existingCacheEntry.winner ?? "")
+                    .toLowerCase()
+                    .trim();
+                  currentPrice =
+                    normalizedSide === normalizedWinner ? 1.0 : 0.0;
                   resolvedCount++;
                   activeCount--;
                   this.currentRefreshMetrics.resolvedCacheHits++;
@@ -1597,15 +1708,23 @@ export class PositionTracker {
                     finalRedeemable = true;
                     // Adjust current price to exact settlement price based on outcome
                     const normalizedSide = side.toLowerCase().trim();
-                    const normalizedWinner = winningOutcome.toLowerCase().trim();
+                    const normalizedWinner = winningOutcome
+                      .toLowerCase()
+                      .trim();
                     currentPrice =
                       normalizedSide === normalizedWinner ? 1.0 : 0.0;
                     resolvedCount++;
                     activeCount--; // Was counted as active, now resolved
-                    
+
                     // Log only on state change (prevents repeated logs)
-                    this.logResolvedPositionIfChanged(tokenId, side, winningOutcome, currentPrice, "RESOLVED");
-                    
+                    this.logResolvedPositionIfChanged(
+                      tokenId,
+                      side,
+                      winningOutcome,
+                      currentPrice,
+                      "RESOLVED",
+                    );
+
                     // Cache the outcome for future refreshes (both new and legacy caches)
                     this.setOutcomeCacheEntry(tokenId, {
                       winner: winningOutcome,
@@ -1643,8 +1762,9 @@ export class PositionTracker {
 
               // === SCENARIO 1: Data-API has P&L values (UI-TRUTH) ===
               // This is the CANONICAL source that matches Polymarket UI
-              const hasDataApiPnl = dataApiPnlPct !== undefined && dataApiPnlUsd !== undefined;
-              
+              const hasDataApiPnl =
+                dataApiPnlPct !== undefined && dataApiPnlUsd !== undefined;
+
               // WHY !finalRedeemable: Redeemable positions are handled separately because:
               // 1. Their settlement price is CERTAIN (1.0 for winner, 0.0 for loser)
               // 2. Data-API P&L may lag behind actual resolution status
@@ -1670,14 +1790,20 @@ export class PositionTracker {
                 // Redeemable positions: P&L is settlement-based (100% certainty)
                 // currentPrice was already set above to 1.0 (winner) or 0.0 (loser)
                 pnlUsd = (currentPrice - entryPrice) * size;
-                pnlPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+                pnlPct =
+                  entryPrice > 0
+                    ? ((currentPrice - entryPrice) / entryPrice) * 100
+                    : 0;
                 pnlSource = "DATA_API"; // Redeemable always trusted (settlement is certain)
               } else if (bestBidPrice !== undefined && bestBidPrice > 0) {
                 // === SCENARIO 2: No Data-API P&L, but CLOB orderbook available ===
                 // Use CLOB best bid as mark price (executable P&L)
                 currentPrice = bestBidPrice;
                 pnlUsd = (currentPrice - entryPrice) * size;
-                pnlPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+                pnlPct =
+                  entryPrice > 0
+                    ? ((currentPrice - entryPrice) / entryPrice) * 100
+                    : 0;
                 pnlSource = "EXECUTABLE_BOOK";
                 executableMarkCents = bestBidPrice * 100;
                 executablePnlUsd = pnlUsd;
@@ -1685,7 +1811,10 @@ export class PositionTracker {
                 // === SCENARIO 3: Fallback - neither Data-API nor CLOB available ===
                 // Use fallback price (mid-price from /price endpoint)
                 pnlUsd = (currentPrice - entryPrice) * size;
-                pnlPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+                pnlPct =
+                  entryPrice > 0
+                    ? ((currentPrice - entryPrice) / entryPrice) * 100
+                    : 0;
                 pnlSource = "FALLBACK";
               }
 
@@ -1710,13 +1839,15 @@ export class PositionTracker {
               } else if (pnlSource === "FALLBACK") {
                 // Fallback P&L is NOT fully trusted - no reliable orderbook mark price
                 // HOWEVER: If Data-API provided pricing info, we can still trust the P&L.
-                // 
+                //
                 // WHY curPrice OR currentValue is sufficient:
                 // - curPrice: The Data-API's market price - same source as Polymarket UI
                 // - currentValue: size * curPrice - if this exists, curPrice was used internally
                 // Either field indicates Data-API has pricing info, so our P&L calculation
                 // using that price is as trustworthy as the UI's display.
-                const hasDataApiPricing = dataApiCurPrice !== undefined || dataApiCurrentValue !== undefined;
+                const hasDataApiPricing =
+                  dataApiCurPrice !== undefined ||
+                  dataApiCurrentValue !== undefined;
                 if (hasDataApiPricing) {
                   pnlTrusted = true; // Data-API provided pricing info
                 } else {
@@ -1829,16 +1960,38 @@ export class PositionTracker {
       };
 
       if (successCount > 0) {
-        // Only log detailed breakdown if there are new market lookups or if it's the first time
-        if (newlyCachedMarkets > 0) {
-          this.logger.info(
-            `[PositionTracker] ✓ Processed ${successCount}/${totalCount} positions (${resolvedCount} resolved, ${activeCount} active, ${newlyCachedMarkets} new market lookups)`,
-          );
-        } else {
-          // Quieter log for steady-state operation (all markets already cached)
-          this.logger.debug(
-            `[PositionTracker] ✓ Processed ${successCount} positions (${resolvedCount} resolved, ${activeCount} active) - all outcomes cached`,
-          );
+        // === CYCLE-AWARE PROCESSED LOG (rate-limited) ===
+        // Compute fingerprint for deduplication
+        const processedFingerprint = JSON.stringify({
+          success: successCount,
+          total: totalCount,
+          resolved: resolvedCount,
+          active: activeCount,
+          newMarkets: newlyCachedMarkets,
+        });
+
+        const processedLogNow = Date.now();
+        const fingerprintChanged =
+          processedFingerprint !== this.lastProcessedLogFingerprint;
+        const heartbeatElapsed =
+          processedLogNow - this.lastProcessedLoggedAt >= TRACKER_HEARTBEAT_MS;
+
+        // Log only if fingerprint changed or heartbeat elapsed
+        if (fingerprintChanged || heartbeatElapsed) {
+          const indicator = fingerprintChanged ? "Δ" : "♥";
+          // Only use INFO for new market lookups; otherwise DEBUG for steady-state
+          if (newlyCachedMarkets > 0) {
+            this.logger.info(
+              `[PositionTracker] ✓ Processed ${successCount}/${totalCount} positions (${resolvedCount} resolved, ${activeCount} active, ${newlyCachedMarkets} new market lookups) (${indicator})`,
+            );
+          } else {
+            // Quieter log for steady-state operation (all markets already cached)
+            this.logger.debug(
+              `[PositionTracker] ✓ Processed ${successCount} positions (${resolvedCount} resolved, ${activeCount} active) - all outcomes cached (${indicator})`,
+            );
+          }
+          this.lastProcessedLogFingerprint = processedFingerprint;
+          this.lastProcessedLoggedAt = processedLogNow;
         }
 
         // P&L summary logging with rate-limiting to avoid log spam
@@ -1847,12 +2000,20 @@ export class PositionTracker {
         const redeemablePositions = sortedByPnl.filter((p) => p.redeemable);
         // Active positions = non-redeemable (can be traded/scalped)
         const activePositions = sortedByPnl.filter((p) => !p.redeemable);
-        
+
         // Use pnlClassification for proper categorization
-        const activeProfitable = activePositions.filter((p) => p.pnlClassification === "PROFITABLE");
-        const activeLosing = activePositions.filter((p) => p.pnlClassification === "LOSING");
-        const activeNeutral = activePositions.filter((p) => p.pnlClassification === "NEUTRAL");
-        const activeUnknown = activePositions.filter((p) => p.pnlClassification === "UNKNOWN");
+        const activeProfitable = activePositions.filter(
+          (p) => p.pnlClassification === "PROFITABLE",
+        );
+        const activeLosing = activePositions.filter(
+          (p) => p.pnlClassification === "LOSING",
+        );
+        const activeNeutral = activePositions.filter(
+          (p) => p.pnlClassification === "NEUTRAL",
+        );
+        const activeUnknown = activePositions.filter(
+          (p) => p.pnlClassification === "UNKNOWN",
+        );
 
         // Rate-limit: log at most once per minute or when counts change
         const now = Date.now();
@@ -1896,7 +2057,7 @@ export class PositionTracker {
               `[PositionTracker] 💰 Active Profitable (${activeProfitable.length}): ${profitSummary}${activeProfitable.length > 10 ? "..." : ""}`,
             );
           }
-          
+
           // Log unknown positions at DEBUG level for diagnostics
           if (activeUnknown.length > 0) {
             const unknownSummary = activeUnknown
@@ -2001,7 +2162,9 @@ export class PositionTracker {
    * Parse a numeric field that may be string or number.
    * Returns undefined if the field is not present or invalid.
    */
-  private parseNumericField(value: string | number | undefined): number | undefined {
+  private parseNumericField(
+    value: string | number | undefined,
+  ): number | undefined {
     if (value === undefined || value === null) {
       return undefined;
     }
@@ -2013,7 +2176,7 @@ export class PositionTracker {
    * Batch fetch market outcomes from Gamma API for multiple tokenIds.
    * Uses comma-separated clob_token_ids parameter to reduce API calls.
    * Results are stored in outcomeCache.
-   * 
+   *
    * @param tokenIds - Array of tokenIds to fetch outcomes for
    * @returns Map of tokenId -> winner (or null if not resolved/error)
    */
@@ -2021,13 +2184,14 @@ export class PositionTracker {
     tokenIds: string[],
   ): Promise<Map<string, string | null>> {
     const results = new Map<string, string | null>();
-    
+
     if (tokenIds.length === 0) {
       return results;
     }
 
     const { httpGet } = await import("../utils/fetch-data.util");
-    const { POLYMARKET_API } = await import("../constants/polymarket.constants");
+    const { POLYMARKET_API } =
+      await import("../constants/polymarket.constants");
 
     // Interface for Gamma market response
     interface GammaMarketResponse {
@@ -2050,7 +2214,11 @@ export class PositionTracker {
 
     // Chunk tokenIds into batches to avoid URL length limits
     const chunks: string[][] = [];
-    for (let i = 0; i < tokenIds.length; i += PositionTracker.GAMMA_BATCH_SIZE) {
+    for (
+      let i = 0;
+      i < tokenIds.length;
+      i += PositionTracker.GAMMA_BATCH_SIZE
+    ) {
       chunks.push(tokenIds.slice(i, i + PositionTracker.GAMMA_BATCH_SIZE));
     }
 
@@ -2062,7 +2230,9 @@ export class PositionTracker {
     for (const chunk of chunks) {
       try {
         // Build comma-separated tokenIds for URL
-        const encodedIds = chunk.map((id) => encodeURIComponent(id.trim())).join(",");
+        const encodedIds = chunk
+          .map((id) => encodeURIComponent(id.trim()))
+          .join(",");
         const url = `${POLYMARKET_API.GAMMA_API_BASE_URL}/markets?clob_token_ids=${encodedIds}`;
 
         this.currentRefreshMetrics.gammaRequestsPerRefresh++;
@@ -2084,7 +2254,8 @@ export class PositionTracker {
         const tokenIdToMarket = new Map<string, GammaMarketResponse>();
         for (const market of markets) {
           // Get all tokenIds associated with this market
-          const marketTokenIds = market.clobTokenIds ?? market.clob_token_ids ?? [];
+          const marketTokenIds =
+            market.clobTokenIds ?? market.clob_token_ids ?? [];
           for (const tid of marketTokenIds) {
             tokenIdToMarket.set(tid, market);
           }
@@ -2158,7 +2329,10 @@ export class PositionTracker {
             }
           }
 
-          if (winnerIndex >= 0 && highestPrice > PositionTracker.WINNER_THRESHOLD) {
+          if (
+            winnerIndex >= 0 &&
+            highestPrice > PositionTracker.WINNER_THRESHOLD
+          ) {
             return outcomes[winnerIndex].trim();
           }
         }
@@ -2214,7 +2388,10 @@ export class PositionTracker {
 
     // ACTIVE outcomes have TTL
     const now = Date.now();
-    if (now - cached.lastCheckedMs < PositionTracker.ACTIVE_OUTCOME_CACHE_TTL_MS) {
+    if (
+      now - cached.lastCheckedMs <
+      PositionTracker.ACTIVE_OUTCOME_CACHE_TTL_MS
+    ) {
       this.currentRefreshMetrics.cacheHits++;
       return cached;
     }
@@ -2227,9 +2404,14 @@ export class PositionTracker {
    * Store outcome in cache.
    * Enforces max cache size by removing oldest entries.
    */
-  private setOutcomeCacheEntry(tokenId: string, entry: OutcomeCacheEntry): void {
+  private setOutcomeCacheEntry(
+    tokenId: string,
+    entry: OutcomeCacheEntry,
+  ): void {
     // Enforce max cache size
-    while (this.outcomeCache.size >= PositionTracker.MAX_OUTCOME_CACHE_ENTRIES) {
+    while (
+      this.outcomeCache.size >= PositionTracker.MAX_OUTCOME_CACHE_ENTRIES
+    ) {
       const firstKey = this.outcomeCache.keys().next().value;
       if (firstKey) {
         this.outcomeCache.delete(firstKey);
@@ -2257,7 +2439,7 @@ export class PositionTracker {
   /**
    * Log resolved position detection only on state change.
    * Prevents repeated logging of the same resolved state.
-   * 
+   *
    * @returns true if logged, false if suppressed (no change)
    */
   private logResolvedPositionIfChanged(
@@ -2272,14 +2454,18 @@ export class PositionTracker {
 
     // Check if state actually changed
     const isFirstSeen = !lastState;
-    const statusChanged = lastState !== undefined && lastState.status !== newStatus;
-    const winnerChanged = lastState !== undefined && lastState.winner !== winner;
+    const statusChanged =
+      lastState !== undefined && lastState.status !== newStatus;
+    const winnerChanged =
+      lastState !== undefined && lastState.winner !== winner;
     // Only log price change if it crosses a meaningful boundary (0 <-> 100)
-    const priceChangedMeaningfully = lastState !== undefined && 
-      ((lastState.priceCents === 0 && priceCents === 100) || 
-       (lastState.priceCents === 100 && priceCents === 0));
+    const priceChangedMeaningfully =
+      lastState !== undefined &&
+      ((lastState.priceCents === 0 && priceCents === 100) ||
+        (lastState.priceCents === 100 && priceCents === 0));
 
-    const shouldLog = isFirstSeen || statusChanged || winnerChanged || priceChangedMeaningfully;
+    const shouldLog =
+      isFirstSeen || statusChanged || winnerChanged || priceChangedMeaningfully;
 
     if (shouldLog && newStatus === "RESOLVED") {
       // Only log at INFO level for RESOLVED state transitions
@@ -2371,14 +2557,14 @@ export class PositionTracker {
 
       // Use the shared winner extraction logic
       const winner = this.extractWinnerFromMarket(market);
-      
+
       // Debug log only if winner found (reduces log spam)
       if (winner) {
         this.logger.debug(
           `[PositionTracker] Resolved market for tokenId ${tokenId}: winner="${winner}"`,
         );
       }
-      
+
       return winner;
     } catch (err: unknown) {
       const anyErr = err as any;
