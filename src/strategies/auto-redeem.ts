@@ -1,5 +1,5 @@
 import type { ClobClient } from "@polymarket/clob-client";
-import { Contract, formatUnits } from "ethers";
+import { Contract, Interface, formatUnits } from "ethers";
 import type { Wallet, TransactionResponse } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker, Position } from "./position-tracker";
@@ -7,6 +7,8 @@ import { resolvePolymarketContracts } from "../polymarket/contracts";
 import { CTF_ABI, ERC20_ABI } from "../trading/exchange-abi";
 import { AUTO_REDEEM_CHECK_INTERVAL_MS } from "./constants";
 import { postOrder } from "../utils/post-order.util";
+import type { RelayerContext } from "../polymarket/relayer";
+import { executeRelayerTxs } from "../polymarket/relayer";
 
 export interface AutoRedeemConfig {
   enabled: boolean;
@@ -31,6 +33,8 @@ export interface AutoRedeemStrategyConfig {
   logger: ConsoleLogger;
   positionTracker: PositionTracker;
   config: AutoRedeemConfig;
+  /** Optional relayer context for gasless redemptions (recommended) */
+  relayer?: RelayerContext;
 }
 
 /**
@@ -43,6 +47,8 @@ export interface RedemptionResult {
   transactionHash?: string;
   amountRedeemed?: string;
   error?: string;
+  /** True if error was due to RPC rate limiting (e.g., "in-flight transaction limit") */
+  isRateLimited?: boolean;
 }
 
 /**
@@ -72,22 +78,31 @@ export class AutoRedeemStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: AutoRedeemConfig;
+  private relayer?: RelayerContext;
   // Track redeemed markets by marketId only (not marketId-tokenId)
   // This is because redeemPositions() redeems ALL positions for a market condition in one tx
   private redeemedMarkets: Set<string> = new Set();
   private redemptionAttempts: Map<
     string,
-    { lastAttempt: number; failures: number }
+    { lastAttempt: number; failures: number; isRateLimited?: boolean }
   > = new Map();
   // Track markets where fallback sell was attempted (to avoid repeated sell attempts)
   private fallbackSellAttempted: Set<string> = new Set();
   // Throttling: track last execution time to avoid checking too frequently
   private lastExecutionTime: number = 0;
   private checkIntervalMs: number;
+  // Global rate limit flag - when hit, pause ALL redemptions
+  private globalRateLimitUntil: number = 0;
 
   // Constants
   private static readonly MAX_REDEMPTION_FAILURES = 3;
   private static readonly REDEMPTION_RETRY_COOLDOWN_MS = 1 * 60 * 1000; // 1 minute - reduced from 5 min for faster retries
+  /**
+   * Extended cooldown for RPC rate limit errors (e.g., "in-flight transaction limit reached")
+   * These errors indicate the RPC provider is overwhelmed - need longer backoff
+   * Default: 15 minutes
+   */
+  private static readonly RPC_RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
   private static readonly DEFAULT_GAS_LIMIT = 300000n;
   // Multiplier to convert USD threshold to minimum share count: minPositionUsd * this = minimum shares to redeem
   // For example, if minPositionUsd = 1, we require at least 0.01 shares to redeem
@@ -126,9 +141,21 @@ export class AutoRedeemStrategy {
     this.logger = strategyConfig.logger;
     this.positionTracker = strategyConfig.positionTracker;
     this.config = strategyConfig.config;
+    this.relayer = strategyConfig.relayer;
     // Use configured interval or default from constants
     this.checkIntervalMs =
       strategyConfig.config.checkIntervalMs ?? AUTO_REDEEM_CHECK_INTERVAL_MS;
+    
+    // Log relayer availability
+    if (this.relayer?.enabled) {
+      this.logger.info(
+        `[AutoRedeem] ✅ Relayer enabled - using gasless redemptions (recommended)`,
+      );
+    } else {
+      this.logger.info(
+        `[AutoRedeem] ⚠️ Relayer not available - using direct contract calls (may hit rate limits)`,
+      );
+    }
   }
 
   /**
@@ -170,6 +197,15 @@ export class AutoRedeemStrategy {
     }
     this.lastExecutionTime = now;
 
+    // Check global rate limit - if we hit "in-flight transaction limit", pause all redemptions
+    if (this.globalRateLimitUntil > now) {
+      const remainingSeconds = Math.ceil((this.globalRateLimitUntil - now) / 1000);
+      this.logger.info(
+        `[AutoRedeem] ⏳ Global rate limit active - paused for ${remainingSeconds}s (RPC provider limit)`,
+      );
+      return 0;
+    }
+
     this.logger.debug(`[AutoRedeem] 🔄 Running redemption check...`);
 
     // Clean up stale entries
@@ -179,6 +215,7 @@ export class AutoRedeemStrategy {
     let skippedAlreadyRedeemed = 0;
     let skippedCooldown = 0;
     let skippedMaxFailures = 0;
+    let skippedRateLimited = 0;
     let attemptedRedemptions = 0;
 
     // Get all positions and filter for redeemable ones OR positions at ~100¢ (essentially resolved winners)
@@ -423,6 +460,16 @@ export class AutoRedeemStrategy {
             `[AutoRedeem] ✓ Successfully redeemed market ${marketId} (~$${totalValueUsd.toFixed(2)}) (tx: ${result.transactionHash})`,
           );
         } else {
+          // Check if this was a rate limit error - if so, set global pause
+          if (result.isRateLimited) {
+            this.globalRateLimitUntil = Date.now() + AutoRedeemStrategy.RPC_RATE_LIMIT_COOLDOWN_MS;
+            this.logger.warn(
+              `[AutoRedeem] 🚫 RPC rate limit hit - pausing ALL redemptions for ${AutoRedeemStrategy.RPC_RATE_LIMIT_COOLDOWN_MS / 60000} minutes`,
+            );
+            // Don't count as failure - this is a temporary rate limit, not a position problem
+            break; // Stop trying more redemptions this cycle
+          }
+          
           // Track failure by marketId
           const currentAttempts = this.redemptionAttempts.get(marketId) || {
             lastAttempt: 0,
@@ -451,6 +498,10 @@ export class AutoRedeemStrategy {
           `[AutoRedeem] Error redeeming market ${marketId}: ${errorMsg}`,
         );
       }
+      
+      // Add small delay between redemption attempts to avoid overwhelming RPC
+      // This helps prevent "in-flight transaction limit" errors
+      await new Promise((resolve) => setTimeout(resolve, 2000)); // 2 second delay between redemptions
     }
 
     // Log summary of redemption activity
@@ -460,7 +511,7 @@ export class AutoRedeemStrategy {
 
     // Log diagnostic info if we have redeemable positions but didn't attempt any redemptions
     const totalSkipped =
-      skippedAlreadyRedeemed + skippedCooldown + skippedMaxFailures;
+      skippedAlreadyRedeemed + skippedCooldown + skippedMaxFailures + skippedRateLimited;
     if (attemptedRedemptions === 0 && totalSkipped > 0) {
       this.logger.info(
         `[AutoRedeem] ⚠️ ${redeemablePositions.length} redeemable but ${totalSkipped} skipped: ` +
@@ -674,53 +725,158 @@ export class AutoRedeemStrategy {
         }
       }
 
-      // Execute redemption transaction
-      this.logger.info(
-        `[AutoRedeem] 🔄 Sending redemption tx to CTF contract ${ctfAddress}...`,
+      // Execute redemption transaction - prefer relayer for gasless execution
+      if (this.relayer?.enabled && this.relayer.client) {
+        // Use relayer for gasless redemption (recommended)
+        this.logger.info(
+          `[AutoRedeem] 🔄 Sending gasless redemption via relayer to CTF contract ${ctfAddress}...`,
+        );
+        
+        // Build the redeemPositions transaction data
+        const ctfInterface = new Interface(CTF_ABI);
+        const txData = ctfInterface.encodeFunctionData("redeemPositions", [
+          usdcAddress,
+          parentCollectionId,
+          conditionId,
+          indexSets,
+        ]);
+        
+        try {
+          const result = await executeRelayerTxs({
+            relayer: this.relayer,
+            txs: [{ to: ctfAddress, data: txData }],
+            description: `Redeem market ${conditionId.slice(0, 16)}...`,
+            logger: this.logger,
+          });
+          
+          if (result.state === "STATE_CONFIRMED" || result.state === "STATE_MINED") {
+            // Get USDC balance after redemption
+            const balanceAfter = (await usdcContract.balanceOf(
+              wallet.address,
+            )) as bigint;
+            const amountRedeemed = balanceAfter - balanceBefore;
+            const amountRedeemedFormatted = formatUnits(amountRedeemed, 6);
+
+            this.logger.info(
+              `[AutoRedeem] ✅ Relayer redemption confirmed, redeemed $${amountRedeemedFormatted} USDC`,
+            );
+
+            return {
+              tokenId: position.tokenId,
+              marketId: position.marketId,
+              success: true,
+              transactionHash: result.transactionHash,
+              amountRedeemed: amountRedeemedFormatted,
+            };
+          } else {
+            return {
+              tokenId: position.tokenId,
+              marketId: position.marketId,
+              success: false,
+              transactionHash: result.transactionHash,
+              error: `Relayer transaction state: ${result.state ?? "unknown"}`,
+            };
+          }
+        } catch (relayerErr) {
+          const errMsg = relayerErr instanceof Error ? relayerErr.message : String(relayerErr);
+          
+          // Check for relayer quota exceeded
+          if (errMsg.includes("RELAYER_QUOTA_EXCEEDED") || errMsg.includes("429")) {
+            this.logger.warn(
+              `[AutoRedeem] 🚫 Relayer quota exceeded - will retry later`,
+            );
+            return {
+              tokenId: position.tokenId,
+              marketId: position.marketId,
+              success: false,
+              error: "Relayer quota exceeded",
+              isRateLimited: true,
+            };
+          }
+          
+          this.logger.error(
+            `[AutoRedeem] ❌ Relayer redemption failed: ${errMsg}`,
+          );
+          return {
+            tokenId: position.tokenId,
+            marketId: position.marketId,
+            success: false,
+            error: `Relayer error: ${errMsg}`,
+          };
+        }
+      } else {
+        // Fall back to direct contract call (may hit rate limits)
+        this.logger.info(
+          `[AutoRedeem] 🔄 Sending redemption tx to CTF contract ${ctfAddress}...`,
+        );
+        const tx = (await ctfContract.redeemPositions(
+          usdcAddress,
+          parentCollectionId,
+          conditionId,
+          indexSets,
+          { gasLimit: AutoRedeemStrategy.DEFAULT_GAS_LIMIT },
+        )) as TransactionResponse;
+
+        this.logger.info(`[AutoRedeem] ✅ Redemption tx submitted: ${tx.hash}`);
+
+        // Wait for confirmation
+        const receipt = await tx.wait(1);
+
+        if (!receipt || receipt.status !== 1) {
+          return {
+            tokenId: position.tokenId,
+            marketId: position.marketId,
+            success: false,
+            transactionHash: tx.hash,
+            error: "Transaction failed or reverted",
+          };
+        }
+
+        // Get USDC balance after redemption
+        const balanceAfter = (await usdcContract.balanceOf(
+          wallet.address,
+        )) as bigint;
+        const amountRedeemed = balanceAfter - balanceBefore;
+        const amountRedeemedFormatted = formatUnits(amountRedeemed, 6);
+
+        this.logger.info(
+          `[AutoRedeem] Redemption confirmed in block ${receipt.blockNumber}, redeemed $${amountRedeemedFormatted} USDC`,
+        );
+
+        return {
+          tokenId: position.tokenId,
+          marketId: position.marketId,
+          success: true,
+          transactionHash: tx.hash,
+          amountRedeemed: amountRedeemedFormatted,
+        };
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      
+      // Log the full error at ERROR level for diagnosis
+      this.logger.error(
+        `[AutoRedeem] ❌ Redemption transaction failed for ${position.marketId.slice(0, 16)}...: ${errorMsg}`,
       );
-      const tx = (await ctfContract.redeemPositions(
-        usdcAddress,
-        parentCollectionId,
-        conditionId,
-        indexSets,
-        { gasLimit: AutoRedeemStrategy.DEFAULT_GAS_LIMIT },
-      )) as TransactionResponse;
 
-      this.logger.info(`[AutoRedeem] ✅ Redemption tx submitted: ${tx.hash}`);
-
-      // Wait for confirmation
-      const receipt = await tx.wait(1);
-
-      if (!receipt || receipt.status !== 1) {
+      // Check for RPC rate limit errors (delegated account limits)
+      const isRateLimitError = 
+        errorMsg.includes("in-flight transaction limit") ||
+        errorMsg.includes("-32000") ||
+        errorMsg.includes("could not coalesce error");
+      
+      if (isRateLimitError) {
+        this.logger.warn(
+          `[AutoRedeem] 🚫 RPC rate limit detected - this indicates too many pending transactions. Will pause redemptions.`,
+        );
         return {
           tokenId: position.tokenId,
           marketId: position.marketId,
           success: false,
-          transactionHash: tx.hash,
-          error: "Transaction failed or reverted",
+          error: "RPC rate limit: too many in-flight transactions",
+          isRateLimited: true,
         };
       }
-
-      // Get USDC balance after redemption
-      const balanceAfter = (await usdcContract.balanceOf(
-        wallet.address,
-      )) as bigint;
-      const amountRedeemed = balanceAfter - balanceBefore;
-      const amountRedeemedFormatted = formatUnits(amountRedeemed, 6);
-
-      this.logger.info(
-        `[AutoRedeem] Redemption confirmed in block ${receipt.blockNumber}, redeemed $${amountRedeemedFormatted} USDC`,
-      );
-
-      return {
-        tokenId: position.tokenId,
-        marketId: position.marketId,
-        success: true,
-        transactionHash: tx.hash,
-        amountRedeemed: amountRedeemedFormatted,
-      };
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
 
       // Handle specific error cases
       if (errorMsg.includes("insufficient funds")) {
