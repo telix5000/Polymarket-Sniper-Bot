@@ -465,6 +465,10 @@ export class ScalpTakeProfitStrategy {
   private static readonly SUMMARY_LOG_INTERVAL_MS = 60_000; // Log summary at most once per minute
   // Value used when no entry time is available - assumes position held long enough for all checks
   private static readonly NO_ENTRY_TIME_HOLD_MINUTES = 999999;
+  // Minimum amount above entry price (in cents) for PROFIT stage when bestBid is below entry
+  private static readonly MIN_PROFIT_ABOVE_ENTRY_CENTS = 0.1;
+  // Multiplier for max window duration in FORCE stage before abandoning
+  private static readonly FORCE_STAGE_WINDOW_MULTIPLIER = 2;
 
   constructor(config: {
     client: ClobClient;
@@ -1465,7 +1469,9 @@ export class ScalpTakeProfitStrategy {
         // Ensure we're still profitable (above entry)
         if (limitCents <= plan.avgEntryCents) {
           return {
-            limitCents: plan.avgEntryCents + 0.1, // Just above entry
+            limitCents:
+              plan.avgEntryCents +
+              ScalpTakeProfitStrategy.MIN_PROFIT_ABOVE_ENTRY_CENTS,
             reason: "PROFIT_MIN_ABOVE_ENTRY",
           };
         }
@@ -1579,8 +1585,11 @@ export class ScalpTakeProfitStrategy {
     // Check if FORCE stage and window expired - should still try
     if (plan.stage === "FORCE") {
       const elapsedSec = (now - plan.startedAtMs) / 1000;
-      // Give FORCE stage extra time (double the window) before giving up
-      if (elapsedSec > this.config.exitWindowSec * 2) {
+      // Give FORCE stage extra time (multiplier * window) before giving up
+      const maxForceWindowSec =
+        this.config.exitWindowSec *
+        ScalpTakeProfitStrategy.FORCE_STAGE_WINDOW_MULTIPLIER;
+      if (elapsedSec > maxForceWindowSec) {
         this.logger.warn(
           `[ScalpExit] ABANDONED tokenId=${plan.tokenId.slice(0, 12)}... ` +
             `elapsed=${elapsedSec.toFixed(0)}s - exceeded max attempts`,
