@@ -551,8 +551,16 @@ export class PositionTracker {
    * AUTO-RECOVERY BOOTSTRAP: When true, the next refresh will skip ACTIVE_COLLAPSE_BUG
    * validation to allow recovery similar to a container restart.
    * 
-   * This flag is set when auto-recovery clears lastGoodSnapshot after stale age threshold,
-   * and cleared after successfully accepting a bootstrap snapshot.
+   * Set when: Auto-recovery triggers because stale age >= MAX_STALE_AGE_MS (60 seconds).
+   *           This clears lastGoodSnapshot and enables bootstrap mode.
+   * Cleared when: A snapshot is successfully accepted (validation passes or bypassed).
+   * 
+   * Why needed: After auto-recovery clears lastGoodSnapshot, the next snapshot may still
+   * trigger ACTIVE_COLLAPSE_BUG. Without bootstrap mode, the service would be stuck in
+   * a loop where every refresh fails with "NO lastGoodSnapshot available!"
+   * 
+   * Safety: Bootstrap mode only allows ONE snapshot through before being cleared.
+   * If that snapshot is later replaced by a valid one, normal validation resumes.
    */
   private allowBootstrapAfterAutoRecovery: boolean = false;
 
