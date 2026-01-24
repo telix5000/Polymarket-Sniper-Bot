@@ -67,6 +67,110 @@ export class OrderbookQualityError extends Error {
 }
 
 /**
+ * Orderbook price extraction result with full diagnostics.
+ * Ensures bestBid and bestAsk are correctly extracted and from the same response.
+ */
+export interface OrderbookPriceExtraction {
+  bestBid: number | null;
+  bestAsk: number | null;
+  /** Number of bid levels in the orderbook */
+  bidCount: number;
+  /** Number of ask levels in the orderbook */
+  askCount: number;
+  /** Whether the extraction found any anomalies */
+  hasAnomaly: boolean;
+  /** Description of any anomaly found */
+  anomalyReason?: string;
+}
+
+/**
+ * Safely extract best bid and ask prices from an orderbook response.
+ *
+ * CRITICAL: This function ensures:
+ * 1. bestBid = max(bids[].price) - highest bid is the best bid
+ * 2. bestAsk = min(asks[].price) - lowest ask is the best ask
+ * 3. Both values come from the SAME response object (no mixing)
+ * 4. Detects anomalies like crossed books (bestBid > bestAsk)
+ *
+ * The CLOB API typically returns bids sorted descending and asks sorted ascending,
+ * so [0] should already be the best price. This function verifies that assumption
+ * and falls back to scanning if needed.
+ *
+ * @param orderbook The orderbook response from CLOB API
+ * @returns OrderbookPriceExtraction with prices and diagnostics
+ */
+export function extractOrderbookPrices(orderbook: {
+  bids?: Array<{ price: string; size: string }>;
+  asks?: Array<{ price: string; size: string }>;
+}): OrderbookPriceExtraction {
+  const bids = orderbook.bids ?? [];
+  const asks = orderbook.asks ?? [];
+
+  const bidCount = bids.length;
+  const askCount = asks.length;
+
+  // Extract best bid (highest bid price)
+  // API typically returns bids sorted descending, so [0] should be best
+  // But we verify by scanning all elements to ensure correctness
+  let bestBid: number | null = null;
+  if (bidCount > 0) {
+    bestBid = parseFloat(bids[0].price);
+    // Scan all bids to find the true maximum (defensive against API changes/corruption)
+    for (let i = 1; i < bidCount; i++) {
+      const price = parseFloat(bids[i].price);
+      if (price > bestBid) {
+        bestBid = price;
+      }
+    }
+  }
+
+  // Extract best ask (lowest ask price)
+  // API typically returns asks sorted ascending, so [0] should be best
+  // But we verify by scanning all elements to ensure correctness
+  let bestAsk: number | null = null;
+  if (askCount > 0) {
+    bestAsk = parseFloat(asks[0].price);
+    // Scan all asks to find the true minimum (defensive against API changes/corruption)
+    for (let i = 1; i < askCount; i++) {
+      const price = parseFloat(asks[i].price);
+      if (price < bestAsk) {
+        bestAsk = price;
+      }
+    }
+  }
+
+  // Detect anomalies
+  let hasAnomaly = false;
+  let anomalyReason: string | undefined;
+
+  // Anomaly: Crossed book (bestBid > bestAsk)
+  if (bestBid !== null && bestAsk !== null && bestBid > bestAsk) {
+    hasAnomaly = true;
+    anomalyReason = `Crossed book: bestBid=${(bestBid * 100).toFixed(2)}¢ > bestAsk=${(bestAsk * 100).toFixed(2)}¢`;
+  }
+
+  // Anomaly: Extreme spread suggesting data corruption
+  if (
+    bestBid !== null &&
+    bestAsk !== null &&
+    bestBid < 0.05 &&
+    bestAsk > 0.95
+  ) {
+    hasAnomaly = true;
+    anomalyReason = `Extreme spread: bestBid=${(bestBid * 100).toFixed(2)}¢, bestAsk=${(bestAsk * 100).toFixed(2)}¢`;
+  }
+
+  return {
+    bestBid,
+    bestAsk,
+    bidCount,
+    askCount,
+    hasAnomaly,
+    anomalyReason,
+  };
+}
+
+/**
  * Price protection validation result
  */
 export type PriceProtectionResult = {
@@ -577,9 +681,23 @@ async function postOrderClobInner(
     );
   }
 
-  // Extract best prices for price protection validation
-  const bestBid = orderBook.bids?.[0] ? parseFloat(orderBook.bids[0].price) : null;
-  const bestAsk = orderBook.asks?.[0] ? parseFloat(orderBook.asks[0].price) : null;
+  // Extract best prices using the safe extraction function
+  // This ensures bestBid = max(bids) and bestAsk = min(asks) even if API doesn't sort correctly
+  const priceExtraction = extractOrderbookPrices(orderBook);
+  const bestBid = priceExtraction.bestBid;
+  const bestAsk = priceExtraction.bestAsk;
+
+  // === ENHANCED DIAGNOSTICS (G) ===
+  // Log orderbook fetch details for debugging tokenId mapping issues
+  logger.debug(
+    `[CLOB] /book fetch: tokenId=${tokenId.slice(0, 16)}... ` +
+      `marketId=${marketId?.slice(0, 16) ?? "N/A"}... ` +
+      `bidCount=${priceExtraction.bidCount} askCount=${priceExtraction.askCount} ` +
+      `bestBid=${bestBid !== null ? (bestBid * 100).toFixed(2) + "¢" : "null"} ` +
+      `bestAsk=${bestAsk !== null ? (bestAsk * 100).toFixed(2) + "¢" : "null"} ` +
+      `cacheKey=book:${tokenId} ` +
+      `hasAnomaly=${priceExtraction.hasAnomaly}${priceExtraction.anomalyReason ? " (" + priceExtraction.anomalyReason + ")" : ""}`,
+  );
 
   // === ORDERBOOK QUALITY CHECK (before price protection) ===
   // Check for corrupted/invalid orderbook data FIRST.

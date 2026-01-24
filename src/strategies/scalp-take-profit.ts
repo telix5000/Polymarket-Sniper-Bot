@@ -48,7 +48,7 @@ import type {
   Position,
   PortfolioSnapshot,
 } from "./position-tracker";
-import { postOrder, OrderbookQualityError } from "../utils/post-order.util";
+import { postOrder, OrderbookQualityError, extractOrderbookPrices } from "../utils/post-order.util";
 import {
   LogDeduper,
   SkipReasonAggregator,
@@ -270,6 +270,17 @@ export function validateOrderbookQuality(
     return {
       status: "NO_EXECUTION_PRICE",
       reason: "No bestBid available from orderbook",
+      diagnostics,
+    };
+  }
+
+  // INVALID_BOOK: bestBid > bestAsk is impossible and indicates corrupted/mismatched data
+  // This check MUST come before other checks as it's a clear sign of data corruption
+  if (bestAsk !== null && bestAsk > 0 && bestBid > bestAsk) {
+    diagnostics.spread = bestAsk - bestBid; // Will be negative
+    return {
+      status: "INVALID_BOOK",
+      reason: `Crossed book: bestBid=${(bestBid * 100).toFixed(1)}¢ > bestAsk=${(bestAsk * 100).toFixed(1)}¢ (impossible state - data corruption or tokenId mismatch)`,
       diagnostics,
     };
   }
@@ -1557,8 +1568,21 @@ export class ScalpTakeProfitStrategy {
         if (orderbook.bids.length === 0 || orderbook.asks.length === 0)
           continue;
 
-        const bestBid = parseFloat(orderbook.bids[0].price);
-        const bestAsk = parseFloat(orderbook.asks[0].price);
+        // Use safe price extraction to ensure correct best prices
+        const priceExtraction = extractOrderbookPrices(orderbook);
+        if (priceExtraction.bestBid === null || priceExtraction.bestAsk === null) continue;
+
+        // Skip if anomaly detected (crossed book or extreme spread)
+        if (priceExtraction.hasAnomaly) {
+          this.logger.debug(
+            `[ScalpTakeProfit] Price history skipped for tokenId=${position.tokenId.slice(0, 12)}...: ` +
+              `anomaly detected - ${priceExtraction.anomalyReason}`,
+          );
+          continue;
+        }
+
+        const bestBid = priceExtraction.bestBid;
+        const bestAsk = priceExtraction.bestAsk;
         const spread = bestAsk - bestBid;
         const midPrice = (bestBid + bestAsk) / 2;
 
@@ -2019,6 +2043,11 @@ export class ScalpTakeProfitStrategy {
   /**
    * Update the circuit breaker for a tokenId based on orderbook quality failure.
    * Escalates cooldown on consecutive failures.
+   *
+   * ENHANCED DIAGNOSTICS (Deliverable D & G):
+   * - Logs detailed information about the invalid book condition
+   * - Includes dataApiPrice comparison when available
+   * - Rate-limited logging to prevent spam
    */
   private updateCircuitBreaker(
     tokenId: string,
@@ -2048,7 +2077,26 @@ export class ScalpTakeProfitStrategy {
       lastFailureAtMs: now,
     });
 
-    // Log escalation
+    // Enhanced diagnostics logging (rate-limited to once per cooldown period)
+    // This is the key log for diagnosing INVALID_BOOK issues per Deliverable G
+    if (this.logDeduper.shouldLog(`ScalpExit:CB_UPDATE:${tokenId}`, cooldownMs)) {
+      const bid = qualityResult.diagnostics?.bestBid;
+      const ask = qualityResult.diagnostics?.bestAsk;
+      const dataApi = qualityResult.diagnostics?.dataApiPrice;
+
+      this.logger.warn(
+        `[CLOB] INVALID_BOOK tokenId=${tokenId.slice(0, 16)}... ` +
+          `bid=${bid !== null && bid !== undefined ? (bid * 100).toFixed(1) + "¢" : "null"} ` +
+          `ask=${ask !== null && ask !== undefined ? (ask * 100).toFixed(1) + "¢" : "null"} ` +
+          `dataApi=${dataApi !== undefined ? (dataApi * 100).toFixed(1) + "¢" : "N/A"} ` +
+          `cooldown=${Math.round(cooldownMs / 1000)}s ` +
+          `failures=${failureCount} ` +
+          `status=${qualityResult.status} ` +
+          `reason="${qualityResult.reason ?? "unknown"}"`,
+      );
+    }
+
+    // Log escalation separately for debugging
     if (failureCount > 1) {
       this.logger.debug(
         `[ScalpExit] Circuit breaker escalated for tokenId=${tokenId.slice(0, 12)}... ` +

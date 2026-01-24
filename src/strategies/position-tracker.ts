@@ -16,6 +16,7 @@ import {
   isNearResolution,
   NEAR_RESOLUTION_THRESHOLD_DOLLARS,
 } from "../utils/price.util";
+import { extractOrderbookPrices } from "../utils/post-order.util";
 
 /**
  * Position status indicating tradability
@@ -2811,13 +2812,19 @@ export class PositionTracker {
                       try {
                         const orderbook =
                           await this.client.getOrderBook(tokenId);
-                        if (orderbook.bids?.[0] && orderbook.asks?.[0]) {
-                          const bestBid = parseFloat(orderbook.bids[0].price);
-                          const bestAsk = parseFloat(orderbook.asks[0].price);
-                          currentPrice = (bestBid + bestAsk) / 2;
+                        // Use safe extraction to ensure bestBid = max(bids), bestAsk = min(asks)
+                        const priceExtraction = extractOrderbookPrices(orderbook);
+                        if (priceExtraction.bestBid !== null && priceExtraction.bestAsk !== null && !priceExtraction.hasAnomaly) {
+                          currentPrice = (priceExtraction.bestBid + priceExtraction.bestAsk) / 2;
                           this.logger.debug(
                             `[PositionTracker] Redeemable with unknown outcome: using orderbook price ${(currentPrice * 100).toFixed(1)}¢ for tokenId=${tokenId.slice(0, 16)}...`,
                           );
+                        } else if (priceExtraction.hasAnomaly) {
+                          // Orderbook has anomaly (crossed book, extreme spread), use fallback
+                          this.logger.debug(
+                            `[PositionTracker] Redeemable with orderbook anomaly for tokenId=${tokenId.slice(0, 16)}...: ${priceExtraction.anomalyReason}, using fallback`,
+                          );
+                          currentPrice = await this.fetchPriceFallback(tokenId);
                         } else {
                           // Empty orderbook, try price fallback
                           this.missingOrderbooks.add(tokenId);
@@ -2896,7 +2903,10 @@ export class PositionTracker {
                     try {
                       const orderbook = await this.client.getOrderBook(tokenId);
 
-                      if (!orderbook.bids?.[0] || !orderbook.asks?.[0]) {
+                      // Use safe extraction to ensure bestBid = max(bids), bestAsk = min(asks)
+                      const priceExtraction = extractOrderbookPrices(orderbook);
+
+                      if (priceExtraction.bestBid === null || priceExtraction.bestAsk === null) {
                         // Orderbook is empty - cache and use fallback
                         this.missingOrderbooks.add(tokenId);
                         positionStatus = "NO_BOOK";
@@ -2904,9 +2914,18 @@ export class PositionTracker {
                           `[PositionTracker] Empty orderbook for tokenId: ${tokenId}, using fallback price API`,
                         );
                         currentPrice = await this.fetchPriceFallback(tokenId);
+                      } else if (priceExtraction.hasAnomaly) {
+                        // Orderbook has anomaly (crossed book, extreme spread) - use fallback
+                        positionStatus = "NO_BOOK";
+                        this.logger.warn(
+                          `[PositionTracker] INVALID_BOOK for tokenId=${tokenId.slice(0, 16)}...: ${priceExtraction.anomalyReason} ` +
+                            `bestBid=${(priceExtraction.bestBid * 100).toFixed(2)}¢ bestAsk=${(priceExtraction.bestAsk * 100).toFixed(2)}¢ ` +
+                            `bidCount=${priceExtraction.bidCount} askCount=${priceExtraction.askCount} - using fallback`,
+                        );
+                        currentPrice = await this.fetchPriceFallback(tokenId);
                       } else {
-                        bestBidPrice = parseFloat(orderbook.bids[0].price);
-                        bestAskPrice = parseFloat(orderbook.asks[0].price);
+                        bestBidPrice = priceExtraction.bestBid;
+                        bestAskPrice = priceExtraction.bestAsk;
 
                         // CRITICAL FIX: Use BEST BID as mark price for P&L
                         // This is what we can actually sell at, not the mid-price
@@ -2956,11 +2975,11 @@ export class PositionTracker {
                           // Log first 3 levels for debugging
                           this.logger.debug(
                             `[PositionTracker] Book levels for ${tokenId.slice(0, 16)}...: ` +
-                              `bids=[${orderbook.bids
+                              `bids=[${(orderbook.bids ?? [])
                                 .slice(0, 3)
                                 .map((b) => `${b.price}@${b.size}`)
                                 .join(", ")}], ` +
-                              `asks=[${orderbook.asks
+                              `asks=[${(orderbook.asks ?? [])
                                 .slice(0, 3)
                                 .map((a) => `${a.price}@${a.size}`)
                                 .join(", ")}]`,
