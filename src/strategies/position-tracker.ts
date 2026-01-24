@@ -1633,6 +1633,20 @@ export class PositionTracker {
   }
 
   /**
+   * Format price in cents for display in logs.
+   * Returns readable strings like "100¢ (WIN)", "0¢ (LOSS)", or "50¢".
+   */
+  private formatPriceCentsForLog(priceCents: number): string {
+    if (priceCents === 100) {
+      return "100¢ (WIN)";
+    }
+    if (priceCents === 0) {
+      return "0¢ (LOSS)";
+    }
+    return `${priceCents}¢`;
+  }
+
+  /**
    * Log resolved position detection only on state change.
    * Prevents repeated logging of the same resolved state.
    * 
@@ -1661,8 +1675,9 @@ export class PositionTracker {
 
     if (shouldLog && newStatus === "RESOLVED") {
       // Only log at INFO level for RESOLVED state transitions
+      const priceDisplay = this.formatPriceCentsForLog(priceCents);
       this.logger.info(
-        `[PositionTracker] Detected resolved position: tokenId=${tokenId.slice(0, 16)}..., side=${side}, winner=${winner ?? "unknown"}, price=${priceCents === 100 ? "100¢ (WIN)" : priceCents === 0 ? "0¢ (LOSS)" : `${priceCents}¢`}`,
+        `[PositionTracker] Detected resolved position: tokenId=${tokenId.slice(0, 16)}..., side=${side}, winner=${winner ?? "unknown"}, price=${priceDisplay}`,
       );
     }
 
@@ -1746,89 +1761,17 @@ export class PositionTracker {
 
       const market = markets[0];
 
-      // Primary method: Parse outcomePrices to find winner
-      // The winning outcome has price = "1" or very close to 1 (e.g., "0.9999...")
-      if (market.outcomes && market.outcomePrices) {
-        try {
-          const outcomes: string[] = JSON.parse(market.outcomes);
-          const prices: string[] = JSON.parse(market.outcomePrices);
-
-          if (outcomes.length > 0 && outcomes.length === prices.length) {
-            // Find the index with price closest to 1 (winner)
-            let winnerIndex = -1;
-            let highestPrice = 0;
-
-            for (let i = 0; i < prices.length; i++) {
-              const price = parseFloat(prices[i]);
-              if (Number.isFinite(price) && price > highestPrice) {
-                highestPrice = price;
-                winnerIndex = i;
-              }
-            }
-
-            // Only consider it a winner if price is significantly above threshold
-            if (
-              winnerIndex >= 0 &&
-              highestPrice > PositionTracker.WINNER_THRESHOLD
-            ) {
-              const winner = outcomes[winnerIndex].trim();
-              this.logger.debug(
-                `[PositionTracker] Resolved market for tokenId ${tokenId}: winner="${winner}" (price=${highestPrice.toFixed(4)})`,
-              );
-              return winner;
-            }
-
-            this.logger.debug(
-              `[PositionTracker] Market for tokenId ${tokenId} has no clear winner (highestPrice=${highestPrice.toFixed(4)})`,
-            );
-          }
-        } catch (parseErr) {
-          this.logger.debug(
-            `[PositionTracker] Failed to parse outcomes/prices for tokenId ${tokenId}: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
-          );
-        }
-      }
-
-      // Fallback: Check for explicit winning outcome field
-      const winningOutcome =
-        market.resolvedOutcome ??
-        market.resolved_outcome ??
-        market.winningOutcome ??
-        market.winning_outcome;
-
-      if (winningOutcome && typeof winningOutcome === "string") {
-        const trimmed = winningOutcome.trim();
-        if (trimmed) {
-          this.logger.debug(
-            `[PositionTracker] Market for tokenId ${tokenId} resolved with explicit outcome: ${trimmed}`,
-          );
-          return trimmed;
-        }
-      }
-
-      // Fallback: Check tokens for winner flag (supports multi-outcome markets)
-      if (market.tokens && Array.isArray(market.tokens)) {
-        for (const token of market.tokens) {
-          if (token.winner === true && token.outcome) {
-            const trimmed = token.outcome.trim();
-            if (trimmed) {
-              this.logger.debug(
-                `[PositionTracker] Market for tokenId ${tokenId} resolved with winning token: ${trimmed}`,
-              );
-              return trimmed;
-            }
-          }
-        }
-      }
-
-      // If market is closed/resolved but no winner info, cannot determine
-      if (market.closed || market.resolved) {
+      // Use the shared winner extraction logic
+      const winner = this.extractWinnerFromMarket(market);
+      
+      // Debug log only if winner found (reduces log spam)
+      if (winner) {
         this.logger.debug(
-          `[PositionTracker] Market for tokenId ${tokenId} is closed/resolved but winning outcome not available`,
+          `[PositionTracker] Resolved market for tokenId ${tokenId}: winner="${winner}"`,
         );
       }
-
-      return null;
+      
+      return winner;
     } catch (err: unknown) {
       const anyErr = err as any;
       const message = err instanceof Error ? err.message : String(err);
