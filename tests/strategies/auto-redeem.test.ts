@@ -20,6 +20,7 @@ interface MockRedemptionResult {
   error?: string;
   isRateLimited?: boolean;
   isNotResolvedYet?: boolean;
+  isNonceError?: boolean;
 }
 
 // Helper function to simulate checking if a "not resolved yet" error
@@ -39,7 +40,20 @@ function isRpcRateLimitError(msg: string): boolean {
     msg.includes("Too Many Requests") ||
     msg.includes("429") ||
     msg.includes("-32000") ||
-    msg.includes("-32005")
+    msg.includes("-32005") ||
+    msg.includes("BAD_DATA") ||
+    msg.includes("missing response for request")
+  );
+}
+
+// Helper function to simulate checking if error is a transaction nonce/replacement issue
+function isTransactionNonceError(msg: string): boolean {
+  return (
+    msg.includes("REPLACEMENT_UNDERPRICED") ||
+    msg.includes("replacement fee too low") ||
+    msg.includes("replacement transaction underpriced") ||
+    msg.includes("nonce too low") ||
+    msg.includes("already known")
   );
 }
 
@@ -56,7 +70,12 @@ function updateRedemptionAttempts(
   }
 
   if (result.isRateLimited) {
-    // Don't count rate limits as failures
+    // Don't count rate limits as failures - transient network issue
+    return;
+  }
+
+  if (result.isNonceError) {
+    // Don't count nonce/replacement errors as failures - transient blockchain state
     return;
   }
 
@@ -335,6 +354,119 @@ describe("Auto-Redeem On-Chain Resolution Check", () => {
         isRpcRateLimitError(errorMsg),
         true,
         "Should detect polygon gas station rate limit error with -32005",
+      );
+    });
+
+    test("should detect BAD_DATA error", () => {
+      const errorMsg = "Error: missing response for request (code=BAD_DATA)";
+
+      assert.strictEqual(
+        isRpcRateLimitError(errorMsg),
+        true,
+        "Should detect BAD_DATA error code",
+      );
+    });
+
+    test("should detect 'missing response for request' error", () => {
+      const errorMsg =
+        'Error: missing response for request (value=[ { "code": -32005, "message": "Too Many Requests" } ])';
+
+      assert.strictEqual(
+        isRpcRateLimitError(errorMsg),
+        true,
+        "Should detect missing response error",
+      );
+    });
+  });
+
+  describe("Transaction Nonce Error Detection", () => {
+    test("should detect REPLACEMENT_UNDERPRICED error", () => {
+      const errorMsg =
+        'Error: replacement fee too low (transaction="0x02f90154...", code=REPLACEMENT_UNDERPRICED, version=6.16.0)';
+
+      assert.strictEqual(
+        isTransactionNonceError(errorMsg),
+        true,
+        "Should detect REPLACEMENT_UNDERPRICED error code",
+      );
+    });
+
+    test("should detect 'replacement fee too low' error", () => {
+      const errorMsg = "replacement fee too low";
+
+      assert.strictEqual(
+        isTransactionNonceError(errorMsg),
+        true,
+        "Should detect replacement fee too low message",
+      );
+    });
+
+    test("should detect 'replacement transaction underpriced' error", () => {
+      const errorMsg =
+        '{ "error": { "code": -32000, "message": "replacement transaction underpriced" } }';
+
+      assert.strictEqual(
+        isTransactionNonceError(errorMsg),
+        true,
+        "Should detect replacement transaction underpriced message",
+      );
+    });
+
+    test("should detect 'nonce too low' error", () => {
+      const errorMsg = "nonce too low: next nonce 42, tx nonce 41";
+
+      assert.strictEqual(
+        isTransactionNonceError(errorMsg),
+        true,
+        "Should detect nonce too low message",
+      );
+    });
+
+    test("should detect 'already known' error", () => {
+      const errorMsg = "transaction already known";
+
+      assert.strictEqual(
+        isTransactionNonceError(errorMsg),
+        true,
+        "Should detect already known message",
+      );
+    });
+
+    test("should NOT detect unrelated errors as nonce errors", () => {
+      const errorMsg = "insufficient funds for gas";
+
+      assert.strictEqual(
+        isTransactionNonceError(errorMsg),
+        false,
+        "Should not match unrelated errors",
+      );
+    });
+  });
+
+  describe("Nonce Error Failure Tracking", () => {
+    test("should NOT count nonce errors as failures", () => {
+      const attempts = new Map<
+        string,
+        { lastAttempt: number; failures: number }
+      >();
+      const marketId = "0x1234567890abcdef";
+
+      // Simulate a nonce error result
+      const result: MockRedemptionResult = {
+        tokenId: "token-123",
+        marketId,
+        success: false,
+        error: "replacement fee too low",
+        isNonceError: true,
+      };
+
+      updateRedemptionAttempts(attempts, marketId, result);
+
+      const tracked = attempts.get(marketId);
+      assert.strictEqual(
+        tracked,
+        undefined,
+        "Should NOT track nonce errors as failures",
       );
     });
   });

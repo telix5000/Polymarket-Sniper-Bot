@@ -49,6 +49,7 @@ export interface RedemptionResult {
   error?: string;
   isRateLimited?: boolean;
   isNotResolvedYet?: boolean;
+  isNonceError?: boolean;
 }
 
 /**
@@ -231,7 +232,13 @@ export class AutoRedeemStrategy {
     }
 
     if (result.isRateLimited) {
-      // Don't count rate limits as failures
+      // Don't count rate limits as failures - transient network issue
+      return;
+    }
+
+    if (result.isNonceError) {
+      // Don't count nonce/replacement errors as failures - transient blockchain state
+      // These occur when there are pending transactions and resolve on their own
       return;
     }
 
@@ -256,7 +263,7 @@ export class AutoRedeemStrategy {
   }
 
   /**
-   * Redeem a position with retry logic for rate-limited requests
+   * Redeem a position with retry logic for transient errors (rate limiting, nonce issues)
    */
   private async redeemPositionWithRetry(
     position: Position,
@@ -266,8 +273,9 @@ export class AutoRedeemStrategy {
     for (let attempt = 0; attempt <= AutoRedeemStrategy.MAX_RETRIES; attempt++) {
       const result = await this.redeemPosition(position);
 
-      // If successful or not a rate limit error, return immediately
-      if (result.success || !result.isRateLimited) {
+      // If successful or not a transient error, return immediately
+      const isTransientError = result.isRateLimited || result.isNonceError;
+      if (result.success || !isTransientError) {
         return result;
       }
 
@@ -277,8 +285,9 @@ export class AutoRedeemStrategy {
       if (attempt < AutoRedeemStrategy.MAX_RETRIES) {
         const backoffDelay =
           AutoRedeemStrategy.RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+        const reason = result.isNonceError ? "nonce/replacement error" : "rate limited";
         this.logger.info(
-          `[AutoRedeem] ⏳ Rate limited, retrying in ${backoffDelay / 1000}s (attempt ${attempt + 1}/${AutoRedeemStrategy.MAX_RETRIES})`,
+          `[AutoRedeem] ⏳ ${reason}, retrying in ${backoffDelay / 1000}s (attempt ${attempt + 1}/${AutoRedeemStrategy.MAX_RETRIES})`,
         );
         await this.sleep(backoffDelay);
       }
@@ -286,14 +295,14 @@ export class AutoRedeemStrategy {
 
     // All retries exhausted
     this.logger.warn(
-      `[AutoRedeem] ⚠️ Exhausted ${AutoRedeemStrategy.MAX_RETRIES} retries due to rate limiting`,
+      `[AutoRedeem] ⚠️ Exhausted ${AutoRedeemStrategy.MAX_RETRIES} retries due to transient errors`,
     );
     return (
       lastResult || {
         tokenId: position.tokenId,
         marketId: position.marketId,
         success: false,
-        error: "Exhausted retries due to rate limiting",
+        error: "Exhausted retries due to transient errors",
         isRateLimited: true,
       }
     );
@@ -471,21 +480,31 @@ export class AutoRedeemStrategy {
       };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`[AutoRedeem] ❌ Error: ${errorMsg}`);
+      const isRateLimited = this.isRpcRateLimitError(errorMsg);
+      const isNonceError = this.isTransactionNonceError(errorMsg);
+      const isNotResolvedYet = this.isNotResolvedYetError(errorMsg);
+
+      // Log as warning for transient errors, error for permanent failures
+      if (isRateLimited || isNonceError) {
+        this.logger.warn(`[AutoRedeem] ⚠️ Transient error (will retry): ${errorMsg}`);
+      } else {
+        this.logger.error(`[AutoRedeem] ❌ Error: ${errorMsg}`);
+      }
 
       return {
         tokenId: position.tokenId,
         marketId: position.marketId,
         success: false,
         error: errorMsg,
-        isRateLimited: this.isRpcRateLimitError(errorMsg),
-        isNotResolvedYet: this.isNotResolvedYetError(errorMsg),
+        isRateLimited,
+        isNotResolvedYet,
+        isNonceError,
       };
     }
   }
 
   /**
-   * Check if error is due to RPC rate limiting
+   * Check if error is due to RPC rate limiting or transient network issues
    */
   private isRpcRateLimitError(msg: string): boolean {
     return (
@@ -494,7 +513,23 @@ export class AutoRedeemStrategy {
       msg.includes("Too Many Requests") ||
       msg.includes("429") ||
       msg.includes("-32000") ||
-      msg.includes("-32005")
+      msg.includes("-32005") ||
+      msg.includes("BAD_DATA") ||
+      msg.includes("missing response for request")
+    );
+  }
+
+  /**
+   * Check if error is a transaction nonce/replacement issue
+   * These errors occur when there are pending transactions and should be retried
+   */
+  private isTransactionNonceError(msg: string): boolean {
+    return (
+      msg.includes("REPLACEMENT_UNDERPRICED") ||
+      msg.includes("replacement fee too low") ||
+      msg.includes("replacement transaction underpriced") ||
+      msg.includes("nonce too low") ||
+      msg.includes("already known")
     );
   }
 

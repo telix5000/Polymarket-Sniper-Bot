@@ -281,7 +281,77 @@ async function main(): Promise<void> {
   }
 }
 
+/**
+ * Global error handlers to prevent crashes from unhandled errors.
+ * These are safety nets for transient RPC errors (rate limits, network issues)
+ * that might escape normal try/catch blocks.
+ */
+
+// Handle unhandled promise rejections (async errors)
+process.on("unhandledRejection", (reason, promise) => {
+  const errorMsg = reason instanceof Error ? reason.message : String(reason);
+  
+  // Check if this is a transient RPC/network error that shouldn't crash the bot
+  const isTransientError = 
+    errorMsg.includes("Too Many Requests") ||
+    errorMsg.includes("-32005") ||
+    errorMsg.includes("-32000") ||
+    errorMsg.includes("BAD_DATA") ||
+    errorMsg.includes("missing response for request") ||
+    errorMsg.includes("REPLACEMENT_UNDERPRICED") ||
+    errorMsg.includes("replacement fee too low") ||
+    errorMsg.includes("in-flight transaction limit") ||
+    errorMsg.includes("rate limit") ||
+    errorMsg.includes("ECONNRESET") ||
+    errorMsg.includes("ETIMEDOUT") ||
+    errorMsg.includes("socket hang up");
+
+  if (isTransientError) {
+    console.warn(
+      `[UnhandledRejection] ⚠️ Transient error (bot continues): ${errorMsg}`
+    );
+  } else {
+    console.error(
+      `[UnhandledRejection] ❌ Unhandled promise rejection:`,
+      reason
+    );
+    // For non-transient errors, log but don't crash
+    // The specific strategy/service should handle retries
+  }
+});
+
+// Handle uncaught exceptions (sync errors)
+process.on("uncaughtException", (error) => {
+  const errorMsg = error.message;
+  
+  // Check if this is a transient error
+  const isTransientError = 
+    errorMsg.includes("Too Many Requests") ||
+    errorMsg.includes("-32005") ||
+    errorMsg.includes("-32000") ||
+    errorMsg.includes("BAD_DATA") ||
+    errorMsg.includes("missing response for request") ||
+    errorMsg.includes("REPLACEMENT_UNDERPRICED") ||
+    errorMsg.includes("replacement fee too low") ||
+    errorMsg.includes("in-flight transaction limit") ||
+    errorMsg.includes("rate limit") ||
+    errorMsg.includes("ECONNRESET") ||
+    errorMsg.includes("ETIMEDOUT") ||
+    errorMsg.includes("socket hang up");
+
+  if (isTransientError) {
+    console.warn(
+      `[UncaughtException] ⚠️ Transient error (bot continues): ${errorMsg}`
+    );
+  } else {
+    console.error(`[UncaughtException] ❌ Uncaught exception:`, error);
+    // For truly fatal errors, exit after logging
+    // Give time for logs to flush
+    setTimeout(() => process.exit(1), 1000);
+  }
+});
+
 main().catch((err) => {
-  console.error("Fatal error", err);
+  console.error("Fatal error in main():", err);
   process.exit(1);
 });
