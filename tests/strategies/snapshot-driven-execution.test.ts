@@ -16,6 +16,7 @@ import type {
   Position,
   PortfolioSnapshot,
   PortfolioSummary,
+  PnLSource,
 } from "../../src/strategies/position-tracker";
 
 // Mock logger that captures log calls
@@ -464,8 +465,9 @@ describe("Orchestrator Ordering Guarantees", () => {
 
 describe("PnL Trust and Source Handling", () => {
   test("DATA_API pnlSource is trusted for scalp decisions", () => {
+    const pnlSource: PnLSource = "DATA_API";
     const position = createMockPosition({
-      pnlSource: "DATA_API",
+      pnlSource,
       pnlTrusted: true,
       pnlPct: 10,
     });
@@ -474,6 +476,11 @@ describe("PnL Trust and Source Handling", () => {
     assert.ok(
       position.pnlTrusted,
       "DATA_API pnlSource should have pnlTrusted=true",
+    );
+    assert.strictEqual(
+      position.pnlSource,
+      "DATA_API",
+      "pnlSource should be DATA_API",
     );
   });
 

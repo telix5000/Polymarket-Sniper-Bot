@@ -945,7 +945,7 @@ export class PositionTracker {
     // Create immutable snapshot with frozen arrays
     this.lastSnapshot = {
       cycleId: cycleId ?? this.lastSnapshotCycleId + 1,
-      addressUsed: this.cachedHoldingAddress ?? "unknown",
+      addressUsed: this.cachedHoldingAddress ?? "address-not-resolved",
       fetchedAtMs: Date.now(),
       activePositions: Object.freeze([...activePositions]),
       redeemablePositions: Object.freeze([...redeemablePositions]),

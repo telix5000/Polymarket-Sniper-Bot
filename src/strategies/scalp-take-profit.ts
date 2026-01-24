@@ -463,7 +463,8 @@ export class ScalpTakeProfitStrategy {
     }
 
     // Update price history for all positions
-    await this.updatePriceHistory([...activePositions] as Position[]);
+    // Note: Create mutable copy since activePositions may be readonly from snapshot
+    await this.updatePriceHistory(Array.from(activePositions));
 
     // DIAGNOSTIC: Log active_count with filtering step counts (requirement #3)
     // Log filter steps: start -> afterStateFilter -> afterPnlTrusted -> afterThreshold
