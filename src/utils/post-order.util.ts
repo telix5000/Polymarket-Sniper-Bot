@@ -110,54 +110,31 @@ export function extractOrderbookPrices(orderbook: {
   const askCount = asks.length;
 
   // Extract best bid (highest bid price)
+  // API typically returns bids sorted descending, so [0] should be best
+  // But we verify by scanning all elements to ensure correctness
   let bestBid: number | null = null;
   if (bidCount > 0) {
-    // Assume first element is best (API returns sorted), but verify
-    const firstBidPrice = parseFloat(bids[0].price);
-    bestBid = firstBidPrice;
-
-    // Verify sorting: scan to ensure first is actually the highest
-    // This catches any API changes or data corruption
-    for (let i = 1; i < Math.min(bidCount, 5); i++) {
+    bestBid = parseFloat(bids[0].price);
+    // Scan all bids to find the true maximum (defensive against API changes/corruption)
+    for (let i = 1; i < bidCount; i++) {
       const price = parseFloat(bids[i].price);
       if (price > bestBid) {
-        // Data not sorted as expected - use max
         bestBid = price;
-      }
-    }
-    // If we found bids but bestBid is still the first element, quick verify it's max of all
-    if (bestBid === firstBidPrice && bidCount > 5) {
-      for (let i = 5; i < bidCount; i++) {
-        const price = parseFloat(bids[i].price);
-        if (price > bestBid) {
-          bestBid = price;
-        }
       }
     }
   }
 
   // Extract best ask (lowest ask price)
+  // API typically returns asks sorted ascending, so [0] should be best
+  // But we verify by scanning all elements to ensure correctness
   let bestAsk: number | null = null;
   if (askCount > 0) {
-    // Assume first element is best (API returns sorted), but verify
-    const firstAskPrice = parseFloat(asks[0].price);
-    bestAsk = firstAskPrice;
-
-    // Verify sorting: scan to ensure first is actually the lowest
-    for (let i = 1; i < Math.min(askCount, 5); i++) {
+    bestAsk = parseFloat(asks[0].price);
+    // Scan all asks to find the true minimum (defensive against API changes/corruption)
+    for (let i = 1; i < askCount; i++) {
       const price = parseFloat(asks[i].price);
       if (price < bestAsk) {
-        // Data not sorted as expected - use min
         bestAsk = price;
-      }
-    }
-    // If we found asks but bestAsk is still the first element, quick verify it's min of all
-    if (bestAsk === firstAskPrice && askCount > 5) {
-      for (let i = 5; i < askCount; i++) {
-        const price = parseFloat(asks[i].price);
-        if (price < bestAsk) {
-          bestAsk = price;
-        }
       }
     }
   }
