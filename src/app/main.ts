@@ -287,12 +287,12 @@ async function main(): Promise<void> {
  * that might escape normal try/catch blocks.
  */
 
-// Handle unhandled promise rejections (async errors)
-process.on("unhandledRejection", (reason, promise) => {
-  const errorMsg = reason instanceof Error ? reason.message : String(reason);
-  
-  // Check if this is a transient RPC/network error that shouldn't crash the bot
-  const isTransientError = 
+/**
+ * Check if an error message indicates a transient RPC/network error
+ * that shouldn't crash the bot. These errors typically resolve on retry.
+ */
+function isTransientRpcError(errorMsg: string): boolean {
+  return (
     errorMsg.includes("Too Many Requests") ||
     errorMsg.includes("-32005") ||
     errorMsg.includes("-32000") ||
@@ -304,16 +304,22 @@ process.on("unhandledRejection", (reason, promise) => {
     errorMsg.includes("rate limit") ||
     errorMsg.includes("ECONNRESET") ||
     errorMsg.includes("ETIMEDOUT") ||
-    errorMsg.includes("socket hang up");
+    errorMsg.includes("socket hang up")
+  );
+}
 
-  if (isTransientError) {
+// Handle unhandled promise rejections (async errors)
+process.on("unhandledRejection", (reason) => {
+  const errorMsg = reason instanceof Error ? reason.message : String(reason);
+
+  if (isTransientRpcError(errorMsg)) {
     console.warn(
-      `[UnhandledRejection] ⚠️ Transient error (bot continues): ${errorMsg}`
+      `[UnhandledRejection] ⚠️ Transient error (bot continues): ${errorMsg}`,
     );
   } else {
     console.error(
       `[UnhandledRejection] ❌ Unhandled promise rejection:`,
-      reason
+      reason,
     );
     // For non-transient errors, log but don't crash
     // The specific strategy/service should handle retries
@@ -323,25 +329,10 @@ process.on("unhandledRejection", (reason, promise) => {
 // Handle uncaught exceptions (sync errors)
 process.on("uncaughtException", (error) => {
   const errorMsg = error.message;
-  
-  // Check if this is a transient error
-  const isTransientError = 
-    errorMsg.includes("Too Many Requests") ||
-    errorMsg.includes("-32005") ||
-    errorMsg.includes("-32000") ||
-    errorMsg.includes("BAD_DATA") ||
-    errorMsg.includes("missing response for request") ||
-    errorMsg.includes("REPLACEMENT_UNDERPRICED") ||
-    errorMsg.includes("replacement fee too low") ||
-    errorMsg.includes("in-flight transaction limit") ||
-    errorMsg.includes("rate limit") ||
-    errorMsg.includes("ECONNRESET") ||
-    errorMsg.includes("ETIMEDOUT") ||
-    errorMsg.includes("socket hang up");
 
-  if (isTransientError) {
+  if (isTransientRpcError(errorMsg)) {
     console.warn(
-      `[UncaughtException] ⚠️ Transient error (bot continues): ${errorMsg}`
+      `[UncaughtException] ⚠️ Transient error (bot continues): ${errorMsg}`,
     );
   } else {
     console.error(`[UncaughtException] ❌ Uncaught exception:`, error);

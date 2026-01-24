@@ -270,7 +270,11 @@ export class AutoRedeemStrategy {
   ): Promise<RedemptionResult> {
     let lastResult: RedemptionResult | null = null;
 
-    for (let attempt = 0; attempt <= AutoRedeemStrategy.MAX_RETRIES; attempt++) {
+    for (
+      let attempt = 0;
+      attempt <= AutoRedeemStrategy.MAX_RETRIES;
+      attempt++
+    ) {
       const result = await this.redeemPosition(position);
 
       // If successful or not a transient error, return immediately
@@ -285,7 +289,9 @@ export class AutoRedeemStrategy {
       if (attempt < AutoRedeemStrategy.MAX_RETRIES) {
         const backoffDelay =
           AutoRedeemStrategy.RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
-        const reason = result.isNonceError ? "nonce/replacement error" : "rate limited";
+        const reason = result.isNonceError
+          ? "nonce/replacement error"
+          : "rate limited";
         this.logger.info(
           `[AutoRedeem] ⏳ ${reason}, retrying in ${backoffDelay / 1000}s (attempt ${attempt + 1}/${AutoRedeemStrategy.MAX_RETRIES})`,
         );
@@ -486,7 +492,9 @@ export class AutoRedeemStrategy {
 
       // Log as warning for transient errors, error for permanent failures
       if (isRateLimited || isNonceError) {
-        this.logger.warn(`[AutoRedeem] ⚠️ Transient error (will retry): ${errorMsg}`);
+        this.logger.warn(
+          `[AutoRedeem] ⚠️ Transient error (will retry): ${errorMsg}`,
+        );
       } else {
         this.logger.error(`[AutoRedeem] ❌ Error: ${errorMsg}`);
       }
