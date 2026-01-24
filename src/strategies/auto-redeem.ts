@@ -350,10 +350,18 @@ export class AutoRedeemStrategy {
             }
           } else if (isTrulyResolved) {
             // Truly resolved market - fallback sell won't work (no orderbook)
-            // Log why and suggest the issue might be with redemption parameters
+            // Log why and show when retry will happen
+            const remainingCooldown = Math.max(
+              0,
+              Math.ceil(
+                (AutoRedeemStrategy.FULL_RESET_COOLDOWN_MS -
+                  timeSinceLastAttempt) /
+                  60000,
+              ),
+            );
             this.logger.info(
               `[AutoRedeem] ⚠️ Market ${marketId.slice(0, 16)}... is RESOLVED but redemption failed ${attempts.failures}x. ` +
-                `Fallback sell not possible (no orderbook). Will retry redemption after full reset cooldown.`,
+                `Fallback sell not possible (no orderbook). Will retry redemption in ~${remainingCooldown}min.`,
             );
           } else {
             const nextRetryIn = Math.max(
@@ -456,8 +464,10 @@ export class AutoRedeemStrategy {
           // Mark entire market as redeemed (all positions for this market are now redeemed)
           this.redeemedMarkets.add(marketId);
           redeemedCount++;
+          // Show actual redeemed amount if available, otherwise show estimated value
+          const actualRedeemed = result.amountRedeemed ? `$${result.amountRedeemed}` : `~$${totalValueUsd.toFixed(2)}`;
           this.logger.info(
-            `[AutoRedeem] ✓ Successfully redeemed market ${marketId} (~$${totalValueUsd.toFixed(2)}) (tx: ${result.transactionHash})`,
+            `[AutoRedeem] ✓ Successfully redeemed market ${marketId} (${actualRedeemed}) (tx: ${result.transactionHash})`,
           );
         } else {
           // Check if this was a rate limit error - if so, set global pause
@@ -757,9 +767,20 @@ export class AutoRedeemStrategy {
             const amountRedeemed = balanceAfter - balanceBefore;
             const amountRedeemedFormatted = formatUnits(amountRedeemed, 6);
 
-            this.logger.info(
-              `[AutoRedeem] ✅ Relayer redemption confirmed, redeemed $${amountRedeemedFormatted} USDC`,
-            );
+            // Provide clear feedback based on amount redeemed
+            if (amountRedeemed <= 0n) {
+              // $0 redeemed typically means losing position or already redeemed
+              this.logger.info(
+                `[AutoRedeem] ✅ Relayer redemption confirmed (tx: ${result.transactionHash ?? "n/a"}). ` +
+                  `$0 USDC received - this is normal for losing positions (worthless shares).`,
+              );
+            } else {
+              // Funds should be available immediately after on-chain confirmation
+              this.logger.info(
+                `[AutoRedeem] ✅ Relayer redemption confirmed, redeemed $${amountRedeemedFormatted} USDC (tx: ${result.transactionHash ?? "n/a"}). ` +
+                  `Funds are now in your wallet.`,
+              );
+            }
 
             return {
               tokenId: position.tokenId,
@@ -839,9 +860,20 @@ export class AutoRedeemStrategy {
         const amountRedeemed = balanceAfter - balanceBefore;
         const amountRedeemedFormatted = formatUnits(amountRedeemed, 6);
 
-        this.logger.info(
-          `[AutoRedeem] Redemption confirmed in block ${receipt.blockNumber}, redeemed $${amountRedeemedFormatted} USDC`,
-        );
+        // Provide clear feedback based on amount redeemed
+        if (amountRedeemed <= 0n) {
+          // $0 redeemed typically means losing position or already redeemed
+          this.logger.info(
+            `[AutoRedeem] Redemption confirmed in block ${receipt.blockNumber} (tx: ${tx.hash}). ` +
+              `$0 USDC received - this is normal for losing positions (worthless shares).`,
+          );
+        } else {
+          // Funds should be available immediately after on-chain confirmation
+          this.logger.info(
+            `[AutoRedeem] Redemption confirmed in block ${receipt.blockNumber}, redeemed $${amountRedeemedFormatted} USDC (tx: ${tx.hash}). ` +
+              `Funds are now in your wallet.`,
+          );
+        }
 
         return {
           tokenId: position.tokenId,
