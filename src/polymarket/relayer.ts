@@ -173,7 +173,7 @@ export const executeRelayerTxs = async (params: {
     const errMsg =
       executeErr instanceof Error ? executeErr.message : String(executeErr);
     params.logger.error(`[Relayer] SDK execute() failed: ${errMsg}`);
-    throw new Error(`Relayer SDK execute failed: ${errMsg}`);
+    throw new Error(`Relayer SDK execute() failed: ${errMsg}`);
   }
 
   params.logger.info(
@@ -187,7 +187,7 @@ export const executeRelayerTxs = async (params: {
     const errMsg =
       waitErr instanceof Error ? waitErr.message : String(waitErr);
     params.logger.error(`[Relayer] SDK wait() failed: ${errMsg}`);
-    throw new Error(`Relayer SDK wait failed: ${errMsg}`);
+    throw new Error(`Relayer SDK wait() failed: ${errMsg}`);
   }
 
   if (!result) {
