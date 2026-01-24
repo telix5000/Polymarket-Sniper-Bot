@@ -245,6 +245,17 @@ export class OrderSubmissionController {
       const reason = normalizeReason(
         extractReason(response) || "order_rejected",
       );
+      
+      // Check for cooldownUntil in the response and cache it
+      const cooldownUntil = extractCooldownUntil(response);
+      if (cooldownUntil && params.tokenId && params.side) {
+        const cooldownKey = `${params.tokenId}:${params.side}`;
+        this.hardCooldownCache.set(cooldownKey, cooldownUntil);
+        params.logger.warn(
+          `[CLOB] Hard cooldown set: ${params.side} on token ${params.tokenId.slice(0, 8)}... until ${new Date(cooldownUntil).toISOString()}`,
+        );
+      }
+      
       if (statusCode === 400 && isBalanceOrAllowanceReason(reason)) {
         this.applyBalanceCooldown(
           now,
@@ -286,6 +297,17 @@ export class OrderSubmissionController {
       }
 
       const reason = normalizeReason(extractReason(error) || "request_error");
+      
+      // Check for cooldownUntil in the error response and cache it
+      const cooldownUntil = extractCooldownUntil(error);
+      if (cooldownUntil && params.tokenId && params.side) {
+        const cooldownKey = `${params.tokenId}:${params.side}`;
+        this.hardCooldownCache.set(cooldownKey, cooldownUntil);
+        params.logger.warn(
+          `[CLOB] Hard cooldown set: ${params.side} on token ${params.tokenId.slice(0, 8)}... until ${new Date(cooldownUntil).toISOString()}`,
+        );
+      }
+      
       if (statusCode === 400 && isBalanceOrAllowanceReason(reason)) {
         this.applyBalanceCooldown(
           now,

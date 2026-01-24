@@ -344,7 +344,7 @@ export class ScalpTakeProfitStrategy {
     const minProfit = activePositions.filter(
       (p) => p.pnlPct >= this.config.minProfitPct,
     );
-    
+
     // Always log summary so user can see what positions exist
     this.logger.info(
       `[ScalpTakeProfit] 📊 Active positions: ${activePositions.length} total | ` +
@@ -352,7 +352,7 @@ export class ScalpTakeProfitStrategy {
       `${minProfit.length} >= min ${this.config.minProfitPct}% | ` +
       `${targetProfit.length} >= target ${this.config.targetProfitPct}%`,
     );
-    
+
     // Log each profitable position with details
     if (profitable.length > 0) {
       for (const p of profitable.slice(0, 10)) { // Top 10
