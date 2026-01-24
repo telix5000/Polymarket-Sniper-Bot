@@ -282,10 +282,11 @@ export class AutoRedeemStrategy {
       if (isHighPricedNotRedeemable) {
         // Position is at ~100¢ but not flagged as redeemable - try direct fallback sell
         const enableFallbackSell = this.config.enableFallbackSell !== false; // Default: true
+        const firstPosition = marketPositions[0];
         
         if (enableFallbackSell && !this.fallbackSellAttempted.has(marketId)) {
           this.logger.info(
-            `[AutoRedeem] 💰 Position at ${(position.currentPrice * 100).toFixed(1)}¢ (not yet redeemable) - attempting direct SELL at ${(AutoRedeemStrategy.FALLBACK_SELL_PRICE * 100).toFixed(1)}¢ for market ${marketId}`,
+            `[AutoRedeem] 💰 Position at ${(firstPosition.currentPrice * 100).toFixed(1)}¢ (not yet redeemable) - attempting direct SELL at ${(AutoRedeemStrategy.FALLBACK_SELL_PRICE * 100).toFixed(1)}¢ for market ${marketId}`,
           );
           
           const sellSuccess = await this.attemptFallbackSell(marketPositions);
@@ -619,12 +620,15 @@ export class AutoRedeemStrategy {
           `[AutoRedeem] 💰 Fallback selling ${position.size.toFixed(2)} shares of ${position.side} at ${(AutoRedeemStrategy.FALLBACK_SELL_PRICE * 100).toFixed(1)}¢ (~$${sizeUsd.toFixed(2)})`,
         );
 
+        // Normalize outcome for order API - tokenId is what identifies the actual outcome
+        const orderOutcome = this.normalizeOutcomeForOrder(position.side);
+
         const result = await postOrder({
           client: this.client,
           wallet,
           marketId: position.marketId,
           tokenId: position.tokenId,
-          outcome: (position.side?.toUpperCase() as "YES" | "NO") || "YES",
+          outcome: orderOutcome,
           side: "SELL",
           sizeUsd,
           maxAcceptablePrice: AutoRedeemStrategy.FALLBACK_SELL_PRICE,
@@ -652,6 +656,27 @@ export class AutoRedeemStrategy {
     }
 
     return anySuccess;
+  }
+
+  /**
+   * Normalize an outcome string to the OrderOutcome type expected by postOrder.
+   * 
+   * For YES/NO markets: returns "YES" or "NO" as-is
+   * For multi-outcome markets (e.g., "Bucks", "Over", "Medjedovic"): returns "YES" as placeholder
+   * 
+   * The tokenId is what actually identifies the specific outcome for order execution,
+   * so the outcome field is primarily for logging and internal bookkeeping.
+   */
+  private normalizeOutcomeForOrder(outcome: string | undefined): "YES" | "NO" {
+    if (!outcome) {
+      return "YES";
+    }
+    const upper = outcome.toUpperCase();
+    if (upper === "YES" || upper === "NO") {
+      return upper as "YES" | "NO";
+    }
+    // For non-YES/NO markets, use "YES" as placeholder - tokenId identifies the actual outcome
+    return "YES";
   }
 
   /**
