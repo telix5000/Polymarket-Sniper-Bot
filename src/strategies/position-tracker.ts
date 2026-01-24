@@ -312,6 +312,14 @@ export class PositionTracker {
   }
 
   /**
+   * Get active positions that are losing (pnlPct < 0)
+   * Use this for stop-loss or hedging strategies
+   */
+  getActiveLosingPositions(): Position[] {
+    return this.getActivePositions().filter((pos) => pos.pnlPct < 0);
+  }
+
+  /**
    * Get active positions above a profit threshold
    * Use this for scalping with minimum profit requirements
    */

@@ -347,7 +347,7 @@ export class ScalpTakeProfitStrategy {
     // This ensures consistent reporting across all strategies
     const activePositions = this.positionTracker.getActivePositions();
     const profitable = this.positionTracker.getActiveProfitablePositions();
-    const losing = activePositions.filter((p) => p.pnlPct < 0);
+    const losing = this.positionTracker.getActiveLosingPositions();
     const targetProfit = this.positionTracker.getActivePositionsAboveTarget(
       this.config.targetProfitPct,
     );
