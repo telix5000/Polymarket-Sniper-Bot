@@ -429,21 +429,43 @@ export class ScalpTakeProfitStrategy {
         (p) => p.pnlPct >= this.config.minProfitPct,
       ) as Position[];
 
-      // === BUG DETECTION: Verify snapshot consistency ===
+      // === INVARIANT CHECK: SNAPSHOT_MISMATCH ===
       // If snapshot says activeTotal > 0 but we see 0, that's a BUG
+      // Enhanced with rawCounts and classification reasons from snapshot
       if (
         effectiveSnapshot.summary.activeTotal > 0 &&
         activePositions.length === 0
       ) {
-        this.logger.error(
-          `[ScalpTakeProfit] BUG DETECTED: cycleId=${effectiveSnapshot.cycleId} ` +
-            `addressUsed=${holdingAddress} ` +
-            `snapshot.summary.activeTotal=${effectiveSnapshot.summary.activeTotal} ` +
-            `but activePositions.length=0. ` +
-            `First 3 summary: prof=${effectiveSnapshot.summary.prof} ` +
-            `lose=${effectiveSnapshot.summary.lose} ` +
-            `unknown=${effectiveSnapshot.summary.unknown}`,
-        );
+        // Rate-limit this error log to avoid spam
+        if (
+          this.logDeduper.shouldLog(
+            "ScalpTakeProfit:SNAPSHOT_MISMATCH",
+            60_000, // 60 second TTL
+          )
+        ) {
+          const rawCounts = effectiveSnapshot.rawCounts;
+          const classificationReasons = effectiveSnapshot.classificationReasons;
+          let reasonsStr = "none";
+          if (classificationReasons && classificationReasons.size > 0) {
+            const reasons: string[] = [];
+            for (const [reason, count] of classificationReasons) {
+              reasons.push(`${reason}=${count}`);
+            }
+            reasonsStr = reasons.join(", ");
+          }
+
+          this.logger.error(
+            `[ScalpTakeProfit] 🐛 SNAPSHOT_MISMATCH: cycleId=${effectiveSnapshot.cycleId} ` +
+              `addressUsed=${holdingAddress?.slice(0, 10)}... ` +
+              `snapshot.summary.activeTotal=${effectiveSnapshot.summary.activeTotal} ` +
+              `but activePositions.length=0. ` +
+              `rawCounts=${JSON.stringify(rawCounts ?? "unavailable")} ` +
+              `classification_reasons=[${reasonsStr}] ` +
+              `Summary: prof=${effectiveSnapshot.summary.prof} ` +
+              `lose=${effectiveSnapshot.summary.lose} ` +
+              `unknown=${effectiveSnapshot.summary.unknown}`,
+          );
+        }
       }
     } else {
       // FALLBACK: No snapshot available, use positionTracker methods (legacy path)

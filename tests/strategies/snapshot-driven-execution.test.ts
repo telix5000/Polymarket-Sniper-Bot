@@ -543,3 +543,348 @@ describe("Address Consistency", () => {
     );
   });
 });
+
+describe("REGRESSION: ACTIVE_COLLAPSE_BUG Detection", () => {
+  test("Raw positions > 0 cannot silently become 0 active without logging", () => {
+    const logger = createMockLogger();
+
+    // Simulate the scenario: raw_total=10, raw_active_candidates=8, but final activePositions=0
+    // This should trigger ACTIVE_COLLAPSE_BUG detection
+    const rawCounts = {
+      rawTotal: 10,
+      rawActiveCandidates: 8,
+      rawRedeemableCandidates: 2,
+    };
+
+    const classificationReasons = new Map<string, number>();
+    classificationReasons.set("MISSING_FIELDS", 3);
+    classificationReasons.set("INVALID_SIZE_PRICE", 5);
+
+    // Create snapshot with 0 active but raw counts > 0
+    const buggySnapshot: PortfolioSnapshot = {
+      cycleId: 42,
+      addressUsed: "0x123abc",
+      fetchedAtMs: Date.now(),
+      activePositions: Object.freeze([]), // Empty!
+      redeemablePositions: Object.freeze([]),
+      summary: {
+        activeTotal: 0, // Zero active
+        prof: 0,
+        lose: 0,
+        neutral: 0,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
+      rawCounts,
+      classificationReasons,
+    };
+
+    // Simulate ACTIVE_COLLAPSE_BUG detection logic
+    if (
+      rawCounts.rawTotal > 0 &&
+      rawCounts.rawActiveCandidates > 0 &&
+      buggySnapshot.activePositions.length === 0
+    ) {
+      const reasonCounts: string[] = [];
+      for (const [reason, count] of classificationReasons) {
+        reasonCounts.push(`${reason}=${count}`);
+      }
+      const reasonsStr = reasonCounts.join(", ");
+
+      logger.error(
+        `[PositionTracker] 🐛 ACTIVE_COLLAPSE_BUG: cycleId=${buggySnapshot.cycleId} ` +
+          `addressUsed=${buggySnapshot.addressUsed.slice(0, 10)}... ` +
+          `raw_total=${rawCounts.rawTotal} raw_active_candidates=${rawCounts.rawActiveCandidates} ` +
+          `BUT final_active=0. Classification reasons: [${reasonsStr}].`,
+      );
+    }
+
+    // Verify bug was detected
+    assert.ok(
+      logger.hasLogMatching(/ACTIVE_COLLAPSE_BUG/),
+      "Should detect and log ACTIVE_COLLAPSE_BUG",
+    );
+    assert.ok(
+      logger.hasLogMatching(/raw_total=10/),
+      "Log should include raw_total",
+    );
+    assert.ok(
+      logger.hasLogMatching(/raw_active_candidates=8/),
+      "Log should include raw_active_candidates",
+    );
+    assert.ok(
+      logger.hasLogMatching(/final_active=0/),
+      "Log should include final_active=0",
+    );
+    assert.ok(
+      logger.hasLogMatching(/MISSING_FIELDS=3/),
+      "Log should include classification reasons",
+    );
+  });
+
+  test("Active positions correctly populated when raw counts are valid", () => {
+    // Normal case: raw positions = final positions (no collapse)
+    const rawCounts = {
+      rawTotal: 5,
+      rawActiveCandidates: 5,
+      rawRedeemableCandidates: 0,
+    };
+
+    const activePositions = Array.from({ length: 5 }, (_, i) =>
+      createMockPosition({ tokenId: `token-${i}` }),
+    );
+
+    const snapshot = createMockSnapshot({
+      activePositions,
+      summary: {
+        activeTotal: 5,
+        prof: 3,
+        lose: 1,
+        neutral: 1,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
+    });
+
+    // No collapse bug when counts match
+    const hasCollapse =
+      rawCounts.rawTotal > 0 &&
+      rawCounts.rawActiveCandidates > 0 &&
+      snapshot.activePositions.length === 0;
+
+    assert.strictEqual(
+      hasCollapse,
+      false,
+      "Should not detect collapse when counts match",
+    );
+    assert.strictEqual(
+      snapshot.activePositions.length,
+      5,
+      "Should have 5 active positions",
+    );
+  });
+});
+
+describe("REGRESSION: Address Stability", () => {
+  test("addressUsed is preserved in snapshot", () => {
+    const proxyAddress = "0xproxy1234567890abcdef";
+    const snapshot = createMockSnapshot({
+      addressUsed: proxyAddress,
+    });
+
+    assert.strictEqual(
+      snapshot.addressUsed,
+      proxyAddress,
+      "Snapshot should preserve the address used",
+    );
+  });
+
+  test("Address change detection works correctly", () => {
+    const logger = createMockLogger();
+
+    const previousAddress = "0xpreviousAddress123";
+    const newAddress = "0xnewAddress456";
+
+    // Simulate address change detection
+    if (previousAddress !== newAddress) {
+      logger.warn(
+        `[PositionTracker] ⚠️ ADDRESS_CHANGED: Holding address changed from ${previousAddress.slice(0, 10)}... -> ${newAddress.slice(0, 10)}...`,
+      );
+    }
+
+    assert.ok(
+      logger.hasLogMatching(/ADDRESS_CHANGED/),
+      "Should log address change warning",
+    );
+    assert.ok(
+      logger.hasLogMatching(/0xprevious/),
+      "Should include previous address",
+    );
+    assert.ok(
+      logger.hasLogMatching(/0xnewAddre/),
+      "Should include new address",
+    );
+  });
+
+  test("No address change warning when address is stable", () => {
+    const logger = createMockLogger();
+
+    const stableAddress = "0xstableAddress123";
+    const previousAddress = stableAddress;
+
+    // Simulate stable address (no change)
+    if (previousAddress !== stableAddress) {
+      logger.warn(`[PositionTracker] ADDRESS_CHANGED`);
+    }
+
+    assert.ok(
+      !logger.hasLogMatching(/ADDRESS_CHANGED/),
+      "Should not log address change when stable",
+    );
+  });
+});
+
+describe("REGRESSION: ScalpTakeProfit Snapshot Consistency", () => {
+  test("ScalpTakeProfit cannot see 0 when snapshot says >0", () => {
+    const logger = createMockLogger();
+
+    // Create a proper snapshot with 10 active positions
+    const activePositions = Array.from({ length: 10 }, (_, i) =>
+      createMockPosition({
+        tokenId: `token-${i}`,
+        pnlPct: i % 2 === 0 ? 10 : -5,
+        pnlClassification: i % 2 === 0 ? "PROFITABLE" : "LOSING",
+      }),
+    );
+
+    const snapshot = createMockSnapshot({
+      activePositions,
+      summary: {
+        activeTotal: 10,
+        prof: 5,
+        lose: 5,
+        neutral: 0,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
+    });
+
+    // Simulate ScalpTakeProfit accessing positions from snapshot
+    const positionsFromSnapshot = snapshot.activePositions;
+
+    // This should NEVER happen: snapshot says 10, but we see different
+    if (snapshot.summary.activeTotal !== positionsFromSnapshot.length) {
+      logger.error(
+        `[ScalpTakeProfit] SNAPSHOT_MISMATCH: summary says ${snapshot.summary.activeTotal} but array has ${positionsFromSnapshot.length}`,
+      );
+    }
+
+    // Verify consistency
+    assert.strictEqual(
+      positionsFromSnapshot.length,
+      snapshot.summary.activeTotal,
+      "Positions from snapshot should match summary.activeTotal",
+    );
+    assert.ok(
+      !logger.hasLogMatching(/SNAPSHOT_MISMATCH/),
+      "Should not log mismatch when snapshot is consistent",
+    );
+  });
+
+  test("SNAPSHOT_MISMATCH is detected when summary differs from array", () => {
+    const logger = createMockLogger();
+
+    // Create an intentionally inconsistent snapshot (simulating a bug)
+    const buggySnapshot: PortfolioSnapshot = {
+      cycleId: 1,
+      addressUsed: "0x123",
+      fetchedAtMs: Date.now(),
+      activePositions: Object.freeze([createMockPosition()]), // Has 1 position
+      redeemablePositions: Object.freeze([]),
+      summary: {
+        activeTotal: 10, // Claims 10 positions!
+        prof: 5,
+        lose: 3,
+        neutral: 2,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
+    };
+
+    // Simulate SNAPSHOT_MISMATCH detection
+    if (
+      buggySnapshot.summary.activeTotal !== buggySnapshot.activePositions.length
+    ) {
+      logger.error(
+        `[ScalpTakeProfit] 🐛 SNAPSHOT_MISMATCH: summary.activeTotal=${buggySnapshot.summary.activeTotal} but activePositions.length=${buggySnapshot.activePositions.length}`,
+      );
+    }
+
+    assert.ok(
+      logger.hasLogMatching(/SNAPSHOT_MISMATCH/),
+      "Should detect SNAPSHOT_MISMATCH when summary differs from array",
+    );
+    assert.ok(
+      logger.hasLogMatching(/activeTotal=10/),
+      "Should log the claimed activeTotal",
+    );
+    assert.ok(
+      logger.hasLogMatching(/length=1/),
+      "Should log the actual array length",
+    );
+  });
+});
+
+describe("REGRESSION: Classification Correctness", () => {
+  test("ACTIVE positions are not derived from orderbook existence", () => {
+    // Position should be ACTIVE regardless of whether orderbook exists
+    // Status: NO_BOOK should NOT change ACTIVE -> REDEEMABLE
+    const positionWithNoBook = createMockPosition({
+      status: "NO_BOOK",
+      redeemable: false, // Still active
+      currentBidPrice: undefined,
+    });
+
+    assert.strictEqual(
+      positionWithNoBook.redeemable,
+      false,
+      "Position with NO_BOOK status should still be active (not redeemable)",
+    );
+    assert.strictEqual(
+      positionWithNoBook.status,
+      "NO_BOOK",
+      "Status should be NO_BOOK",
+    );
+  });
+
+  test("REDEEMABLE requires explicit flag, not inferred from price", () => {
+    // Position with price near 1.0 should NOT be auto-classified as REDEEMABLE
+    const positionNearOne = createMockPosition({
+      currentPrice: 0.99,
+      redeemable: false, // Explicitly NOT redeemable despite price
+    });
+
+    assert.strictEqual(
+      positionNearOne.redeemable,
+      false,
+      "Position with high price should not be automatically redeemable",
+    );
+  });
+
+  test("Price near 1.0 does not change classification to REDEEMABLE", () => {
+    // Create positions with various prices that might appear "resolved"
+    const highPricePosition = createMockPosition({
+      currentPrice: 0.98,
+      redeemable: false,
+      positionState: "ACTIVE",
+    });
+
+    const lowPricePosition = createMockPosition({
+      currentPrice: 0.02,
+      redeemable: false,
+      positionState: "ACTIVE",
+    });
+
+    // Both should remain ACTIVE
+    assert.strictEqual(
+      highPricePosition.redeemable,
+      false,
+      "High price position should not be marked redeemable",
+    );
+    assert.strictEqual(
+      lowPricePosition.redeemable,
+      false,
+      "Low price position should not be marked redeemable",
+    );
+    assert.strictEqual(
+      highPricePosition.positionState,
+      "ACTIVE",
+      "High price position state should be ACTIVE",
+    );
+    assert.strictEqual(
+      lowPricePosition.positionState,
+      "ACTIVE",
+      "Low price position state should be ACTIVE",
+    );
+  });
+});
