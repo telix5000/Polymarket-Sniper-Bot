@@ -367,7 +367,7 @@ export class ScalpTakeProfitStrategy {
         total: activePositions.length,
       };
 
-      // Log summary at DEBUG level (use INFO only when there are actionable positions at target)
+      // Log summary at DEBUG level (use INFO only when there are positions at target profit threshold)
       if (targetProfit.length > 0) {
         this.logger.info(
           `[ScalpTakeProfit] 📊 Active positions: ${activePositions.length} total | ` +

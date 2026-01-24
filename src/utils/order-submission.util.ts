@@ -735,7 +735,7 @@ function extractCooldownUntil(response: unknown): number | undefined {
     if (value === undefined) return undefined;
     const parsed = typeof value === "string" ? parseInt(value, 10) : value;
     if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
-    // Normalize: if value looks like seconds (< year 2001 in ms), convert to ms
+    // Normalize: if value looks like seconds (< Sep 2001 in ms), convert to ms
     return parsed < 1e12 ? parsed * 1000 : parsed;
   };
 
