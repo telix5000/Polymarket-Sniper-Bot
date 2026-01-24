@@ -9,7 +9,166 @@ import {
   type OrderbookQualityStatus,
   type OrderbookQualityResult,
 } from "../../src/strategies/scalp-take-profit";
-import { OrderbookQualityError } from "../../src/utils/post-order.util";
+import { OrderbookQualityError, extractOrderbookPrices } from "../../src/utils/post-order.util";
+
+// === ORDERBOOK PRICE EXTRACTION TESTS ===
+
+describe("Orderbook Price Extraction", () => {
+  describe("bestBid extraction", () => {
+    test("should extract best bid from sorted bids array (descending)", () => {
+      const result = extractOrderbookPrices({
+        bids: [
+          { price: "0.65", size: "100" },
+          { price: "0.64", size: "200" },
+          { price: "0.63", size: "150" },
+        ],
+        asks: [
+          { price: "0.66", size: "100" },
+        ],
+      });
+
+      assert.equal(result.bestBid, 0.65);
+      assert.equal(result.bidCount, 3);
+    });
+
+    test("should find best bid even if array is not sorted", () => {
+      // If API returns unsorted, we should still find the max
+      const result = extractOrderbookPrices({
+        bids: [
+          { price: "0.63", size: "150" },
+          { price: "0.65", size: "100" }, // Max is not first
+          { price: "0.64", size: "200" },
+        ],
+        asks: [],
+      });
+
+      assert.equal(result.bestBid, 0.65);
+    });
+
+    test("should return null for empty bids array", () => {
+      const result = extractOrderbookPrices({
+        bids: [],
+        asks: [{ price: "0.66", size: "100" }],
+      });
+
+      assert.equal(result.bestBid, null);
+      assert.equal(result.bidCount, 0);
+    });
+  });
+
+  describe("bestAsk extraction", () => {
+    test("should extract best ask from sorted asks array (ascending)", () => {
+      const result = extractOrderbookPrices({
+        bids: [{ price: "0.64", size: "100" }],
+        asks: [
+          { price: "0.66", size: "100" },
+          { price: "0.67", size: "200" },
+          { price: "0.68", size: "150" },
+        ],
+      });
+
+      assert.equal(result.bestAsk, 0.66);
+      assert.equal(result.askCount, 3);
+    });
+
+    test("should find best ask even if array is not sorted", () => {
+      // If API returns unsorted, we should still find the min
+      const result = extractOrderbookPrices({
+        bids: [],
+        asks: [
+          { price: "0.68", size: "150" },
+          { price: "0.66", size: "100" }, // Min is not first
+          { price: "0.67", size: "200" },
+        ],
+      });
+
+      assert.equal(result.bestAsk, 0.66);
+    });
+
+    test("should return null for empty asks array", () => {
+      const result = extractOrderbookPrices({
+        bids: [{ price: "0.64", size: "100" }],
+        asks: [],
+      });
+
+      assert.equal(result.bestAsk, null);
+      assert.equal(result.askCount, 0);
+    });
+  });
+
+  describe("anomaly detection", () => {
+    test("should detect crossed book anomaly", () => {
+      const result = extractOrderbookPrices({
+        bids: [{ price: "0.70", size: "100" }],
+        asks: [{ price: "0.65", size: "100" }],
+      });
+
+      assert.equal(result.hasAnomaly, true);
+      assert.ok(result.anomalyReason?.includes("Crossed book"));
+      assert.equal(result.bestBid, 0.70);
+      assert.equal(result.bestAsk, 0.65);
+    });
+
+    test("should detect extreme spread anomaly", () => {
+      const result = extractOrderbookPrices({
+        bids: [{ price: "0.01", size: "100" }],
+        asks: [{ price: "0.99", size: "100" }],
+      });
+
+      assert.equal(result.hasAnomaly, true);
+      assert.ok(result.anomalyReason?.includes("Extreme spread"));
+    });
+
+    test("should not flag normal spread as anomaly", () => {
+      const result = extractOrderbookPrices({
+        bids: [{ price: "0.64", size: "100" }],
+        asks: [{ price: "0.66", size: "100" }],
+      });
+
+      assert.equal(result.hasAnomaly, false);
+      assert.equal(result.anomalyReason, undefined);
+    });
+  });
+
+  describe("edge cases", () => {
+    test("should handle undefined bids/asks gracefully", () => {
+      const result = extractOrderbookPrices({});
+
+      assert.equal(result.bestBid, null);
+      assert.equal(result.bestAsk, null);
+      assert.equal(result.bidCount, 0);
+      assert.equal(result.askCount, 0);
+      assert.equal(result.hasAnomaly, false);
+    });
+
+    test("should handle single bid/ask", () => {
+      const result = extractOrderbookPrices({
+        bids: [{ price: "0.50", size: "100" }],
+        asks: [{ price: "0.51", size: "100" }],
+      });
+
+      assert.equal(result.bestBid, 0.50);
+      assert.equal(result.bestAsk, 0.51);
+      assert.equal(result.bidCount, 1);
+      assert.equal(result.askCount, 1);
+    });
+
+    test("should handle large orderbook (>5 levels)", () => {
+      const bids = Array.from({ length: 20 }, (_, i) => ({
+        price: (0.50 - i * 0.01).toFixed(2),
+        size: "100",
+      }));
+      // Insert a higher bid at position 15 to test full scan
+      bids[15] = { price: "0.55", size: "100" };
+
+      const result = extractOrderbookPrices({ bids, asks: [] });
+
+      // Should find 0.55 as best bid even though it's deep in the array
+      assert.equal(result.bestBid, 0.55);
+      assert.equal(result.bidCount, 20);
+    });
+  });
+});
 
 // === ORDERBOOK QUALITY VALIDATION TESTS ===
 
@@ -328,5 +487,34 @@ describe("OrderbookQualityError", () => {
         assert.fail("Should have caught OrderbookQualityError");
       }
     }
+  });
+});
+
+// === CROSSED BOOK DETECTION TESTS ===
+
+describe("Crossed Book Detection", () => {
+  test("bestBid > bestAsk => INVALID_BOOK (impossible state)", () => {
+    // This should never happen in a valid orderbook
+    const result = validateOrderbookQuality(0.65, 0.60);
+
+    assert.equal(result.status, "INVALID_BOOK");
+    assert.ok(result.reason?.includes("Crossed book"));
+    assert.ok(result.reason?.includes("bestBid=65.0¢"));
+    assert.ok(result.reason?.includes("bestAsk=60.0¢"));
+  });
+
+  test("bestBid = bestAsk => VALID (locked book is acceptable)", () => {
+    // A locked book (bid == ask) is valid, just means no spread
+    const result = validateOrderbookQuality(0.65, 0.65);
+
+    assert.equal(result.status, "VALID");
+  });
+
+  test("crossed book detected before extreme spread check", () => {
+    // Even at extreme prices, crossed book should be caught first
+    const result = validateOrderbookQuality(0.99, 0.01);
+
+    assert.equal(result.status, "INVALID_BOOK");
+    assert.ok(result.reason?.includes("Crossed book"));
   });
 });
