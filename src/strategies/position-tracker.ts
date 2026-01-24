@@ -3445,7 +3445,7 @@ export class PositionTracker {
                   // even when the market was already resolved on-chain and could be redeemed.
 
                   if (marketId) {
-                    // Condition: price at 99.5%+, check on-chain regardless of orderbook
+                    // Price at or above RESOLVED_PRICE_HIGH_THRESHOLD, check on-chain regardless of orderbook
                     const isOnChainResolved =
                       await this.checkOnChainRedeemable(marketId);
 

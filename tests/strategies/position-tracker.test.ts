@@ -690,12 +690,12 @@ describe("PositionTracker Strict State Machine", () => {
   test("ONCHAIN_DENOM: Position with on-chain payoutDenominator > 0 should become REDEEMABLE", () => {
     // Simulates the new on-chain check logic:
     // - Data-API says NOT redeemable
-    // - Price is at 100¢ (suggesting resolved)
+    // - Price is at or above RESOLVED_PRICE_HIGH_THRESHOLD (≥99.5¢)
     // - On-chain payoutDenominator > 0 (confirmed resolved)
     // NOTE: We now check on-chain regardless of orderbook availability
 
     const dataApiRedeemable = false;
-    const currentPrice = 1.0; // 100¢
+    const currentPrice = 1.0; // 100¢ (above RESOLVED_PRICE_HIGH_THRESHOLD)
     const onChainPayoutDenominator = 1n; // > 0 means resolved on-chain
 
     // Price near resolution check
