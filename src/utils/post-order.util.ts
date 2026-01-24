@@ -588,13 +588,18 @@ async function postOrderClobInner(
   // This allows callers to distinguish between:
   // - "corrupted data, need circuit breaker" (OrderbookQualityError)
   // - "legitimate price too low" (regular Error from price protection)
-  const orderbookQuality = validateOrderbookQuality(bestBid, bestAsk);
+  //
+  // For SELL orders, use minAcceptablePrice as reference (represents expected price)
+  // For BUY orders, use maxAcceptablePrice as reference (represents expected price)
+  const referencePrice = side === "SELL" ? minAcceptablePrice : maxAcceptablePrice;
+  const orderbookQuality = validateOrderbookQuality(bestBid, bestAsk, referencePrice);
 
   if (orderbookQuality.status !== "VALID") {
     const errorMessage =
       `[CLOB] ORDERBOOK_QUALITY_FAILURE: ${orderbookQuality.status} for tokenId=${tokenId.slice(0, 12)}... ` +
       `bestBid=${bestBid !== null ? (bestBid * 100).toFixed(1) + "¢" : "null"} ` +
       `bestAsk=${bestAsk !== null ? (bestAsk * 100).toFixed(1) + "¢" : "null"} ` +
+      `referencePrice=${referencePrice !== undefined ? (referencePrice * 100).toFixed(1) + "¢" : "N/A"} ` +
       `reason: ${orderbookQuality.reason ?? "unknown"}`;
 
     logger.warn(errorMessage);
@@ -612,11 +617,15 @@ async function postOrderClobInner(
   });
 
   if (!priceProtection.valid) {
-    // Price protection failed with VALID orderbook - this is a legitimate price issue
-    // Log diagnostics with actionable context for debugging price protection failures
+    // Price protection failed with VALID orderbook - this is a legitimate price issue.
+    // NOTE: This error may repeat during exit plan execution until:
+    // 1. Market conditions improve (bestBid rises above minAcceptable)
+    // 2. Exit plan escalates to FORCE stage (exits at any price)
+    // 3. Exit plan is abandoned after max attempts
     logger.warn(
       `[CLOB] Price protection failed (valid book): ${priceProtection.error} ` +
-        `diagnostics=${JSON.stringify(priceProtection.diagnostics)}`,
+        `diagnostics=${JSON.stringify(priceProtection.diagnostics)} ` +
+        `(Will retry until FORCE stage or conditions improve)`,
     );
     throw new Error(priceProtection.error ?? "Price protection failed");
   }

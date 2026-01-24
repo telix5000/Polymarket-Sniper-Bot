@@ -9,6 +9,7 @@ import {
   type OrderbookQualityStatus,
   type OrderbookQualityResult,
 } from "../../src/strategies/scalp-take-profit";
+import { OrderbookQualityError } from "../../src/utils/post-order.util";
 
 // === ORDERBOOK QUALITY VALIDATION TESTS ===
 
@@ -240,8 +241,6 @@ describe("Edge Cases", () => {
 });
 
 // === ORDERBOOK QUALITY ERROR CLASS TESTS ===
-
-import { OrderbookQualityError } from "../../src/utils/post-order.util";
 
 describe("OrderbookQualityError", () => {
   test("should be an instance of Error", () => {
