@@ -4224,8 +4224,9 @@ export class PositionTracker {
         const is422 =
           errMsg.includes("422") || errMsg.includes("Unprocessable");
         const is429 = errMsg.includes("429") || errMsg.includes("Too Many");
+        // Match 5xx status codes (500-599) more explicitly
         const is5xx =
-          /\b5\d{2}\b/.test(errMsg) || errMsg.includes("Server Error");
+          /5[0-9]{2}/.test(errMsg) || errMsg.includes("Server Error");
 
         if (is422 || is429 || is5xx) {
           // Log at WARN level for batch failures that trigger fallback

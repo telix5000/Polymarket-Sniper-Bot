@@ -4851,7 +4851,8 @@ describe("PositionTracker Gamma Batch Fetch Error Handling", () => {
     ];
 
     for (const errMsg of errorMessages) {
-      const is5xx = /\b5\d{2}\b/.test(errMsg) || errMsg.includes("Server Error");
+      // Match 5xx status codes (500-599) more explicitly
+      const is5xx = /5[0-9]{2}/.test(errMsg) || errMsg.includes("Server Error");
       assert.ok(is5xx, `Should detect 5xx in: "${errMsg}"`);
     }
   });
