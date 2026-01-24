@@ -317,12 +317,12 @@ export class MempoolMonitorService {
       hasFailures || hasEligibleTrades || hashChanged || heartbeatElapsed;
 
     if (shouldLog) {
-      // Compute delta from previous (for indication of change)
-      const delta = hashChanged ? "Δ" : "♥"; // Δ = changed, ♥ = heartbeat
+      // Compute indicator for change type (Δ = changed, ♥ = heartbeat)
+      const indicator = hashChanged ? "Δ" : "♥";
 
       // Log compact INFO summary
       logger.info(
-        `[Monitor] ✓ ${checkedAddresses} addrs | eligible=${stats.eligibleTrades} recent=${stats.recentTrades} skipped=${totalSkipped} unsupported=${stats.skippedUnsupportedActionTrades} failed=${failedAddressChecks} (${delta}) [${durationMs}ms]`,
+        `[Monitor] ✓ ${checkedAddresses} addrs | eligible=${stats.eligibleTrades} recent=${stats.recentTrades} skipped=${totalSkipped} unsupported=${stats.skippedUnsupportedActionTrades} failed=${failedAddressChecks} (${indicator}) [${durationMs}ms]`,
       );
 
       // Update deduplication state
