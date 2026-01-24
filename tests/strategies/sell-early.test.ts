@@ -23,6 +23,9 @@ import type { Position } from "../../src/strategies/position-tracker";
  * - All optional gates (liquidity, spread, hold time) are OFF (0) by default
  */
 
+// Conversion factor: decimal price (0.999) * 100 = cents (99.9)
+const CENTS_TO_DECIMAL = 100;
+
 const baseEnv = {
   RPC_URL: "http://localhost:8545",
   PRIVATE_KEY: "0x" + "11".repeat(32),
@@ -241,7 +244,7 @@ describe("SellEarly Strategy Logic", () => {
       });
 
       // Verify bid in cents is at or above threshold
-      const bidCents = position.currentBidPrice! * 100;
+      const bidCents = position.currentBidPrice! * CENTS_TO_DECIMAL;
       assert.ok(
         bidCents >= config.bidCents,
         "Bid at 99.9¢ should meet threshold",
@@ -262,7 +265,7 @@ describe("SellEarly Strategy Logic", () => {
         currentBidPrice: 0.989, // 98.9¢
       });
 
-      const bidCents = position.currentBidPrice! * 100;
+      const bidCents = position.currentBidPrice! * CENTS_TO_DECIMAL;
       assert.ok(
         bidCents < config.bidCents,
         "Bid at 98.9¢ should NOT meet threshold",
@@ -283,7 +286,7 @@ describe("SellEarly Strategy Logic", () => {
         currentBidPrice: 0.9995, // 99.95¢
       });
 
-      const bidCents = position.currentBidPrice! * 100;
+      const bidCents = position.currentBidPrice! * CENTS_TO_DECIMAL;
       assert.ok(
         bidCents >= config.bidCents,
         "Bid at 99.95¢ should meet threshold",

@@ -205,7 +205,7 @@ export const STRATEGY_PRESETS = {
     SELL_EARLY_BID_CENTS: 99.9,
     SELL_EARLY_MIN_LIQUIDITY_USD: 0, // DISABLED by default
     SELL_EARLY_MAX_SPREAD_CENTS: 0, // DISABLED by default
-    SELL_EARLY_MIN_HOLD_SEC: 0, // DISABLED by default,
+    SELL_EARLY_MIN_HOLD_SEC: 0, // DISABLED by default
   },
   conservative: {
     STRATEGY_ENABLED: true,
