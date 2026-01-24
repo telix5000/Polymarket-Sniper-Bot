@@ -2609,8 +2609,8 @@ describe("P&L Math Correctness", () => {
       `P&L should be -$3.00, got ${pnlUsd}`,
     );
     
-    // Use tolerance for floating point comparison
-    const expectedPct = -5.357142857142857; // (0.53 - 0.56) / 0.56 * 100
+    // Calculate expected percentage inline for clarity
+    const expectedPct = ((currentPrice - entryPrice) / entryPrice) * 100; // -5.357...%
     assert.ok(
       Math.abs(pnlPct - expectedPct) < 0.01,
       `P&L should be approximately -5.36%, got ${pnlPct.toFixed(2)}%`,
@@ -2626,7 +2626,8 @@ describe("P&L Math Correctness", () => {
     const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
 
     assert.ok(Math.abs(pnlUsd - 2.5) < 0.0001, `P&L should be +$2.50, got ${pnlUsd}`);
-    const expectedPct = 7.692307692307692;
+    // Calculate expected percentage inline for clarity
+    const expectedPct = ((currentPrice - entryPrice) / entryPrice) * 100; // +7.692...%
     assert.ok(
       Math.abs(pnlPct - expectedPct) < 0.01,
       `P&L should be approximately +7.69%, got ${pnlPct.toFixed(2)}%`,
