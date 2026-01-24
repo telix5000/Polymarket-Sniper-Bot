@@ -29,13 +29,32 @@
  * Default TTL for skip logs (2 minutes)
  * Configurable via environment variable SKIP_LOG_TTL_MS
  */
-export const SKIP_LOG_TTL_MS =
-  parseInt(process.env.SKIP_LOG_TTL_MS ?? "", 10) || 120_000;
+const parseSkipLogTtl = (): number => {
+  const envValue = process.env.SKIP_LOG_TTL_MS;
+  if (!envValue) return 120_000;
+  
+  const parsed = parseInt(envValue, 10);
+  if (isNaN(parsed) || parsed < 0) {
+    console.warn(
+      `[LogDeduper] Invalid SKIP_LOG_TTL_MS value "${envValue}", using default 120000ms`
+    );
+    return 120_000;
+  }
+  return parsed;
+};
+
+export const SKIP_LOG_TTL_MS = parseSkipLogTtl();
 
 /**
  * Default heartbeat interval for summary logs (2 minutes)
  */
 export const HEARTBEAT_INTERVAL_MS = 120_000;
+
+/**
+ * Standard truncation length for tokenIds in log messages
+ * Provides enough characters to identify tokens while keeping logs readable
+ */
+export const TOKEN_ID_DISPLAY_LENGTH = 16;
 
 /**
  * Entry stored for each tracked log key

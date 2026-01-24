@@ -20,6 +20,7 @@ import {
   LogDeduper,
   SkipReasonAggregator,
   SKIP_LOG_TTL_MS,
+  TOKEN_ID_DISPLAY_LENGTH,
 } from "../utils/log-deduper.util";
 
 /**
@@ -229,7 +230,7 @@ export class SmartHedgingStrategy {
 
     for (const position of positions) {
       const key = `${position.marketId}-${position.tokenId}`;
-      const tokenIdShort = position.tokenId.slice(0, 16);
+      const tokenIdShort = position.tokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH);
 
       // Skip if already hedged
       if (this.hedgedPositions.has(key)) {

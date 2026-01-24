@@ -29,6 +29,7 @@ import {
   SkipReasonAggregator,
   SKIP_LOG_TTL_MS,
   HEARTBEAT_INTERVAL_MS,
+  TOKEN_ID_DISPLAY_LENGTH,
 } from "../utils/log-deduper.util";
 
 /**
@@ -502,7 +503,7 @@ export class ScalpTakeProfitStrategy {
 
     for (const position of enrichedPositions) {
       const positionKey = `${position.marketId}-${position.tokenId}`;
-      const tokenIdShort = position.tokenId.slice(0, 16);
+      const tokenIdShort = position.tokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH);
 
       // Skip if already exited
       if (this.exitedPositions.has(positionKey)) {
@@ -550,14 +551,24 @@ export class ScalpTakeProfitStrategy {
       const exitDecision = await this.evaluateScalpExit(position, now);
 
       if (!exitDecision.shouldExit) {
-        // Categorize skip reason for aggregation
+        // Categorize skip reason for aggregation using case-insensitive pattern matching
         if (exitDecision.reason) {
-          if (exitDecision.reason.includes("Hold")) {
+          const reasonLower = exitDecision.reason.toLowerCase();
+          if (reasonLower.includes("hold") && reasonLower.includes("min")) {
+            // Matches: "Hold Xmin < min Ymin", "Low-price position waiting..."
             skipAggregator.add(tokenIdShort, "hold_time");
-          } else if (exitDecision.reason.includes("Profit")) {
+          } else if (
+            reasonLower.includes("profit") &&
+            (reasonLower.includes("< min") || reasonLower.includes("below"))
+          ) {
+            // Matches: "Profit X% < min Y%", "Profit $X < min $Y"
             skipAggregator.add(tokenIdShort, "below_min_profit");
-          } else if (exitDecision.reason.includes("Resolution exclusion")) {
+          } else if (reasonLower.includes("resolution exclusion")) {
+            // Matches: "Resolution exclusion: entry..."
             skipAggregator.add(tokenIdShort, "resolution_exclusion");
+          } else if (reasonLower.includes("low-price")) {
+            // Matches various low-price scenarios
+            skipAggregator.add(tokenIdShort, "low_price_wait");
           } else {
             skipAggregator.add(tokenIdShort, "other");
           }
