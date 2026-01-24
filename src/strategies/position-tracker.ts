@@ -168,6 +168,24 @@ export interface CircuitBreakerEntry {
 }
 
 /**
+ * Reset level for PositionTracker self-heal.
+ * SOFT_RESET: Clear transient caches, clear in-flight promise
+ * HARD_RESET: Also recreate HTTP clients, clear all mapping caches
+ */
+export type ResetLevel = "SOFT_RESET" | "HARD_RESET";
+
+/**
+ * Self-heal event for watchdog monitoring
+ */
+export interface SelfHealEvent {
+  timestamp: number;
+  level: ResetLevel;
+  reason: string;
+  previousFailures: number;
+  staleAgeMs: number;
+}
+
+/**
  * Summary of position counts for a portfolio snapshot.
  * All strategies must use this for consistent reporting.
  */
@@ -572,13 +590,30 @@ export class PositionTracker {
   private static readonly MAX_BACKOFF_MS = 120_000; // 2 minutes max backoff
   private static readonly BASE_BACKOFF_MS = 5_000; // 5 seconds base backoff
   private static readonly FETCH_REGRESSION_THRESHOLD = 0.2; // 20% - below this is suspicious
-  private static readonly MAX_STALE_AGE_MS = 60_000; // 60 seconds - auto-clear stale snapshot to allow recovery (HFT-friendly)
+  private static readonly MAX_STALE_AGE_MS = 30_000; // 30 seconds - HFT requires fresh data
+
+  // === SELF-HEALING CONSTANTS (HFT-TIGHT) ===
+  // Bounded failure policy to prevent infinite degraded mode
+  private static readonly MAX_CONSECUTIVE_FAILURES = 5; // Trigger self-heal after 5 failures (HFT-tight)
+  private static readonly MAX_DEGRADED_DURATION_MS = 120_000; // 2 minutes max in degraded mode before HARD_RESET
+  private static readonly REFRESH_WATCHDOG_TIMEOUT_MS = 15_000; // 15 seconds max for a refresh cycle
+  private static readonly RECOVERY_MODE_MAX_CYCLES = 3; // Exit recovery mode after 3 successful cycles
+  private static readonly HEALTH_STATUS_LOG_INTERVAL_MS = 300_000; // Log health status every 5 minutes
+
+  // === SELF-HEALING STATE ===
+  private degradedModeEnteredAt: number = 0; // Timestamp when degraded mode started
+  private recoveryMode: boolean = false; // When true, relax validation temporarily
+  private recoveryCycleCount: number = 0; // Count successful cycles in recovery mode
+  private lastSelfHealAt: number = 0; // Timestamp of last self-heal trigger
+  private selfHealCount: number = 0; // Total self-heal events for diagnostics
+  private lastHealthStatusLogAt: number = 0; // For periodic health logging
+  private refreshAbortController: AbortController | null = null; // For aborting stuck refreshes
 
   /**
    * AUTO-RECOVERY BOOTSTRAP: When true, the next refresh will skip ACTIVE_COLLAPSE_BUG
    * validation to allow recovery similar to a container restart.
    * 
-   * Set when: Auto-recovery triggers because stale age >= MAX_STALE_AGE_MS (60 seconds).
+   * Set when: Auto-recovery triggers because stale age >= MAX_STALE_AGE_MS (30 seconds for HFT).
    *           This clears lastGoodSnapshot and enables bootstrap mode.
    * Cleared when: A snapshot is successfully accepted (validation passes or bypassed).
    * 
@@ -853,10 +888,21 @@ export class PositionTracker {
    * Stop tracking positions
    */
   stop(): void {
+    // Abort any in-flight refresh
+    if (this.refreshAbortController) {
+      this.refreshAbortController.abort();
+      this.refreshAbortController = null;
+    }
+    
     if (this.refreshTimer) {
       clearInterval(this.refreshTimer);
       this.refreshTimer = undefined;
     }
+    
+    // Clear the single-flight promise to prevent deadlocks
+    this.currentRefreshPromise = null;
+    this.isRefreshing = false;
+    
     // Clear caches to release memory
     this.marketOutcomeCache.clear();
     this.missingOrderbooks.clear();
@@ -865,6 +911,163 @@ export class PositionTracker {
     this.outcomeCache.clear();
     this.lastLoggedState.clear();
     this.logger.info("[PositionTracker] Stopped position tracking");
+  }
+
+  /**
+   * SELF-HEALING: Reset internal state to recover from stuck/degraded mode.
+   * 
+   * This method implements the self-heal lifecycle for PositionTracker.
+   * Call this when the tracker is stuck and needs recovery without container restart.
+   * 
+   * @param level - Reset level:
+   *   - SOFT_RESET: Clear transient caches, clear in-flight promise, reset throttling
+   *   - HARD_RESET: Also clear all mapping caches, address probe cache, circuit breakers
+   * @param reason - Human-readable reason for the reset (for logging)
+   */
+  resetState(level: ResetLevel, reason: string): void {
+    const now = Date.now();
+    const staleAge = this.lastGoodAtMs > 0 ? now - this.lastGoodAtMs : 0;
+    
+    this.logger.warn(
+      `[PositionTracker] 🔄 SELF_HEAL: level=${level} reason="${reason}" ` +
+        `failures=${this.consecutiveFailures} staleAge=${Math.round(staleAge / 1000)}s ` +
+        `selfHealCount=${this.selfHealCount + 1}`,
+    );
+
+    // Track self-heal event
+    this.selfHealCount++;
+    this.lastSelfHealAt = now;
+
+    // A) Cancel in-flight work
+    if (this.refreshAbortController) {
+      this.refreshAbortController.abort();
+      this.refreshAbortController = null;
+    }
+    this.currentRefreshPromise = null;
+    this.isRefreshing = false;
+    this.lastRefreshCyclePromise = null;
+
+    // B) Reset throttling/backoff - allow immediate retry
+    this.consecutiveFailures = 0;
+    this.currentBackoffMs = 0;
+    this.lastRefreshCompletedAt = 0; // Allow immediate refresh
+
+    // C) Clear transient caches (SOFT_RESET)
+    this.orderbookCache.clear();
+    this.missingOrderbooks.clear();
+    this.loggedFallbackPrices.clear();
+    this.lastLoggedState.clear();
+    
+    // Clear outcome cache TTLs (mark as stale so they refresh)
+    for (const [tokenId, entry] of this.outcomeCache) {
+      if (entry.status === "ACTIVE") {
+        entry.lastCheckedMs = 0; // Force refresh on next access
+      }
+    }
+
+    // D) Reset recovery tracking
+    this.degradedModeEnteredAt = 0;
+    this.recoveryMode = true; // Enter recovery mode to relax validation
+    this.recoveryCycleCount = 0;
+    this.allowBootstrapAfterAutoRecovery = true;
+
+    if (level === "HARD_RESET") {
+      // E) HARD_RESET: Clear all mapping caches
+      this.marketOutcomeCache.clear();
+      this.outcomeCache.clear();
+      this.marketEndTimeCache.clear();
+      this.circuitBreaker.clear();
+      
+      // F) Reset address probe to force re-detection
+      this.addressProbeCompleted = false;
+      this.cachedHoldingAddress = null;
+      this.cachedEOAAddress = null;
+      this.holdingAddressCacheMs = 0;
+      
+      // G) Clear lastGoodSnapshot to accept fresh data
+      this.lastGoodSnapshot = null;
+      this.lastGoodAtMs = 0;
+      this.lastSnapshot = null;
+
+      this.logger.info(
+        `[PositionTracker] 🔄 HARD_RESET complete: Cleared all caches and address probe. ` +
+          `Next refresh will re-probe addresses and accept fresh snapshot.`,
+      );
+    } else {
+      this.logger.info(
+        `[PositionTracker] 🔄 SOFT_RESET complete: Cleared transient caches. ` +
+          `Recovery mode enabled for next ${PositionTracker.RECOVERY_MODE_MAX_CYCLES} cycles.`,
+      );
+    }
+  }
+
+  /**
+   * Check if self-heal should be triggered based on current state.
+   * Returns the recommended reset level, or null if no reset needed.
+   */
+  checkSelfHealNeeded(): { level: ResetLevel; reason: string } | null {
+    const now = Date.now();
+    const staleAge = this.lastGoodAtMs > 0 ? now - this.lastGoodAtMs : 0;
+    const degradedDuration = this.degradedModeEnteredAt > 0 
+      ? now - this.degradedModeEnteredAt 
+      : 0;
+
+    // Rule 1: Too many consecutive failures -> SOFT_RESET
+    if (this.consecutiveFailures >= PositionTracker.MAX_CONSECUTIVE_FAILURES) {
+      return {
+        level: "SOFT_RESET",
+        reason: `consecutiveFailures=${this.consecutiveFailures} >= ${PositionTracker.MAX_CONSECUTIVE_FAILURES}`,
+      };
+    }
+
+    // Rule 2: Stale age exceeded -> SOFT_RESET
+    if (staleAge >= PositionTracker.MAX_STALE_AGE_MS && this.lastGoodAtMs > 0) {
+      return {
+        level: "SOFT_RESET",
+        reason: `staleAge=${Math.round(staleAge / 1000)}s >= ${Math.round(PositionTracker.MAX_STALE_AGE_MS / 1000)}s`,
+      };
+    }
+
+    // Rule 3: In degraded mode too long -> HARD_RESET
+    if (degradedDuration >= PositionTracker.MAX_DEGRADED_DURATION_MS) {
+      return {
+        level: "HARD_RESET",
+        reason: `degradedDuration=${Math.round(degradedDuration / 1000)}s >= ${Math.round(PositionTracker.MAX_DEGRADED_DURATION_MS / 1000)}s`,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Get self-healing status for external monitoring (Watchdog).
+   */
+  getSelfHealStatus(): {
+    consecutiveFailures: number;
+    staleAgeMs: number;
+    degradedDurationMs: number;
+    recoveryMode: boolean;
+    recoveryCycleCount: number;
+    selfHealCount: number;
+    lastSelfHealAt: number;
+    isHealthy: boolean;
+  } {
+    const now = Date.now();
+    const staleAgeMs = this.lastGoodAtMs > 0 ? now - this.lastGoodAtMs : 0;
+    const degradedDurationMs = this.degradedModeEnteredAt > 0 
+      ? now - this.degradedModeEnteredAt 
+      : 0;
+
+    return {
+      consecutiveFailures: this.consecutiveFailures,
+      staleAgeMs,
+      degradedDurationMs,
+      recoveryMode: this.recoveryMode,
+      recoveryCycleCount: this.recoveryCycleCount,
+      selfHealCount: this.selfHealCount,
+      lastSelfHealAt: this.lastSelfHealAt,
+      isHealthy: this.consecutiveFailures === 0 && !this.recoveryMode,
+    };
   }
 
   /**
@@ -1336,13 +1539,18 @@ export class PositionTracker {
   /**
    * CRASH-PROOF RECOVERY: Validate a new snapshot before publishing.
    *
-   * Validation rules (NON-NEGOTIABLE):
+   * Validation rules:
    * A) ACTIVE_COLLAPSE_BUG: If newSnap.rawTotal > 0 AND rawActiveCandidates > 0
-   *    AND activePositions.length === 0, REJECT.
+   *    AND activePositions.length === 0, REJECT (unless in recovery/bootstrap mode).
    * B) FETCH_REGRESSION: If newSnap.rawTotal < 20% of prevSnap.rawTotal
    *    (and prevSnap had > 0 positions), REJECT as suspicious.
    * C) ADDRESS_FLIP_COLLAPSE: If address changed AND position counts collapsed
    *    simultaneously, REJECT.
+   *
+   * RECOVERY MODE RELAXATION:
+   * - In recovery mode, ACTIVE_COLLAPSE_BUG is logged but not rejected
+   * - Snapshot is published with pnlTrusted=false for affected positions
+   * - This prevents indefinite stale mode from false positive detections
    *
    * @param newSnap The candidate snapshot to validate
    * @param prevSnap The previous known-good snapshot (for comparison)
@@ -1356,16 +1564,64 @@ export class PositionTracker {
     const rawActiveCandidates = newSnap.rawCounts?.rawActiveCandidates ?? 0;
     const finalActiveCount = newSnap.activePositions.length;
 
+    // Build classification reasons string for diagnostics
+    const reasonCounts: string[] = [];
+    if (newSnap.classificationReasons && newSnap.classificationReasons.size > 0) {
+      for (const [reason, count] of newSnap.classificationReasons) {
+        reasonCounts.push(`${reason}=${count}`);
+      }
+    }
+    // CRITICAL FIX: Never allow "none" for reasons - always have at least one entry
+    // If no skip reasons were recorded, add PROCESSED_OK count
+    if (reasonCounts.length === 0) {
+      const processedOk = rawActiveCandidates - finalActiveCount;
+      if (processedOk > 0) {
+        reasonCounts.push(`FILTERED_NO_REASON=${processedOk}`);
+      } else {
+        reasonCounts.push(`ALL_ACTIVE=${finalActiveCount}`);
+      }
+    }
+    const reasonsStr = reasonCounts.join(", ");
+
     // Rule A: ACTIVE_COLLAPSE_BUG
-    // If raw total > 0 AND raw active candidates > 0 BUT final active = 0, this is a bug
-    // EXCEPTION: Skip this check in bootstrap mode (after auto-recovery) to allow service
-    // to recover similar to a container restart when there's no baseline to compare
+    // If raw total > 0 AND raw active candidates > 0 BUT final active = 0, this may be a bug
+    // EXCEPTIONS that allow acceptance:
+    // 1. Bootstrap mode (after auto-recovery)
+    // 2. Recovery mode (relaxed validation)
+    // 3. Minimal acceptance rule: small raw counts with no real reasons
     if (rawTotal > 0 && rawActiveCandidates > 0 && finalActiveCount === 0) {
+      // Check for minimal acceptance rule:
+      // If rawTotal==rawActiveCandidates (no redeemable) and both are small (<=5),
+      // and no real skip reasons were logged, this is likely a classifier bug
+      // Accept the snapshot but log a warning
+      const isMinimalAcceptanceCase = 
+        rawTotal === rawActiveCandidates && 
+        rawTotal <= 5 &&
+        (reasonsStr.includes("FILTERED_NO_REASON") || reasonsStr.includes("ALL_ACTIVE"));
+
       if (this.allowBootstrapAfterAutoRecovery) {
         // Bootstrap mode: log and accept the snapshot despite ACTIVE_COLLAPSE_BUG
         this.logger.warn(
           `[PositionTracker] 🚀 BOOTSTRAP_RECOVERY: Accepting snapshot despite ACTIVE_COLLAPSE_BUG ` +
-            `(bootstrap mode after auto-recovery). rawTotal=${rawTotal} rawActiveCandidates=${rawActiveCandidates} finalActive=${finalActiveCount}`,
+            `(bootstrap mode). rawTotal=${rawTotal} rawActiveCandidates=${rawActiveCandidates} ` +
+            `finalActive=${finalActiveCount} reasons=[${reasonsStr}]`,
+        );
+        // Continue to other validations (don't return early)
+      } else if (this.recoveryMode) {
+        // Recovery mode: log and accept with warning
+        this.logger.warn(
+          `[PositionTracker] 🔄 RECOVERY_MODE: Accepting snapshot despite ACTIVE_COLLAPSE_BUG ` +
+            `(recovery mode active). rawTotal=${rawTotal} rawActiveCandidates=${rawActiveCandidates} ` +
+            `finalActive=${finalActiveCount} reasons=[${reasonsStr}]`,
+        );
+        // Continue to other validations (don't return early)
+      } else if (isMinimalAcceptanceCase) {
+        // Minimal acceptance rule: small counts with no clear reason
+        // This prevents classifier bugs from blocking indefinitely
+        this.logger.warn(
+          `[PositionTracker] ⚠️ MINIMAL_ACCEPTANCE: Accepting snapshot despite zero active ` +
+            `(small raw counts, no clear skip reasons). rawTotal=${rawTotal} rawActiveCandidates=${rawActiveCandidates} ` +
+            `finalActive=${finalActiveCount} reasons=[${reasonsStr}] - positions may have UNKNOWN pnl`,
         );
         // Continue to other validations (don't return early)
       } else {
@@ -1373,14 +1629,15 @@ export class PositionTracker {
           ok: false,
           reason: "ACTIVE_COLLAPSE_BUG",
           diagnostics:
-            `rawTotal=${rawTotal} rawActiveCandidates=${rawActiveCandidates} finalActive=${finalActiveCount}`,
+            `rawTotal=${rawTotal} rawActiveCandidates=${rawActiveCandidates} finalActive=${finalActiveCount} reasons=[${reasonsStr}]`,
         };
       }
     }
 
     // Rule B: FETCH_REGRESSION
     // If new snapshot has dramatically fewer positions than previous (< 20%), reject
-    if (prevSnap) {
+    // EXCEPTION: Skip in recovery mode to allow gradual restoration
+    if (prevSnap && !this.recoveryMode) {
       const prevRawTotal = prevSnap.rawCounts?.rawTotal ?? 0;
       if (
         prevRawTotal > 0 &&
@@ -1397,7 +1654,8 @@ export class PositionTracker {
 
     // Rule C: ADDRESS_FLIP_COLLAPSE
     // If address changed AND position counts collapsed, reject
-    if (prevSnap) {
+    // EXCEPTION: Skip in recovery mode
+    if (prevSnap && !this.recoveryMode) {
       const addressChanged = newSnap.addressUsed !== prevSnap.addressUsed;
       const prevActiveCount = prevSnap.activePositions.length;
       const countsCollapsed =
@@ -1454,11 +1712,11 @@ export class PositionTracker {
    *
    * When refresh fails:
    * 1. Increment consecutiveFailures
-   * 2. Calculate exponential backoff
-   * 3. Fall back to lastGoodSnapshot (marked as stale)
-   * 4. Log diagnostic with recovery info
-   * 5. AUTO-RECOVERY: If stale age exceeds MAX_STALE_AGE_MS, clear lastGoodSnapshot
-   *    to allow the next refresh to accept a fresh snapshot (simulates container restart)
+   * 2. Enter degraded mode if not already
+   * 3. Calculate exponential backoff
+   * 4. Fall back to lastGoodSnapshot (marked as stale)
+   * 5. Check if self-heal is needed and trigger it
+   * 6. AUTO-RECOVERY: If stale age exceeds MAX_STALE_AGE_MS, trigger self-heal
    *
    * @param error The error that caused the failure
    */
@@ -1466,6 +1724,23 @@ export class PositionTracker {
     const now = Date.now();
     this.consecutiveFailures++;
     this.lastErrorAtMs = now;
+
+    // Enter degraded mode if this is the first failure
+    if (this.degradedModeEnteredAt === 0) {
+      this.degradedModeEnteredAt = now;
+      this.logger.warn(
+        `[PositionTracker] ⚠️ DEGRADED_MODE_ENTERED: First failure, starting degraded mode tracking`,
+      );
+    }
+
+    // Check if self-heal is needed BEFORE calculating backoff
+    const selfHealCheck = this.checkSelfHealNeeded();
+    if (selfHealCheck) {
+      // Trigger self-heal - this will reset state and allow immediate retry
+      this.resetState(selfHealCheck.level, selfHealCheck.reason);
+      // After self-heal, don't apply backoff - allow immediate retry
+      return;
+    }
 
     // Calculate exponential backoff: base * 2^failures, capped at max
     this.currentBackoffMs = Math.min(
@@ -1489,19 +1764,14 @@ export class PositionTracker {
       const redeemableCount = staleSnapshot.redeemablePositions.length;
       const backoffSec = Math.round(this.currentBackoffMs / 1000);
 
-      // AUTO-RECOVERY: If snapshot is too stale, clear lastGoodSnapshot
-      // This allows the next refresh to accept a fresh snapshot, similar to container restart
+      // AUTO-RECOVERY: If snapshot is too stale, trigger SOFT_RESET
+      // This allows the next refresh to accept a fresh snapshot
       if (staleAgeMs >= PositionTracker.MAX_STALE_AGE_MS) {
         this.logger.warn(
-          `[PositionTracker] 🔄 AUTO-RECOVERY: Clearing stale snapshot (age=${staleAgeSec}s >= ${Math.round(PositionTracker.MAX_STALE_AGE_MS / 1000)}s threshold). ` +
-            `Next refresh will accept fresh data (bootstrap mode). reason="${error.message}" active=${activeCount} redeemable=${redeemableCount}`,
+          `[PositionTracker] 🔄 AUTO-RECOVERY: Stale age exceeded (age=${staleAgeSec}s >= ${Math.round(PositionTracker.MAX_STALE_AGE_MS / 1000)}s threshold). ` +
+            `Triggering SOFT_RESET. reason="${error.message}" active=${activeCount} redeemable=${redeemableCount}`,
         );
-        this.lastGoodSnapshot = null;
-        this.lastGoodAtMs = 0;
-        this.consecutiveFailures = 0;
-        this.currentBackoffMs = 0;
-        // Enable bootstrap mode: next refresh will skip ACTIVE_COLLAPSE_BUG validation
-        this.allowBootstrapAfterAutoRecovery = true;
+        this.resetState("SOFT_RESET", `staleAge=${staleAgeSec}s exceeded threshold`);
         return;
       }
 
@@ -1520,10 +1790,12 @@ export class PositionTracker {
       }
     } else {
       // No good snapshot to fall back to - this is critical
+      // Trigger HARD_RESET to attempt full recovery
       this.logger.error(
         `[PositionTracker] ❌ refresh_failed: reason="${error.message}" ` +
-          `NO lastGoodSnapshot available! failures=${this.consecutiveFailures}`,
+          `NO lastGoodSnapshot available! failures=${this.consecutiveFailures} - triggering HARD_RESET`,
       );
+      this.resetState("HARD_RESET", `no lastGoodSnapshot after ${this.consecutiveFailures} failures`);
     }
   }
 
@@ -1534,17 +1806,23 @@ export class PositionTracker {
    * 1. Reset consecutiveFailures to 0
    * 2. Clear backoff
    * 3. Update lastGoodSnapshot
-   * 4. Log recovery if we were in failed state
-   * 5. Clear bootstrap mode flag if it was set
+   * 4. Exit degraded mode
+   * 5. Track recovery mode cycles and exit when stable
+   * 6. Log recovery if we were in failed state
+   * 7. Clear bootstrap mode flag if it was set
    */
   private handleRefreshSuccess(): void {
     const wasInFailedState = this.consecutiveFailures > 0;
     const wasInBootstrapMode = this.allowBootstrapAfterAutoRecovery;
+    const wasInRecoveryMode = this.recoveryMode;
     const previousFailures = this.consecutiveFailures;
 
     // Reset failure tracking
     this.consecutiveFailures = 0;
     this.currentBackoffMs = 0;
+    
+    // Exit degraded mode
+    this.degradedModeEnteredAt = 0;
     
     // Clear bootstrap mode flag
     this.allowBootstrapAfterAutoRecovery = false;
@@ -1555,8 +1833,26 @@ export class PositionTracker {
       this.lastGoodAtMs = Date.now();
     }
 
+    // Track recovery mode cycles
+    if (this.recoveryMode) {
+      this.recoveryCycleCount++;
+      const activeCount = this.lastSnapshot?.activePositions.length ?? 0;
+      
+      // Exit recovery mode if:
+      // 1. We have active positions (snapshot is useful), OR
+      // 2. We've completed enough successful cycles
+      if (activeCount > 0 || this.recoveryCycleCount >= PositionTracker.RECOVERY_MODE_MAX_CYCLES) {
+        this.recoveryMode = false;
+        this.recoveryCycleCount = 0;
+        this.logger.info(
+          `[PositionTracker] ✅ RECOVERY_MODE_EXIT: Exiting recovery mode after ${this.recoveryCycleCount} cycles; ` +
+            `active=${activeCount} - normal validation resumed`,
+        );
+      }
+    }
+
     // Log recovery if we were in a failed state or bootstrap mode
-    if ((wasInFailedState || wasInBootstrapMode) && this.lastSnapshot) {
+    if ((wasInFailedState || wasInBootstrapMode || wasInRecoveryMode) && this.lastSnapshot) {
       const activeCount = this.lastSnapshot.activePositions.length;
       const redeemableCount = this.lastSnapshot.redeemablePositions.length;
 
@@ -1565,12 +1861,26 @@ export class PositionTracker {
           `[PositionTracker] ✅ BOOTSTRAP_RECOVERY complete: Service restored via bootstrap mode; ` +
             `snapshot accepted active=${activeCount}, redeemable=${redeemableCount}`,
         );
-      } else {
+      } else if (wasInFailedState) {
         this.logger.info(
-          `[PositionTracker] ✅ recovered after ${previousFailures} failures; ` +
+          `[PositionTracker] ✅ RECOVERED: recovered after ${previousFailures} failures; ` +
             `snapshot updated active=${activeCount}, redeemable=${redeemableCount}`,
         );
       }
+    }
+
+    // Periodic health status logging (every 5 minutes)
+    const now = Date.now();
+    if (now - this.lastHealthStatusLogAt >= PositionTracker.HEALTH_STATUS_LOG_INTERVAL_MS) {
+      this.lastHealthStatusLogAt = now;
+      const status = this.getSelfHealStatus();
+      const snapshot = this.lastSnapshot;
+      this.logger.info(
+        `[PositionTracker] health: snapshotAge=${Math.round(status.staleAgeMs / 1000)}s ` +
+          `failures=${status.consecutiveFailures} recoveryMode=${status.recoveryMode} ` +
+          `selfHealCount=${status.selfHealCount} active=${snapshot?.activePositions.length ?? 0} ` +
+          `redeemable=${snapshot?.redeemablePositions.length ?? 0}`,
+      );
     }
   }
 
