@@ -138,7 +138,7 @@ export interface ScalpTakeProfitConfig {
    * Maximum hold time (minutes) for low-price positions before cutting losses
    * If a low-price position hasn't profited within this window, exit at breakeven or trailing stop
    * This prevents holding volatile positions forever when they drop
-   * Set to 0 to disable (hold indefinitely). Default: 30 minutes
+   * Set to 0 to disable (hold indefinitely). Default: 3 minutes (quick scalps!)
    */
   lowPriceMaxHoldMinutes: number;
 }
@@ -210,7 +210,7 @@ export const DEFAULT_SCALP_TAKE_PROFIT_CONFIG: ScalpTakeProfitConfig = {
   suddenSpikeWindowMinutes: 10,
   // Low-price instant profit mode (disabled by default)
   lowPriceThreshold: 0, // Set via SCALP_LOW_PRICE_THRESHOLD to enable (e.g., 0.20 for ≤20¢)
-  lowPriceMaxHoldMinutes: 30, // Don't hold volatile low-price positions forever
+  lowPriceMaxHoldMinutes: 3, // Quick scalps - don't hold volatile positions long
 };
 
 /**

@@ -1283,7 +1283,7 @@ export type StrategyConfig = {
    * Maximum hold time (minutes) for low-price positions before cutting losses
    * If a low-price position hasn't profited within this window, exit at breakeven or small loss
    * Prevents holding volatile positions forever when they drop
-   * Set to 0 to disable (hold indefinitely). Default: 30 minutes
+   * Set to 0 to disable (hold indefinitely). Default: 3 minutes (quick scalps!)
    */
   scalpLowPriceMaxHoldMinutes: number;
   // Combined settings from ARB and MONITOR
@@ -1674,7 +1674,7 @@ export function loadStrategyConfig(
         ? (preset as { SCALP_LOW_PRICE_MAX_HOLD_MINUTES: number })
             .SCALP_LOW_PRICE_MAX_HOLD_MINUTES
         : undefined) ??
-      30, // Default: 30 minutes - don't hold volatile positions forever
+      3, // Default: 3 minutes - quick scalps, don't hold volatile positions
   };
 
   // Apply preset settings to environment for ARB and MONITOR config loaders
