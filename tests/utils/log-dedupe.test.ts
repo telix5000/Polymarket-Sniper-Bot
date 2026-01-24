@@ -106,10 +106,8 @@ describe("LogDedupeMiddleware", () => {
 
     test("replaces block numbers", () => {
       const msg = "Confirmed in block 12345678";
-      // Block number is 8 digits, which gets replaced by the large numeric ID rule
-      const normalized = normalizeMessage(msg);
-      assert.ok(normalized.includes("block"));
-      assert.ok(!normalized.includes("12345678")); // The number should be gone
+      // Block numbers are now explicitly handled before large numeric IDs
+      assert.equal(normalizeMessage(msg), "Confirmed in block N");
     });
 
     test("replaces gas prices", () => {

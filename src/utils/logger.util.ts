@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { getLogDedupe, type LogLevel as DedupeLevel } from "./log-dedupe.util";
+import { getLogDedupe } from "./log-dedupe.util";
 
 export interface Logger {
   info: (msg: string) => void;
@@ -23,7 +23,7 @@ const shouldLogDebug = (): boolean => {
 export class ConsoleLogger implements Logger {
   info(msg: string): void {
     const dedupe = getLogDedupe();
-    const result = dedupe.shouldEmit("info" as DedupeLevel, msg);
+    const result = dedupe.shouldEmit("info", msg);
     if (!result.emit) return;
 
     const outputMsg = result.suffix ? `${msg} ${result.suffix}` : msg;
@@ -32,7 +32,7 @@ export class ConsoleLogger implements Logger {
 
   warn(msg: string): void {
     const dedupe = getLogDedupe();
-    const result = dedupe.shouldEmit("warn" as DedupeLevel, msg);
+    const result = dedupe.shouldEmit("warn", msg);
     if (!result.emit) return;
 
     const outputMsg = result.suffix ? `${msg} ${result.suffix}` : msg;
@@ -41,7 +41,7 @@ export class ConsoleLogger implements Logger {
 
   error(msg: string, err?: Error): void {
     const dedupe = getLogDedupe();
-    const result = dedupe.shouldEmit("error" as DedupeLevel, msg);
+    const result = dedupe.shouldEmit("error", msg);
     if (!result.emit) return;
 
     const outputMsg = result.suffix ? `${msg} ${result.suffix}` : msg;
@@ -56,7 +56,7 @@ export class ConsoleLogger implements Logger {
     if (!shouldLogDebug()) return;
 
     const dedupe = getLogDedupe();
-    const result = dedupe.shouldEmit("debug" as DedupeLevel, msg);
+    const result = dedupe.shouldEmit("debug", msg);
     if (!result.emit) return;
 
     const outputMsg = result.suffix ? `${msg} ${result.suffix}` : msg;

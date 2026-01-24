@@ -148,14 +148,15 @@ export function normalizeMessage(message: string): string {
     "X CURRENCY",
   );
 
-  // Replace large numeric IDs (8+ digits)
-  normalized = normalized.replace(/\b\d{8,}\b/g, "…");
-
-  // Replace block numbers like "block 12345678"
+  // Replace block numbers like "block 12345678" BEFORE large numeric IDs
+  // (block numbers are often 8+ digits and should get specific treatment)
   normalized = normalized.replace(/block\s+\d+/gi, "block N");
 
   // Replace gas prices like "30 gwei" or "30gwei"
   normalized = normalized.replace(/\b\d+(?:\.\d+)?\s*gwei/gi, "X gwei");
+
+  // Replace large numeric IDs (8+ digits) - AFTER block numbers to avoid conflicts
+  normalized = normalized.replace(/\b\d{8,}\b/g, "…");
 
   return normalized;
 }
