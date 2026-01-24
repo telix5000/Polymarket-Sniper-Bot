@@ -426,11 +426,12 @@ export class PositionTracker {
 
     try {
       // Fetch proxy wallet from Gamma public profile API
+      // Uses GAMMA_PROFILE_ENDPOINT for consistency with other API endpoint constants
       interface ProfileResponse {
         proxyWallet?: string;
       }
 
-      const profileUrl = `${POLYMARKET_API.GAMMA_API_BASE_URL}/public-profile?address=${encodeURIComponent(signerAddress)}`;
+      const profileUrl = POLYMARKET_API.GAMMA_PROFILE_ENDPOINT(signerAddress);
       const profile = await httpGet<ProfileResponse>(profileUrl, {
         timeout: PositionTracker.API_TIMEOUT_MS,
       });
@@ -1644,6 +1645,11 @@ export class PositionTracker {
               // This is the CANONICAL source that matches Polymarket UI
               const hasDataApiPnl = dataApiPnlPct !== undefined && dataApiPnlUsd !== undefined;
               
+              // WHY !finalRedeemable: Redeemable positions are handled separately because:
+              // 1. Their settlement price is CERTAIN (1.0 for winner, 0.0 for loser)
+              // 2. Data-API P&L may lag behind actual resolution status
+              // 3. We've already computed the definitive settlement price above
+              // For ACTIVE positions, Data-API P&L is preferred as it matches UI.
               if (hasDataApiPnl && !finalRedeemable) {
                 // Use Data-API P&L as primary (matches UI)
                 pnlUsd = dataApiPnlUsd;
@@ -1662,9 +1668,10 @@ export class PositionTracker {
                 }
               } else if (finalRedeemable) {
                 // Redeemable positions: P&L is settlement-based (100% certainty)
+                // currentPrice was already set above to 1.0 (winner) or 0.0 (loser)
                 pnlUsd = (currentPrice - entryPrice) * size;
                 pnlPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
-                pnlSource = "DATA_API"; // Redeemable always trusted
+                pnlSource = "DATA_API"; // Redeemable always trusted (settlement is certain)
               } else if (bestBidPrice !== undefined && bestBidPrice > 0) {
                 // === SCENARIO 2: No Data-API P&L, but CLOB orderbook available ===
                 // Use CLOB best bid as mark price (executable P&L)
@@ -1701,10 +1708,17 @@ export class PositionTracker {
                 // CLOB orderbook P&L is trusted (executable)
                 pnlTrusted = true;
               } else if (pnlSource === "FALLBACK") {
-                // Fallback P&L is NOT trusted - no reliable mark price
-                // BUT: If Data-API provided curPrice or currentValue, we can still trust it
-                if (dataApiCurPrice !== undefined || dataApiCurrentValue !== undefined) {
-                  pnlTrusted = true; // Data-API provided some pricing info
+                // Fallback P&L is NOT fully trusted - no reliable orderbook mark price
+                // HOWEVER: If Data-API provided pricing info, we can still trust the P&L.
+                // 
+                // WHY curPrice OR currentValue is sufficient:
+                // - curPrice: The Data-API's market price - same source as Polymarket UI
+                // - currentValue: size * curPrice - if this exists, curPrice was used internally
+                // Either field indicates Data-API has pricing info, so our P&L calculation
+                // using that price is as trustworthy as the UI's display.
+                const hasDataApiPricing = dataApiCurPrice !== undefined || dataApiCurrentValue !== undefined;
+                if (hasDataApiPricing) {
+                  pnlTrusted = true; // Data-API provided pricing info
                 } else {
                   pnlTrusted = false;
                   pnlUntrustedReason = "NO_ORDERBOOK_BIDS";
