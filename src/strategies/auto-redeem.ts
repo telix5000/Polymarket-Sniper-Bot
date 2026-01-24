@@ -760,32 +760,50 @@ export class AutoRedeemStrategy {
           });
           
           if (result.state === "STATE_CONFIRMED" || result.state === "STATE_MINED") {
-            // Get USDC balance after redemption
+            // Verify redemption by checking both USDC balance AND token balance
             const balanceAfter = (await usdcContract.balanceOf(
               wallet.address,
             )) as bigint;
             const amountRedeemed = balanceAfter - balanceBefore;
             const amountRedeemedFormatted = formatUnits(amountRedeemed, 6);
+            
+            // Also check if token balance decreased (proves redemption executed)
+            const tokenBalanceAfter = (await ctfContract.balanceOf(
+              wallet.address,
+              tokenIdBigInt,
+            )) as bigint;
+            const tokensCleared = tokenBalance - tokenBalanceAfter;
 
-            // Provide clear feedback based on amount redeemed
-            if (amountRedeemed <= 0n) {
-              // $0 redeemed typically means losing position or already redeemed
+            // Provide clear feedback based on what actually happened
+            if (tokensCleared <= 0n) {
+              // Token balance didn't decrease - redemption may not have executed
+              const txLink = result.transactionHash 
+                ? `Verify tx on Polygonscan: https://polygonscan.com/tx/${result.transactionHash}`
+                : "No transaction hash available for verification.";
+              this.logger.warn(
+                `[AutoRedeem] ⚠️ Relayer tx confirmed (tx: ${result.transactionHash ?? "n/a"}) but token balance unchanged. ` +
+                  `Tokens before=${tokenBalance}, after=${tokenBalanceAfter}. Position may already be redeemed or tx reverted silently. ` +
+                  txLink,
+              );
+            } else if (amountRedeemed <= 0n) {
+              // Tokens cleared but $0 USDC - normal for losing position
               this.logger.info(
                 `[AutoRedeem] ✅ Relayer redemption confirmed (tx: ${result.transactionHash ?? "n/a"}). ` +
-                  `$0 USDC received - this is normal for losing positions (worthless shares).`,
+                  `Cleared ${tokensCleared} tokens, $0 USDC received - this is normal for losing positions (worthless shares). ` +
+                  `Position should clear from Polymarket within ~1-2 minutes.`,
               );
             } else {
-              // Funds should be available immediately after on-chain confirmation
+              // Winning position - funds received
               this.logger.info(
                 `[AutoRedeem] ✅ Relayer redemption confirmed, redeemed $${amountRedeemedFormatted} USDC (tx: ${result.transactionHash ?? "n/a"}). ` +
-                  `Funds are now in your wallet.`,
+                  `Cleared ${tokensCleared} tokens. Funds are now in your wallet.`,
               );
             }
 
             return {
               tokenId: position.tokenId,
               marketId: position.marketId,
-              success: true,
+              success: tokensCleared > 0n, // Only mark success if tokens actually cleared
               transactionHash: result.transactionHash,
               amountRedeemed: amountRedeemedFormatted,
             };
@@ -853,32 +871,47 @@ export class AutoRedeemStrategy {
           };
         }
 
-        // Get USDC balance after redemption
+        // Verify redemption by checking both USDC balance AND token balance
         const balanceAfter = (await usdcContract.balanceOf(
           wallet.address,
         )) as bigint;
         const amountRedeemed = balanceAfter - balanceBefore;
         const amountRedeemedFormatted = formatUnits(amountRedeemed, 6);
+        
+        // Also check if token balance decreased (proves redemption executed)
+        const tokenBalanceAfter = (await ctfContract.balanceOf(
+          wallet.address,
+          tokenIdBigInt,
+        )) as bigint;
+        const tokensCleared = tokenBalance - tokenBalanceAfter;
 
-        // Provide clear feedback based on amount redeemed
-        if (amountRedeemed <= 0n) {
-          // $0 redeemed typically means losing position or already redeemed
+        // Provide clear feedback based on what actually happened
+        if (tokensCleared <= 0n) {
+          // Token balance didn't decrease - redemption may not have executed
+          this.logger.warn(
+            `[AutoRedeem] ⚠️ Tx confirmed in block ${receipt.blockNumber} (tx: ${tx.hash}) but token balance unchanged. ` +
+              `Tokens before=${tokenBalance}, after=${tokenBalanceAfter}. Position may already be redeemed or tx reverted silently. ` +
+              `Verify tx on Polygonscan: https://polygonscan.com/tx/${tx.hash}`,
+          );
+        } else if (amountRedeemed <= 0n) {
+          // Tokens cleared but $0 USDC - normal for losing position
           this.logger.info(
             `[AutoRedeem] Redemption confirmed in block ${receipt.blockNumber} (tx: ${tx.hash}). ` +
-              `$0 USDC received - this is normal for losing positions (worthless shares).`,
+              `Cleared ${tokensCleared} tokens, $0 USDC received - this is normal for losing positions (worthless shares). ` +
+              `Position should clear from Polymarket within ~1-2 minutes.`,
           );
         } else {
-          // Funds should be available immediately after on-chain confirmation
+          // Winning position - funds received
           this.logger.info(
             `[AutoRedeem] Redemption confirmed in block ${receipt.blockNumber}, redeemed $${amountRedeemedFormatted} USDC (tx: ${tx.hash}). ` +
-              `Funds are now in your wallet.`,
+              `Cleared ${tokensCleared} tokens. Funds are now in your wallet.`,
           );
         }
 
         return {
           tokenId: position.tokenId,
           marketId: position.marketId,
-          success: true,
+          success: tokensCleared > 0n, // Only mark success if tokens actually cleared
           transactionHash: tx.hash,
           amountRedeemed: amountRedeemedFormatted,
         };
