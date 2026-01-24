@@ -389,10 +389,7 @@ export class SmartHedgingStrategy {
       // re-hedging and exceeding SMART_HEDGING_ABSOLUTE_MAX_USD.
       // This is critical: without this check, partial fills could trigger repeated
       // hedge attempts, each spending money until the total far exceeds the limit.
-      if (
-        hedgeResult.filledAmountUsd &&
-        hedgeResult.filledAmountUsd > 0
-      ) {
+      if (hedgeResult.filledAmountUsd) {
         this.logger.warn(
           `[SmartHedging] 🛑 Partial hedge fill ($${hedgeResult.filledAmountUsd.toFixed(2)}) - marking position as hedged to prevent exceeding ABSOLUTE_MAX`,
         );
@@ -475,10 +472,7 @@ export class SmartHedgingStrategy {
           }
 
           // Check for partial fill on retry - still mark as hedged to prevent exceeding limit
-          if (
-            retryResult.filledAmountUsd &&
-            retryResult.filledAmountUsd > 0
-          ) {
+          if (retryResult.filledAmountUsd) {
             this.logger.warn(
               `[SmartHedging] 🛑 Retry partial fill ($${retryResult.filledAmountUsd.toFixed(2)}) - marking position as hedged`,
             );

@@ -1278,7 +1278,6 @@ describe("Smart Hedging Insufficient Funds Fallback Logic", () => {
 /**
  * Tests for Partial Fill Protection
  *
- * Critical fix for: https://github.com/telix5000/Polymarket-Sniper-Bot/issues/XXX
  * When a hedge order is partially filled, the position should be marked as hedged
  * to prevent multiple hedge attempts that exceed SMART_HEDGING_ABSOLUTE_MAX_USD.
  */
