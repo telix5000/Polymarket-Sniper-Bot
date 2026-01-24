@@ -84,6 +84,7 @@ async function run(): Promise<void> {
     config: {
       enabled: true,
       minPositionUsd: 0, // Redeem all positions (no minimum)
+      checkIntervalMs: 30000, // Not used in CLI, but required by type
     },
   });
 

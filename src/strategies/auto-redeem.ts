@@ -1,266 +1,471 @@
-// ✅ DROP-IN REPLACEMENT for your redeemPosition() logic + the helpers it needs.
-// This fixes: "got invalid index set" by generating indexSets from on-chain outcomeSlotCount,
-// uses bigint[] (ethers v6 friendly), and keeps your proxy/direct flow intact.
-//
-// You can paste this into your AutoRedeemStrategy class and then:
-// 1) DELETE your current redeemPosition() implementation
-// 2) DELETE the hardcoded indexSets = Array.from({length: 16}...)
-// 3) ADD the small imports noted at the top if missing
+/**
+ * Auto-Redeem Strategy
+ *
+ * Automatically redeems resolved market positions to recover USDC.
+ * Based on: https://github.com/milanzandbak/polymarketredeemer/blob/main/polyredeemer.js
+ *
+ * When a market resolves (outcome determined), positions can be redeemed for USDC.
+ * This strategy:
+ * 1. Periodically checks for redeemable positions via Polymarket Data API
+ * 2. Fetches the user's proxy address (if any) from Polymarket
+ * 3. Sends redemption transactions to the CTF contract
+ *
+ * Configuration is minimal - only private key and RPC URL are needed.
+ * The public key is derived from the private key automatically.
+ */
 
-// ADD at top of file if you don't already have these:
-import { ZeroHash } from "ethers"; // ethers v6
+import { Contract, Interface, Wallet, ZeroHash } from "ethers";
+import type { TransactionResponse } from "ethers";
+import type { ClobClient } from "@polymarket/clob-client";
+import type { ConsoleLogger } from "../utils/logger.util";
+import type { PositionTracker, Position } from "./position-tracker";
+import type { RelayerContext } from "../polymarket/relayer";
+import { httpGet } from "../utils/fetch-data.util";
+import { POLYMARKET_API } from "../constants/polymarket.constants";
+import { resolvePolymarketContracts } from "../polymarket/contracts";
+import { CTF_ABI, PROXY_WALLET_ABI } from "../trading/exchange-abi";
 
-// ADD inside class (fields):
-private outcomeSlotCountCache = new Map<string, { n: bigint; ts: number }>();
-private static readonly OUTCOME_SLOTS_CACHE_MS = 60_000; // 1 min
-
-// ADD inside class (helpers):
-private async getOutcomeSlotCountCached(
-  wallet: Wallet,
-  ctfAddress: string,
-  conditionId: string,
-): Promise<bigint> {
-  const cached = this.outcomeSlotCountCache.get(conditionId);
-  const now = Date.now();
-  if (cached && now - cached.ts < AutoRedeemStrategy.OUTCOME_SLOTS_CACHE_MS) {
-    return cached.n;
-  }
-
-  const ctf = new Contract(ctfAddress, CTF_ABI, wallet.provider);
-  // CTF method name is typically getOutcomeSlotCount(bytes32)
-  const nRaw = await ctf.getOutcomeSlotCount(conditionId);
-  const n = BigInt(nRaw);
-
-  if (n <= 1n || n > 256n) {
-    throw new Error(`Invalid outcomeSlotCount=${n.toString()} for conditionId=${conditionId}`);
-  }
-
-  this.outcomeSlotCountCache.set(conditionId, { n, ts: now });
-  return n;
+/**
+ * Auto-Redeem Configuration
+ */
+export interface AutoRedeemConfig {
+  /** Enable auto-redemption */
+  enabled: boolean;
+  /** Minimum position value (USD) to bother redeeming */
+  minPositionUsd: number;
+  /** How often to check for redeemable positions (ms) */
+  checkIntervalMs: number;
 }
 
-private buildIndexSetsFromOutcomeSlots(outcomeSlotCount: bigint): bigint[] {
-  // Valid index sets are singletons: 1<<i, for i in [0..n-1], with constraint < fullIndexSet
-  // fullIndexSet = (1<<n)-1; for binary n=2 => full=3 => valid [1,2]
-  const fullIndexSet = (1n << outcomeSlotCount) - 1n;
-
-  const sets: bigint[] = [];
-  for (let i = 0n; i < outcomeSlotCount; i++) {
-    const s = 1n << i;
-    if (s > 0n && s < fullIndexSet) sets.push(s);
-  }
-
-  if (sets.length === 0) {
-    throw new Error(`No valid indexSets built for outcomeSlotCount=${outcomeSlotCount.toString()}`);
-  }
-  return sets;
+/**
+ * Result of a redemption attempt
+ */
+export interface RedemptionResult {
+  tokenId: string;
+  marketId: string;
+  success: boolean;
+  transactionHash?: string;
+  amountRedeemed?: string;
+  error?: string;
+  isRateLimited?: boolean;
+  isNotResolvedYet?: boolean;
 }
 
-private isRpcRateLimitError(msg: string): boolean {
-  return (
-    msg.includes("in-flight transaction limit") ||
-    msg.includes("rate limit") ||
-    msg.includes("429") ||
-    msg.includes("-32000")
-  );
+/**
+ * Auto-Redeem Strategy Options
+ */
+export interface AutoRedeemStrategyOptions {
+  client: ClobClient;
+  logger: ConsoleLogger;
+  positionTracker: PositionTracker;
+  relayer?: RelayerContext;
+  config: AutoRedeemConfig;
 }
 
-private isNotResolvedYetError(msg: string): boolean {
-  // CTF/UMA style messages vary by wrapper/provider
-  return (
-    msg.includes("result for condition not received yet") ||
-    msg.includes("condition not resolved") ||
-    msg.includes("payoutDenominator") ||
-    msg.includes("payout denominator") ||
-    msg.includes("not resolved")
-  );
-}
+/**
+ * Auto-Redeem Strategy
+ *
+ * Automatically claims resolved positions to recover USDC.
+ */
+export class AutoRedeemStrategy {
+  private client: ClobClient;
+  private logger: ConsoleLogger;
+  private positionTracker: PositionTracker;
+  private config: AutoRedeemConfig;
 
-// ✅ DROP-IN redeemPosition() replacement:
-private async redeemPosition(position: Position): Promise<RedemptionResult> {
-  const wallet = (this.client as { wallet?: Wallet }).wallet;
+  // Timing constants
+  private static readonly API_TIMEOUT_MS = 10_000;
+  private static readonly TX_CONFIRMATION_TIMEOUT_MS = 45_000;
 
-  if (!wallet) {
-    return {
-      tokenId: position.tokenId,
-      marketId: position.marketId,
-      success: false,
-      error: "No wallet available for redemption",
-    };
+  // Standard indexSets for binary (YES/NO) markets on Polymarket
+  // [1, 2] represents the two outcome slots in a binary market
+  // Based on: https://github.com/milanzandbak/polymarketredeemer
+  private static readonly BINARY_MARKET_INDEX_SETS = [1, 2];
+
+  // Bytes32 hex string length (0x + 64 hex chars)
+  private static readonly BYTES32_HEX_LENGTH = 66;
+
+  // Track redemption attempts to avoid spamming failed markets
+  private redemptionAttempts = new Map<
+    string,
+    { lastAttempt: number; failures: number }
+  >();
+  private static readonly REDEMPTION_RETRY_COOLDOWN_MS = 5 * 60 * 1000; // 5 min
+  private static readonly MAX_REDEMPTION_FAILURES = 3;
+
+  constructor(options: AutoRedeemStrategyOptions) {
+    this.client = options.client;
+    this.logger = options.logger;
+    this.positionTracker = options.positionTracker;
+    this.config = options.config;
   }
 
-  const contracts = resolvePolymarketContracts();
-  const ctfAddress = contracts.ctfAddress;
-  const usdcAddress = contracts.usdcAddress;
+  /**
+   * Execute the auto-redeem check cycle
+   * Called by the orchestrator on a schedule
+   * @returns The number of successful redemptions
+   */
+  async execute(): Promise<number> {
+    if (!this.config.enabled) {
+      return 0;
+    }
 
-  if (!ctfAddress || !usdcAddress) {
-    return {
-      tokenId: position.tokenId,
-      marketId: position.marketId,
-      success: false,
-      error: "CTF or USDC contract address not configured",
-    };
-  }
+    const redeemablePositions = this.getRedeemablePositions();
 
-  if (!wallet.provider) {
-    return {
-      tokenId: position.tokenId,
-      marketId: position.marketId,
-      success: false,
-      error: "No provider available",
-    };
-  }
+    if (redeemablePositions.length === 0) {
+      return 0;
+    }
 
-  // IMPORTANT: In your codebase, position.marketId appears to actually be a bytes32 conditionId.
-  // If this is not true, you MUST map Polymarket marketId -> conditionId via Gamma and use that here.
-  const conditionId = position.marketId;
-
-  if (!conditionId?.startsWith("0x") || conditionId.length !== 66) {
-    return {
-      tokenId: position.tokenId,
-      marketId: position.marketId,
-      success: false,
-      error: `Invalid conditionId format (expected bytes32): ${conditionId}`,
-    };
-  }
-
-  // Confirm on-chain resolution (you already have this helper)
-  const resolutionCheck = await this.isConditionResolvedOnChain(wallet, ctfAddress, conditionId);
-  if (resolutionCheck.error) {
-    this.logger.warn(
-      `[AutoRedeem] ⚠️ Could not verify on-chain resolution for ${conditionId.slice(0, 16)}...: ${resolutionCheck.error}`,
-    );
-    // Continue; the contract call will fail if truly not resolved
-  } else if (!resolutionCheck.resolved) {
     this.logger.info(
-      `[AutoRedeem] ⏳ Market ${conditionId.slice(0, 16)}... marked redeemable but NOT resolved on-chain yet (oracle hasn't reported results)`,
+      `[AutoRedeem] Found ${redeemablePositions.length} redeemable position(s)`,
     );
-    return {
-      tokenId: position.tokenId,
-      marketId: position.marketId,
-      success: false,
-      error: "Condition not resolved on-chain yet (payoutDenominator=0)",
-      isNotResolvedYet: true,
-    };
+
+    let successCount = 0;
+
+    for (const position of redeemablePositions) {
+      // Check if we should skip due to recent failures
+      if (this.shouldSkipRedemption(position.marketId)) {
+        continue;
+      }
+
+      const result = await this.redeemPosition(position);
+
+      // Track attempts
+      this.updateRedemptionAttempts(position.marketId, result);
+
+      if (result.success) {
+        successCount++;
+      }
+
+      // Small delay between redemptions to avoid rate limits
+      if (
+        redeemablePositions.indexOf(position) <
+        redeemablePositions.length - 1
+      ) {
+        await this.sleep(2000);
+      }
+    }
+
+    return successCount;
   }
 
-  try {
-    // 1) Find proxy (optional)
-    let proxyAddress: string | null = null;
-    try {
-      const profileUrl = POLYMARKET_API.PROFILE_ENDPOINT(wallet.address);
-      const profileData = await httpGet<{ proxyAddress?: string }>(profileUrl, {
-        timeout: AutoRedeemStrategy.API_TIMEOUT_MS,
-      });
-      if (profileData?.proxyAddress) {
-        proxyAddress = profileData.proxyAddress;
-        this.logger.debug(`[AutoRedeem] Found proxy address: ${proxyAddress}`);
+  /**
+   * Force redeem all positions (for CLI use)
+   */
+  async forceRedeemAll(): Promise<RedemptionResult[]> {
+    const redeemablePositions = this.getRedeemablePositions();
+
+    if (redeemablePositions.length === 0) {
+      this.logger.info("[AutoRedeem] No redeemable positions found");
+      return [];
+    }
+
+    const results: RedemptionResult[] = [];
+
+    for (const position of redeemablePositions) {
+      const result = await this.redeemPosition(position);
+      results.push(result);
+
+      // Small delay between redemptions
+      if (
+        redeemablePositions.indexOf(position) <
+        redeemablePositions.length - 1
+      ) {
+        await this.sleep(2000);
       }
-    } catch {
-      this.logger.debug(`[AutoRedeem] No proxy address found, using direct wallet`);
     }
 
-    const targetAddress = proxyAddress || wallet.address;
-    this.logger.info(`[AutoRedeem] Redeeming for ${targetAddress} (proxy=${!!proxyAddress})`);
+    return results;
+  }
 
-    // 2) Build correct indexSets based on on-chain outcomeSlotCount
-    const outcomeSlotCount = await this.getOutcomeSlotCountCached(wallet, ctfAddress, conditionId);
-    const indexSets = this.buildIndexSetsFromOutcomeSlots(outcomeSlotCount);
+  /**
+   * Get positions that are marked as redeemable
+   */
+  private getRedeemablePositions(): Position[] {
+    return this.positionTracker
+      .getPositions()
+      .filter((pos) => pos.redeemable === true)
+      .filter(
+        (pos) => pos.size * pos.currentPrice >= this.config.minPositionUsd,
+      );
+  }
 
-    this.logger.debug(
-      `[AutoRedeem] condition=${conditionId.slice(0, 10)}... outcomes=${outcomeSlotCount.toString()} indexSets=[${indexSets
-        .slice(0, 8)
-        .map((x) => x.toString())
-        .join(",")}${indexSets.length > 8 ? ",..." : ""}]`,
-    );
+  /**
+   * Check if we should skip redemption due to recent failures
+   */
+  private shouldSkipRedemption(marketId: string): boolean {
+    const attempts = this.redemptionAttempts.get(marketId);
+    if (!attempts) return false;
 
-    // 3) Encode redeemPositions call
-    const ctfInterface = new Interface(CTF_ABI);
-    const redeemData = ctfInterface.encodeFunctionData("redeemPositions", [
-      usdcAddress,
-      ZeroHash,      // parentCollectionId bytes32(0)
-      conditionId,   // bytes32
-      indexSets,     // bigint[]
-    ]);
-
-    // 4) Fee data w/ buffer
-    const feeData = await wallet.provider.getFeeData();
-    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
-      ? (feeData.maxPriorityFeePerGas * 130n) / 100n
-      : undefined;
-    const maxFeePerGas = feeData.maxFeePerGas ? (feeData.maxFeePerGas * 130n) / 100n : undefined;
-
-    const txOptions =
-      maxPriorityFeePerGas && maxFeePerGas ? { maxPriorityFeePerGas, maxFeePerGas } : {};
-
-    // 5) Send tx (proxy or direct)
-    let tx: TransactionResponse;
-
-    if (proxyAddress) {
-      this.logger.info(`[AutoRedeem] 🔄 Sending redemption via proxy ${proxyAddress.slice(0, 10)}...`);
-      const proxyContract = new Contract(proxyAddress, PROXY_WALLET_ABI, wallet);
-      tx = (await proxyContract.proxy(ctfAddress, redeemData, txOptions)) as TransactionResponse;
-    } else {
-      this.logger.info(`[AutoRedeem] 🔄 Sending direct redemption to CTF...`);
-      const ctfContract = new Contract(ctfAddress, CTF_ABI, wallet);
-      tx = (await ctfContract.redeemPositions(
-        usdcAddress,
-        ZeroHash,
-        conditionId,
-        indexSets,
-        txOptions,
-      )) as TransactionResponse;
+    // Skip if too many failures
+    if (attempts.failures >= AutoRedeemStrategy.MAX_REDEMPTION_FAILURES) {
+      return true;
     }
 
-    this.logger.info(`[AutoRedeem] ✅ Tx sent: ${tx.hash}`);
+    // Skip if still in cooldown
+    const cooldownRemaining =
+      attempts.lastAttempt +
+      AutoRedeemStrategy.REDEMPTION_RETRY_COOLDOWN_MS -
+      Date.now();
+    if (cooldownRemaining > 0) {
+      return true;
+    }
 
-    // 6) Wait for confirmation with timeout
-    const receipt = await Promise.race([
-      tx.wait(),
-      new Promise<null>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(
-                `Transaction timeout (${AutoRedeemStrategy.TX_CONFIRMATION_TIMEOUT_MS / 1000}s)`,
-              ),
-            ),
-          AutoRedeemStrategy.TX_CONFIRMATION_TIMEOUT_MS,
-        ),
-      ),
-    ]);
+    return false;
+  }
 
-    if (!receipt || receipt.status !== 1) {
+  /**
+   * Update redemption attempt tracking
+   */
+  private updateRedemptionAttempts(
+    marketId: string,
+    result: RedemptionResult,
+  ): void {
+    if (result.success) {
+      // Clear attempts on success
+      this.redemptionAttempts.delete(marketId);
+      return;
+    }
+
+    if (result.isRateLimited) {
+      // Don't count rate limits as failures
+      return;
+    }
+
+    if (result.isNotResolvedYet) {
+      // Don't increment failures for "not resolved yet" - just set cooldown
+      this.redemptionAttempts.set(marketId, {
+        lastAttempt: Date.now(),
+        failures: 0,
+      });
+      return;
+    }
+
+    // Track actual failure
+    const current = this.redemptionAttempts.get(marketId) || {
+      lastAttempt: 0,
+      failures: 0,
+    };
+    this.redemptionAttempts.set(marketId, {
+      lastAttempt: Date.now(),
+      failures: current.failures + 1,
+    });
+  }
+
+  /**
+   * Redeem a single position
+   * Based on: https://github.com/milanzandbak/polymarketredeemer/blob/main/polyredeemer.js
+   */
+  private async redeemPosition(position: Position): Promise<RedemptionResult> {
+    const wallet = (this.client as { wallet?: Wallet }).wallet;
+
+    if (!wallet) {
       return {
         tokenId: position.tokenId,
         marketId: position.marketId,
         success: false,
-        transactionHash: tx.hash,
-        error: "Transaction failed or reverted",
+        error: "No wallet available for redemption",
       };
     }
 
-    this.logger.info(
-      `[AutoRedeem] ✅ Confirmed in block ${receipt.blockNumber}. View on Polygonscan: https://polygonscan.com/tx/${tx.hash}`,
+    const contracts = resolvePolymarketContracts();
+    const ctfAddress = contracts.ctfAddress;
+    const usdcAddress = contracts.usdcAddress;
+
+    if (!ctfAddress || !usdcAddress) {
+      return {
+        tokenId: position.tokenId,
+        marketId: position.marketId,
+        success: false,
+        error: "CTF or USDC contract address not configured",
+      };
+    }
+
+    if (!wallet.provider) {
+      return {
+        tokenId: position.tokenId,
+        marketId: position.marketId,
+        success: false,
+        error: "No provider available",
+      };
+    }
+
+    // The marketId in Polymarket is the conditionId (bytes32)
+    const conditionId = position.marketId;
+
+    if (
+      !conditionId?.startsWith("0x") ||
+      conditionId.length !== AutoRedeemStrategy.BYTES32_HEX_LENGTH
+    ) {
+      return {
+        tokenId: position.tokenId,
+        marketId: position.marketId,
+        success: false,
+        error: `Invalid conditionId format (expected bytes32): ${conditionId}`,
+      };
+    }
+
+    try {
+      // 1) Find proxy address (optional) - from Polymarket Data API
+      let proxyAddress: string | null = null;
+      try {
+        const profileUrl = POLYMARKET_API.PROFILE_ENDPOINT(wallet.address);
+        const profileData = await httpGet<{ proxyAddress?: string }>(
+          profileUrl,
+          { timeout: AutoRedeemStrategy.API_TIMEOUT_MS },
+        );
+        if (profileData?.proxyAddress) {
+          proxyAddress = profileData.proxyAddress;
+          this.logger.debug(
+            `[AutoRedeem] Found proxy address: ${proxyAddress}`,
+          );
+        }
+      } catch {
+        this.logger.debug(
+          `[AutoRedeem] No proxy address found, using direct wallet`,
+        );
+      }
+
+      const targetAddress = proxyAddress || wallet.address;
+      this.logger.info(
+        `[AutoRedeem] Redeeming ${conditionId.slice(0, 16)}... for ${targetAddress.slice(0, 10)}... (proxy=${!!proxyAddress})`,
+      );
+
+      // 2) Get fee data with 30% buffer (like reference implementation)
+      const feeData = await wallet.provider.getFeeData();
+      const maxPriorityFee = feeData.maxPriorityFeePerGas
+        ? (feeData.maxPriorityFeePerGas * 130n) / 100n
+        : undefined;
+      const maxFee = feeData.maxFeePerGas
+        ? (feeData.maxFeePerGas * 130n) / 100n
+        : undefined;
+
+      const txDetails =
+        maxPriorityFee && maxFee
+          ? { maxPriorityFeePerGas: maxPriorityFee, maxFeePerGas: maxFee }
+          : {};
+
+      // 3) Encode the redemption call
+      // Using standard indexSets for binary markets (like reference implementation)
+      const ctfInterface = new Interface(CTF_ABI);
+      const redeemData = ctfInterface.encodeFunctionData("redeemPositions", [
+        usdcAddress,
+        ZeroHash, // parentCollectionId (always 0x0 for Polymarket)
+        conditionId,
+        AutoRedeemStrategy.BINARY_MARKET_INDEX_SETS,
+      ]);
+
+      // 4) Send transaction (via proxy if available, otherwise direct)
+      let tx: TransactionResponse;
+
+      if (
+        proxyAddress &&
+        proxyAddress.toLowerCase() !== wallet.address.toLowerCase()
+      ) {
+        // Use proxy contract to forward the call
+        this.logger.info(
+          `[AutoRedeem] 🔄 Sending via proxy ${proxyAddress.slice(0, 10)}...`,
+        );
+        const proxyContract = new Contract(
+          proxyAddress,
+          PROXY_WALLET_ABI,
+          wallet,
+        );
+        tx = (await proxyContract.proxy(
+          ctfAddress,
+          redeemData,
+          txDetails,
+        )) as TransactionResponse;
+      } else {
+        // Direct call to CTF contract
+        this.logger.info(`[AutoRedeem] 🔄 Sending direct redemption to CTF...`);
+        const ctfContract = new Contract(ctfAddress, CTF_ABI, wallet);
+        tx = (await ctfContract.redeemPositions(
+          usdcAddress,
+          ZeroHash,
+          conditionId,
+          AutoRedeemStrategy.BINARY_MARKET_INDEX_SETS,
+          txDetails,
+        )) as TransactionResponse;
+      }
+
+      this.logger.info(`[AutoRedeem] ✅ Tx sent: ${tx.hash}`);
+
+      // 5) Wait for confirmation with timeout
+      const receipt = await Promise.race([
+        tx.wait(),
+        new Promise<null>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Transaction timeout (45s)")),
+            AutoRedeemStrategy.TX_CONFIRMATION_TIMEOUT_MS,
+          ),
+        ),
+      ]);
+
+      if (!receipt || receipt.status !== 1) {
+        return {
+          tokenId: position.tokenId,
+          marketId: position.marketId,
+          success: false,
+          transactionHash: tx.hash,
+          error: "Transaction failed or reverted",
+        };
+      }
+
+      this.logger.info(
+        `[AutoRedeem] ✅ Confirmed in block ${receipt.blockNumber}. View: https://polygonscan.com/tx/${tx.hash}`,
+      );
+
+      return {
+        tokenId: position.tokenId,
+        marketId: position.marketId,
+        success: true,
+        transactionHash: tx.hash,
+      };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`[AutoRedeem] ❌ Error: ${errorMsg}`);
+
+      return {
+        tokenId: position.tokenId,
+        marketId: position.marketId,
+        success: false,
+        error: errorMsg,
+        isRateLimited: this.isRpcRateLimitError(errorMsg),
+        isNotResolvedYet: this.isNotResolvedYetError(errorMsg),
+      };
+    }
+  }
+
+  /**
+   * Check if error is due to RPC rate limiting
+   */
+  private isRpcRateLimitError(msg: string): boolean {
+    return (
+      msg.includes("in-flight transaction limit") ||
+      msg.includes("rate limit") ||
+      msg.includes("429") ||
+      msg.includes("-32000")
     );
+  }
 
-    return {
-      tokenId: position.tokenId,
-      marketId: position.marketId,
-      success: true,
-      transactionHash: tx.hash,
-    };
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    this.logger.error(`[AutoRedeem] ❌ Error: ${errorMsg}`);
+  /**
+   * Check if error indicates market not resolved yet
+   */
+  private isNotResolvedYetError(msg: string): boolean {
+    return (
+      msg.includes("result for condition not received yet") ||
+      msg.includes("condition not resolved") ||
+      msg.includes("payoutDenominator") ||
+      msg.includes("payout denominator") ||
+      msg.includes("not resolved")
+    );
+  }
 
-    return {
-      tokenId: position.tokenId,
-      marketId: position.marketId,
-      success: false,
-      error: errorMsg,
-      isRateLimited: this.isRpcRateLimitError(errorMsg),
-      isNotResolvedYet: this.isNotResolvedYetError(errorMsg),
-    };
+  /**
+   * Simple sleep helper
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
