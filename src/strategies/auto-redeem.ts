@@ -566,12 +566,31 @@ export class AutoRedeemStrategy {
       }
 
       // Check token balance for this position
-      // The tokenId from the position is the ERC1155 token ID
+      // The tokenId from the position is the ERC1155 token ID (as a string)
+      // We need to convert it to BigInt for the contract call
+      let tokenIdBigInt: bigint;
+      try {
+        // Handle both decimal strings and hex strings
+        if (position.tokenId.startsWith("0x")) {
+          tokenIdBigInt = BigInt(position.tokenId);
+        } else {
+          // Assume decimal string
+          tokenIdBigInt = BigInt(position.tokenId);
+        }
+      } catch {
+        return {
+          tokenId: position.tokenId,
+          marketId: position.marketId,
+          success: false,
+          error: `Invalid tokenId format (cannot convert to BigInt): ${position.tokenId}`,
+        };
+      }
+
       let tokenBalance: bigint;
       try {
         tokenBalance = (await ctfContract.balanceOf(
           wallet.address,
-          position.tokenId,
+          tokenIdBigInt,
         )) as bigint;
         this.logger.debug(
           `[AutoRedeem] Token ${position.tokenId.slice(0, 16)}... balance=${tokenBalance}`,
@@ -620,8 +639,15 @@ export class AutoRedeemStrategy {
         indexSets = [1, 2];
       }
 
-      this.logger.debug(
-        `[AutoRedeem] Calling redeemPositions: collateral=${usdcAddress}, parentCollectionId=${parentCollectionId}, conditionId=${conditionId}, indexSets=[${indexSets.join(",")}], side=${position.side}`,
+      // Log detailed info about what we're about to redeem
+      this.logger.info(
+        `[AutoRedeem] 📝 Redemption params: ` +
+          `tokenId=${position.tokenId.slice(0, 20)}..., ` +
+          `conditionId=${conditionId.slice(0, 20)}..., ` +
+          `side=${position.side}, ` +
+          `indexSets=[${indexSets.join(",")}], ` +
+          `tokenBalance=${tokenBalance}, ` +
+          `payoutDenominator=${payoutDenominator}`,
       );
 
       // Check gas price if configured
@@ -649,6 +675,9 @@ export class AutoRedeemStrategy {
       }
 
       // Execute redemption transaction
+      this.logger.info(
+        `[AutoRedeem] 🔄 Sending redemption tx to CTF contract ${ctfAddress}...`,
+      );
       const tx = (await ctfContract.redeemPositions(
         usdcAddress,
         parentCollectionId,
@@ -657,7 +686,7 @@ export class AutoRedeemStrategy {
         { gasLimit: AutoRedeemStrategy.DEFAULT_GAS_LIMIT },
       )) as TransactionResponse;
 
-      this.logger.info(`[AutoRedeem] Redemption tx submitted: ${tx.hash}`);
+      this.logger.info(`[AutoRedeem] ✅ Redemption tx submitted: ${tx.hash}`);
 
       // Wait for confirmation
       const receipt = await tx.wait(1);
