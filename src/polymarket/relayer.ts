@@ -1,4 +1,8 @@
-import { RelayClient, RelayerTxType } from "@polymarket/builder-relayer-client";
+import {
+  RelayClient,
+  RelayerTxType,
+  OperationType,
+} from "@polymarket/builder-relayer-client";
 import {
   deriveProxyWallet,
   deriveSafe,
@@ -156,11 +160,23 @@ export const executeRelayerTxs = async (params: {
     throw new Error("[Relayer] Client unavailable for execute.");
   }
 
-  const txs = params.txs.map((tx) => ({
-    to: tx.to,
-    data: tx.data,
-    value: tx.value ?? "0",
-  }));
+  // Format transactions with operation type as required by the relayer SDK
+  // The operation field is required for Safe transactions
+  const txs = params.txs.map((tx) => {
+    // Validate hex string format
+    if (!tx.to.startsWith("0x")) {
+      throw new Error(`[Relayer] Invalid 'to' address format: ${tx.to}`);
+    }
+    if (!tx.data.startsWith("0x")) {
+      throw new Error(`[Relayer] Invalid 'data' format: ${tx.data.slice(0, 20)}...`);
+    }
+    return {
+      to: tx.to as `0x${string}`,
+      data: tx.data as `0x${string}`,
+      value: tx.value ?? "0",
+      operation: OperationType.Call,
+    };
+  });
 
   params.logger.info(
     `[Relayer] Executing ${txs.length} tx(s) desc=${params.description}`,
