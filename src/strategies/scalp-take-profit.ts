@@ -156,17 +156,17 @@ interface PriceHistoryEntry {
 
 /**
  * FEE AND SLIPPAGE CONSIDERATIONS
- * 
+ *
  * Polymarket fees: ~0.02% round-trip (0.01% per side)
  * Expected slippage: 0.5-2% depending on liquidity
  * Spread cost: typically 1-3%
- * 
+ *
  * TOTAL COST OF TRADE: ~2-5% when you factor in:
  * - Entry slippage (buying at ask)
  * - Exit slippage (selling at bid)
  * - Bid-ask spread
  * - Trading fees
- * 
+ *
  * Therefore, profit targets MUST be well above these costs!
  * - Minimum: 5% (to clear ~3% costs and still profit)
  * - Target: 8%+ (meaningful profit after all costs)
@@ -175,18 +175,18 @@ interface PriceHistoryEntry {
 
 /**
  * Default configuration - balanced settings
- * 
+ *
  * PROFIT TARGETS: Must clear transaction costs (fees + slippage + spread)!
  * A 3% "profit" can easily become a loss after costs. Target 5%+ minimum.
- * 
+ *
  * TIME WINDOWS: We ALWAYS respect the time window. No early exits!
  * - Wait at least minHoldMinutes before considering ANY exit
  * - After minHoldMinutes, exit only when profit >= target AND momentum fading
  * - After maxHoldMinutes, exit if profit >= minimum (don't let winners sit forever)
- * 
+ *
  * EXCEPTION - SUDDEN SPIKE: If price spikes massively in a short window
  * (e.g., +15% in 10 minutes), capture it immediately - such moves often reverse.
- * 
+ *
  * ENTRY TIMES: This strategy relies on the PositionTracker's historical
  * entry time loading from the wallet activity API. On container restart,
  * entry times are fetched from actual purchase history, NOT container
@@ -215,7 +215,7 @@ export const DEFAULT_SCALP_TAKE_PROFIT_CONFIG: ScalpTakeProfitConfig = {
 
 /**
  * Conservative preset - patient, larger profits
- * 
+ *
  * Wait longer (60-120 min) for bigger profits (8-12%).
  * Best for larger positions where patience pays off.
  * $2.00 minimum profit ensures trades are truly worthwhile.
@@ -232,7 +232,7 @@ export const CONSERVATIVE_SCALP_CONFIG: Partial<ScalpTakeProfitConfig> = {
 
 /**
  * Balanced preset - moderate patience and profit targets
- * 
+ *
  * Hold 45-90 minutes, target 5-8% profit.
  * Good balance of churn rate and profit per trade.
  * $1.00 minimum profit ensures trades matter after fees.
@@ -249,10 +249,10 @@ export const BALANCED_SCALP_CONFIG: Partial<ScalpTakeProfitConfig> = {
 
 /**
  * Aggressive preset - faster churn, but STILL meaningful profits
- * 
+ *
  * Faster exits (30-60 min) with 4-6% targets.
  * Higher sensitivity to momentum changes.
- * 
+ *
  * IMPORTANT: Even "aggressive" mode requires 4%+ profit!
  * We're aggressive on TIME, not on accepting tiny profits.
  * A 2% "profit" after fees/slippage is basically break-even.
@@ -266,7 +266,7 @@ export const AGGRESSIVE_SCALP_CONFIG: Partial<ScalpTakeProfitConfig> = {
   momentumSlopeThreshold: -0.001, // More sensitive to declining momentum
   spreadWideningThresholdBps: 75, // More sensitive to spread changes
   bidDepthThinningPct: 60, // More sensitive to liquidity changes
-  minProfitUsd: 0.50, // $0.50 minimum (aggressive accepts smaller absolute profits)
+  minProfitUsd: 0.5, // $0.50 minimum (aggressive accepts smaller absolute profits)
   suddenSpikeThresholdPct: 12.0, // Capture 12%+ spikes (more aggressive)
   suddenSpikeWindowMinutes: 5, // Shorter window - faster detection
 };
@@ -357,7 +357,8 @@ export class ScalpTakeProfitStrategy {
       this.lastLoggedCounts.total !== activePositions.length;
     const shouldLogSummary =
       countsChanged ||
-      now - this.lastSummaryLogAt >= ScalpTakeProfitStrategy.SUMMARY_LOG_INTERVAL_MS;
+      now - this.lastSummaryLogAt >=
+        ScalpTakeProfitStrategy.SUMMARY_LOG_INTERVAL_MS;
 
     if (shouldLogSummary) {
       this.lastSummaryLogAt = now;
@@ -371,33 +372,65 @@ export class ScalpTakeProfitStrategy {
       if (targetProfit.length > 0) {
         this.logger.info(
           `[ScalpTakeProfit] 📊 Active positions: ${activePositions.length} total | ` +
-          `${profitable.length} profitable (>0%) | ${losing.length} losing | ` +
-          `${targetProfit.length} >= target ${this.config.targetProfitPct}%`,
+            `${profitable.length} profitable (>0%) | ${losing.length} losing | ` +
+            `${targetProfit.length} >= target ${this.config.targetProfitPct}%`,
         );
       } else {
         this.logger.debug(
           `[ScalpTakeProfit] 📊 Active positions: ${activePositions.length} total | ` +
-          `${profitable.length} profitable (>0%) | ${losing.length} losing | ` +
-          `${minProfit.length} >= min ${this.config.minProfitPct}% | ` +
-          `${targetProfit.length} >= target ${this.config.targetProfitPct}%`,
+            `${profitable.length} profitable (>0%) | ${losing.length} losing | ` +
+            `${minProfit.length} >= min ${this.config.minProfitPct}% | ` +
+            `${targetProfit.length} >= target ${this.config.targetProfitPct}%`,
         );
       }
 
       // Log profitable positions at DEBUG level
       if (profitable.length > 0) {
-        for (const p of profitable.slice(0, 10)) { // Top 10
-          const entryTime = this.positionTracker.getPositionEntryTime(p.marketId, p.tokenId);
-          const holdMin = entryTime ? Math.round((now - entryTime) / 60000) : "?";
+        for (const p of profitable.slice(0, 10)) {
+          // Top 10
+          const entryTime = this.positionTracker.getPositionEntryTime(
+            p.marketId,
+            p.tokenId,
+          );
+          const holdMin = entryTime
+            ? Math.round((now - entryTime) / 60000)
+            : "?";
           this.logger.debug(
             `[ScalpTakeProfit] 💰 ${p.tokenId.slice(0, 12)}... +${p.pnlPct.toFixed(1)}% ($${p.pnlUsd.toFixed(2)}) | ` +
-            `entry=${(p.entryPrice * 100).toFixed(1)}¢ current=${(p.currentPrice * 100).toFixed(1)}¢ | ` +
-            `held=${holdMin}min | size=${p.size.toFixed(2)}`,
+              `entry=${(p.entryPrice * 100).toFixed(1)}¢ current=${(p.currentPrice * 100).toFixed(1)}¢ | ` +
+              `held=${holdMin}min | size=${p.size.toFixed(2)}`,
           );
         }
         if (profitable.length > 10) {
-          this.logger.debug(`[ScalpTakeProfit] ... and ${profitable.length - 10} more profitable positions`);
+          this.logger.debug(
+            `[ScalpTakeProfit] ... and ${profitable.length - 10} more profitable positions`,
+          );
         }
       }
+    }
+
+    // Log highly profitable positions that should be candidates for scalping
+    const highlyProfitable = activePositions.filter(
+      (p) => p.pnlPct >= this.config.targetProfitPct,
+    );
+    if (highlyProfitable.length > 0) {
+      this.logger.info(
+        `[ScalpTakeProfit] 🎯 ${highlyProfitable.length} position(s) at/above target profit (${this.config.targetProfitPct}%): ` +
+          highlyProfitable
+            .slice(0, 5)
+            .map((p) => {
+              const entryTime = this.positionTracker.getPositionEntryTime(
+                p.marketId,
+                p.tokenId,
+              );
+              const holdMin = entryTime
+                ? Math.round((now - entryTime) / 60000)
+                : "?";
+              return `${p.tokenId.slice(0, 8)}...+${p.pnlPct.toFixed(1)}%/$${p.pnlUsd.toFixed(2)} (${holdMin}min)`;
+            })
+            .join(", ") +
+          (highlyProfitable.length > 5 ? "..." : ""),
+      );
     }
 
     for (const position of positions) {
@@ -479,9 +512,7 @@ export class ScalpTakeProfitStrategy {
     // If no entry time is available, treat position as "old enough" (assume external purchase)
     // Use a very large holdMinutes value so all hold time checks pass
     // This is safer than blocking - if someone bought externally, they want to sell when profitable
-    const holdMinutes = entryTime
-      ? (now - entryTime) / (60 * 1000)
-      : 999999; // No entry time = assume held forever (old enough for any check)
+    const holdMinutes = entryTime ? (now - entryTime) / (60 * 1000) : 999999; // No entry time = assume held forever (old enough for any check)
 
     if (!entryTime) {
       this.logger.debug(
@@ -558,8 +589,32 @@ export class ScalpTakeProfitStrategy {
       }
     }
 
+    // === CRITICAL: Extremely high profit override ===
+    // If profit is massive (3x target or 25%+), sell immediately regardless of hold time
+    // These are rare opportunities that could reverse - take the money!
+    const extremeProfitThreshold = Math.max(
+      this.config.targetProfitPct * 3,
+      25,
+    );
+    if (
+      position.pnlPct >= extremeProfitThreshold &&
+      position.pnlUsd >= this.config.minProfitUsd
+    ) {
+      return {
+        shouldExit: true,
+        reason: `🔥 EXTREME PROFIT: +${position.pnlPct.toFixed(1)}% >= ${extremeProfitThreshold.toFixed(0)}% threshold - TAKE IT NOW!`,
+      };
+    }
+
     // === Check 1: Minimum hold time ===
+    // Note: This can be bypassed by extreme profit above
     if (holdMinutes < this.config.minHoldMinutes) {
+      // Log if we're skipping a profitable position due to hold time
+      if (position.pnlPct >= this.config.targetProfitPct) {
+        this.logger.debug(
+          `[ScalpTakeProfit] ⏳ Position at +${position.pnlPct.toFixed(1)}% waiting for hold time (${holdMinutes.toFixed(0)}/${this.config.minHoldMinutes}min)`,
+        );
+      }
       return {
         shouldExit: false,
         reason: `Hold ${holdMinutes.toFixed(0)}min < min ${this.config.minHoldMinutes}min`,
@@ -613,7 +668,7 @@ export class ScalpTakeProfitStrategy {
 
   /**
    * Check for sudden price spike that should trigger immediate exit
-   * 
+   *
    * A sudden spike is when price moves significantly in a short window.
    * These moves often reverse quickly (news events, whale activity, etc.)
    * so capturing them immediately can lock in gains before reversal.
@@ -671,11 +726,11 @@ export class ScalpTakeProfitStrategy {
    *
    * These are positions that started speculative but are now near-certain
    * $1.00 winners. Don't force them out on a time window - let them ride!
-   * 
+   *
    * Example: Bought at 50¢, now at 92¢ = don't force exit, let it resolve to $1.00
    * Example: Bought at 50¢, now at 65¢ = still speculative, scalp rules apply
    */
-  private static readonly NEAR_RESOLUTION_THRESHOLD = 0.90; // 90¢ = near certain winner
+  private static readonly NEAR_RESOLUTION_THRESHOLD = 0.9; // 90¢ = near certain winner
 
   private shouldExcludeFromTimeExit(position: Position): boolean {
     // Only applies to low-entry positions (speculative tier or below)
@@ -687,7 +742,8 @@ export class ScalpTakeProfitStrategy {
     // A position at 65¢ is still speculative - scalp rules apply
     // A position at 92¢ is almost certainly going to $1.00 - let it ride!
     const nearResolution =
-      position.currentPrice >= ScalpTakeProfitStrategy.NEAR_RESOLUTION_THRESHOLD;
+      position.currentPrice >=
+      ScalpTakeProfitStrategy.NEAR_RESOLUTION_THRESHOLD;
 
     if (nearResolution) {
       this.logger.debug(
@@ -732,8 +788,7 @@ export class ScalpTakeProfitStrategy {
 
     // === Check 2: Spread widening ===
     const currentTick = recentTicks[recentTicks.length - 1];
-    const spreadWidening =
-      (currentTick.spread - entryMetrics.spread) * 10000; // Convert to bps
+    const spreadWidening = (currentTick.spread - entryMetrics.spread) * 10000; // Convert to bps
     if (spreadWidening >= this.config.spreadWideningThresholdBps) {
       return {
         fadingMomentum: true,
@@ -743,8 +798,7 @@ export class ScalpTakeProfitStrategy {
 
     // === Check 3: Bid depth thinning ===
     if (entryMetrics.bidDepth > 0) {
-      const depthRatio =
-        (currentTick.bidDepth / entryMetrics.bidDepth) * 100;
+      const depthRatio = (currentTick.bidDepth / entryMetrics.bidDepth) * 100;
       if (depthRatio < this.config.bidDepthThinningPct) {
         return {
           fadingMomentum: true,

@@ -87,7 +87,7 @@ export class AutoRedeemStrategy {
 
   // Constants
   private static readonly MAX_REDEMPTION_FAILURES = 3;
-  private static readonly REDEMPTION_RETRY_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+  private static readonly REDEMPTION_RETRY_COOLDOWN_MS = 1 * 60 * 1000; // 1 minute - reduced from 5 min for faster retries
   private static readonly DEFAULT_GAS_LIMIT = 300000n;
   // Multiplier to convert USD threshold to minimum share count: minPositionUsd * this = minimum shares to redeem
   // For example, if minPositionUsd = 1, we require at least 0.01 shares to redeem
@@ -144,21 +144,35 @@ export class AutoRedeemStrategy {
       this.lastExecutionTime > 0 &&
       timeSinceLastExecution < this.checkIntervalMs
     ) {
-      // Not enough time has passed since last check
+      // Not enough time has passed since last check - show when next check will happen
+      const nextCheckIn = Math.ceil(
+        (this.checkIntervalMs - timeSinceLastExecution) / 1000,
+      );
+      this.logger.debug(
+        `[AutoRedeem] Throttled - next check in ${nextCheckIn}s`,
+      );
       return 0;
     }
     this.lastExecutionTime = now;
+
+    this.logger.debug(`[AutoRedeem] 🔄 Running redemption check...`);
 
     // Clean up stale entries
     this.cleanupStaleEntries();
 
     let redeemedCount = 0;
+    let skippedAlreadyRedeemed = 0;
+    let skippedCooldown = 0;
+    let skippedMaxFailures = 0;
+    let attemptedRedemptions = 0;
 
     // Get all positions and filter for redeemable ones OR positions at ~100¢ (essentially resolved winners)
     // Positions at >= 99.5¢ are almost certainly resolved winners even if not flagged as redeemable
     const allPositions = this.positionTracker.getPositions();
     const redeemablePositions = allPositions.filter(
-      (pos) => pos.redeemable === true || pos.currentPrice >= AutoRedeemStrategy.HIGH_PRICE_THRESHOLD,
+      (pos) =>
+        pos.redeemable === true ||
+        pos.currentPrice >= AutoRedeemStrategy.HIGH_PRICE_THRESHOLD,
     );
 
     if (redeemablePositions.length === 0) {
@@ -167,9 +181,13 @@ export class AutoRedeemStrategy {
     }
 
     // Count how many are flagged redeemable vs just high-priced
-    const flaggedRedeemable = redeemablePositions.filter((pos) => pos.redeemable === true).length;
+    const flaggedRedeemable = redeemablePositions.filter(
+      (pos) => pos.redeemable === true,
+    ).length;
     const highPriced = redeemablePositions.filter(
-      (pos) => !pos.redeemable && pos.currentPrice >= AutoRedeemStrategy.HIGH_PRICE_THRESHOLD
+      (pos) =>
+        !pos.redeemable &&
+        pos.currentPrice >= AutoRedeemStrategy.HIGH_PRICE_THRESHOLD,
     ).length;
 
     if (highPriced > 0) {
@@ -195,6 +213,10 @@ export class AutoRedeemStrategy {
     for (const marketId of marketIds) {
       // Skip if this market was already redeemed
       if (this.redeemedMarkets.has(marketId)) {
+        skippedAlreadyRedeemed++;
+        this.logger.debug(
+          `[AutoRedeem] ⏭️ Skipping market ${marketId.slice(0, 16)}... - already redeemed in this session`,
+        );
         continue;
       }
 
@@ -215,19 +237,24 @@ export class AutoRedeemStrategy {
       const attempts = this.redemptionAttempts.get(marketId);
       if (attempts) {
         if (attempts.failures >= AutoRedeemStrategy.MAX_REDEMPTION_FAILURES) {
+          skippedMaxFailures++;
           // Max redemption failures reached - try fallback sell if enabled
           const enableFallbackSell = this.config.enableFallbackSell !== false; // Default: true
           const isWinning = marketPositions.some((pos) => pos.currentPrice > 0);
-          
-          if (enableFallbackSell && isWinning && !this.fallbackSellAttempted.has(marketId)) {
+
+          if (
+            enableFallbackSell &&
+            isWinning &&
+            !this.fallbackSellAttempted.has(marketId)
+          ) {
             // Attempt fallback sell at 99.9¢ instead of waiting for redemption
             this.logger.info(
               `[AutoRedeem] 💸 Redemption failed ${attempts.failures}x - attempting fallback SELL at ${(AutoRedeemStrategy.FALLBACK_SELL_PRICE * 100).toFixed(1)}¢ for market ${marketId}`,
             );
-            
+
             const sellSuccess = await this.attemptFallbackSell(marketPositions);
             this.fallbackSellAttempted.add(marketId);
-            
+
             if (sellSuccess) {
               this.redeemedMarkets.add(marketId); // Mark as handled
               redeemedCount++;
@@ -246,10 +273,19 @@ export class AutoRedeemStrategy {
           }
           continue;
         }
+        const timeSinceLastAttempt = Date.now() - attempts.lastAttempt;
         if (
-          Date.now() - attempts.lastAttempt <
-          AutoRedeemStrategy.REDEMPTION_RETRY_COOLDOWN_MS
+          timeSinceLastAttempt < AutoRedeemStrategy.REDEMPTION_RETRY_COOLDOWN_MS
         ) {
+          skippedCooldown++;
+          const remainingCooldown = Math.ceil(
+            (AutoRedeemStrategy.REDEMPTION_RETRY_COOLDOWN_MS -
+              timeSinceLastAttempt) /
+              1000,
+          );
+          this.logger.debug(
+            `[AutoRedeem] ⏳ Market ${marketId.slice(0, 16)}... in cooldown (${attempts.failures} failures, ${remainingCooldown}s remaining)`,
+          );
           continue;
         }
       }
@@ -272,26 +308,28 @@ export class AutoRedeemStrategy {
       // Determine if this is a winning or losing position:
       // consider it winning if any position in the market has a positive current price.
       const isWinning = marketPositions.some((pos) => pos.currentPrice > 0);
-      
+
       // Check if ALL positions are high-priced but NOT flagged as redeemable
       // These are "essentially resolved" winners that we can sell at 99.9¢ immediately
       const isHighPricedNotRedeemable = marketPositions.every(
-        (pos) => !pos.redeemable && pos.currentPrice >= AutoRedeemStrategy.HIGH_PRICE_THRESHOLD
+        (pos) =>
+          !pos.redeemable &&
+          pos.currentPrice >= AutoRedeemStrategy.HIGH_PRICE_THRESHOLD,
       );
-      
+
       if (isHighPricedNotRedeemable) {
         // Position is at ~100¢ but not flagged as redeemable - try direct fallback sell
         const enableFallbackSell = this.config.enableFallbackSell !== false; // Default: true
         const firstPosition = marketPositions[0];
-        
+
         if (enableFallbackSell && !this.fallbackSellAttempted.has(marketId)) {
           this.logger.info(
             `[AutoRedeem] 💰 Position at ${(firstPosition.currentPrice * 100).toFixed(1)}¢ (not yet redeemable) - attempting direct SELL at ${(AutoRedeemStrategy.FALLBACK_SELL_PRICE * 100).toFixed(1)}¢ for market ${marketId}`,
           );
-          
+
           const sellSuccess = await this.attemptFallbackSell(marketPositions);
           this.fallbackSellAttempted.add(marketId);
-          
+
           if (sellSuccess) {
             this.redeemedMarkets.add(marketId); // Mark as handled
             redeemedCount++;
@@ -306,7 +344,8 @@ export class AutoRedeemStrategy {
         }
         continue;
       }
-      
+
+      attemptedRedemptions++;
       this.logger.info(
         `[AutoRedeem] Attempting to redeem ${isWinning ? "WINNING" : "LOSING"} market: market=${marketId}, positions=${marketPositions.length}, shares=${totalSize.toFixed(2)}, value=$${totalValueUsd.toFixed(2)}`,
       );
@@ -352,8 +391,19 @@ export class AutoRedeemStrategy {
       }
     }
 
+    // Log summary of redemption activity
     if (redeemedCount > 0) {
-      this.logger.info(`[AutoRedeem] Redeemed ${redeemedCount} market(s)`);
+      this.logger.info(`[AutoRedeem] ✅ Redeemed ${redeemedCount} market(s)`);
+    }
+
+    // Log diagnostic info if we have redeemable positions but didn't attempt any redemptions
+    const totalSkipped =
+      skippedAlreadyRedeemed + skippedCooldown + skippedMaxFailures;
+    if (attemptedRedemptions === 0 && totalSkipped > 0) {
+      this.logger.info(
+        `[AutoRedeem] ⚠️ ${redeemablePositions.length} redeemable but ${totalSkipped} skipped: ` +
+          `${skippedAlreadyRedeemed} already redeemed, ${skippedCooldown} in cooldown, ${skippedMaxFailures} max failures`,
+      );
     }
 
     return redeemedCount;
@@ -593,7 +643,7 @@ export class AutoRedeemStrategy {
   /**
    * Attempt to sell winning positions at 99.9¢ as a fallback when redemption fails.
    * This frees up funds immediately instead of waiting for on-chain redemption.
-   * 
+   *
    * @param positions - The positions to sell (all for the same market)
    * @returns true if at least one sell succeeded
    */
@@ -660,10 +710,10 @@ export class AutoRedeemStrategy {
 
   /**
    * Normalize an outcome string to the OrderOutcome type expected by postOrder.
-   * 
+   *
    * For YES/NO markets: returns "YES" or "NO" as-is
    * For multi-outcome markets (e.g., "Bucks", "Over", "Medjedovic"): returns "YES" as placeholder
-   * 
+   *
    * The tokenId is what actually identifies the specific outcome for order execution,
    * so the outcome field is primarily for logging and internal bookkeeping.
    */

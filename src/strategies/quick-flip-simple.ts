@@ -99,16 +99,33 @@ export class SimpleQuickFlipStrategy {
     let soldCount = 0;
 
     // Log position summary for diagnostics
-    const profitable = positions.filter((p) => p.pnlPct >= this.config.targetPct && !p.redeemable);
+    // Show both positions meeting target AND positions with any profit (for comparison)
+    const atTarget = positions.filter(
+      (p) => p.pnlPct >= this.config.targetPct && !p.redeemable,
+    );
+    const anyProfit = positions.filter((p) => p.pnlPct > 0 && !p.redeemable);
     const redeemable = positions.filter((p) => p.redeemable);
-    if (profitable.length > 0 || positions.length > 0) {
+
+    if (anyProfit.length > 0 || positions.length > 0) {
       this.logger.debug(
-        `[SimpleQuickFlip] 📊 Positions: ${positions.length} total, ${profitable.length} profitable (>=${this.config.targetPct}%), ${redeemable.length} redeemable`,
+        `[SimpleQuickFlip] 📊 Positions: ${positions.length} total, ${anyProfit.length} any profit, ${atTarget.length} at target (>=${this.config.targetPct}%), ${redeemable.length} redeemable`,
       );
     }
-    if (profitable.length > 0) {
+
+    // If there are profitable positions but none meet target, log the gap for diagnostics
+    if (anyProfit.length > 0 && atTarget.length === 0) {
+      const bestProfit = anyProfit.reduce(
+        (best, p) => (p.pnlPct > best.pnlPct ? p : best),
+        anyProfit[0],
+      );
+      this.logger.debug(
+        `[SimpleQuickFlip] ℹ️ ${anyProfit.length} profitable position(s) below target. Best: +${bestProfit.pnlPct.toFixed(1)}% (need >=${this.config.targetPct}%)`,
+      );
+    }
+
+    if (atTarget.length > 0) {
       this.logger.info(
-        `[SimpleQuickFlip] 💰 Found ${profitable.length} position(s) at target profit: ${profitable.map((p) => `${p.tokenId.slice(0, 8)}...+${p.pnlPct.toFixed(1)}%`).join(", ")}`,
+        `[SimpleQuickFlip] 💰 Found ${atTarget.length} position(s) at target profit: ${atTarget.map((p) => `${p.tokenId.slice(0, 8)}...+${p.pnlPct.toFixed(1)}%`).join(", ")}`,
       );
     }
 
@@ -137,7 +154,7 @@ export class SimpleQuickFlipStrategy {
         position.marketId,
         position.tokenId,
       );
-      
+
       // If no entry time is available, check if position is clearly profitable
       // For profitable positions, the hold time check is mainly to prevent immediate flip after buying
       // If we don't know when we bought but the position is clearly profitable (>= target), allow selling
@@ -164,9 +181,17 @@ export class SimpleQuickFlipStrategy {
       // This prevents selling for a loss when spread is large
       const actualProfit = await this.verifyProfitAtBidPrice(position);
       if (!actualProfit.profitable) {
-        this.logger.debug(
-          `[SimpleQuickFlip] ⚠️ Mid-price shows +${position.pnlPct.toFixed(1)}% but bid price shows ${actualProfit.bidPnlPct.toFixed(1)}% - skipping to avoid loss`,
-        );
+        // Log at INFO level if position shows high profit but bid verification failed
+        // This helps diagnose why profitable positions aren't being sold
+        if (position.pnlPct >= 20) {
+          this.logger.info(
+            `[SimpleQuickFlip] ⚠️ HIGH PROFIT BLOCKED: ${position.tokenId.slice(0, 8)}... shows +${position.pnlPct.toFixed(1)}% mid-price but bid=${(actualProfit.bidPrice * 100).toFixed(1)}¢ (${actualProfit.bidPnlPct.toFixed(1)}%) - check orderbook`,
+          );
+        } else {
+          this.logger.debug(
+            `[SimpleQuickFlip] ⚠️ Mid-price shows +${position.pnlPct.toFixed(1)}% but bid price shows ${actualProfit.bidPnlPct.toFixed(1)}% - skipping to avoid loss`,
+          );
+        }
         continue;
       }
 
