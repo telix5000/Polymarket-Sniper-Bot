@@ -334,20 +334,39 @@ export class ScalpTakeProfitStrategy {
     // Update price history for all positions
     await this.updatePriceHistory(positions);
 
-    // Log position summary for diagnostics
-    const profitable = positions.filter((p) => p.pnlPct > 0 && !p.redeemable);
-    const targetProfit = positions.filter(
-      (p) => p.pnlPct >= this.config.targetProfitPct && !p.redeemable,
+    // ALWAYS log position summary at INFO level for diagnostics
+    const activePositions = positions.filter((p) => !p.redeemable);
+    const profitable = activePositions.filter((p) => p.pnlPct > 0);
+    const losing = activePositions.filter((p) => p.pnlPct < 0);
+    const targetProfit = activePositions.filter(
+      (p) => p.pnlPct >= this.config.targetProfitPct,
     );
+    const minProfit = activePositions.filter(
+      (p) => p.pnlPct >= this.config.minProfitPct,
+    );
+    
+    // Always log summary so user can see what positions exist
+    this.logger.info(
+      `[ScalpTakeProfit] 📊 Active positions: ${activePositions.length} total | ` +
+      `${profitable.length} profitable (>0%) | ${losing.length} losing | ` +
+      `${minProfit.length} >= min ${this.config.minProfitPct}% | ` +
+      `${targetProfit.length} >= target ${this.config.targetProfitPct}%`,
+    );
+    
+    // Log each profitable position with details
     if (profitable.length > 0) {
-      this.logger.debug(
-        `[ScalpTakeProfit] 📊 Positions: ${positions.length} total, ${profitable.length} profitable (>0%), ${targetProfit.length} at target (>=${this.config.targetProfitPct}%)`,
-      );
-    }
-    if (targetProfit.length > 0) {
-      this.logger.info(
-        `[ScalpTakeProfit] 💰 Found ${targetProfit.length} position(s) at target profit: ${targetProfit.map((p) => `${p.tokenId.slice(0, 8)}...+${p.pnlPct.toFixed(1)}%`).join(", ")}`,
-      );
+      for (const p of profitable.slice(0, 10)) { // Top 10
+        const entryTime = this.positionTracker.getPositionEntryTime(p.marketId, p.tokenId);
+        const holdMin = entryTime ? Math.round((now - entryTime) / 60000) : "?";
+        this.logger.info(
+          `[ScalpTakeProfit] 💰 ${p.tokenId.slice(0, 12)}... +${p.pnlPct.toFixed(1)}% ($${p.pnlUsd.toFixed(2)}) | ` +
+          `entry=${(p.entryPrice * 100).toFixed(1)}¢ current=${(p.currentPrice * 100).toFixed(1)}¢ | ` +
+          `held=${holdMin}min | size=${p.size.toFixed(2)}`,
+        );
+      }
+      if (profitable.length > 10) {
+        this.logger.info(`[ScalpTakeProfit] ... and ${profitable.length - 10} more profitable positions`);
+      }
     }
 
     for (const position of positions) {
@@ -420,24 +439,18 @@ export class ScalpTakeProfitStrategy {
       position.tokenId,
     );
 
-    // If no entry time is available, we can still scalp clearly profitable positions
-    // The hold time check is mainly to prevent immediate flip after buying
-    // If position meets target profit AND min USD, allow selling even without entry time
-    // This handles positions bought via on-chain wallet where historical data might be missing
-    if (!entryTime) {
-      if (
-        position.pnlPct >= this.config.targetProfitPct &&
-        position.pnlUsd >= this.config.minProfitUsd
-      ) {
-        return {
-          shouldExit: true,
-          reason: `Target profit +${position.pnlPct.toFixed(1)}% reached (no entry time - likely external purchase)`,
-        };
-      }
-      return { shouldExit: false, reason: "No entry time available" };
-    }
+    // If no entry time is available, treat position as "old enough" (assume external purchase)
+    // Use a very large holdMinutes value so all hold time checks pass
+    // This is safer than blocking - if someone bought externally, they want to sell when profitable
+    const holdMinutes = entryTime
+      ? (now - entryTime) / (60 * 1000)
+      : 999999; // No entry time = assume held forever (old enough for any check)
 
-    const holdMinutes = (now - entryTime) / (60 * 1000);
+    if (!entryTime) {
+      this.logger.debug(
+        `[ScalpTakeProfit] Position ${position.tokenId.slice(0, 8)}... has no entry time - treating as old enough to scalp`,
+      );
+    }
 
     // === LOW-PRICE SCALPING MODE ===
     // For volatile low-price positions, special handling:
