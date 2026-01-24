@@ -76,6 +76,9 @@ export class AutoRedeemStrategy {
   // Timing constants
   private static readonly API_TIMEOUT_MS = 10_000;
   private static readonly TX_CONFIRMATION_TIMEOUT_MS = 45_000;
+  private static readonly REDEMPTION_DELAY_MS = 5_000; // Delay between redemptions to avoid rate limits
+  private static readonly RETRY_BASE_DELAY_MS = 2_000; // Base delay for exponential backoff
+  private static readonly MAX_RETRIES = 3; // Max retries for rate-limited requests
 
   // Standard indexSets for binary (YES/NO) markets on Polymarket
   // [1, 2] represents the two outcome slots in a binary market
@@ -128,7 +131,7 @@ export class AutoRedeemStrategy {
         continue;
       }
 
-      const result = await this.redeemPosition(position);
+      const result = await this.redeemPositionWithRetry(position);
 
       // Track attempts
       this.updateRedemptionAttempts(position.marketId, result);
@@ -137,12 +140,12 @@ export class AutoRedeemStrategy {
         successCount++;
       }
 
-      // Small delay between redemptions to avoid rate limits
+      // Longer delay between redemptions to avoid rate limits
       if (
         redeemablePositions.indexOf(position) <
         redeemablePositions.length - 1
       ) {
-        await this.sleep(2000);
+        await this.sleep(AutoRedeemStrategy.REDEMPTION_DELAY_MS);
       }
     }
 
@@ -163,15 +166,15 @@ export class AutoRedeemStrategy {
     const results: RedemptionResult[] = [];
 
     for (const position of redeemablePositions) {
-      const result = await this.redeemPosition(position);
+      const result = await this.redeemPositionWithRetry(position);
       results.push(result);
 
-      // Small delay between redemptions
+      // Longer delay between redemptions
       if (
         redeemablePositions.indexOf(position) <
         redeemablePositions.length - 1
       ) {
-        await this.sleep(2000);
+        await this.sleep(AutoRedeemStrategy.REDEMPTION_DELAY_MS);
       }
     }
 
@@ -250,6 +253,50 @@ export class AutoRedeemStrategy {
       lastAttempt: Date.now(),
       failures: current.failures + 1,
     });
+  }
+
+  /**
+   * Redeem a position with retry logic for rate-limited requests
+   */
+  private async redeemPositionWithRetry(
+    position: Position,
+  ): Promise<RedemptionResult> {
+    let lastResult: RedemptionResult | null = null;
+
+    for (let attempt = 0; attempt <= AutoRedeemStrategy.MAX_RETRIES; attempt++) {
+      const result = await this.redeemPosition(position);
+
+      // If successful or not a rate limit error, return immediately
+      if (result.success || !result.isRateLimited) {
+        return result;
+      }
+
+      lastResult = result;
+
+      // If we haven't exhausted retries, wait with exponential backoff
+      if (attempt < AutoRedeemStrategy.MAX_RETRIES) {
+        const backoffDelay =
+          AutoRedeemStrategy.RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+        this.logger.info(
+          `[AutoRedeem] ⏳ Rate limited, retrying in ${backoffDelay / 1000}s (attempt ${attempt + 1}/${AutoRedeemStrategy.MAX_RETRIES})`,
+        );
+        await this.sleep(backoffDelay);
+      }
+    }
+
+    // All retries exhausted
+    this.logger.warn(
+      `[AutoRedeem] ⚠️ Exhausted ${AutoRedeemStrategy.MAX_RETRIES} retries due to rate limiting`,
+    );
+    return (
+      lastResult || {
+        tokenId: position.tokenId,
+        marketId: position.marketId,
+        success: false,
+        error: "Exhausted retries due to rate limiting",
+        isRateLimited: true,
+      }
+    );
   }
 
   /**
@@ -444,8 +491,10 @@ export class AutoRedeemStrategy {
     return (
       msg.includes("in-flight transaction limit") ||
       msg.includes("rate limit") ||
+      msg.includes("Too Many Requests") ||
       msg.includes("429") ||
-      msg.includes("-32000")
+      msg.includes("-32000") ||
+      msg.includes("-32005")
     );
   }
 
