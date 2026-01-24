@@ -363,16 +363,29 @@ export class SellEarlyStrategy {
       return false;
     }
 
+    // Validate bid price is available (should already be checked by evaluateAndSell)
+    if (position.currentBidPrice === undefined) {
+      this.logger.error("[SellEarly] No bid price available for sell");
+      return false;
+    }
+
+    // Validate side is defined
+    const outcome = position.side?.toUpperCase();
+    if (outcome !== "YES" && outcome !== "NO") {
+      this.logger.error(`[SellEarly] Invalid or missing position side: ${position.side}`);
+      return false;
+    }
+
     try {
-      // Calculate size in USD at the current bid price
-      const sizeUsd = position.size * (position.currentBidPrice ?? position.currentPrice);
+      // Calculate size in USD at the current bid price (already validated above)
+      const sizeUsd = position.size * position.currentBidPrice;
 
       const result = await postOrder({
         client: this.client,
         wallet,
         marketId: position.marketId,
         tokenId: position.tokenId,
-        outcome: (position.side?.toUpperCase() as "YES" | "NO") || "YES",
+        outcome: outcome as "YES" | "NO", // Already validated above
         side: "SELL",
         sizeUsd,
         logger: this.logger,
