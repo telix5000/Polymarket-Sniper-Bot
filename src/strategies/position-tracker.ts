@@ -162,6 +162,14 @@ export interface PortfolioSnapshot {
   redeemablePositions: readonly Position[];
   /** Summary counts for logging and diagnostics */
   summary: PortfolioSummary;
+  /** Raw counts from API before filtering (for ACTIVE_COLLAPSE_BUG diagnostics) */
+  rawCounts?: {
+    rawTotal: number;
+    rawActiveCandidates: number;
+    rawRedeemableCandidates: number;
+  };
+  /** Classification reasons for filtered positions (for diagnostics) */
+  classificationReasons?: Map<string, number>;
 }
 
 export interface Position {
@@ -448,6 +456,21 @@ export class PositionTracker {
   // This ensures all strategies operate on the same position data within a cycle
   private lastSnapshot: PortfolioSnapshot | null = null;
   private lastSnapshotCycleId: number = -1;
+
+  // === RAW COUNTS FOR DIAGNOSTICS ===
+  // Track raw counts from last API fetch for ACTIVE_COLLAPSE_BUG detection
+  private lastRawCounts: {
+    rawTotal: number;
+    rawActiveCandidates: number;
+    rawRedeemableCandidates: number;
+  } = { rawTotal: 0, rawActiveCandidates: 0, rawRedeemableCandidates: 0 };
+  private lastClassificationReasons: Map<string, number> = new Map();
+
+  // === ADDRESS STABILITY TRACKING ===
+  // Track address changes to detect unstable address selection
+  private lastSelectedAddress: string | null = null;
+  private addressChangeLoggedAt: number = 0;
+  private static readonly ADDRESS_CHANGE_LOG_COOLDOWN_MS = 300_000; // Log address change at most once per 5 min
 
   /**
    * Orderbook cache with TTL for accurate P&L calculation
@@ -932,6 +955,10 @@ export class PositionTracker {
    * Create an immutable portfolio snapshot from current positions.
    * Called after each refresh to ensure strategies see consistent data.
    *
+   * INVARIANT CHECK: ACTIVE_COLLAPSE_BUG
+   * If raw_total > 0 AND raw_active_candidates > 0 BUT activePositions.length === 0,
+   * log ERROR with diagnostic dump (once per TTL to avoid spam).
+   *
    * @param cycleId Optional orchestrator cycle ID to tag the snapshot
    */
   private createSnapshot(cycleId?: number): void {
@@ -953,10 +980,87 @@ export class PositionTracker {
       (p) => p.pnlClassification === "UNKNOWN",
     ).length;
 
+    const snapshotCycleId = cycleId ?? this.lastSnapshotCycleId + 1;
+    const addressUsed = this.cachedHoldingAddress ?? "address-not-resolved";
+
+    // === INVARIANT CHECK: ACTIVE_COLLAPSE_BUG ===
+    // If raw_total > 0 AND raw_active_candidates > 0 BUT activePositions.length === 0,
+    // this is a regression bug - log ERROR with diagnostic dump (rate-limited)
+    const rawTotal = this.lastRawCounts.rawTotal;
+    const rawActiveCandidates = this.lastRawCounts.rawActiveCandidates;
+
+    if (
+      rawTotal > 0 &&
+      rawActiveCandidates > 0 &&
+      activePositions.length === 0
+    ) {
+      // ACTIVE_COLLAPSE_BUG detected - log with diagnostic dump (rate-limited)
+      if (
+        this.logDeduper.shouldLog(
+          "Tracker:ACTIVE_COLLAPSE_BUG",
+          60_000, // TTL: 60 seconds to avoid spam
+        )
+      ) {
+        // Build classification reason counts string
+        const reasonCounts: string[] = [];
+        for (const [reason, count] of this.lastClassificationReasons) {
+          reasonCounts.push(`${reason}=${count}`);
+        }
+        const reasonsStr = reasonCounts.join(", ") || "none";
+
+        // Helper to safely truncate tokenId
+        const truncateTokenId = (tokenId: string): string => {
+          if (tokenId.length > 16) {
+            return tokenId.slice(0, 16) + "...";
+          }
+          return tokenId;
+        };
+
+        // Get first 3 positions for diagnostic dump (sanitized)
+        const firstThreePositions = allPositions.slice(0, 3).map((p) => ({
+          tokenId: truncateTokenId(p.tokenId),
+          side: p.side,
+          size: p.size.toFixed(2),
+          pnlPct: p.pnlPct.toFixed(2),
+          redeemable: p.redeemable,
+          positionState: p.positionState,
+          pnlClassification: p.pnlClassification,
+        }));
+
+        this.logger.error(
+          `[PositionTracker] 🐛 ACTIVE_COLLAPSE_BUG: cycleId=${snapshotCycleId} ` +
+            `addressUsed=${addressUsed.slice(0, 10)}... ` +
+            `raw_total=${rawTotal} raw_active_candidates=${rawActiveCandidates} ` +
+            `BUT final_active=0. ` +
+            `Classification reasons: [${reasonsStr}]. ` +
+            `First 3 positions: ${JSON.stringify(firstThreePositions)}`,
+        );
+      }
+    }
+
+    // === ADDRESS STABILITY CHECK ===
+    // Warn if address selection flips between cycles
+    if (
+      this.lastSelectedAddress !== null &&
+      this.lastSelectedAddress !== addressUsed
+    ) {
+      const now = Date.now();
+      if (
+        now - this.addressChangeLoggedAt >=
+        PositionTracker.ADDRESS_CHANGE_LOG_COOLDOWN_MS
+      ) {
+        this.logger.warn(
+          `[PositionTracker] ⚠️ ADDRESS_CHANGED: Holding address changed from ${this.lastSelectedAddress.slice(0, 10)}... -> ${addressUsed.slice(0, 10)}... (cycleId=${snapshotCycleId})`,
+        );
+        this.addressChangeLoggedAt = now;
+      }
+    }
+    this.lastSelectedAddress = addressUsed;
+
     // Create immutable snapshot with frozen arrays
     this.lastSnapshot = {
-      cycleId: cycleId ?? this.lastSnapshotCycleId + 1,
-      addressUsed: this.cachedHoldingAddress ?? "address-not-resolved",
+      cycleId: snapshotCycleId,
+      addressUsed,
       fetchedAtMs: Date.now(),
       activePositions: Object.freeze([...activePositions]),
       redeemablePositions: Object.freeze([...redeemablePositions]),
@@ -968,6 +1072,9 @@ export class PositionTracker {
         unknown,
         redeemableTotal: redeemablePositions.length,
       },
+      // Include raw counts for downstream diagnostics
+      rawCounts: { ...this.lastRawCounts },
+      classificationReasons: new Map(this.lastClassificationReasons),
     };
 
     this.lastSnapshotCycleId = this.lastSnapshot.cycleId;
@@ -1470,6 +1577,15 @@ export class PositionTracker {
       const rawRedeemableCandidates =
         apiPositions?.filter((p) => p.redeemable === true).length ?? 0;
 
+      // Store raw counts for ACTIVE_COLLAPSE_BUG detection in createSnapshot
+      this.lastRawCounts = {
+        rawTotal,
+        rawActiveCandidates,
+        rawRedeemableCandidates,
+      };
+      // Clear classification reasons for this cycle
+      this.lastClassificationReasons.clear();
+
       // Log raw counts once per refresh or when counts change
       const rawCountsFingerprint = `${rawTotal}-${rawActiveCandidates}-${rawRedeemableCandidates}`;
       if (
@@ -1536,6 +1652,25 @@ export class PositionTracker {
       const skippedPositions: Array<{ reason: string; data: ApiPosition }> = [];
       const tokenIdsNeedingOutcome: string[] = [];
 
+      // Helper to track classification reasons
+      const trackSkipReason = (reason: string) => {
+        // Extract reason category (e.g., "Missing required fields" -> "MISSING_FIELDS")
+        let category = "OTHER";
+        if (reason.includes("Missing required fields"))
+          category = "MISSING_FIELDS";
+        else if (reason.includes("Invalid size/price"))
+          category = "INVALID_SIZE_PRICE";
+        else if (reason.includes("Missing or invalid side"))
+          category = "MISSING_SIDE";
+        else if (reason.includes("Failed to enrich"))
+          category = "ENRICH_FAILED";
+
+        this.lastClassificationReasons.set(
+          category,
+          (this.lastClassificationReasons.get(category) ?? 0) + 1,
+        );
+      };
+
       for (const apiPos of apiPositions) {
         // Try new API format first, then fall back to legacy format
         const tokenId = apiPos.asset ?? apiPos.token_id ?? apiPos.asset_id;
@@ -1544,6 +1679,7 @@ export class PositionTracker {
         if (!tokenId || !marketId) {
           const reason = `Missing required fields - tokenId: ${tokenId || "MISSING"}, marketId: ${marketId || "MISSING"}`;
           skippedPositions.push({ reason, data: apiPos });
+          trackSkipReason(reason);
           this.logger.debug(`[PositionTracker] ${reason}`);
           continue;
         }
@@ -1558,6 +1694,7 @@ export class PositionTracker {
         if (size <= 0 || entryPrice <= 0) {
           const reason = `Invalid size/price - size: ${size}, entryPrice: ${entryPrice}`;
           skippedPositions.push({ reason, data: apiPos });
+          trackSkipReason(reason);
           this.logger.debug(`[PositionTracker] ${reason}`);
           continue;
         }
@@ -1571,6 +1708,7 @@ export class PositionTracker {
         ) {
           const reason = `Missing or invalid side/outcome value for tokenId ${tokenId}`;
           skippedPositions.push({ reason, data: apiPos });
+          trackSkipReason(reason);
           this.logger.warn(`[PositionTracker] ${reason}`);
           continue;
         }
@@ -2255,6 +2393,7 @@ export class PositionTracker {
             } catch (err) {
               const reason = `Failed to enrich position: ${err instanceof Error ? err.message : String(err)}`;
               skippedPositions.push({ reason, data: parsed.apiPos });
+              trackSkipReason(reason);
               this.logger.debug(`[PositionTracker] ${reason}`);
               return null;
             }
