@@ -139,6 +139,13 @@ export class PositionTracker {
   private static readonly RESOLVED_PRICE_HIGH_THRESHOLD = 0.99;
   private static readonly RESOLVED_PRICE_LOW_THRESHOLD = 0.01;
 
+  // P&L sanity check thresholds
+  // Used to detect TOKEN_MISMATCH_OR_BOOK_FETCH_BUG:
+  // If bid is near zero but market appears liquid (mid > threshold, spread < threshold)
+  private static readonly SANITY_CHECK_BID_NEAR_ZERO = 0.001;  // Bid below 0.1¢ considered "near zero"
+  private static readonly SANITY_CHECK_MID_PRICE_MIN = 0.10;   // Mid-price > 10¢ suggests active market
+  private static readonly SANITY_CHECK_MAX_SPREAD = 0.20;      // Spread < 20¢ suggests liquid market
+
   // Rate-limit P&L summary logging to avoid log spam (refreshes every 5s)
   private lastPnlSummaryLogAt = 0;
   private lastLoggedPnlCounts = { profitable: 0, losing: 0, redeemable: 0 };
@@ -767,12 +774,15 @@ export class PositionTracker {
                         currentPrice = bestBidPrice;
                         cacheAgeMs = 0; // Fresh fetch
                         
-                        // Cache the orderbook data
-                        if (this.orderbookCache.size >= PositionTracker.MAX_ORDERBOOK_CACHE_SIZE) {
-                          // Remove oldest entry
+                        // Cache the orderbook data with proper eviction
+                        // Remove entries until we're under the limit before adding new one
+                        while (this.orderbookCache.size >= PositionTracker.MAX_ORDERBOOK_CACHE_SIZE) {
+                          // Remove oldest entry (first key in Map iteration order - FIFO)
                           const firstKey = this.orderbookCache.keys().next().value;
                           if (firstKey) {
                             this.orderbookCache.delete(firstKey);
+                          } else {
+                            break; // Safety: exit if no keys found
                           }
                         }
                         this.orderbookCache.set(tokenId, {
@@ -785,7 +795,9 @@ export class PositionTracker {
                         // If computed bid is near 0 but market looks liquid, flag potential mismatch
                         const spread = bestAskPrice - bestBidPrice;
                         const midPrice = (bestBidPrice + bestAskPrice) / 2;
-                        if (bestBidPrice < 0.001 && midPrice > 0.10 && spread < 0.20) {
+                        if (bestBidPrice < PositionTracker.SANITY_CHECK_BID_NEAR_ZERO && 
+                            midPrice > PositionTracker.SANITY_CHECK_MID_PRICE_MIN && 
+                            spread < PositionTracker.SANITY_CHECK_MAX_SPREAD) {
                           // Bid near zero but market appears liquid - likely a bug
                           this.logger.error(
                             `[PositionTracker] ⚠️ TOKEN_MISMATCH_OR_BOOK_FETCH_BUG: tokenId=${tokenId.slice(0, 16)}..., ` +
