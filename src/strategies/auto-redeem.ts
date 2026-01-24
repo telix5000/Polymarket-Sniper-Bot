@@ -1,5 +1,5 @@
 import type { ClobClient } from "@polymarket/clob-client";
-import { Contract, formatUnits } from "ethers";
+import { Contract, Interface, formatUnits } from "ethers";
 import type { Wallet, TransactionResponse } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker, Position } from "./position-tracker";
@@ -7,6 +7,8 @@ import { resolvePolymarketContracts } from "../polymarket/contracts";
 import { CTF_ABI, ERC20_ABI } from "../trading/exchange-abi";
 import { AUTO_REDEEM_CHECK_INTERVAL_MS } from "./constants";
 import { postOrder } from "../utils/post-order.util";
+import type { RelayerContext } from "../polymarket/relayer";
+import { executeRelayerTxs } from "../polymarket/relayer";
 
 export interface AutoRedeemConfig {
   enabled: boolean;
@@ -31,6 +33,8 @@ export interface AutoRedeemStrategyConfig {
   logger: ConsoleLogger;
   positionTracker: PositionTracker;
   config: AutoRedeemConfig;
+  /** Optional relayer context for gasless redemptions (recommended) */
+  relayer?: RelayerContext;
 }
 
 /**
@@ -74,6 +78,7 @@ export class AutoRedeemStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: AutoRedeemConfig;
+  private relayer?: RelayerContext;
   // Track redeemed markets by marketId only (not marketId-tokenId)
   // This is because redeemPositions() redeems ALL positions for a market condition in one tx
   private redeemedMarkets: Set<string> = new Set();
@@ -136,9 +141,21 @@ export class AutoRedeemStrategy {
     this.logger = strategyConfig.logger;
     this.positionTracker = strategyConfig.positionTracker;
     this.config = strategyConfig.config;
+    this.relayer = strategyConfig.relayer;
     // Use configured interval or default from constants
     this.checkIntervalMs =
       strategyConfig.config.checkIntervalMs ?? AUTO_REDEEM_CHECK_INTERVAL_MS;
+    
+    // Log relayer availability
+    if (this.relayer?.enabled) {
+      this.logger.info(
+        `[AutoRedeem] ✅ Relayer enabled - using gasless redemptions (recommended)`,
+      );
+    } else {
+      this.logger.info(
+        `[AutoRedeem] ⚠️ Relayer not available - using direct contract calls (may hit rate limits)`,
+      );
+    }
   }
 
   /**
@@ -708,51 +725,132 @@ export class AutoRedeemStrategy {
         }
       }
 
-      // Execute redemption transaction
-      this.logger.info(
-        `[AutoRedeem] 🔄 Sending redemption tx to CTF contract ${ctfAddress}...`,
-      );
-      const tx = (await ctfContract.redeemPositions(
-        usdcAddress,
-        parentCollectionId,
-        conditionId,
-        indexSets,
-        { gasLimit: AutoRedeemStrategy.DEFAULT_GAS_LIMIT },
-      )) as TransactionResponse;
+      // Execute redemption transaction - prefer relayer for gasless execution
+      if (this.relayer?.enabled && this.relayer.client) {
+        // Use relayer for gasless redemption (recommended)
+        this.logger.info(
+          `[AutoRedeem] 🔄 Sending gasless redemption via relayer to CTF contract ${ctfAddress}...`,
+        );
+        
+        // Build the redeemPositions transaction data
+        const ctfInterface = new Interface(CTF_ABI);
+        const txData = ctfInterface.encodeFunctionData("redeemPositions", [
+          usdcAddress,
+          parentCollectionId,
+          conditionId,
+          indexSets,
+        ]);
+        
+        try {
+          const result = await executeRelayerTxs({
+            relayer: this.relayer,
+            txs: [{ to: ctfAddress, data: txData }],
+            description: `Redeem market ${conditionId.slice(0, 16)}...`,
+            logger: this.logger,
+          });
+          
+          if (result.state === "STATE_CONFIRMED" || result.state === "STATE_MINED") {
+            // Get USDC balance after redemption
+            const balanceAfter = (await usdcContract.balanceOf(
+              wallet.address,
+            )) as bigint;
+            const amountRedeemed = balanceAfter - balanceBefore;
+            const amountRedeemedFormatted = formatUnits(amountRedeemed, 6);
 
-      this.logger.info(`[AutoRedeem] ✅ Redemption tx submitted: ${tx.hash}`);
+            this.logger.info(
+              `[AutoRedeem] ✅ Relayer redemption confirmed, redeemed $${amountRedeemedFormatted} USDC`,
+            );
 
-      // Wait for confirmation
-      const receipt = await tx.wait(1);
+            return {
+              tokenId: position.tokenId,
+              marketId: position.marketId,
+              success: true,
+              transactionHash: result.transactionHash,
+              amountRedeemed: amountRedeemedFormatted,
+            };
+          } else {
+            return {
+              tokenId: position.tokenId,
+              marketId: position.marketId,
+              success: false,
+              transactionHash: result.transactionHash,
+              error: `Relayer transaction state: ${result.state ?? "unknown"}`,
+            };
+          }
+        } catch (relayerErr) {
+          const errMsg = relayerErr instanceof Error ? relayerErr.message : String(relayerErr);
+          
+          // Check for relayer quota exceeded
+          if (errMsg.includes("RELAYER_QUOTA_EXCEEDED") || errMsg.includes("429")) {
+            this.logger.warn(
+              `[AutoRedeem] 🚫 Relayer quota exceeded - will retry later`,
+            );
+            return {
+              tokenId: position.tokenId,
+              marketId: position.marketId,
+              success: false,
+              error: "Relayer quota exceeded",
+              isRateLimited: true,
+            };
+          }
+          
+          this.logger.error(
+            `[AutoRedeem] ❌ Relayer redemption failed: ${errMsg}`,
+          );
+          return {
+            tokenId: position.tokenId,
+            marketId: position.marketId,
+            success: false,
+            error: `Relayer error: ${errMsg}`,
+          };
+        }
+      } else {
+        // Fall back to direct contract call (may hit rate limits)
+        this.logger.info(
+          `[AutoRedeem] 🔄 Sending redemption tx to CTF contract ${ctfAddress}...`,
+        );
+        const tx = (await ctfContract.redeemPositions(
+          usdcAddress,
+          parentCollectionId,
+          conditionId,
+          indexSets,
+          { gasLimit: AutoRedeemStrategy.DEFAULT_GAS_LIMIT },
+        )) as TransactionResponse;
 
-      if (!receipt || receipt.status !== 1) {
+        this.logger.info(`[AutoRedeem] ✅ Redemption tx submitted: ${tx.hash}`);
+
+        // Wait for confirmation
+        const receipt = await tx.wait(1);
+
+        if (!receipt || receipt.status !== 1) {
+          return {
+            tokenId: position.tokenId,
+            marketId: position.marketId,
+            success: false,
+            transactionHash: tx.hash,
+            error: "Transaction failed or reverted",
+          };
+        }
+
+        // Get USDC balance after redemption
+        const balanceAfter = (await usdcContract.balanceOf(
+          wallet.address,
+        )) as bigint;
+        const amountRedeemed = balanceAfter - balanceBefore;
+        const amountRedeemedFormatted = formatUnits(amountRedeemed, 6);
+
+        this.logger.info(
+          `[AutoRedeem] Redemption confirmed in block ${receipt.blockNumber}, redeemed $${amountRedeemedFormatted} USDC`,
+        );
+
         return {
           tokenId: position.tokenId,
           marketId: position.marketId,
-          success: false,
+          success: true,
           transactionHash: tx.hash,
-          error: "Transaction failed or reverted",
+          amountRedeemed: amountRedeemedFormatted,
         };
       }
-
-      // Get USDC balance after redemption
-      const balanceAfter = (await usdcContract.balanceOf(
-        wallet.address,
-      )) as bigint;
-      const amountRedeemed = balanceAfter - balanceBefore;
-      const amountRedeemedFormatted = formatUnits(amountRedeemed, 6);
-
-      this.logger.info(
-        `[AutoRedeem] Redemption confirmed in block ${receipt.blockNumber}, redeemed $${amountRedeemedFormatted} USDC`,
-      );
-
-      return {
-        tokenId: position.tokenId,
-        marketId: position.marketId,
-        success: true,
-        transactionHash: tx.hash,
-        amountRedeemed: amountRedeemedFormatted,
-      };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       

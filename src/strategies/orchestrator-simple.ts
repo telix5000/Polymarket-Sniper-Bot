@@ -44,6 +44,7 @@ import {
 } from "./universal-stop-loss";
 import { RiskManager, createRiskManager } from "./risk-manager";
 import { PnLLedger } from "./pnl-ledger";
+import type { RelayerContext } from "../polymarket/relayer";
 
 const POSITION_REFRESH_MS = 5000; // 5 seconds
 const EXECUTION_INTERVAL_MS = 2000; // 2 seconds
@@ -100,11 +101,16 @@ export class SimpleOrchestrator {
 
     // === INITIALIZE ALL STRATEGIES ===
 
+    // Extract relayer context from client (set by preflight if available)
+    const relayerContext = (config.client as { relayerContext?: RelayerContext }).relayerContext;
+
     // 1. Auto-Redeem - Claim resolved positions (HIGHEST PRIORITY)
+    // Uses relayer for gasless redemptions when available (recommended)
     this.autoRedeemStrategy = new AutoRedeemStrategy({
       client: config.client,
       logger: config.logger,
       positionTracker: this.positionTracker,
+      relayer: relayerContext,
       config: {
         enabled: true,
         minPositionUsd: 0.01, // Redeem anything
