@@ -350,31 +350,13 @@ export class SimpleSmartHedgingStrategy {
         }
       }
 
-      // Force liquidation if loss is catastrophic
-      if (lossPct >= this.config.forceLiquidationPct) {
-        this.logger.warn(
-          `[SimpleHedging] 🚨 Loss ${lossPct.toFixed(1)}% >= ${this.config.forceLiquidationPct}% - LIQUIDATING`,
-        );
-        const sold = await this.sellPosition(position);
-        if (sold) {
-          actionsCount++;
-          this.hedgedPositions.add(key);
-        } else {
-          // Sell failed - add to cooldown to prevent repeated attempts
-          this.failedLiquidationCooldowns.set(
-            key,
-            now + FAILED_LIQUIDATION_COOLDOWN_MS,
-          );
-          this.logger.warn(
-            `[SimpleHedging] ⏳ Liquidation failed - position on cooldown for 5 minutes: ${key}`,
-          );
-        }
-        continue;
-      }
+      // ALWAYS try to hedge FIRST, even for catastrophic losses
+      // Only liquidate as a last resort if hedge fails
+      const isCatastrophicLoss = lossPct >= this.config.forceLiquidationPct;
 
       // Try to hedge
       this.logger.info(
-        `[SimpleHedging] 🎯 Position losing ${lossPct.toFixed(1)}% - attempting hedge`,
+        `[SimpleHedging] 🎯 Position losing ${lossPct.toFixed(1)}%${isCatastrophicLoss ? " (catastrophic)" : ""} - attempting hedge FIRST`,
       );
 
       const hedgeResult = await this.executeHedge(position);
@@ -472,13 +454,22 @@ export class SimpleSmartHedgingStrategy {
         hedgeResult.reason === "NO_LIQUIDITY"
       ) {
         this.logger.info(
-          `[SimpleHedging] 📋 Hedge skip reason: ${hedgeResult.reason} - will liquidate losing position instead`,
+          `[SimpleHedging] 📋 Hedge skip reason: ${hedgeResult.reason}`,
         );
       }
 
-      // Hedge failed - liquidate to stop bleeding
+      // Hedge failed - only liquidate if loss is catastrophic (>= forceLiquidationPct)
+      // For smaller losses, wait and try again later (market conditions may improve)
+      if (!isCatastrophicLoss) {
+        this.logger.info(
+          `[SimpleHedging] 📋 Hedge failed (${hedgeResult.reason}) but loss ${lossPct.toFixed(1)}% < ${this.config.forceLiquidationPct}% threshold - waiting for better conditions`,
+        );
+        continue;
+      }
+
+      // Catastrophic loss AND hedge failed - liquidate to stop bleeding
       this.logger.warn(
-        `[SimpleHedging] ⚠️ Hedge failed (${hedgeResult.reason}) - liquidating instead`,
+        `[SimpleHedging] 🚨 Hedge failed (${hedgeResult.reason}) AND loss ${lossPct.toFixed(1)}% >= ${this.config.forceLiquidationPct}% - LIQUIDATING as last resort`,
       );
       const sold = await this.sellPosition(position);
       if (sold) {

@@ -967,7 +967,7 @@ export class PositionTracker {
         const batchResults = await Promise.allSettled(
           batch.map(async (parsed) => {
             try {
-              const { tokenId, marketId, size, entryPrice, side, isRedeemable, apiPos } = parsed;
+              const { tokenId, marketId, size, entryPrice, side, apiPos } = parsed;
 
               // Skip orderbook fetch for resolved/closed markets (no orderbook available)
               let currentPrice: number;
