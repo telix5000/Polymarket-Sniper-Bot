@@ -409,7 +409,7 @@ export class ScalpTakeProfitStrategy {
     // DIAGNOSTIC: Log active_count (requirement #6)
     // If 0, also log chosenAddress and raw_total to confirm upstream data
     const holdingAddress = this.positionTracker.getHoldingAddress();
-    
+
     // Log active_count with diagnostics if 0
     if (activePositions.length === 0) {
       // Only fetch all positions when we need to diagnose the zero count case
@@ -417,7 +417,13 @@ export class ScalpTakeProfitStrategy {
       this.logger.info(
         `[ScalpTakeProfit] active_count=0 (chosenAddress=${holdingAddress ?? "unknown"} raw_total=${allPositions.length})`,
       );
-    } else if (this.logDeduper.shouldLog("ScalpTakeProfit:active_count", SKIP_LOG_TTL_MS, String(activePositions.length))) {
+    } else if (
+      this.logDeduper.shouldLog(
+        "ScalpTakeProfit:active_count",
+        SKIP_LOG_TTL_MS,
+        String(activePositions.length),
+      )
+    ) {
       this.logger.debug(
         `[ScalpTakeProfit] active_count=${activePositions.length}`,
       );
