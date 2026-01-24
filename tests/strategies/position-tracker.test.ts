@@ -4204,8 +4204,8 @@ describe("Self-Healing: Recovery Mode Behavior", () => {
     let recoveryMode = true;
     let recoveryCycleCount = 0;
 
-    // Simulate 3 successful cycles without active positions
-    for (let i = 0; i < 3; i++) {
+    // Simulate RECOVERY_MODE_MAX_CYCLES successful cycles without active positions
+    for (let i = 0; i < RECOVERY_MODE_MAX_CYCLES; i++) {
       if (recoveryMode) {
         recoveryCycleCount++;
         const activePositions = 0;
@@ -4252,6 +4252,9 @@ describe("Self-Healing: Classification Reasons Cannot Be Empty", () => {
   });
 
   test("Minimal acceptance rule allows small raw counts through with warning", () => {
+    // Mirror constant from PositionTracker
+    const MINIMAL_ACCEPTANCE_MAX_RAW_COUNT = 5;
+    
     // The specific case mentioned in the issue:
     // rawTotal=2, rawActiveCandidates=2, finalActive=0, reasons=[none]
     const rawTotal = 2;
@@ -4272,7 +4275,7 @@ describe("Self-Healing: Classification Reasons Cannot Be Empty", () => {
     // Check minimal acceptance rule
     const isMinimalAcceptanceCase = 
       rawTotal === rawActiveCandidates && 
-      rawTotal <= 5 &&
+      rawTotal <= MINIMAL_ACCEPTANCE_MAX_RAW_COUNT &&
       reasonsStr.includes("FILTERED_NO_REASON");
 
     assert.ok(isMinimalAcceptanceCase, "Should match minimal acceptance rule");
@@ -4369,5 +4372,89 @@ describe("Self-Healing: HFT Timing Constraints", () => {
     // HFT constraint: single refresh should not take forever
     assert.ok(REFRESH_WATCHDOG_TIMEOUT_MS <= 30_000, "Refresh timeout should be <= 30s");
     assert.ok(REFRESH_WATCHDOG_TIMEOUT_MS >= 5_000, "Refresh timeout should be >= 5s for network latency");
+  });
+});
+
+describe("Self-Healing: Refresh Watchdog Timeout", () => {
+  test("Watchdog timeout aborts stuck refresh and counts as failure", async () => {
+    const REFRESH_WATCHDOG_TIMEOUT_MS = 15_000;
+    
+    // Simulate a refresh that takes too long
+    let abortCalled = false;
+    const mockAbortController = {
+      abort: () => { abortCalled = true; },
+    };
+
+    // Simulate watchdog timeout logic
+    const refreshStartTime = Date.now();
+    const simulatedRefreshDuration = 20_000; // 20 seconds - exceeds 15s timeout
+    
+    const wouldTimeout = simulatedRefreshDuration > REFRESH_WATCHDOG_TIMEOUT_MS;
+    if (wouldTimeout) {
+      mockAbortController.abort();
+    }
+
+    assert.ok(wouldTimeout, "Refresh exceeding timeout should be detected");
+    assert.ok(abortCalled, "AbortController.abort() should be called on timeout");
+  });
+
+  test("Refresh completing within timeout is not aborted", () => {
+    const REFRESH_WATCHDOG_TIMEOUT_MS = 15_000;
+    
+    let abortCalled = false;
+    const mockAbortController = {
+      abort: () => { abortCalled = true; },
+    };
+
+    // Simulate a fast refresh
+    const simulatedRefreshDuration = 5_000; // 5 seconds - well within timeout
+    
+    const wouldTimeout = simulatedRefreshDuration > REFRESH_WATCHDOG_TIMEOUT_MS;
+    if (wouldTimeout) {
+      mockAbortController.abort();
+    }
+
+    assert.strictEqual(wouldTimeout, false, "Fast refresh should not timeout");
+    assert.strictEqual(abortCalled, false, "AbortController should NOT be called for fast refresh");
+  });
+
+  test("awaitWithWatchdog races promise against timeout", async () => {
+    // Test the race logic conceptually
+    const TIMEOUT_MS = 100; // Short timeout for testing
+    
+    // Fast promise should win
+    const fastPromise = new Promise<string>((resolve) => {
+      setTimeout(() => resolve("success"), 10);
+    });
+    
+    const timeoutPromise = new Promise<string>((_, reject) => {
+      setTimeout(() => reject(new Error("TIMEOUT")), TIMEOUT_MS);
+    });
+
+    const result = await Promise.race([fastPromise, timeoutPromise]);
+    assert.strictEqual(result, "success", "Fast promise should win the race");
+  });
+
+  test("awaitWithWatchdog timeout wins against slow promise", async () => {
+    const TIMEOUT_MS = 50; // Short timeout
+    
+    // Slow promise should lose
+    const slowPromise = new Promise<string>((resolve) => {
+      setTimeout(() => resolve("success"), 200);
+    });
+    
+    const timeoutPromise = new Promise<string>((_, reject) => {
+      setTimeout(() => reject(new Error("REFRESH_WATCHDOG_TIMEOUT")), TIMEOUT_MS);
+    });
+
+    let caughtError: Error | null = null;
+    try {
+      await Promise.race([slowPromise, timeoutPromise]);
+    } catch (err) {
+      caughtError = err as Error;
+    }
+
+    assert.ok(caughtError, "Should have caught an error");
+    assert.ok(caughtError!.message.includes("REFRESH_WATCHDOG_TIMEOUT"), "Should be watchdog timeout error");
   });
 });

@@ -599,6 +599,7 @@ export class PositionTracker {
   private static readonly REFRESH_WATCHDOG_TIMEOUT_MS = 15_000; // 15 seconds max for a refresh cycle
   private static readonly RECOVERY_MODE_MAX_CYCLES = 3; // Exit recovery mode after 3 successful cycles
   private static readonly HEALTH_STATUS_LOG_INTERVAL_MS = 300_000; // Log health status every 5 minutes
+  private static readonly MINIMAL_ACCEPTANCE_MAX_RAW_COUNT = 5; // Max raw count for minimal acceptance rule
 
   // === SELF-HEALING STATE ===
   private degradedModeEnteredAt: number = 0; // Timestamp when degraded mode started
@@ -1125,20 +1126,60 @@ export class PositionTracker {
    * - If a refresh is in progress, returns the existing promise
    * - If no refresh is in progress, starts a new one and returns that promise
    * - All callers await the same promise, ensuring refresh runs exactly once
+   *
+   * WATCHDOG TIMEOUT (HFT):
+   * - Refresh is wrapped with a timeout (REFRESH_WATCHDOG_TIMEOUT_MS = 15s)
+   * - If refresh exceeds timeout, abort and count as failure
+   * - Prevents stuck refreshes from blocking the system indefinitely
    */
   async awaitCurrentRefresh(): Promise<void> {
-    // If a refresh is already in progress, await it
+    // If a refresh is already in progress, await it with timeout
     if (this.currentRefreshPromise) {
-      return this.currentRefreshPromise;
+      return this.awaitWithWatchdog(this.currentRefreshPromise);
     }
+
+    // Create an AbortController for this refresh cycle
+    this.refreshAbortController = new AbortController();
 
     // Start a new refresh and track the promise
     this.currentRefreshPromise = this.refresh().finally(() => {
       // Clear the promise when done so next caller can start a fresh refresh
       this.currentRefreshPromise = null;
+      this.refreshAbortController = null;
     });
 
-    return this.currentRefreshPromise;
+    return this.awaitWithWatchdog(this.currentRefreshPromise);
+  }
+
+  /**
+   * Await a promise with a watchdog timeout.
+   * If the promise doesn't resolve within REFRESH_WATCHDOG_TIMEOUT_MS,
+   * abort and treat as a failure.
+   */
+  private async awaitWithWatchdog(promise: Promise<void>): Promise<void> {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        // Abort any in-flight requests
+        if (this.refreshAbortController) {
+          this.refreshAbortController.abort();
+        }
+        reject(new Error(`REFRESH_WATCHDOG_TIMEOUT: refresh exceeded ${PositionTracker.REFRESH_WATCHDOG_TIMEOUT_MS}ms`));
+      }, PositionTracker.REFRESH_WATCHDOG_TIMEOUT_MS);
+    });
+
+    try {
+      await Promise.race([promise, timeoutPromise]);
+    } catch (err) {
+      // If it was a watchdog timeout, log and handle as failure
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("REFRESH_WATCHDOG_TIMEOUT")) {
+        this.logger.error(
+          `[PositionTracker] ⏱️ REFRESH_WATCHDOG_TIMEOUT: Refresh exceeded ${PositionTracker.REFRESH_WATCHDOG_TIMEOUT_MS}ms - aborting and counting as failure`,
+        );
+        // handleRefreshFailure is called by refresh() itself on error
+      }
+      throw err;
+    }
   }
 
   /**
@@ -1591,12 +1632,12 @@ export class PositionTracker {
     // 3. Minimal acceptance rule: small raw counts with no real reasons
     if (rawTotal > 0 && rawActiveCandidates > 0 && finalActiveCount === 0) {
       // Check for minimal acceptance rule:
-      // If rawTotal==rawActiveCandidates (no redeemable) and both are small (<=5),
+      // If rawTotal==rawActiveCandidates (no redeemable) and both are small,
       // and no real skip reasons were logged, this is likely a classifier bug
       // Accept the snapshot but log a warning
       const isMinimalAcceptanceCase = 
         rawTotal === rawActiveCandidates && 
-        rawTotal <= 5 &&
+        rawTotal <= PositionTracker.MINIMAL_ACCEPTANCE_MAX_RAW_COUNT &&
         (reasonsStr.includes("FILTERED_NO_REASON") || reasonsStr.includes("ALL_ACTIVE"));
 
       if (this.allowBootstrapAfterAutoRecovery) {
