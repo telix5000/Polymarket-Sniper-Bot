@@ -1115,15 +1115,15 @@ export class PositionTracker {
       // ADDRESS PROBE: If we got 0-2 positions and address probe hasn't been done,
       // try both EOA and proxy separately and pick whichever returns more positions.
       // This handles the case where we're using the wrong address.
-      const positionCount = apiPositions?.length ?? 0;
-      if (positionCount <= 2 && !this.addressProbeCompleted && this.cachedEOAAddress && this.cachedHoldingAddress) {
+      const initialPositionCount = apiPositions?.length ?? 0;
+      if (initialPositionCount <= 2 && !this.addressProbeCompleted && this.cachedEOAAddress && this.cachedHoldingAddress) {
         const eoaAddress = this.cachedEOAAddress;
         const proxyAddress = this.cachedHoldingAddress;
         
         // Only probe if EOA and proxy are different
         if (eoaAddress !== proxyAddress) {
           this.logger.info(
-            `[PositionTracker] Low position count (${positionCount}), running address probe...`,
+            `[PositionTracker] Low position count (${initialPositionCount}), running address probe...`,
           );
           
           try {
@@ -1142,22 +1142,25 @@ export class PositionTracker {
             const eoaCount = eoaPositions?.length ?? 0;
             const proxyCount = proxyPositions?.length ?? 0;
             
-            // Log the probe results
+            // Determine which address to use (pick whichever returned more positions)
+            const selectedAddress = eoaCount >= proxyCount ? "eoa" : "proxy";
+            
+            // Log the probe results with the actual selection
             this.logger.info(
-              `[PositionTracker] address_probe: eoa_positions=${eoaCount} proxy_positions=${proxyCount} selected=${eoaCount >= proxyCount ? "eoa" : "proxy"}`,
+              `[PositionTracker] address_probe: eoa_positions=${eoaCount} proxy_positions=${proxyCount} selected=${selectedAddress}`,
             );
             
             // Use whichever returned more positions
-            if (eoaCount > proxyCount && eoaCount > positionCount) {
+            if (eoaCount >= proxyCount && eoaCount > initialPositionCount) {
               apiPositions = eoaPositions;
               this.cachedHoldingAddress = eoaAddress;
               this.holdingAddressCacheMs = Date.now();
               this.logger.info(
                 `[PositionTracker] Address probe selected EOA (${eoaCount} positions vs ${proxyCount} proxy)`,
               );
-            } else if (proxyCount > positionCount) {
+            } else if (proxyCount > initialPositionCount) {
               apiPositions = proxyPositions;
-              // Already using proxy, no change needed
+              // cachedHoldingAddress was already set to proxyAddress
               this.logger.info(
                 `[PositionTracker] Address probe confirmed proxy (${proxyCount} positions vs ${eoaCount} EOA)`,
               );
@@ -1381,6 +1384,8 @@ export class PositionTracker {
               
               // P&L source tracking: where did the P&L values come from?
               let pnlSource: PnLSource = "FALLBACK";
+              // Track if pricing fetch completely failed (for pnlUntrustedReason)
+              let pricingFetchFailed = false;
               const apiRedeemable = apiPos.redeemable === true;
 
               // GATED REDEEMABLE DETECTION: Don't blindly trust apiPos.redeemable
@@ -1659,6 +1664,7 @@ export class PositionTracker {
                   // Use entry price as current price (will show 0% P&L but position is preserved)
                   currentPrice = entryPrice;
                   positionStatus = "NO_BOOK";
+                  pricingFetchFailed = true;
                 }
                 // Increment activeCount only after successful pricing
                 activeCount++;
@@ -1819,7 +1825,10 @@ export class PositionTracker {
                   pnlTrusted = true; // Data-API provided pricing info
                 } else {
                   pnlTrusted = false;
-                  pnlUntrustedReason = "NO_ORDERBOOK_BIDS";
+                  // Use more descriptive reason based on what actually failed
+                  pnlUntrustedReason = pricingFetchFailed 
+                    ? "PRICING_FETCH_FAILED" 
+                    : "NO_ORDERBOOK_BIDS";
                 }
               }
 
