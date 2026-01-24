@@ -3428,24 +3428,24 @@ export class PositionTracker {
                   // This is EXPECTED behavior - we keep it ACTIVE until Data-API confirms
                   // RENAMED: "price_near_resolution" -> "near_resolution_candidate" for clarity
                   this.logger.debug(
-                    `[PositionTracker] near_resolution_candidate tokenId=${tokenId.slice(0, 16)}... price=${formatCents(currentPrice)} but redeemable=false, keeping ACTIVE`,
+                    `[PositionTracker] near_resolution_candidate tokenId=${tokenId.slice(0, 16)}... price=${formatCents(currentPrice)} but redeemable=false, checking on-chain`,
                   );
 
                   // === ON-CHAIN REDEEMABLE CHECK ===
                   // When position has:
                   // 1. Price near 100¢ (or 0¢) - suggesting resolution
-                  // 2. NO_BOOK status (no orderbook bids) - can't sell via SellEarly
-                  // 3. Data-API hasn't flagged as redeemable yet
+                  // 2. Data-API hasn't flagged as redeemable yet
                   //
                   // Check on-chain payoutDenominator to confirm if actually redeemable.
                   // This fixes the gap where high-profit positions at 100¢ get stuck.
-                  const hasNoBids =
-                    positionStatus === "NO_BOOK" ||
-                    bestBidPrice === undefined ||
-                    bestBidPrice === 0;
+                  //
+                  // IMPORTANT: We now check on-chain regardless of orderbook availability.
+                  // Previously, we only checked when no bids were available, but this caused
+                  // positions with bids (at high prices like 99.95¢) to remain stuck as ACTIVE
+                  // even when the market was already resolved on-chain and could be redeemed.
 
-                  if (hasNoBids && marketId) {
-                    // Condition: price at 99%+, no bids available, check on-chain
+                  if (marketId) {
+                    // Condition: price at 99.5%+, check on-chain regardless of orderbook
                     const isOnChainResolved =
                       await this.checkOnChainRedeemable(marketId);
 
@@ -3468,7 +3468,7 @@ export class PositionTracker {
 
                       this.logger.info(
                         `[PositionTracker] 🎯 ONCHAIN_DENOM: promote->REDEEMABLE tokenId=${tokenId.slice(0, 16)}... ` +
-                          `(price=${(currentPrice * 100).toFixed(1)}¢, no_bids=true, on-chain payoutDenominator > 0)`,
+                          `(price=${(currentPrice * 100).toFixed(1)}¢, on-chain payoutDenominator > 0)`,
                       );
                     }
                   }
