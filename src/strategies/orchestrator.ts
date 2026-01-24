@@ -159,9 +159,9 @@ export class Orchestrator {
     });
 
     // Initialize Dynamic Reserves Controller
-    // Aligns hedgeCapUsd with SMART_HEDGING_ABSOLUTE_MAX_USD (default: 25)
+    // Aligns hedgeCapUsd with SMART_HEDGING_ABSOLUTE_MAX_USD (or DEFAULT_RESERVES_CONFIG default)
     this.dynamicReserves = createDynamicReservesController(this.logger, {
-      hedgeCapUsd: config.hedgingConfig?.absoluteMaxUsd ?? 25,
+      hedgeCapUsd: config.hedgingConfig?.absoluteMaxUsd,
       ...config.dynamicReservesConfig,
     });
     this.getWalletBalances = config.getWalletBalances;
@@ -441,7 +441,8 @@ export class Orchestrator {
       // Pass reserve plan for RISK_OFF gating (blocks BUYs when reserves insufficient)
       await this.runStrategyTimed(
         "Endgame",
-        () => this.endgameStrategy.execute(this.currentReservePlan ?? undefined),
+        () =>
+          this.endgameStrategy.execute(this.currentReservePlan ?? undefined),
         strategyTimings,
       );
 

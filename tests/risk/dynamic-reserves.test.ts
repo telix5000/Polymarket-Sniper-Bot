@@ -189,7 +189,10 @@ describe("DynamicReservesController", () => {
       // Catastrophic tier = min(hedgeCapUsd, notional * 1.0)
       // notional = 100 * 0.5 = 50, hedgeCapUsd = 25 (default)
       // So reserve = min(25, 50) = 25
-      assert.equal(tokenReserve?.baseReserve, 25);
+      assert.equal(
+        tokenReserve?.baseReserve,
+        DEFAULT_RESERVES_CONFIG.hedgeCapUsd,
+      );
     });
 
     test("hedge trigger losses require 50% of notional reserve", () => {
@@ -214,7 +217,10 @@ describe("DynamicReservesController", () => {
       // Hedge tier = min(hedgeCapUsd, notional * 0.5)
       // notional = 100 * 0.5 = 50
       // reserve = min(25, 50 * 0.5) = min(25, 25) = 25
-      assert.equal(tokenReserve?.baseReserve, 25);
+      assert.equal(
+        tokenReserve?.baseReserve,
+        DEFAULT_RESERVES_CONFIG.hedgeCapUsd,
+      );
     });
 
     test("normal positions have small buffer reserve", () => {
@@ -239,7 +245,10 @@ describe("DynamicReservesController", () => {
       // Normal tier = min(normalReserveCapUsd, notional * 0.1)
       // notional = 100 * 0.5 = 50
       // reserve = min(2, 50 * 0.1) = min(2, 5) = 2
-      assert.equal(tokenReserve?.baseReserve, 2);
+      assert.equal(
+        tokenReserve?.baseReserve,
+        DEFAULT_RESERVES_CONFIG.normalReserveCapUsd,
+      );
     });
 
     test("illiquid positions have 1.5x multiplier on reserve", () => {

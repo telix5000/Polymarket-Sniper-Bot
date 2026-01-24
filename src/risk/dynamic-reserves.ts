@@ -434,8 +434,9 @@ export class DynamicReservesController {
       let baseReserve: number;
       let reason: string;
 
-      // Note: pnlPct is negative for losses (e.g., -25 means 25% loss)
-      const lossPct = -pnlPct; // Convert to positive for comparison
+      // pnlPct is negative for losses (e.g., -25 means 25% loss)
+      // Convert to absolute value for clearer threshold comparisons
+      const lossPct = Math.abs(Math.min(0, pnlPct)); // Only count losses (pnlPct <= 0)
 
       if (lossPct >= this.config.catastrophicLossPct) {
         // Catastrophic loss tier: assume worst-case hedge attempt
@@ -457,7 +458,9 @@ export class DynamicReservesController {
         reason = "NORMAL_BUFFER";
       }
 
-      // C) Liquidity penalty for illiquid positions
+      // Liquidity penalty: positions that can't be easily exited on CLOB require higher reserves
+      // Check both executionStatus (primary) and bookStatus (fallback) for robustness
+      // since executionStatus may not always be populated by all callers
       const isIlliquid =
         pos.executionStatus === "NOT_TRADABLE_ON_CLOB" ||
         pos.bookStatus === "NO_BOOK_404" ||
