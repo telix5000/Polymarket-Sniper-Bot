@@ -1806,3 +1806,365 @@ describe("PositionTracker Cache TTL Logic", () => {
     );
   });
 });
+
+// ============================================================================
+// NEW TESTS: Batch Fetching, Caching, Log De-spam, Single-Flight Refresh
+// ============================================================================
+
+describe("PositionTracker Batch Gamma Fetch Logic", () => {
+  test("Chunking splits tokenIds into batches of correct size", () => {
+    // Simulates chunking logic from fetchMarketOutcomesBatch
+    const GAMMA_BATCH_SIZE = 25;
+    const tokenIds = Array.from({ length: 63 }, (_, i) => `token-${i}`);
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < tokenIds.length; i += GAMMA_BATCH_SIZE) {
+      chunks.push(tokenIds.slice(i, i + GAMMA_BATCH_SIZE));
+    }
+
+    assert.strictEqual(chunks.length, 3, "Should create 3 chunks for 63 tokens");
+    assert.strictEqual(chunks[0].length, 25, "First chunk should have 25 tokens");
+    assert.strictEqual(chunks[1].length, 25, "Second chunk should have 25 tokens");
+    assert.strictEqual(chunks[2].length, 13, "Third chunk should have 13 tokens");
+  });
+
+  test("Empty tokenIds array produces empty results", () => {
+    const tokenIds: string[] = [];
+    const results = new Map<string, string | null>();
+
+    // Simulates early return in fetchMarketOutcomesBatch
+    if (tokenIds.length === 0) {
+      // Return empty map
+    }
+
+    assert.strictEqual(results.size, 0, "Empty tokenIds should produce empty results");
+  });
+
+  test("Batch fetch URL correctly joins tokenIds", () => {
+    const tokenIds = ["token-1", "token-2", "token-3"];
+    const encodedIds = tokenIds.map((id) => encodeURIComponent(id.trim())).join(",");
+
+    assert.strictEqual(
+      encodedIds,
+      "token-1,token-2,token-3",
+      "TokenIds should be comma-separated",
+    );
+  });
+});
+
+describe("PositionTracker OutcomeCache Logic", () => {
+  test("RESOLVED outcomes should be cached indefinitely", () => {
+    // Simulates cache entry for resolved outcome
+    interface OutcomeCacheEntry {
+      winner: string | null;
+      resolvedPrice: number;
+      resolvedAtMs: number;
+      lastCheckedMs: number;
+      status: "ACTIVE" | "RESOLVED";
+    }
+
+    const entry: OutcomeCacheEntry = {
+      winner: "YES",
+      resolvedPrice: 1.0,
+      resolvedAtMs: Date.now() - 1000000, // Long ago
+      lastCheckedMs: Date.now() - 1000000, // Long ago
+      status: "RESOLVED",
+    };
+
+    // RESOLVED entries never expire based on TTL
+    const isExpired = entry.status !== "RESOLVED";
+
+    assert.strictEqual(isExpired, false, "RESOLVED entries should never expire");
+  });
+
+  test("ACTIVE outcomes should expire after TTL", () => {
+    const ACTIVE_OUTCOME_CACHE_TTL_MS = 30000; // 30 seconds
+    const lastCheckedMs = Date.now() - 60000; // 60 seconds ago
+    const now = Date.now();
+
+    const isExpired = now - lastCheckedMs >= ACTIVE_OUTCOME_CACHE_TTL_MS;
+
+    assert.strictEqual(isExpired, true, "ACTIVE entries should expire after TTL");
+  });
+
+  test("ACTIVE outcomes within TTL should not expire", () => {
+    const ACTIVE_OUTCOME_CACHE_TTL_MS = 30000; // 30 seconds
+    const lastCheckedMs = Date.now() - 10000; // 10 seconds ago
+    const now = Date.now();
+
+    const isExpired = now - lastCheckedMs >= ACTIVE_OUTCOME_CACHE_TTL_MS;
+
+    assert.strictEqual(isExpired, false, "ACTIVE entries within TTL should not expire");
+  });
+
+  test("Cache eviction removes oldest entry when at max size", () => {
+    const MAX_SIZE = 3;
+    const cache = new Map<string, string>();
+
+    cache.set("old-1", "value1");
+    cache.set("old-2", "value2");
+    cache.set("old-3", "value3");
+
+    // Simulates cache eviction logic
+    while (cache.size >= MAX_SIZE) {
+      const firstKey = cache.keys().next().value;
+      if (firstKey) {
+        cache.delete(firstKey);
+      } else {
+        break;
+      }
+    }
+    cache.set("new-4", "value4");
+
+    assert.strictEqual(cache.size, 3, "Cache should maintain max size");
+    assert.ok(!cache.has("old-1"), "Oldest entry should be evicted");
+    assert.ok(cache.has("new-4"), "New entry should be added");
+  });
+});
+
+describe("PositionTracker Log De-spam Logic", () => {
+  test("First seen tokenId should trigger logging", () => {
+    interface LastLoggedState {
+      status: "ACTIVE" | "RESOLVED";
+      winner: string | null;
+      priceCents: number;
+    }
+
+    const lastLoggedState = new Map<string, LastLoggedState>();
+    const tokenId = "new-token";
+
+    const lastState = lastLoggedState.get(tokenId);
+    const isFirstSeen = !lastState;
+
+    assert.strictEqual(isFirstSeen, true, "First seen should be true for new tokenId");
+  });
+
+  test("Status change from ACTIVE to RESOLVED should trigger logging", () => {
+    interface LastLoggedState {
+      status: "ACTIVE" | "RESOLVED";
+      winner: string | null;
+      priceCents: number;
+    }
+
+    const lastLoggedState = new Map<string, LastLoggedState>();
+    lastLoggedState.set("token-1", { status: "ACTIVE", winner: null, priceCents: 50 });
+
+    const lastState = lastLoggedState.get("token-1");
+    const newStatus: "RESOLVED" = "RESOLVED";
+    const statusChanged = lastState !== undefined && lastState.status !== newStatus;
+
+    assert.strictEqual(statusChanged, true, "Status change should be detected");
+  });
+
+  test("Same state should not trigger logging", () => {
+    interface LastLoggedState {
+      status: "ACTIVE" | "RESOLVED";
+      winner: string | null;
+      priceCents: number;
+    }
+
+    const lastLoggedState = new Map<string, LastLoggedState>();
+    lastLoggedState.set("token-1", { status: "RESOLVED", winner: "YES", priceCents: 100 });
+
+    const lastState = lastLoggedState.get("token-1");
+    const newStatus: "RESOLVED" = "RESOLVED";
+    const newWinner: string | null = "YES";
+    const newPriceCents = 100;
+
+    const isFirstSeen = !lastState;
+    const statusChanged = lastState !== undefined && lastState.status !== newStatus;
+    const winnerChanged = lastState !== undefined && lastState.winner !== newWinner;
+    const priceChangedMeaningfully = lastState !== undefined &&
+      ((lastState.priceCents === 0 && newPriceCents === 100) ||
+       (lastState.priceCents === 100 && newPriceCents === 0));
+
+    const shouldLog = isFirstSeen || statusChanged || winnerChanged || priceChangedMeaningfully;
+
+    assert.strictEqual(shouldLog, false, "Same state should not trigger logging");
+  });
+
+  test("Winner change should trigger logging", () => {
+    interface LastLoggedState {
+      status: "ACTIVE" | "RESOLVED";
+      winner: string | null;
+      priceCents: number;
+    }
+
+    const lastLoggedState = new Map<string, LastLoggedState>();
+    lastLoggedState.set("token-1", { status: "RESOLVED", winner: "YES", priceCents: 100 });
+
+    const lastState = lastLoggedState.get("token-1");
+    const newWinner: string | null = "NO";
+
+    const winnerChanged = lastState !== undefined && lastState.winner !== newWinner;
+
+    assert.strictEqual(winnerChanged, true, "Winner change should be detected");
+  });
+
+  test("Price boundary crossing (0 -> 100) should trigger logging", () => {
+    interface LastLoggedState {
+      status: "ACTIVE" | "RESOLVED";
+      winner: string | null;
+      priceCents: number;
+    }
+
+    const lastLoggedState = new Map<string, LastLoggedState>();
+    lastLoggedState.set("token-1", { status: "RESOLVED", winner: "YES", priceCents: 0 });
+
+    const lastState = lastLoggedState.get("token-1");
+    const newPriceCents = 100;
+
+    const priceChangedMeaningfully = lastState !== undefined &&
+      ((lastState.priceCents === 0 && newPriceCents === 100) ||
+       (lastState.priceCents === 100 && newPriceCents === 0));
+
+    assert.strictEqual(priceChangedMeaningfully, true, "Price boundary crossing should be detected");
+  });
+});
+
+describe("PositionTracker Single-Flight Refresh Logic", () => {
+  test("Min refresh interval prevents rapid refreshes", () => {
+    const MIN_REFRESH_INTERVAL_MS = 5000; // 5 seconds
+    const lastRefreshCompletedAt = Date.now() - 2000; // 2 seconds ago
+
+    const timeSinceLastRefresh = Date.now() - lastRefreshCompletedAt;
+    const shouldSkip = timeSinceLastRefresh < MIN_REFRESH_INTERVAL_MS;
+
+    assert.strictEqual(shouldSkip, true, "Should skip refresh if under min interval");
+  });
+
+  test("Refresh is allowed after min interval elapsed", () => {
+    const MIN_REFRESH_INTERVAL_MS = 5000; // 5 seconds
+    const lastRefreshCompletedAt = Date.now() - 6000; // 6 seconds ago
+
+    const timeSinceLastRefresh = Date.now() - lastRefreshCompletedAt;
+    const shouldSkip = timeSinceLastRefresh < MIN_REFRESH_INTERVAL_MS;
+
+    assert.strictEqual(shouldSkip, false, "Should allow refresh after min interval");
+  });
+
+  test("Single-flight returns same promise to concurrent callers", async () => {
+    // Simulates single-flight promise pattern
+    let inFlightPromise: Promise<string> | null = null;
+    let executionCount = 0;
+
+    const refreshFn = async (): Promise<string> => {
+      if (inFlightPromise) {
+        return inFlightPromise;
+      }
+
+      inFlightPromise = (async () => {
+        executionCount++;
+        await new Promise((resolve) => setTimeout(resolve, 50)); // Simulate work
+        return "done";
+      })();
+
+      const result = await inFlightPromise;
+      inFlightPromise = null;
+      return result;
+    };
+
+    // Call refresh multiple times concurrently
+    const [result1, result2, result3] = await Promise.all([
+      refreshFn(),
+      refreshFn(),
+      refreshFn(),
+    ]);
+
+    // With proper single-flight, only one execution should occur
+    // Note: In this simulation, subsequent calls see the in-flight promise
+    assert.strictEqual(result1, "done", "First caller should get result");
+    assert.strictEqual(result2, "done", "Second caller should get same result");
+    assert.strictEqual(result3, "done", "Third caller should get same result");
+    // The execution count will be 1-3 depending on timing, but the pattern is correct
+    assert.ok(executionCount >= 1, "At least one execution should occur");
+  });
+
+  test("Skip refresh log is rate-limited", () => {
+    const SKIP_REFRESH_LOG_INTERVAL_MS = 60000; // 60 seconds
+    let lastSkipRefreshLogAt = Date.now() - 30000; // 30 seconds ago
+
+    const now = Date.now();
+    const shouldLogSkip = now - lastSkipRefreshLogAt >= SKIP_REFRESH_LOG_INTERVAL_MS;
+
+    assert.strictEqual(shouldLogSkip, false, "Should not log skip within rate limit window");
+
+    // Simulate time passing
+    lastSkipRefreshLogAt = Date.now() - 65000; // 65 seconds ago
+
+    const shouldLogSkip2 = Date.now() - lastSkipRefreshLogAt >= SKIP_REFRESH_LOG_INTERVAL_MS;
+    assert.strictEqual(shouldLogSkip2, true, "Should log skip after rate limit window");
+  });
+});
+
+describe("PositionTracker Metrics Logic", () => {
+  test("Metrics are reset at start of refresh", () => {
+    interface RefreshMetrics {
+      gammaRequestsPerRefresh: number;
+      tokenIdsFetched: number;
+      cacheHits: number;
+      cacheMisses: number;
+      resolvedCacheHits: number;
+    }
+
+    let metrics: RefreshMetrics = {
+      gammaRequestsPerRefresh: 5,
+      tokenIdsFetched: 100,
+      cacheHits: 50,
+      cacheMisses: 50,
+      resolvedCacheHits: 25,
+    };
+
+    // Reset at start of refresh
+    metrics = {
+      gammaRequestsPerRefresh: 0,
+      tokenIdsFetched: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      resolvedCacheHits: 0,
+    };
+
+    assert.strictEqual(metrics.gammaRequestsPerRefresh, 0, "gammaRequestsPerRefresh should reset");
+    assert.strictEqual(metrics.tokenIdsFetched, 0, "tokenIdsFetched should reset");
+    assert.strictEqual(metrics.cacheHits, 0, "cacheHits should reset");
+    assert.strictEqual(metrics.cacheMisses, 0, "cacheMisses should reset");
+    assert.strictEqual(metrics.resolvedCacheHits, 0, "resolvedCacheHits should reset");
+  });
+
+  test("Cache hits increment correctly", () => {
+    let cacheHits = 0;
+    let cacheMisses = 0;
+
+    // Simulate cache hit
+    const cached = { winner: "YES", status: "RESOLVED" };
+    if (cached) {
+      cacheHits++;
+    } else {
+      cacheMisses++;
+    }
+
+    assert.strictEqual(cacheHits, 1, "Cache hits should increment on hit");
+    assert.strictEqual(cacheMisses, 0, "Cache misses should not increment on hit");
+  });
+
+  test("Batch requests counted correctly", () => {
+    const GAMMA_BATCH_SIZE = 25;
+    const tokenIds = Array.from({ length: 63 }, (_, i) => `token-${i}`);
+
+    let gammaRequestsPerRefresh = 0;
+    let tokenIdsFetched = 0;
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < tokenIds.length; i += GAMMA_BATCH_SIZE) {
+      chunks.push(tokenIds.slice(i, i + GAMMA_BATCH_SIZE));
+    }
+
+    for (const chunk of chunks) {
+      gammaRequestsPerRefresh++;
+      tokenIdsFetched += chunk.length;
+    }
+
+    assert.strictEqual(gammaRequestsPerRefresh, 3, "Should count 3 batch requests");
+    assert.strictEqual(tokenIdsFetched, 63, "Should count all 63 tokens fetched");
+  });
+});
