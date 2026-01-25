@@ -2,6 +2,7 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 import {
   isValidEvmAddress,
   normalizeAddresses,
@@ -12,8 +13,8 @@ import {
   type LeaderboardOptions,
 } from "../../src/targets/leaderboardTargets";
 
-// Test cache directory
-const TEST_CACHE_DIR = "/tmp/leaderboard-test-cache";
+// Test cache directory (cross-platform compatible)
+const TEST_CACHE_DIR = path.join(os.tmpdir(), "leaderboard-test-cache");
 const TEST_CACHE_FILE = path.join(TEST_CACHE_DIR, "test-cache.json");
 
 // Silent logger for tests

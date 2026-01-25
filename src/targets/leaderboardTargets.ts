@@ -1,4 +1,4 @@
-import axios, { AxiosError } from "axios";
+import axios from "axios";
 import * as fs from "fs";
 import * as path from "path";
 import { ConsoleLogger, Logger } from "../utils/logger.util";
@@ -15,7 +15,7 @@ export interface LeaderboardOptions {
   timePeriod: "MONTH";
   /** Order by field (PNL = profit and loss) */
   orderBy: "PNL";
-  /** Path to cache file for persisting addresses (optional - set to empty string to disable caching) */
+  /** Path to cache file for persisting addresses (only used when enableCache is true) */
   cacheFile: string;
   /** Time-to-live for cache in seconds */
   ttlSeconds: number;
@@ -153,7 +153,10 @@ function delay(ms: number): Promise<void> {
 /**
  * Determines if an error is retryable (rate limit or server error)
  */
-function isRetryableError(error: AxiosError): boolean {
+function isRetryableError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) {
+    return false;
+  }
   const status = error.response?.status;
   return (
     status === 403 || status === 429 || (status !== undefined && status >= 500)
@@ -240,14 +243,13 @@ export async function getTargetAddressesFromLeaderboard(
       lastError = err instanceof Error ? err : new Error(String(err));
 
       // Check if we should retry
-      if (
-        err instanceof AxiosError &&
-        isRetryableError(err) &&
-        attempt < BACKOFF_DELAYS_MS.length
-      ) {
+      if (isRetryableError(err) && attempt < BACKOFF_DELAYS_MS.length) {
         const delayMs = BACKOFF_DELAYS_MS[attempt];
+        const status = axios.isAxiosError(err)
+          ? err.response?.status || "network"
+          : "unknown";
         logger.warn(
-          `[Leaderboard] API error (${err.response?.status || "network"}), ` +
+          `[Leaderboard] API error (${status}), ` +
             `retrying in ${delayMs}ms (attempt ${attempt + 1}/${BACKOFF_DELAYS_MS.length + 1})`,
         );
         await delay(delayMs);
