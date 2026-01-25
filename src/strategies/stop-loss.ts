@@ -130,11 +130,24 @@ export class StopLossStrategy {
    */
   private stopLossTriggered: Map<string, number> = new Map();
 
+  /**
+   * Timestamp of last diagnostic log to rate-limit log spam
+   */
+  private lastDiagnosticLogAt = 0;
+
   constructor(strategyConfig: StopLossStrategyConfig) {
     this.client = strategyConfig.client;
     this.logger = strategyConfig.logger;
     this.positionTracker = strategyConfig.positionTracker;
     this.config = strategyConfig.config;
+  }
+
+  /**
+   * Check if a position has catastrophic loss (>= maxStopLossPct).
+   * Used to bypass safety checks like entry time and hold time verification.
+   */
+  private isCatastrophicLoss(position: Position): boolean {
+    return position.pnlPct < 0 && Math.abs(position.pnlPct) >= this.config.maxStopLossPct;
   }
 
   /**
@@ -171,16 +184,20 @@ export class StopLossStrategy {
 
     let soldCount = 0;
     const allPositions = this.positionTracker.getPositions();
+    const now = Date.now();
 
     // Skip resolved/redeemable positions (they can't be sold, only redeemed)
     let activePositions = allPositions.filter((pos) => !pos.redeemable);
 
-    // === DIAGNOSTIC: Log high-loss positions before filtering ===
+    // === DIAGNOSTIC: Log high-loss positions before filtering (rate-limited) ===
     // This helps debug why positions aren't being acted upon
     const highLossPositions = activePositions.filter(
       (p) => p.pnlPct < 0 && Math.abs(p.pnlPct) >= this.config.maxStopLossPct
     );
-    if (highLossPositions.length > 0) {
+    // Rate-limit diagnostic logging to once per minute to prevent log spam
+    const DIAGNOSTIC_LOG_INTERVAL_MS = 60_000;
+    if (highLossPositions.length > 0 && now - this.lastDiagnosticLogAt >= DIAGNOSTIC_LOG_INTERVAL_MS) {
+      this.lastDiagnosticLogAt = now;
       for (const pos of highLossPositions) {
         const lossPct = Math.abs(pos.pnlPct);
         this.logger.info(
@@ -200,14 +217,11 @@ export class StopLossStrategy {
     // untrusted P&L because the risk of inaction is greater than the risk of acting.
     activePositions = activePositions.filter((pos) => {
       if (!pos.pnlTrusted) {
-        // Check for catastrophic loss exception
-        const isActualLoss = pos.pnlPct < 0;
-        const lossPctMagnitude = Math.abs(pos.pnlPct);
-        const isCatastrophicLoss = isActualLoss && lossPctMagnitude >= this.config.maxStopLossPct;
-        
-        if (isCatastrophicLoss) {
+        // Check for catastrophic loss exception using helper method
+        if (this.isCatastrophicLoss(pos)) {
           // CATASTROPHIC LOSS with untrusted P&L - ALLOW stop-loss with warning
           // The risk of doing nothing is greater than the risk of acting on imperfect data
+          const lossPctMagnitude = Math.abs(pos.pnlPct);
           this.logger.warn(
             `[StopLoss] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}% >= ${this.config.maxStopLossPct}%) with untrusted P&L ` +
             `(${pos.pnlUntrustedReason ?? "unknown reason"}) - PROCEEDING WITH STOP-LOSS despite data uncertainty`,
@@ -267,7 +281,6 @@ export class StopLossStrategy {
 
     // Get minimum hold time from config (default to 60 seconds if not set)
     const minHoldSeconds = this.config.minHoldSeconds ?? 60;
-    const now = Date.now();
 
     // Find positions exceeding their stop-loss threshold
     const positionsToStop: Array<{ position: Position; stopLossPct: number }> =
@@ -278,11 +291,8 @@ export class StopLossStrategy {
 
       // Check if position exceeds stop-loss (negative P&L beyond threshold)
       if (position.pnlPct <= -stopLossPct) {
-        const lossPctMagnitude = Math.abs(position.pnlPct);
-        
-        // CATASTROPHIC LOSS: >= maxStopLossPct (default 25%) - should act immediately
-        // For catastrophic losses, the Data API price is the truth - don't wait for entry time
-        const isCatastrophicLoss = lossPctMagnitude >= this.config.maxStopLossPct;
+        // Use helper method to check for catastrophic loss
+        const isCatastrophic = this.isCatastrophicLoss(position);
         
         // Check minimum hold time before allowing stop-loss
         // Use PositionTracker's entry time as single source of truth
@@ -296,8 +306,9 @@ export class StopLossStrategy {
         // The original conservative approach prevented action on positions after container restart,
         // but it also prevented action on legitimately losing positions.
         if (!entryTime) {
-          if (isCatastrophicLoss) {
+          if (isCatastrophic) {
             // CATASTROPHIC LOSS with no entry time - ACT ANYWAY
+            const lossPctMagnitude = Math.abs(position.pnlPct);
             this.logger.warn(
               `[StopLoss] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}%) with no entry time - PROCEEDING ANYWAY (Data API is source of truth)`,
             );
@@ -311,7 +322,7 @@ export class StopLossStrategy {
         }
 
         // Check hold time (but skip for catastrophic losses)
-        if (entryTime && !isCatastrophicLoss) {
+        if (entryTime && !isCatastrophic) {
           const holdTimeSeconds = (now - entryTime) / 1000;
 
           if (holdTimeSeconds < minHoldSeconds) {

@@ -3456,6 +3456,9 @@ export class PositionTracker {
                   // - Neither StopLoss nor Hedging would act on the position
                   //
                   // With this fix, we preserve the Data API price, keeping P&L consistent and trusted.
+                  // NOTE: We check > 0 (not >= 0) because a 0 price means the position is worthless
+                  // and using it for selling wouldn't recover any value. In that case, fallback to
+                  // entry price is acceptable since the position shows 0% P&L but is preserved.
                   if (dataApiCurPrice !== undefined && dataApiCurPrice > 0) {
                     currentPrice = dataApiCurPrice;
                     this.logger.debug(
