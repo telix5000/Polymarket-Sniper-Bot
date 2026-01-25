@@ -656,12 +656,15 @@ export class HedgingStrategy {
         const isActualLoss = pnlPct < 0;
         const isCatastrophicLoss = isActualLoss && lossPctMagnitude >= this.config.forceLiquidationPct;
         
-        if (isCatastrophicLoss && position.pnlTrusted) {
-          // CATASTROPHIC LOSS with trusted P&L on NOT_TRADABLE position
+        if (isCatastrophicLoss) {
+          // CATASTROPHIC LOSS on NOT_TRADABLE position (trusted or untrusted P&L)
           // Attempt liquidation using Data API price as fallback
+          // NOTE: Consistent with lines 619-626 which allow action on catastrophic losses
+          // even with untrusted P&L - the risk of inaction is greater than the risk of acting
           this.logger.warn(
             `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}%) on NOT_TRADABLE position ${position.side} ${tokenIdShort}... ` +
-              `- ATTEMPTING LIQUIDATION using Data API price ${(position.currentPrice * 100).toFixed(1)}¢`,
+              `- ATTEMPTING LIQUIDATION using Data API price ${(position.currentPrice * 100).toFixed(1)}¢` +
+              `${!position.pnlTrusted ? ` (untrusted P&L: ${position.pnlUntrustedReason ?? "unknown"})` : ""}`,
           );
           
           // Skip hedging (can't buy opposite side without orderbook), but try to sell
