@@ -53,7 +53,7 @@ export interface TradeNotificationInput {
 
 // Singleton instance
 let telegramService: TelegramService | null = null;
-let getPnLSummary: (() => LedgerSummary) | null = null;
+let getPnLSummary: (() => LedgerSummary | Promise<LedgerSummary>) | null = null;
 let logger: Logger | null = null;
 
 /**
@@ -74,9 +74,10 @@ export function initTradeNotificationService(
 /**
  * Set the P&L callback for including P&L snapshots with notifications.
  * This should be called after the PnL ledger is initialized.
+ * Supports both sync and async callbacks for balance enrichment.
  */
 export function setTradeNotificationPnLCallback(
-  callback: () => LedgerSummary,
+  callback: () => LedgerSummary | Promise<LedgerSummary>,
 ): void {
   getPnLSummary = callback;
   logger?.debug("[TradeNotification] P&L callback set");
@@ -100,6 +101,10 @@ function toPnLSnapshot(summary: LedgerSummary): PnLSnapshot {
     winRate: summary.winRate,
     winningTrades: summary.winningTrades,
     losingTrades: summary.losingTrades,
+    // Include balance info if available from orchestrator
+    usdcBalance: summary.usdcBalance,
+    holdingsValue: summary.holdingsValue,
+    totalValue: summary.totalValue,
   };
 }
 
@@ -139,7 +144,7 @@ export async function notifyTrade(
     let pnlSnapshot: PnLSnapshot | undefined;
     if (getPnLSummary) {
       try {
-        const summary = getPnLSummary();
+        const summary = await Promise.resolve(getPnLSummary());
         pnlSnapshot = toPnLSnapshot(summary);
       } catch (err) {
         logger?.warn(

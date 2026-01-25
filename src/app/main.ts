@@ -213,13 +213,14 @@ async function main(): Promise<void> {
     // Start Telegram P&L updates if configured (use global reference for cleanup)
     telegramService = createTelegramService(logger);
     if (telegramService.isEnabled()) {
-      const pnlLedger = orchestrator.getPnLLedger();
-      telegramService.startPnlUpdates(() => pnlLedger.getSummary());
+      // Use getSummaryWithBalances for P&L updates to include balance info
+      // orchestrator is definitely defined here (we just created it above)
+      telegramService.startPnlUpdates(() => orchestrator!.getSummaryWithBalances());
       logger.info("📱 Telegram P&L notifications started");
 
       // Initialize centralized trade notification service for all strategies
       initTradeNotificationService(telegramService, logger);
-      setTradeNotificationPnLCallback(() => pnlLedger.getSummary());
+      setTradeNotificationPnLCallback(() => orchestrator!.getSummaryWithBalances());
       logger.info("📱 Trade notifications enabled - will notify on buys/sells/hedges/redemptions");
     }
   } else if (strategyConfig && !strategyConfig.enabled) {

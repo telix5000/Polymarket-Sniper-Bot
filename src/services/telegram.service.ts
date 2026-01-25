@@ -108,6 +108,14 @@ export interface PnLSnapshot {
   winRate: number;
   winningTrades: number;
   losingTrades: number;
+
+  // === BALANCE INFORMATION (optional) ===
+  /** USDC cash balance (reserves) */
+  usdcBalance?: number;
+  /** Total value of all holdings at current prices */
+  holdingsValue?: number;
+  /** Grand total (USDC + holdings value) */
+  totalValue?: number;
 }
 
 /**
@@ -118,7 +126,7 @@ export class TelegramService {
   private readonly logger: Logger;
   private pnlTimer?: NodeJS.Timeout;
   private lastPnlUpdateTime: number = 0;
-  private getPnlSummary?: () => LedgerSummary;
+  private getPnlSummary?: () => LedgerSummary | Promise<LedgerSummary>;
 
   constructor(config: Partial<TelegramConfig>, logger: Logger) {
     this.config = {
@@ -150,7 +158,9 @@ export class TelegramService {
   /**
    * Start periodic P&L updates
    */
-  startPnlUpdates(getPnlSummary: () => LedgerSummary): void {
+  startPnlUpdates(
+    getPnlSummary: () => LedgerSummary | Promise<LedgerSummary>,
+  ): void {
     if (!this.config.enabled || this.config.pnlIntervalMinutes <= 0) {
       return;
     }
@@ -292,6 +302,18 @@ export class TelegramService {
       if (pnlSnapshot.winningTrades + pnlSnapshot.losingTrades > 0) {
         message += `📉 Win Rate: ${(pnlSnapshot.winRate * 100).toFixed(1)}% (${pnlSnapshot.winningTrades}W/${pnlSnapshot.losingTrades}L)\n`;
       }
+
+      // Add balance breakdown if available
+      if (
+        pnlSnapshot.usdcBalance !== undefined &&
+        pnlSnapshot.holdingsValue !== undefined &&
+        pnlSnapshot.totalValue !== undefined
+      ) {
+        message += `\n━━━ Balance ━━━\n`;
+        message += `🏦 USDC: $${pnlSnapshot.usdcBalance.toFixed(2)}\n`;
+        message += `📊 Holdings: $${pnlSnapshot.holdingsValue.toFixed(2)}\n`;
+        message += `💎 Total: $${pnlSnapshot.totalValue.toFixed(2)}\n`;
+      }
     }
 
     if (trade.txHash) {
@@ -311,7 +333,7 @@ export class TelegramService {
 
     // Track performance of P&L summary generation
     const startTime = Date.now();
-    const summary = this.getPnlSummary();
+    const summary = await Promise.resolve(this.getPnlSummary());
     const summaryDurationMs = Date.now() - startTime;
 
     // Log slow summary generation for performance monitoring
@@ -361,6 +383,18 @@ export class TelegramService {
       if (summary.largestLoss < 0) {
         message += `💔 Worst: $${summary.largestLoss.toFixed(2)}\n`;
       }
+    }
+
+    // Add balance breakdown if available
+    if (
+      summary.usdcBalance !== undefined &&
+      summary.holdingsValue !== undefined &&
+      summary.totalValue !== undefined
+    ) {
+      message += `\n━━━ Balance ━━━\n`;
+      message += `🏦 USDC: $${summary.usdcBalance.toFixed(2)}\n`;
+      message += `📊 Holdings: $${summary.holdingsValue.toFixed(2)}\n`;
+      message += `💎 Total: $${summary.totalValue.toFixed(2)}\n`;
     }
 
     this.lastPnlUpdateTime = Date.now();
