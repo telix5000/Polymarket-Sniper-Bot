@@ -32,7 +32,7 @@ import {
   acquireHedgeLock,
   releaseHedgeLock,
 } from "../utils/funds-allowance.util";
-import { POLYMARKET_TAKER_FEE_BPS } from "./constants";
+import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR } from "./constants";
 
 /**
  * Smart Hedging Direction - determines when smart hedging is active
@@ -941,7 +941,7 @@ export class SmartHedgingStrategy {
               // Update cycle budget with freed funds so retry can use them
               // Account for transaction fees (taker fee on sell)
               const grossValue = profitToSell.size * profitToSell.currentPrice;
-              const feeAmount = grossValue * (POLYMARKET_TAKER_FEE_BPS / 10000);
+              const feeAmount = grossValue * (POLYMARKET_TAKER_FEE_BPS / BASIS_POINTS_DIVISOR);
               const freedValue = grossValue - feeAmount;
               totalFreedFunds += freedValue;
               

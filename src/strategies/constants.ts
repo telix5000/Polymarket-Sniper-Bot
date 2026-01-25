@@ -62,6 +62,11 @@ export const POLYMARKET_FEE_BPS = 1; // Default to taker fee for conservative ca
 export const POLYMARKET_ROUND_TRIP_FEE_PCT = 0.02; // 0.02% total for buy + sell as taker (0.01% each)
 
 /**
+ * Divisor for converting basis points to decimal (10000 BPS = 100%)
+ */
+export const BASIS_POINTS_DIVISOR = 10000;
+
+/**
  * Calculate net profit after fees
  * @param grossProfitPct Gross profit percentage
  * @returns Net profit percentage after round-trip fees
