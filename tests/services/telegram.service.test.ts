@@ -595,7 +595,7 @@ describe("TelegramService Class", () => {
       size: 30,
       price: 0.45,
       sizeUsd: 13.5,
-      strategy: "SmartHedging",
+      strategy: "Hedging",
     };
 
     const result = await service.sendTradeNotificationWithPnL(trade);
@@ -606,7 +606,7 @@ describe("TelegramService Class", () => {
     const [, options] = mockFetch.mock.calls[0].arguments;
     const body = JSON.parse(options.body);
     assert.ok(body.text.includes("Hedge Placed"));
-    assert.ok(body.text.includes("SmartHedging"));
+    assert.ok(body.text.includes("Hedging"));
     // Should not include portfolio update without P&L snapshot
     assert.ok(!body.text.includes("Portfolio Update"));
   });

@@ -342,7 +342,7 @@ export interface Position {
    * - No orderbook bids available (mark price unknown)
    * - Price data is stale or contradictory
    *
-   * CRITICAL: SmartHedging, ScalpTrade, and StopLoss MUST skip
+   * CRITICAL: Hedging, ScalpTrade, and StopLoss MUST skip
    * positions where pnlTrusted === false.
    */
   pnlTrusted: boolean;
@@ -352,7 +352,7 @@ export interface Position {
    * ONLY VALID when pnlTrusted === true.
    *
    * - PROFITABLE: pnlPct > 0 (candidate for ScalpTrade)
-   * - LOSING: pnlPct < 0 (candidate for SmartHedging, StopLoss)
+   * - LOSING: pnlPct < 0 (candidate for Hedging, StopLoss)
    * - NEUTRAL: pnlPct === 0 (breakeven)
    * - UNKNOWN: pnlTrusted === false (DO NOT ACT)
    */
@@ -499,7 +499,7 @@ export interface Position {
    * - currentPrice >= 50¢ (safety guard - NEAR_RESOLUTION_MIN_PRICE_DOLLARS)
    * - redeemable is false
    *
-   * SmartHedging MUST NOT hedge or liquidate positions where this is true.
+   * Hedging MUST NOT hedge or liquidate positions where this is true.
    * Instead, wait for resolution or use sell-early module if configured.
    *
    * CRITICAL SAFETY GUARD: Prices < 50¢ are NEVER classified as near-resolution.

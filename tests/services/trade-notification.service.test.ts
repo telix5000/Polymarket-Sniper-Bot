@@ -216,7 +216,7 @@ describe("Trade Notification Service", () => {
       const [, options] = mockFetch.mock.calls[0].arguments;
       const body = JSON.parse(options.body);
       assert.ok(body.text.includes("Hedge Placed"));
-      assert.ok(body.text.includes("SmartHedging"));
+      assert.ok(body.text.includes("Hedging"));
     });
 
     test("notifyHedgeExit sends HEDGE_EXIT notification", async () => {

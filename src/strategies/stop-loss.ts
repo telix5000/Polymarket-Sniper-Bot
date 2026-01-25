@@ -31,23 +31,23 @@ export interface StopLossConfig {
    */
   useDynamicTiers: boolean;
   /**
-   * Skip positions that Smart Hedging will handle (entry < hedgingMaxEntryPrice).
-   * When enabled, Stop-Loss defers to Smart Hedging for low-entry positions.
+   * Skip positions that Hedging will handle (entry < hedgingMaxEntryPrice).
+   * When enabled, Stop-Loss defers to Hedging for low-entry positions.
    *
    * Default: true when smart hedging is enabled
    */
   skipForSmartHedging?: boolean;
   /**
    * Entry price threshold for determining which strategy handles a position.
-   * Should match Smart Hedging's maxEntryPrice (default: 1.0 = 100¢).
+   * Should match Hedging's maxEntryPrice (default: 1.0 = 100¢).
    *
    * When skipForSmartHedging is true:
-   * - Positions with entry < this threshold: Handled by Smart Hedging (skipped by Stop-Loss)
+   * - Positions with entry < this threshold: Handled by Hedging (skipped by Stop-Loss)
    * - Positions with entry >= this threshold: Handled by Stop-Loss
    *
-   * This matches Smart Hedging's logic which skips positions where entry >= maxEntryPrice.
+   * This matches Hedging's logic which skips positions where entry >= maxEntryPrice.
    *
-   * Default: 1.0 (100¢) - matches Smart Hedging default (handles ALL positions)
+   * Default: 1.0 (100¢) - matches Hedging default (handles ALL positions)
    */
   hedgingMaxEntryPrice?: number;
   /**
@@ -86,9 +86,9 @@ export interface StopLossStrategyConfig {
  *
  * The maxStopLossPct acts as an absolute ceiling (default 25%).
  *
- * NOTE: When Smart Hedging is enabled (skipForSmartHedging=true), positions with
+ * NOTE: When Hedging is enabled (skipForSmartHedging=true), positions with
  * entry price below hedgingMaxEntryPrice (default 75¢) are SKIPPED by this strategy.
- * Smart Hedging handles them by buying the opposing side instead of selling at a loss,
+ * Hedging handles them by buying the opposing side instead of selling at a loss,
  * which can turn losers into winners.
  *
  * This strategy is designed to catch positions from:
@@ -188,17 +188,17 @@ export class StopLossStrategy {
       return true;
     });
 
-    // Skip positions that Smart Hedging will handle
-    // When skipForSmartHedging is true, defer to Smart Hedging for ALL positions
+    // Skip positions that Hedging will handle
+    // When skipForSmartHedging is true, defer to Hedging for ALL positions
     if (this.config.skipForSmartHedging) {
-      // Use configured threshold or default to 100¢ (matches Smart Hedging default - handles ALL positions)
+      // Use configured threshold or default to 100¢ (matches Hedging default - handles ALL positions)
       const hedgingThreshold = this.config.hedgingMaxEntryPrice ?? 1.0;
       activePositions = activePositions.filter(
         (pos) => pos.entryPrice >= hedgingThreshold,
       );
 
       // NOTE: We intentionally don't log skipped positions here.
-      // Smart Hedging handles these positions with its own fallback mechanism
+      // Hedging handles these positions with its own fallback mechanism
       // (liquidation if hedge fails), so this skip is expected and silent.
     }
 

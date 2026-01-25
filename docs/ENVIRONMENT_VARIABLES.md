@@ -13,7 +13,7 @@ A comprehensive guide to all environment variables in Polymarket Sniper Bot. Thi
 - [Strategy Presets](#-strategy-presets)
 - [Position Management](#-position-management)
 - [Auto-Sell & Exit Strategies](#-auto-sell--exit-strategies)
-- [Smart Hedging](#-smart-hedging)
+- [Hedging](#-smart-hedging)
 - [Scalping Configuration](#-scalping-configuration)
 - [Auto-Redeem](#-auto-redeem)
 - [Arbitrage Engine](#-arbitrage-engine)
@@ -300,27 +300,27 @@ ON_CHAIN_EXIT_ENABLED=true
 
 ---
 
-## 🛡️ Smart Hedging
+## 🛡️ Hedging
 
 Smart hedging protects against losses by buying the opposing side instead of selling at a loss.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SMART_HEDGING_ENABLED` | Enable smart hedging | `true` |
-| `SMART_HEDGING_DIRECTION` | Hedging direction | `both` |
-| `SMART_HEDGING_TRIGGER_LOSS_PCT` | Loss percentage to trigger hedge | `20` |
-| `SMART_HEDGING_MAX_HEDGE_USD` | Maximum USD per hedge | Varies (10-50) |
-| `SMART_HEDGING_RESERVE_PCT` | Percentage reserved for hedging | `20` |
+| `HEDGING_ENABLED` | Enable hedging | `true` |
+| `HEDGING_DIRECTION` | Hedging direction | `both` |
+| `HEDGING_TRIGGER_LOSS_PCT` | Loss percentage to trigger hedge | `20` |
+| `HEDGING_MAX_HEDGE_USD` | Maximum USD per hedge | Varies (10-50) |
+| `HEDGING_RESERVE_PCT` | Percentage reserved for hedging | `20` |
 
 ### Hedge Up Settings (Buy More When Winning)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SMART_HEDGING_HEDGE_UP_PRICE_THRESHOLD` | Min price for hedge up | `0.85` (85¢) |
-| `SMART_HEDGING_HEDGE_UP_MAX_PRICE` | Max price for hedge up | `0.95` (95¢) |
-| `SMART_HEDGING_HEDGE_UP_WINDOW_MINUTES` | Minutes before close | `30` |
-| `SMART_HEDGING_HEDGE_UP_MAX_USD` | Max USD for hedge up | `25` |
-| `SMART_HEDGING_HEDGE_UP_ANYTIME` | Allow hedge up anytime | `false` |
+| `HEDGING_HEDGE_UP_PRICE_THRESHOLD` | Min price for hedge up | `0.85` (85¢) |
+| `HEDGING_HEDGE_UP_MAX_PRICE` | Max price for hedge up | `0.95` (95¢) |
+| `HEDGING_HEDGE_UP_WINDOW_MINUTES` | Minutes before close | `30` |
+| `HEDGING_HEDGE_UP_MAX_USD` | Max USD for hedge up | `25` |
+| `HEDGING_HEDGE_UP_ANYTIME` | Allow hedge up anytime | `false` |
 
 ### Direction Options
 - `down`: Only hedge losing positions (traditional)
@@ -329,11 +329,11 @@ Smart hedging protects against losses by buying the opposing side instead of sel
 
 ### Example
 ```bash
-SMART_HEDGING_ENABLED=true
-SMART_HEDGING_DIRECTION=both
-SMART_HEDGING_TRIGGER_LOSS_PCT=20
-SMART_HEDGING_MAX_HEDGE_USD=25
-SMART_HEDGING_RESERVE_PCT=20
+HEDGING_ENABLED=true
+HEDGING_DIRECTION=both
+HEDGING_TRIGGER_LOSS_PCT=20
+HEDGING_MAX_HEDGE_USD=25
+HEDGING_RESERVE_PCT=20
 ```
 
 ---

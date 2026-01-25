@@ -8,6 +8,7 @@ import {
 import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 import { MempoolMonitorService } from "../services/mempool-monitor.service";
 import { TradeExecutorService } from "../services/trade-executor.service";
+import { SellSignalMonitorService } from "../services/sell-signal-monitor.service";
 import {
   createTelegramService,
   TelegramService,
@@ -33,6 +34,7 @@ import { populateTargetAddressesFromLeaderboard } from "../targets";
 // Global service references for graceful shutdown
 let telegramService: TelegramService | undefined;
 let orchestrator: Orchestrator | undefined;
+let sellSignalMonitor: SellSignalMonitorService | undefined;
 
 async function main(): Promise<void> {
   const logger = new ConsoleLogger();
@@ -100,8 +102,8 @@ async function main(): Promise<void> {
     );
     logger.info(
       `📊 Config: MAX_POSITION_USD=$${strategyConfig.endgameMaxPositionUsd}, ` +
-        `SMART_HEDGING=${strategyConfig.smartHedgingEnabled ? "ON" : "OFF"}, ` +
-        `ABSOLUTE_MAX=$${strategyConfig.smartHedgingAbsoluteMaxUsd}`,
+        `HEDGING=${strategyConfig.hedgingEnabled ? "ON" : "OFF"}, ` +
+        `ABSOLUTE_MAX=$${strategyConfig.hedgingAbsoluteMaxUsd}`,
     );
 
     // Load env config for balance fetching (needed for dynamic reserves)
@@ -127,30 +129,30 @@ async function main(): Promise<void> {
       }),
       // Pass hedging config from env
       hedgingConfig: {
-        enabled: strategyConfig.smartHedgingEnabled,
-        triggerLossPct: strategyConfig.smartHedgingTriggerLossPct,
-        maxHedgeUsd: strategyConfig.smartHedgingMaxHedgeUsd,
-        minHedgeUsd: strategyConfig.smartHedgingMinHedgeUsd,
-        absoluteMaxUsd: strategyConfig.smartHedgingAbsoluteMaxUsd,
-        allowExceedMax: strategyConfig.smartHedgingAllowExceedMax,
-        forceLiquidationPct: strategyConfig.smartHedgingForceLiquidationLossPct,
-        emergencyLossPct: strategyConfig.smartHedgingEmergencyLossPct,
+        enabled: strategyConfig.hedgingEnabled,
+        triggerLossPct: strategyConfig.hedgingTriggerLossPct,
+        maxHedgeUsd: strategyConfig.hedgingMaxHedgeUsd,
+        minHedgeUsd: strategyConfig.hedgingMinHedgeUsd,
+        absoluteMaxUsd: strategyConfig.hedgingAbsoluteMaxUsd,
+        allowExceedMax: strategyConfig.hedgingAllowExceedMax,
+        forceLiquidationPct: strategyConfig.hedgingForceLiquidationLossPct,
+        emergencyLossPct: strategyConfig.hedgingEmergencyLossPct,
         // Near-close hedging behavior
         nearCloseWindowMinutes:
-          strategyConfig.smartHedgingNearCloseWindowMinutes,
+          strategyConfig.hedgingNearCloseWindowMinutes,
         nearClosePriceDropCents:
-          strategyConfig.smartHedgingNearClosePriceDropCents,
-        nearCloseLossPct: strategyConfig.smartHedgingNearCloseLossPct,
-        noHedgeWindowMinutes: strategyConfig.smartHedgingNoHedgeWindowMinutes,
-        // Smart hedging direction and "hedge up" settings
-        direction: strategyConfig.smartHedgingDirection,
-        hedgeUpPriceThreshold: strategyConfig.smartHedgingHedgeUpPriceThreshold,
-        hedgeUpMaxPrice: strategyConfig.smartHedgingHedgeUpMaxPrice,
-        hedgeUpWindowMinutes: strategyConfig.smartHedgingHedgeUpWindowMinutes,
-        hedgeUpMaxUsd: strategyConfig.smartHedgingHedgeUpMaxUsd,
-        hedgeUpAnytime: strategyConfig.smartHedgingHedgeUpAnytime,
+          strategyConfig.hedgingNearClosePriceDropCents,
+        nearCloseLossPct: strategyConfig.hedgingNearCloseLossPct,
+        noHedgeWindowMinutes: strategyConfig.hedgingNoHedgeWindowMinutes,
+        // Hedging direction and "hedge up" settings
+        direction: strategyConfig.hedgingDirection,
+        hedgeUpPriceThreshold: strategyConfig.hedgingHedgeUpPriceThreshold,
+        hedgeUpMaxPrice: strategyConfig.hedgingHedgeUpMaxPrice,
+        hedgeUpWindowMinutes: strategyConfig.hedgingHedgeUpWindowMinutes,
+        hedgeUpMaxUsd: strategyConfig.hedgingHedgeUpMaxUsd,
+        hedgeUpAnytime: strategyConfig.hedgingHedgeUpAnytime,
         // Hedge exit monitoring
-        hedgeExitThreshold: strategyConfig.smartHedgingHedgeExitThreshold,
+        hedgeExitThreshold: strategyConfig.hedgingHedgeExitThreshold,
       },
       // Quick flip module removed - functionality covered by ScalpTrade
       // Pass endgame config
@@ -243,7 +245,7 @@ async function main(): Promise<void> {
           sellEarly: strategyConfig.sellEarlyEnabled,
           autoSell: strategyConfig.autoSellEnabled,
           scalpTakeProfit: strategyConfig.scalpTakeProfitEnabled,
-          smartHedging: strategyConfig.smartHedgingEnabled,
+          hedging: strategyConfig.hedgingEnabled,
           stopLoss: true, // Always enabled when orchestrator runs
           autoRedeem: strategyConfig.autoRedeemEnabled,
           frontrun: mempoolWillRun, // Frontrun/copy trading enabled when mempool mode runs
@@ -394,7 +396,7 @@ async function main(): Promise<void> {
             sellEarly: false,
             autoSell: false,
             scalpTakeProfit: false,
-            smartHedging: false,
+            hedging: false,
             stopLoss: false,
             autoRedeem: false,
           })
@@ -421,6 +423,36 @@ async function main(): Promise<void> {
       dynamicReserves: orchestrator?.getDynamicReserves(),
     });
 
+    // Initialize SellSignalMonitorService when orchestrator exists (provides position tracking)
+    // This monitors SELL signals from tracked traders and triggers protective actions
+    if (orchestrator) {
+      sellSignalMonitor = new SellSignalMonitorService({
+        logger,
+        positionTracker: orchestrator.getPositionTracker(),
+        // Callbacks for protective actions - currently logging only
+        // TODO: Wire up actual hedge/stop-loss execution via orchestrator strategies
+        onTriggerHedge: async (position, signal) => {
+          logger.info(
+            `[SellSignalMonitor] 🛡️ HEDGE triggered for ${position.tokenId.slice(0, 12)}... ` +
+              `(loss: ${Math.abs(position.pnlPct).toFixed(1)}%) by trader ${signal.trader.slice(0, 10)}...`,
+          );
+          // Note: The actual hedge execution would be handled by the HedgingStrategy
+          // in the next orchestrator cycle. This callback is for immediate notification.
+          return true;
+        },
+        onTriggerStopLoss: async (position, signal) => {
+          logger.warn(
+            `[SellSignalMonitor] 🚨 STOP-LOSS triggered for ${position.tokenId.slice(0, 12)}... ` +
+              `(loss: ${Math.abs(position.pnlPct).toFixed(1)}%) by trader ${signal.trader.slice(0, 10)}...`,
+          );
+          // Note: The actual stop-loss execution would be handled by the StopLossStrategy
+          // in the next orchestrator cycle. This callback is for immediate notification.
+          return true;
+        },
+      });
+      logger.info("📊 Sell signal monitor initialized - watching for tracked trader SELL signals");
+    }
+
     const monitor = new MempoolMonitorService({
       client,
       logger,
@@ -428,6 +460,12 @@ async function main(): Promise<void> {
       onDetectedTrade: async (signal) => {
         await executor.frontrunTrade(signal);
       },
+      // Route SELL signals to SellSignalMonitorService for protective monitoring
+      onDetectedSell: sellSignalMonitor
+        ? async (signal) => {
+            await sellSignalMonitor!.processSellSignal(signal);
+          }
+        : undefined,
     });
 
     await monitor.start();

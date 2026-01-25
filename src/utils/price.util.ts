@@ -6,7 +6,7 @@
  *
  * CRITICAL: This module ensures consistent price handling across:
  * - PositionTracker (Data-API prices)
- * - SmartHedging (orderbook prices)
+ * - Hedging (orderbook prices)
  * - All logging and display
  *
  * RULES:

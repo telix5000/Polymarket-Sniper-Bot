@@ -1,5 +1,5 @@
 /**
- * Smart Hedging Strategy
+ * Hedging Strategy
  *
  * Instead of selling at a loss, buy the opposing outcome to guarantee profit.
  *
@@ -35,27 +35,27 @@ import {
 import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR, calculateMinAcceptablePrice, FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
 
 /**
- * Smart Hedging Direction - determines when smart hedging is active
+ * Hedging Direction - determines when hedging is active
  * - "down": Only hedge losing positions (traditional behavior)
  * - "up": Only buy more shares when winning at high probability (85¢+)
  * - "both": Both behaviors enabled (default - maximize wins and minimize losses)
  */
-export type SmartHedgingDirection = "down" | "up" | "both";
+export type HedgingDirection = "down" | "up" | "both";
 
 /**
- * Smart Hedging Configuration
+ * Hedging Configuration
  */
-export interface SmartHedgingConfig {
-  /** Enable smart hedging */
+export interface HedgingConfig {
+  /** Enable hedging */
   enabled: boolean;
 
   /**
-   * Direction for smart hedging (default: "both")
+   * Direction for hedging (default: "both")
    * - "down": Only hedge losing positions (traditional behavior)
    * - "up": Only buy more shares when winning at high probability
    * - "both": Both behaviors enabled (maximize wins AND minimize losses)
    */
-  direction: SmartHedgingDirection;
+  direction: HedgingDirection;
 
   /** Loss % to trigger hedging (default: 20) */
   triggerLossPct: number;
@@ -69,7 +69,7 @@ export interface SmartHedgingConfig {
   /** Allow exceeding maxHedgeUsd for large losses (default: true) */
   allowExceedMax: boolean;
 
-  /** Absolute max even when exceeding (default: from SMART_HEDGING_ABSOLUTE_MAX_USD) */
+  /** Absolute max even when exceeding (default: from HEDGING_ABSOLUTE_MAX_USD) */
   absoluteMaxUsd: number;
 
   /** Max entry price for hedging - only hedge risky positions (default: 0.75 = 75¢) */
@@ -183,7 +183,7 @@ export interface SmartHedgingConfig {
   hedgeExitThreshold: number;
 }
 
-export const DEFAULT_HEDGING_CONFIG: SmartHedgingConfig = {
+export const DEFAULT_HEDGING_CONFIG: HedgingConfig = {
   enabled: true,
   direction: "both", // Enable both hedging down (losses) and hedging up (high win prob)
   triggerLossPct: 20,
@@ -263,13 +263,13 @@ const HEDGE_TOO_EXPENSIVE_THRESHOLD = 0.9;
 const NEAR_RESOLUTION_HEDGE_MAX_PRICE = 0.93;
 
 /**
- * Smart Hedging Strategy
+ * Hedging Strategy
  */
-export class SmartHedgingStrategy {
+export class HedgingStrategy {
   private client: ClobClient;
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
-  private config: SmartHedgingConfig;
+  private config: HedgingConfig;
   /** Optional getter for the current reserve plan (injected by orchestrator) */
   private getReservePlan?: () => ReservePlan | null;
 
@@ -305,7 +305,7 @@ export class SmartHedgingStrategy {
     client: ClobClient;
     logger: ConsoleLogger;
     positionTracker: PositionTracker;
-    config: SmartHedgingConfig;
+    config: HedgingConfig;
     /** Optional getter for the current reserve plan (for reserve-aware hedging) */
     getReservePlan?: () => ReservePlan | null;
   }) {
@@ -326,7 +326,7 @@ export class SmartHedgingStrategy {
         : "disabled";
 
     this.logger.info(
-      `[SmartHedging] Initialized: direction=${this.config.direction}, trigger=-${this.config.triggerLossPct}%, ` +
+      `[Hedging] Initialized: direction=${this.config.direction}, trigger=-${this.config.triggerLossPct}%, ` +
         `maxHedge=$${this.config.maxHedgeUsd}, absoluteMax=$${this.config.absoluteMaxUsd}, ` +
         `hedgeUp=${hedgeUpStatus}, hedgeExit=${hedgeExitStatus}`,
     );
@@ -372,7 +372,7 @@ export class SmartHedgingStrategy {
     // Log when we're using reserves for hedging
     if (plan.mode === "RISK_OFF") {
       this.logger.info(
-        `[SmartHedging] 💰 Using reserves for hedging: available=$${plan.availableCash.toFixed(2)}, ` +
+        `[Hedging] 💰 Using reserves for hedging: available=$${plan.availableCash.toFixed(2)}, ` +
           `reserveRequired=$${plan.reserveRequired.toFixed(2)}, shortfall=$${plan.shortfall.toFixed(2)}`,
       );
     }
@@ -408,7 +408,7 @@ export class SmartHedgingStrategy {
     // Check if budget is below minimum hedge threshold
     if (this.cycleHedgeBudgetRemaining < this.config.minHedgeUsd) {
       this.logger.info(
-        `[SmartHedging] 📋 ${operationLabel} skipped (RESERVE_SHORTFALL): budget=$${this.cycleHedgeBudgetRemaining.toFixed(2)} < minHedge=$${this.config.minHedgeUsd}`,
+        `[Hedging] 📋 ${operationLabel} skipped (RESERVE_SHORTFALL): budget=$${this.cycleHedgeBudgetRemaining.toFixed(2)} < minHedge=$${this.config.minHedgeUsd}`,
       );
       return { skip: true, reason: "RESERVE_SHORTFALL" };
     }
@@ -417,7 +417,7 @@ export class SmartHedgingStrategy {
     if (this.cycleHedgeBudgetRemaining < computedUsd) {
       const cappedUsd = this.cycleHedgeBudgetRemaining;
       this.logger.info(
-        `[SmartHedging] 📉 PARTIAL ${operationLabel}: Capping from $${computedUsd.toFixed(2)} to $${cappedUsd.toFixed(2)} (reserve constraint)`,
+        `[Hedging] 📉 PARTIAL ${operationLabel}: Capping from $${computedUsd.toFixed(2)} to $${cappedUsd.toFixed(2)} (reserve constraint)`,
       );
       return { skip: false, cappedUsd, isPartial: true };
     }
@@ -438,7 +438,7 @@ export class SmartHedgingStrategy {
 
     // Single-flight guard: prevent concurrent execution
     if (this.inFlight) {
-      this.logger.debug("[SmartHedging] Skipped - already in flight");
+      this.logger.debug("[Hedging] Skipped - already in flight");
       return 0;
     }
 
@@ -467,7 +467,7 @@ export class SmartHedgingStrategy {
     this.cycleCount++;
 
     // === DIAGNOSTIC: Log high-loss positions that could be hedged ===
-    // This helps diagnose why smart hedging might not be acting on losses
+    // This helps diagnose why hedging might not be acting on losses
     const highLossPositions = positions.filter(
       (p) => p.pnlPct < 0 && Math.abs(p.pnlPct) >= this.config.forceLiquidationPct
     );
@@ -476,7 +476,7 @@ export class SmartHedgingStrategy {
       const logKey = `diagnostic_high_loss:${highLossPositions.length}`;
       if (this.logDeduper.shouldLog(logKey, 60_000)) {
         this.logger.info(
-          `[SmartHedging] 🔍 Diagnostic: Found ${highLossPositions.length} catastrophic loss position(s) ` +
+          `[Hedging] 🔍 Diagnostic: Found ${highLossPositions.length} catastrophic loss position(s) ` +
             `(>=${this.config.forceLiquidationPct}% loss). Direction=${this.config.direction}, ` +
             `Budget=$${this.cycleHedgeBudgetRemaining?.toFixed(2) ?? "null"}, ` +
             `Hedged=${this.hedgedPositions.size}, Cooldowns=${this.failedLiquidationCooldowns.size}`,
@@ -505,7 +505,7 @@ export class SmartHedgingStrategy {
           actionsCount++;
           this.hedgedUpPositions.add(key);
           this.logger.info(
-            `[SmartHedging] 📈 HEDGE UP: Bought more shares of ${position.side} ${tokenIdShort}... ` +
+            `[Hedging] 📈 HEDGE UP: Bought more shares of ${position.side} ${tokenIdShort}... ` +
               `at ${formatCents(position.currentPrice)} (${hedgeUpResult.reason})`,
           );
         } else if (hedgeUpResult.action === "skipped") {
@@ -530,7 +530,7 @@ export class SmartHedgingStrategy {
         if (this.hedgedPositions.has(key)) {
           if (isCatastrophicLossPosition) {
             this.logger.info(
-              `[SmartHedging] 📋 Catastrophic loss position already hedged: ${position.side ?? "?"} ${tokenIdShort}... at ${position.pnlPct.toFixed(1)}%`,
+              `[Hedging] 📋 Catastrophic loss position already hedged: ${position.side ?? "?"} ${tokenIdShort}... at ${position.pnlPct.toFixed(1)}%`,
             );
           }
           skipAggregator.add(tokenIdShort, "already_hedged");
@@ -543,7 +543,7 @@ export class SmartHedgingStrategy {
         if (isCatastrophicLossPosition) {
           const remainingSec = Math.ceil((cooldownUntil - now) / 1000);
           this.logger.warn(
-            `[SmartHedging] ⏳ Catastrophic loss position in cooldown: ${position.side ?? "?"} ${tokenIdShort}... at ${position.pnlPct.toFixed(1)}% (${remainingSec}s remaining)`,
+            `[Hedging] ⏳ Catastrophic loss position in cooldown: ${position.side ?? "?"} ${tokenIdShort}... at ${position.pnlPct.toFixed(1)}% (${remainingSec}s remaining)`,
           );
         }
         skipAggregator.add(tokenIdShort, "cooldown");
@@ -584,7 +584,7 @@ export class SmartHedgingStrategy {
           // CATASTROPHIC LOSS with trusted P&L - PROCEED despite invalid orderbook
           // The P&L is calculated from Data-API which is reliable
           this.logger.warn(
-            `[SmartHedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}%) with invalid orderbook ` +
+            `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}%) with invalid orderbook ` +
               `(${orderbookQuality.reason}) but TRUSTED P&L - PROCEEDING with hedge/liquidation. ` +
               `Position: ${position.side} ${tokenIdShort}...`,
           );
@@ -595,7 +595,7 @@ export class SmartHedgingStrategy {
           const previousReason = this.lastSkipReasonByTokenId.get(key);
           if (previousReason !== "invalid_book") {
             this.logger.warn(
-              `[SmartHedging] ⚠️ Invalid orderbook for ${position.side} ${tokenIdShort}... (${orderbookQuality.reason}), skipping to avoid false catastrophic loss`,
+              `[Hedging] ⚠️ Invalid orderbook for ${position.side} ${tokenIdShort}... (${orderbookQuality.reason}), skipping to avoid false catastrophic loss`,
             );
             this.lastSkipReasonByTokenId.set(key, "invalid_book");
           }
@@ -619,20 +619,20 @@ export class SmartHedgingStrategy {
           // CATASTROPHIC LOSS with untrusted P&L - ALLOW hedging/liquidation with warning
           // The risk of doing nothing is greater than the risk of acting on imperfect data
           this.logger.warn(
-            `[SmartHedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}% >= ${this.config.forceLiquidationPct}%) with untrusted P&L ` +
+            `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}% >= ${this.config.forceLiquidationPct}%) with untrusted P&L ` +
             `(${position.pnlUntrustedReason ?? "unknown reason"}) - PROCEEDING WITH HEDGE/LIQUIDATION despite data uncertainty`,
           );
           // Fall through to continue processing - don't skip
         } else if (isActualLoss && lossPctMagnitude >= this.config.triggerLossPct) {
           // Significant loss but not catastrophic - log warning but still skip
           this.logger.warn(
-            `[SmartHedging] ⚠️ Skip hedge (UNTRUSTED_PNL): ${position.side} ${tokenIdShort}... at ${lossPctMagnitude.toFixed(1)}% loss has untrusted P&L (${position.pnlUntrustedReason ?? "unknown reason"}) - CANNOT HEDGE until P&L is trusted`,
+            `[Hedging] ⚠️ Skip hedge (UNTRUSTED_PNL): ${position.side} ${tokenIdShort}... at ${lossPctMagnitude.toFixed(1)}% loss has untrusted P&L (${position.pnlUntrustedReason ?? "unknown reason"}) - CANNOT HEDGE until P&L is trusted`,
           );
           skipAggregator.add(tokenIdShort, "untrusted_pnl");
           continue;
         } else {
           this.logger.debug(
-            `[SmartHedging] 📋 Skip hedge (UNTRUSTED_PNL): ${position.side} position has untrusted P&L (${position.pnlUntrustedReason ?? "unknown reason"})`,
+            `[Hedging] 📋 Skip hedge (UNTRUSTED_PNL): ${position.side} position has untrusted P&L (${position.pnlUntrustedReason ?? "unknown reason"})`,
           );
           skipAggregator.add(tokenIdShort, "untrusted_pnl");
           continue;
@@ -651,7 +651,7 @@ export class SmartHedgingStrategy {
         const lossPctMagnitude = Math.abs(pnlPct);
         if (pnlPct < 0 && lossPctMagnitude >= this.config.triggerLossPct) {
           this.logger.warn(
-            `[SmartHedging] ⚠️ Skip hedge (NOT_TRADABLE): ${position.side} ${tokenIdShort}... at ${lossPctMagnitude.toFixed(1)}% loss - position not tradable on CLOB (status=${position.executionStatus})`,
+            `[Hedging] ⚠️ Skip hedge (NOT_TRADABLE): ${position.side} ${tokenIdShort}... at ${lossPctMagnitude.toFixed(1)}% loss - position not tradable on CLOB (status=${position.executionStatus})`,
           );
         }
         skipAggregator.add(tokenIdShort, "not_tradable");
@@ -683,7 +683,7 @@ export class SmartHedgingStrategy {
         if (previousReason !== "redeemable") {
           // State changed to redeemable - this is noteworthy
           this.logger.info(
-            `[SmartHedging] 🔄 Position became redeemable: ${position.side} ${tokenIdShort}... (routing to AutoRedeem)`,
+            `[Hedging] 🔄 Position became redeemable: ${position.side} ${tokenIdShort}... (routing to AutoRedeem)`,
           );
           this.lastSkipReasonByTokenId.set(key, "redeemable");
         }
@@ -705,7 +705,7 @@ export class SmartHedgingStrategy {
         if (previousReason !== "near_resolution") {
           // State changed to near-resolution - log once per TTL
           this.logger.info(
-            `[SmartHedging] 🎯 Near-resolution position (${formatCents(position.currentPrice)}), skipping hedge/liquidation: ${position.side} ${tokenIdShort}...`,
+            `[Hedging] 🎯 Near-resolution position (${formatCents(position.currentPrice)}), skipping hedge/liquidation: ${position.side} ${tokenIdShort}...`,
           );
           this.lastSkipReasonByTokenId.set(key, "near_resolution");
         }
@@ -761,7 +761,7 @@ export class SmartHedgingStrategy {
             // Significant loss near resolution - buying inverse is critical
             isNearResolutionHedge = true;
             this.logger.info(
-              `[SmartHedging] 🎯 NEAR-RESOLUTION HEDGE: ${minutesToClose.toFixed(1)}min to close, loss ${lossPct.toFixed(1)}% - ` +
+              `[Hedging] 🎯 NEAR-RESOLUTION HEDGE: ${minutesToClose.toFixed(1)}min to close, loss ${lossPct.toFixed(1)}% - ` +
                 `Will BUY INVERSE then SELL original to lock in remaining value`,
             );
             // Fall through to the main hedging logic below - don't skip!
@@ -788,7 +788,7 @@ export class SmartHedgingStrategy {
           }
 
           this.logger.info(
-            `[SmartHedging] 📍 Near-close hedge triggered: ${minutesToClose.toFixed(1)}min to close, ` +
+            `[Hedging] 📍 Near-close hedge triggered: ${minutesToClose.toFixed(1)}min to close, ` +
               `loss=${lossPct.toFixed(1)}%${meetsLossThreshold ? " ✓" : ""}, ` +
               `drop=${priceDropCents.toFixed(1)}¢${meetsDropThreshold ? " ✓" : ""}`,
           );
@@ -808,7 +808,7 @@ export class SmartHedgingStrategy {
       const lockAcquired = acquireHedgeLock(position.marketId, "HEDGE_DOWN");
       if (!lockAcquired) {
         this.logger.warn(
-          `[SmartHedging] ⚠️ Could not acquire hedge lock for ${position.marketId.slice(0, 8)}... - another operation in progress`,
+          `[Hedging] ⚠️ Could not acquire hedge lock for ${position.marketId.slice(0, 8)}... - another operation in progress`,
         );
         skipAggregator.add(tokenIdShort, "hedge_lock_unavailable");
         continue;
@@ -817,7 +817,7 @@ export class SmartHedgingStrategy {
       try {
         // Try to hedge
         this.logger.info(
-          `[SmartHedging] 🎯 Position losing ${lossPct.toFixed(1)}%${isCatastrophicLoss ? " (catastrophic)" : ""}${isNearResolutionHedge ? " (near-resolution)" : ""} - attempting hedge FIRST`,
+          `[Hedging] 🎯 Position losing ${lossPct.toFixed(1)}%${isCatastrophicLoss ? " (catastrophic)" : ""}${isNearResolutionHedge ? " (near-resolution)" : ""} - attempting hedge FIRST`,
         );
 
         const hedgeResult = await this.executeHedge(position, lossPct, isNearResolutionHedge);
@@ -832,7 +832,7 @@ export class SmartHedgingStrategy {
               originalTokenId: position.tokenId,
             });
             this.logger.debug(
-              `[SmartHedging] 📊 Tracking paired hedge: original=${position.tokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}... hedge=${hedgeResult.hedgeTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}...`,
+              `[Hedging] 📊 Tracking paired hedge: original=${position.tokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}... hedge=${hedgeResult.hedgeTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}...`,
             );
           }
 
@@ -842,7 +842,7 @@ export class SmartHedgingStrategy {
           // This completes the hedge: BUY inverse + SELL original = locked in recovery
           if (isNearResolutionHedge) {
             this.logger.info(
-              `[SmartHedging] 💰 NEAR-RESOLUTION: Now selling original losing position to complete hedge`,
+              `[Hedging] 💰 NEAR-RESOLUTION: Now selling original losing position to complete hedge`,
             );
             const soldOriginal = await this.sellPosition(position);
             if (soldOriginal) {
@@ -850,11 +850,11 @@ export class SmartHedgingStrategy {
               // Mark the original as exited in hedge tracking
               this.hedgeExitedPositions.add(key);
               this.logger.info(
-                `[SmartHedging] ✅ NEAR-RESOLUTION HEDGE COMPLETE: Bought inverse + sold original ${position.side} ${tokenIdShort}...`,
+                `[Hedging] ✅ NEAR-RESOLUTION HEDGE COMPLETE: Bought inverse + sold original ${position.side} ${tokenIdShort}...`,
               );
             } else {
               this.logger.warn(
-                `[SmartHedging] ⚠️ Failed to sell original position after hedge - will retry via hedge exit monitoring`,
+                `[Hedging] ⚠️ Failed to sell original position after hedge - will retry via hedge exit monitoring`,
               );
             }
           }
@@ -863,12 +863,12 @@ export class SmartHedgingStrategy {
 
         // === PARTIAL FILL PROTECTION ===
         // If money was spent on a partial fill, mark position as hedged to prevent
-        // re-hedging and exceeding SMART_HEDGING_ABSOLUTE_MAX_USD.
+        // re-hedging and exceeding HEDGING_ABSOLUTE_MAX_USD.
         // This is critical: without this check, partial fills could trigger repeated
         // hedge attempts, each spending money until the total far exceeds the limit.
         if (hedgeResult.filledAmountUsd) {
           this.logger.warn(
-            `[SmartHedging] 🛑 Partial hedge fill ($${hedgeResult.filledAmountUsd.toFixed(2)}) - marking position as hedged to prevent exceeding ABSOLUTE_MAX`,
+            `[Hedging] 🛑 Partial hedge fill ($${hedgeResult.filledAmountUsd.toFixed(2)}) - marking position as hedged to prevent exceeding ABSOLUTE_MAX`,
           );
           this.hedgedPositions.add(key);
           // Track paired hedge even for partial fills
@@ -883,7 +883,7 @@ export class SmartHedgingStrategy {
           // For partial fills near resolution, still try to sell the original
           if (isNearResolutionHedge) {
             this.logger.info(
-              `[SmartHedging] 💰 NEAR-RESOLUTION (partial): Attempting to sell original losing position`,
+              `[Hedging] 💰 NEAR-RESOLUTION (partial): Attempting to sell original losing position`,
             );
             const soldOriginal = await this.sellPosition(position);
             if (soldOriginal) {
@@ -899,7 +899,7 @@ export class SmartHedgingStrategy {
         // The position should be redeemed, not sold at a loss
         if (hedgeResult.reason === "MARKET_RESOLVED") {
           this.logger.info(
-            `[SmartHedging] 📋 Position marked as resolved - skipping liquidation, awaiting redemption: ${key}`,
+            `[Hedging] 📋 Position marked as resolved - skipping liquidation, awaiting redemption: ${key}`,
           );
           // Add to hedged positions to prevent future attempts (will be redeemed instead)
           this.hedgedPositions.add(key);
@@ -921,7 +921,7 @@ export class SmartHedgingStrategy {
             : this.config.maxHedgeUsd;
           
           this.logger.info(
-            `[SmartHedging] 💰 Hedge failed (insufficient funds) - need ~$${targetHedgeAmount.toFixed(2)} for hedge, attempting to free funds by selling profitable positions`,
+            `[Hedging] 💰 Hedge failed (insufficient funds) - need ~$${targetHedgeAmount.toFixed(2)} for hedge, attempting to free funds by selling profitable positions`,
           );
 
           // Get profitable positions sorted by lowest profit first (sell smallest winners first)
@@ -945,13 +945,13 @@ export class SmartHedgingStrategy {
             // Check if we've freed enough funds already
             if (totalFreedFunds >= targetHedgeAmount) {
               this.logger.info(
-                `[SmartHedging] 💰 Freed enough funds ($${totalFreedFunds.toFixed(2)} >= $${targetHedgeAmount.toFixed(2)}) after selling ${positionsSold} position(s)`,
+                `[Hedging] 💰 Freed enough funds ($${totalFreedFunds.toFixed(2)} >= $${targetHedgeAmount.toFixed(2)}) after selling ${positionsSold} position(s)`,
               );
               break;
             }
 
             this.logger.info(
-              `[SmartHedging] 🔄 Selling profitable position #${positionsSold + 1} to free funds: ${profitToSell.side} +${profitToSell.pnlPct.toFixed(1)}% ($${(profitToSell.size * profitToSell.currentPrice).toFixed(2)})`,
+              `[Hedging] 🔄 Selling profitable position #${positionsSold + 1} to free funds: ${profitToSell.side} +${profitToSell.pnlPct.toFixed(1)}% ($${(profitToSell.size * profitToSell.currentPrice).toFixed(2)})`,
             );
 
             const soldProfit = await this.sellPosition(profitToSell);
@@ -974,25 +974,25 @@ export class SmartHedgingStrategy {
               }
               
               this.logger.info(
-                `[SmartHedging] 💰 Freed $${freedValue.toFixed(2)} (gross $${grossValue.toFixed(2)} - fees $${feeAmount.toFixed(4)}) - total freed: $${totalFreedFunds.toFixed(2)}`,
+                `[Hedging] 💰 Freed $${freedValue.toFixed(2)} (gross $${grossValue.toFixed(2)} - fees $${feeAmount.toFixed(4)}) - total freed: $${totalFreedFunds.toFixed(2)}`,
               );
             } else {
               this.logger.warn(
-                `[SmartHedging] ⚠️ Failed to sell profitable position for fund release - trying next`,
+                `[Hedging] ⚠️ Failed to sell profitable position for fund release - trying next`,
               );
             }
           }
 
           if (positionsSold === 0) {
             this.logger.debug(
-              `[SmartHedging] 📋 No profitable positions available to sell for fund release`,
+              `[Hedging] 📋 No profitable positions available to sell for fund release`,
             );
           }
 
           // Retry hedge if we freed some funds
           if (totalFreedFunds > 0) {
             this.logger.info(
-              `[SmartHedging] 🔄 Retrying hedge after freeing $${totalFreedFunds.toFixed(2)} from ${positionsSold} position(s)...`,
+              `[Hedging] 🔄 Retrying hedge after freeing $${totalFreedFunds.toFixed(2)} from ${positionsSold} position(s)...`,
             );
 
             const retryResult = await this.executeHedge(position, lossPct, isNearResolutionHedge);
@@ -1003,7 +1003,7 @@ export class SmartHedgingStrategy {
               // For near-resolution, also sell the original after successful hedge
               if (isNearResolutionHedge) {
                 this.logger.info(
-                  `[SmartHedging] 💰 NEAR-RESOLUTION: Now selling original losing position to complete hedge`,
+                  `[Hedging] 💰 NEAR-RESOLUTION: Now selling original losing position to complete hedge`,
                 );
                 const soldOriginal = await this.sellPosition(position);
                 if (soldOriginal) {
@@ -1017,7 +1017,7 @@ export class SmartHedgingStrategy {
             // Check for partial fill on retry - still mark as hedged to prevent exceeding limit
             if (retryResult.filledAmountUsd) {
               this.logger.warn(
-                `[SmartHedging] 🛑 Retry partial fill ($${retryResult.filledAmountUsd.toFixed(2)}) - marking position as hedged`,
+                `[Hedging] 🛑 Retry partial fill ($${retryResult.filledAmountUsd.toFixed(2)}) - marking position as hedged`,
               );
               this.hedgedPositions.add(key);
               actionsCount++;
@@ -1025,7 +1025,7 @@ export class SmartHedgingStrategy {
             }
 
             this.logger.warn(
-              `[SmartHedging] ⚠️ Hedge retry failed (${retryResult.reason}) - will sell losing position as last resort`,
+              `[Hedging] ⚠️ Hedge retry failed (${retryResult.reason}) - will sell losing position as last resort`,
             );
           }
 
@@ -1039,7 +1039,7 @@ export class SmartHedgingStrategy {
           hedgeResult.reason === "NO_LIQUIDITY"
         ) {
           this.logger.info(
-            `[SmartHedging] 📋 Hedge skip reason: ${hedgeResult.reason}`,
+            `[Hedging] 📋 Hedge skip reason: ${hedgeResult.reason}`,
           );
         }
 
@@ -1051,19 +1051,19 @@ export class SmartHedgingStrategy {
         // EXCEPTION: If market is essentially resolved (95¢+), await redemption instead.
         if (isNearResolutionHedge && hedgeResult.reason !== "MARKET_RESOLVED") {
           this.logger.warn(
-            `[SmartHedging] 🚨 NEAR-RESOLUTION: Hedge failed (${hedgeResult.reason}) - SELLING losing position to salvage remaining value`,
+            `[Hedging] 🚨 NEAR-RESOLUTION: Hedge failed (${hedgeResult.reason}) - SELLING losing position to salvage remaining value`,
           );
           const sold = await this.sellPosition(position);
           if (sold) {
             actionsCount++;
             this.hedgedPositions.add(key);
             this.logger.info(
-              `[SmartHedging] ✅ NEAR-RESOLUTION: Sold losing ${position.side} ${tokenIdShort}... to recover value`,
+              `[Hedging] ✅ NEAR-RESOLUTION: Sold losing ${position.side} ${tokenIdShort}... to recover value`,
             );
           } else {
             this.failedLiquidationCooldowns.set(key, now + FAILED_LIQUIDATION_COOLDOWN_MS);
             this.logger.warn(
-              `[SmartHedging] ⏳ Near-resolution sell failed - position on cooldown: ${key}`,
+              `[Hedging] ⏳ Near-resolution sell failed - position on cooldown: ${key}`,
             );
           }
           continue;
@@ -1073,14 +1073,14 @@ export class SmartHedgingStrategy {
         // For smaller losses, wait and try again later (market conditions may improve)
         if (!isCatastrophicLoss) {
           this.logger.info(
-            `[SmartHedging] 📋 Hedge failed (${hedgeResult.reason}) but loss ${lossPct.toFixed(1)}% < ${this.config.forceLiquidationPct}% threshold - waiting for better conditions`,
+            `[Hedging] 📋 Hedge failed (${hedgeResult.reason}) but loss ${lossPct.toFixed(1)}% < ${this.config.forceLiquidationPct}% threshold - waiting for better conditions`,
           );
           continue;
         }
 
         // Catastrophic loss AND hedge failed - liquidate to stop bleeding
         this.logger.warn(
-          `[SmartHedging] 🚨 Hedge failed (${hedgeResult.reason}) AND loss ${lossPct.toFixed(1)}% >= ${this.config.forceLiquidationPct}% - LIQUIDATING as last resort`,
+          `[Hedging] 🚨 Hedge failed (${hedgeResult.reason}) AND loss ${lossPct.toFixed(1)}% >= ${this.config.forceLiquidationPct}% - LIQUIDATING as last resort`,
         );
         const sold = await this.sellPosition(position);
         if (sold) {
@@ -1093,7 +1093,7 @@ export class SmartHedgingStrategy {
             now + FAILED_LIQUIDATION_COOLDOWN_MS,
           );
           this.logger.warn(
-            `[SmartHedging] ⏳ Hedge and liquidation both failed - position on cooldown for 5 minutes: ${key}`,
+            `[Hedging] ⏳ Hedge and liquidation both failed - position on cooldown for 5 minutes: ${key}`,
           );
         }
       } finally {
@@ -1129,12 +1129,12 @@ export class SmartHedgingStrategy {
         
         if (hasCriticalSkips) {
           this.logger.warn(
-            `[SmartHedging] ⚠️ Skipped ${skipAggregator.getTotalCount()} positions: ${summary} (cycle=${this.cycleCount})`,
+            `[Hedging] ⚠️ Skipped ${skipAggregator.getTotalCount()} positions: ${summary} (cycle=${this.cycleCount})`,
           );
         } else {
           // Still log at INFO level if positions were skipped - helps diagnose issues
           this.logger.info(
-            `[SmartHedging] 📋 Skipped ${skipAggregator.getTotalCount()} positions: ${summary} (cycle=${this.cycleCount})`,
+            `[Hedging] 📋 Skipped ${skipAggregator.getTotalCount()} positions: ${summary} (cycle=${this.cycleCount})`,
           );
         }
       }
@@ -1247,7 +1247,7 @@ export class SmartHedgingStrategy {
       ? `${((position.marketEndTime - now) / (60 * 1000)).toFixed(1)}min to close`
       : "no close time";
     this.logger.info(
-      `[SmartHedging] 📈 HEDGE UP candidate: ${position.side} ${tokenIdShort}... ` +
+      `[Hedging] 📈 HEDGE UP candidate: ${position.side} ${tokenIdShort}... ` +
         `at ${formatCents(position.currentPrice)}, ${timeToCloseStr}`,
     );
 
@@ -1273,7 +1273,7 @@ export class SmartHedgingStrategy {
   ): Promise<{ success: boolean; reason?: string; amountUsd?: number }> {
     const wallet = (this.client as { wallet?: Wallet }).wallet;
     if (!wallet) {
-      this.logger.error(`[SmartHedging] No wallet - cannot buy more`);
+      this.logger.error(`[Hedging] No wallet - cannot buy more`);
       return { success: false, reason: "NO_WALLET" };
     }
 
@@ -1282,19 +1282,19 @@ export class SmartHedgingStrategy {
     try {
       const orderbook = await this.client.getOrderBook(position.tokenId);
       if (!orderbook.asks || orderbook.asks.length === 0) {
-        this.logger.warn(`[SmartHedging] No liquidity to buy more ${position.side}`);
+        this.logger.warn(`[Hedging] No liquidity to buy more ${position.side}`);
         return { success: false, reason: "NO_LIQUIDITY" };
       }
       askPrice = parseFloat(orderbook.asks[0].price);
     } catch {
-      this.logger.warn(`[SmartHedging] Failed to get price for buying more`);
+      this.logger.warn(`[Hedging] Failed to get price for buying more`);
       return { success: false, reason: "ORDERBOOK_ERROR" };
     }
 
     // Check if ask price is still at or above our threshold
     if (askPrice < this.config.hedgeUpPriceThreshold) {
       this.logger.debug(
-        `[SmartHedging] Ask price ${formatCents(askPrice)} below threshold ${formatCents(this.config.hedgeUpPriceThreshold)}`,
+        `[Hedging] Ask price ${formatCents(askPrice)} below threshold ${formatCents(this.config.hedgeUpPriceThreshold)}`,
       );
       return { success: false, reason: "PRICE_DROPPED" };
     }
@@ -1302,7 +1302,7 @@ export class SmartHedgingStrategy {
     // Check if ask price is too high (essentially closed - minimal profit margin)
     if (askPrice >= this.config.hedgeUpMaxPrice) {
       this.logger.debug(
-        `[SmartHedging] Ask price ${formatCents(askPrice)} too high (>= ${formatCents(this.config.hedgeUpMaxPrice)}) - minimal profit margin`,
+        `[Hedging] Ask price ${formatCents(askPrice)} too high (>= ${formatCents(this.config.hedgeUpMaxPrice)}) - minimal profit margin`,
       );
       return { success: false, reason: "PRICE_TOO_HIGH" };
     }
@@ -1327,7 +1327,7 @@ export class SmartHedgingStrategy {
     // Check minimum
     if (buyUsd < this.config.minHedgeUsd) {
       this.logger.debug(
-        `[SmartHedging] Buy amount $${buyUsd.toFixed(2)} below min $${this.config.minHedgeUsd}`,
+        `[Hedging] Buy amount $${buyUsd.toFixed(2)} below min $${this.config.minHedgeUsd}`,
       );
       return { success: false, reason: "BELOW_MIN" };
     }
@@ -1337,7 +1337,7 @@ export class SmartHedgingStrategy {
     const potentialProfit = additionalShares * (1 - askPrice); // What we make if price goes to $1
 
     this.logger.info(
-      `[SmartHedging] 📈 BUYING MORE: ${additionalShares.toFixed(2)} ${position.side} @ ${formatCents(askPrice)} = $${buyUsd.toFixed(2)}` +
+      `[Hedging] 📈 BUYING MORE: ${additionalShares.toFixed(2)} ${position.side} @ ${formatCents(askPrice)} = $${buyUsd.toFixed(2)}` +
         `\n  Potential profit if ${position.side} wins: +$${potentialProfit.toFixed(2)}`,
     );
 
@@ -1362,17 +1362,17 @@ export class SmartHedgingStrategy {
       if (result.status === "submitted") {
         // Deduct from per-cycle hedge budget to prevent exceeding reserves
         this.deductFromCycleHedgeBudget(buyUsd);
-        this.logger.info(`[SmartHedging] ✅ Buy more executed successfully`);
+        this.logger.info(`[Hedging] ✅ Buy more executed successfully`);
         return { success: true, amountUsd: buyUsd };
       }
 
       this.logger.warn(
-        `[SmartHedging] ⚠️ Buy more order not filled: ${result.reason ?? "unknown"}`,
+        `[Hedging] ⚠️ Buy more order not filled: ${result.reason ?? "unknown"}`,
       );
       return { success: false, reason: result.reason ?? "ORDER_NOT_FILLED" };
     } catch (err) {
       this.logger.error(
-        `[SmartHedging] ❌ Buy more failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[Hedging] ❌ Buy more failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return { success: false, reason: "BUY_ERROR" };
     }
@@ -1429,7 +1429,7 @@ export class SmartHedgingStrategy {
       if (originalPosition && originalPosition.currentPrice < this.config.hedgeExitThreshold) {
         const tokenIdShort = originalTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH);
         this.logger.warn(
-          `[SmartHedging] 🔻 HEDGE EXIT: Original ${originalPosition.side} ${tokenIdShort}... at ` +
+          `[Hedging] 🔻 HEDGE EXIT: Original ${originalPosition.side} ${tokenIdShort}... at ` +
             `${formatCents(originalPosition.currentPrice)} < ${formatCents(this.config.hedgeExitThreshold)} threshold - SELLING to recover value`,
         );
 
@@ -1437,7 +1437,7 @@ export class SmartHedgingStrategy {
         const lockAcquired = acquireHedgeLock(marketId, "HEDGE_EXIT");
         if (!lockAcquired) {
           this.logger.warn(
-            `[SmartHedging] ⚠️ Could not acquire hedge lock for hedge exit - skipping`,
+            `[Hedging] ⚠️ Could not acquire hedge lock for hedge exit - skipping`,
           );
           continue;
         }
@@ -1447,7 +1447,7 @@ export class SmartHedgingStrategy {
             exitActionsCount++;
             this.hedgeExitedPositions.add(originalKey);
             this.logger.info(
-              `[SmartHedging] ✅ HEDGE EXIT: Sold losing original position ${tokenIdShort}...`,
+              `[Hedging] ✅ HEDGE EXIT: Sold losing original position ${tokenIdShort}...`,
             );
           }
         } finally {
@@ -1460,7 +1460,7 @@ export class SmartHedgingStrategy {
       if (hedgePosition && hedgePosition.currentPrice < this.config.hedgeExitThreshold) {
         const tokenIdShort = hedgeTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH);
         this.logger.warn(
-          `[SmartHedging] 🔻 HEDGE EXIT: Hedge ${hedgePosition.side} ${tokenIdShort}... at ` +
+          `[Hedging] 🔻 HEDGE EXIT: Hedge ${hedgePosition.side} ${tokenIdShort}... at ` +
             `${formatCents(hedgePosition.currentPrice)} < ${formatCents(this.config.hedgeExitThreshold)} threshold - SELLING to recover value`,
         );
 
@@ -1468,7 +1468,7 @@ export class SmartHedgingStrategy {
         const lockAcquired = acquireHedgeLock(marketId, "HEDGE_EXIT");
         if (!lockAcquired) {
           this.logger.warn(
-            `[SmartHedging] ⚠️ Could not acquire hedge lock for hedge exit - skipping`,
+            `[Hedging] ⚠️ Could not acquire hedge lock for hedge exit - skipping`,
           );
           continue;
         }
@@ -1478,7 +1478,7 @@ export class SmartHedgingStrategy {
             exitActionsCount++;
             this.hedgeExitedPositions.add(hedgeKey);
             this.logger.info(
-              `[SmartHedging] ✅ HEDGE EXIT: Sold losing hedge position ${tokenIdShort}...`,
+              `[Hedging] ✅ HEDGE EXIT: Sold losing hedge position ${tokenIdShort}...`,
             );
           }
         } finally {
@@ -1522,7 +1522,7 @@ export class SmartHedgingStrategy {
 
     if (!oppositeInfo) {
       this.logger.warn(
-        `[SmartHedging] Could not find opposite token for ${currentSide}`,
+        `[Hedging] Could not find opposite token for ${currentSide}`,
       );
       return { success: false, reason: "NO_OPPOSITE_TOKEN" };
     }
@@ -1534,12 +1534,12 @@ export class SmartHedgingStrategy {
     try {
       const orderbook = await this.client.getOrderBook(oppositeTokenId);
       if (!orderbook.asks || orderbook.asks.length === 0) {
-        this.logger.warn(`[SmartHedging] No liquidity for ${oppositeSide}`);
+        this.logger.warn(`[Hedging] No liquidity for ${oppositeSide}`);
         return { success: false, reason: "NO_LIQUIDITY" };
       }
       oppositePrice = parseFloat(orderbook.asks[0].price);
     } catch {
-      this.logger.warn(`[SmartHedging] Failed to get opposite price`);
+      this.logger.warn(`[Hedging] Failed to get opposite price`);
       return { success: false, reason: "ORDERBOOK_ERROR" };
     }
 
@@ -1553,7 +1553,7 @@ export class SmartHedgingStrategy {
     // If opposite is >= 95¢, market is essentially resolved - await redemption
     if (oppositePrice >= MARKET_RESOLVED_THRESHOLD) {
       this.logger.info(
-        `[SmartHedging] ${oppositeSide} at ${(oppositePrice * 100).toFixed(0)}¢ - market essentially resolved, skipping (await redemption)`,
+        `[Hedging] ${oppositeSide} at ${(oppositePrice * 100).toFixed(0)}¢ - market essentially resolved, skipping (await redemption)`,
       );
       // Return special indicator that this is a resolved market, not a hedge failure
       return { success: false, reason: "MARKET_RESOLVED" };
@@ -1570,7 +1570,7 @@ export class SmartHedgingStrategy {
       const thresholdLabel = isNearResolution ? "near-resolution max" : "normal max";
       const comparisonOp = isNearResolution ? ">" : ">=";
       this.logger.warn(
-        `[SmartHedging] ${oppositeSide} at ${(oppositePrice * 100).toFixed(0)}¢ ${comparisonOp} ${(priceThreshold * 100).toFixed(0)}¢ (${thresholdLabel}) - too expensive to hedge`,
+        `[Hedging] ${oppositeSide} at ${(oppositePrice * 100).toFixed(0)}¢ ${comparisonOp} ${(priceThreshold * 100).toFixed(0)}¢ (${thresholdLabel}) - too expensive to hedge`,
       );
       return { success: false, reason: "TOO_EXPENSIVE" };
     }
@@ -1596,13 +1596,13 @@ export class SmartHedgingStrategy {
       if (this.config.allowExceedMax) {
         hedgeUsd = this.config.absoluteMaxUsd;
         this.logger.warn(
-          `[SmartHedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss >= ${this.config.emergencyLossPct}% threshold): ` +
+          `[Hedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss >= ${this.config.emergencyLossPct}% threshold): ` +
             `Targeting absoluteMaxUsd=$${this.config.absoluteMaxUsd} for maximum protection`,
         );
       } else {
         hedgeUsd = this.config.maxHedgeUsd;
         this.logger.warn(
-          `[SmartHedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss >= ${this.config.emergencyLossPct}% threshold): ` +
+          `[Hedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss >= ${this.config.emergencyLossPct}% threshold): ` +
             `Targeting maxHedgeUsd=$${this.config.maxHedgeUsd} (allowExceedMax=false)`,
         );
       }
@@ -1627,7 +1627,7 @@ export class SmartHedgingStrategy {
     // Log when reserve constraint affected emergency hedge sizing
     if (isEmergencyHedge && reserveSizing.isPartial) {
       this.logger.warn(
-        `[SmartHedging] 🚨 EMERGENCY HEDGE constrained by reserves: ` +
+        `[Hedging] 🚨 EMERGENCY HEDGE constrained by reserves: ` +
           `targeting $${hedgeUsd.toFixed(2)} (reserve budget limited)`,
       );
     }
@@ -1635,7 +1635,7 @@ export class SmartHedgingStrategy {
     // Check minimum
     if (hedgeUsd < this.config.minHedgeUsd) {
       this.logger.debug(
-        `[SmartHedging] Hedge $${hedgeUsd.toFixed(2)} below min $${this.config.minHedgeUsd}`,
+        `[Hedging] Hedge $${hedgeUsd.toFixed(2)} below min $${this.config.minHedgeUsd}`,
       );
       return { success: false, reason: "BELOW_MIN_HEDGE" };
     }
@@ -1647,7 +1647,7 @@ export class SmartHedgingStrategy {
     const ifHedgeWins = hedgeShares * 1.0 - totalInvested;
 
     this.logger.info(
-      `[SmartHedging] 🔄 HEDGING: Buy ${hedgeShares.toFixed(2)} ${oppositeSide} @ ${(oppositePrice * 100).toFixed(1)}¢ = $${hedgeUsd.toFixed(2)}` +
+      `[Hedging] 🔄 HEDGING: Buy ${hedgeShares.toFixed(2)} ${oppositeSide} @ ${(oppositePrice * 100).toFixed(1)}¢ = $${hedgeUsd.toFixed(2)}` +
         `\n  If ${currentSide} wins: ${ifOriginalWins >= 0 ? "+" : ""}$${ifOriginalWins.toFixed(2)}` +
         `\n  If ${oppositeSide} wins: ${ifHedgeWins >= 0 ? "+" : ""}$${ifHedgeWins.toFixed(2)}`,
     );
@@ -1655,7 +1655,7 @@ export class SmartHedgingStrategy {
     // Execute the hedge order
     const wallet = (this.client as { wallet?: Wallet }).wallet;
     if (!wallet) {
-      this.logger.error(`[SmartHedging] No wallet - cannot hedge`);
+      this.logger.error(`[Hedging] No wallet - cannot hedge`);
       return { success: false, reason: "NO_WALLET" };
     }
 
@@ -1680,7 +1680,7 @@ export class SmartHedgingStrategy {
       if (result.status === "submitted") {
         // Deduct from per-cycle hedge budget to prevent exceeding reserves
         this.deductFromCycleHedgeBudget(hedgeUsd);
-        this.logger.info(`[SmartHedging] ✅ Hedge executed successfully`);
+        this.logger.info(`[Hedging] ✅ Hedge executed successfully`);
 
         // Send telegram notification for hedge placement
         void notifyHedge(
@@ -1705,7 +1705,7 @@ export class SmartHedgingStrategy {
         // Deduct partial fill from budget too
         this.deductFromCycleHedgeBudget(filledUsd);
         this.logger.warn(
-          `[SmartHedging] ⚠️ Hedge partially filled: $${filledUsd.toFixed(2)} spent (order incomplete)`,
+          `[Hedging] ⚠️ Hedge partially filled: $${filledUsd.toFixed(2)} spent (order incomplete)`,
         );
         // Return partial fill info so caller can mark position as hedged
         // Include hedgeTokenId for paired tracking even on partial fill
@@ -1718,12 +1718,12 @@ export class SmartHedgingStrategy {
       }
 
       this.logger.warn(
-        `[SmartHedging] ⚠️ Hedge order not filled: ${result.reason ?? "unknown"}`,
+        `[Hedging] ⚠️ Hedge order not filled: ${result.reason ?? "unknown"}`,
       );
       return { success: false, reason: result.reason ?? "ORDER_NOT_FILLED" };
     } catch (err) {
       this.logger.error(
-        `[SmartHedging] ❌ Hedge failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[Hedging] ❌ Hedge failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return { success: false, reason: "HEDGE_ERROR" };
     }
@@ -1758,7 +1758,7 @@ export class SmartHedgingStrategy {
   private async sellPosition(position: Position): Promise<boolean> {
     const wallet = (this.client as { wallet?: Wallet }).wallet;
     if (!wallet) {
-      this.logger.error(`[SmartHedging] No wallet - cannot sell`);
+      this.logger.error(`[Hedging] No wallet - cannot sell`);
       return false;
     }
 
@@ -1766,7 +1766,7 @@ export class SmartHedgingStrategy {
     // but check again as a safety measure
     if (!position.side || position.side.trim() === "") {
       this.logger.warn(
-        `[SmartHedging] Position has no side defined - cannot sell (tokenId=${position.tokenId})`,
+        `[Hedging] Position has no side defined - cannot sell (tokenId=${position.tokenId})`,
       );
       return false;
     }
@@ -1774,7 +1774,7 @@ export class SmartHedgingStrategy {
     const currentValue = position.size * position.currentPrice;
 
     this.logger.info(
-      `[SmartHedging] 💸 SELLING ${position.side} to salvage $${currentValue.toFixed(2)}`,
+      `[Hedging] 💸 SELLING ${position.side} to salvage $${currentValue.toFixed(2)}`,
     );
 
     try {
@@ -1803,7 +1803,7 @@ export class SmartHedgingStrategy {
       });
 
       if (result.status === "submitted") {
-        this.logger.info(`[SmartHedging] ✅ Position sold`);
+        this.logger.info(`[Hedging] ✅ Position sold`);
 
         // Calculate P&L for the trade
         const tradePnl = (position.currentPrice - position.entryPrice) * position.size;
@@ -1837,7 +1837,7 @@ export class SmartHedgingStrategy {
             position.currentPrice,
             currentValue,
             {
-              strategy: "SmartHedging",
+              strategy: "Hedging",
               entryPrice: position.entryPrice,
               pnl: tradePnl,
               outcome: position.side,
@@ -1851,12 +1851,12 @@ export class SmartHedgingStrategy {
       }
 
       this.logger.warn(
-        `[SmartHedging] ⚠️ Sell not filled: ${result.reason ?? "unknown"}`,
+        `[Hedging] ⚠️ Sell not filled: ${result.reason ?? "unknown"}`,
       );
       return false;
     } catch (err) {
       this.logger.error(
-        `[SmartHedging] ❌ Sell failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[Hedging] ❌ Sell failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return false;
     }
@@ -1894,7 +1894,7 @@ export class SmartHedgingStrategy {
       // If missing, log a warning but continue - the tokenId is what matters for execution.
       if (!oppositeToken.outcome) {
         this.logger.warn(
-          `[SmartHedging] Opposite token has no outcome defined (marketId=${marketId}, tokenId=${oppositeToken.token_id})`,
+          `[Hedging] Opposite token has no outcome defined (marketId=${marketId}, tokenId=${oppositeToken.token_id})`,
         );
       }
 
@@ -1945,11 +1945,11 @@ export class SmartHedgingStrategy {
       }
 
       this.logger.debug(
-        `[SmartHedging] Cleaned up ${expiredCount} expired + ${toRemove} oldest cooldown entries (max: ${MAX_FAILED_LIQUIDATION_COOLDOWN_ENTRIES})`,
+        `[Hedging] Cleaned up ${expiredCount} expired + ${toRemove} oldest cooldown entries (max: ${MAX_FAILED_LIQUIDATION_COOLDOWN_ENTRIES})`,
       );
     } else if (expiredCount > 0) {
       this.logger.debug(
-        `[SmartHedging] Cleaned up ${expiredCount} expired cooldown entries`,
+        `[Hedging] Cleaned up ${expiredCount} expired cooldown entries`,
       );
     }
   }

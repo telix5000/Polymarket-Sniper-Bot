@@ -59,7 +59,7 @@ export interface DynamicReservesConfig {
   /** Maximum reserve cap in USD (default: 200) */
   maxReserveUsd: number;
 
-  /** Per-position hedge cap in USD - aligns with SMART_HEDGING_ABSOLUTE_MAX_USD (default: 25) */
+  /** Per-position hedge cap in USD - aligns with HEDGING_ABSOLUTE_MAX_USD (default: 25) */
   hedgeCapUsd: number;
 
   /** Loss % threshold to trigger hedge-tier reserve (default: 20) */
