@@ -1313,6 +1313,319 @@ describe("Smart Hedging Insufficient Funds Fallback Logic", () => {
 });
 
 /**
+ * Tests for Multi-Position Fund-Freeing and Fee-Adjusted Freed Funds
+ *
+ * The fund-freeing logic sells multiple profitable positions (lowest profit first)
+ * until the target hedge amount is reached. Freed funds are calculated net of
+ * taker fees to ensure accurate budget tracking.
+ */
+describe("Smart Hedging Multi-Position Fund-Freeing", () => {
+  // Import the fee constants for validation
+  const POLYMARKET_TAKER_FEE_BPS = 1; // 0.01% = 1 basis point
+  const BASIS_POINTS_DIVISOR = 10000;
+
+  interface TestPosition {
+    marketId: string;
+    tokenId: string;
+    side: string;
+    size: number;
+    entryPrice: number;
+    currentPrice: number;
+    pnlPct: number;
+    grossValue: number; // size * currentPrice
+  }
+
+  /**
+   * Calculate freed funds net of taker fees
+   */
+  function calculateFreedFundsNetOfFees(grossValue: number): number {
+    const feeAmount = grossValue * (POLYMARKET_TAKER_FEE_BPS / BASIS_POINTS_DIVISOR);
+    return grossValue - feeAmount;
+  }
+
+  /**
+   * Simulates multi-position fund-freeing until target is reached
+   */
+  function simulateMultiPositionSell(
+    profitableCandidates: TestPosition[],
+    targetHedgeAmount: number,
+    hedgedPositions: Set<string>,
+  ): {
+    positionsSold: string[];
+    totalFreedFunds: number;
+    reachedTarget: boolean;
+  } {
+    // Filter out already hedged positions
+    const sellable = profitableCandidates.filter((p) => {
+      const key = `${p.marketId}-${p.tokenId}`;
+      return !hedgedPositions.has(key);
+    });
+
+    let totalFreedFunds = 0;
+    const positionsSold: string[] = [];
+
+    for (const position of sellable) {
+      if (totalFreedFunds >= targetHedgeAmount) {
+        break;
+      }
+
+      const grossValue = position.grossValue;
+      const freedValue = calculateFreedFundsNetOfFees(grossValue);
+      totalFreedFunds += freedValue;
+      positionsSold.push(`${position.marketId}-${position.tokenId}`);
+    }
+
+    return {
+      positionsSold,
+      totalFreedFunds,
+      reachedTarget: totalFreedFunds >= targetHedgeAmount,
+    };
+  }
+
+  test("Should sell multiple positions until target amount is reached", () => {
+    const profitableCandidates: TestPosition[] = [
+      {
+        marketId: "m1",
+        tokenId: "t1",
+        side: "YES",
+        size: 50,
+        entryPrice: 0.4,
+        currentPrice: 0.44,
+        pnlPct: 10,
+        grossValue: 50 * 0.44, // $22
+      },
+      {
+        marketId: "m2",
+        tokenId: "t2",
+        side: "NO",
+        size: 30,
+        entryPrice: 0.3,
+        currentPrice: 0.36,
+        pnlPct: 20,
+        grossValue: 30 * 0.36, // $10.80
+      },
+      {
+        marketId: "m3",
+        tokenId: "t3",
+        side: "YES",
+        size: 100,
+        entryPrice: 0.5,
+        currentPrice: 0.65,
+        pnlPct: 30,
+        grossValue: 100 * 0.65, // $65
+      },
+    ];
+
+    // Target $25 for hedge - first position yields ~$22 (net of fees), not enough
+    // Second position yields ~$10.80 (net of fees), together > $25
+    const result = simulateMultiPositionSell(profitableCandidates, 25, new Set());
+
+    assert.strictEqual(
+      result.positionsSold.length,
+      2,
+      "Should sell exactly 2 positions to reach $25 target",
+    );
+    assert.strictEqual(
+      result.positionsSold[0],
+      "m1-t1",
+      "Should sell lowest-profit position first",
+    );
+    assert.strictEqual(
+      result.positionsSold[1],
+      "m2-t2",
+      "Should sell second lowest-profit position next",
+    );
+    assert.strictEqual(
+      result.reachedTarget,
+      true,
+      "Should have reached target amount",
+    );
+  });
+
+  test("Should stop selling when target is reached even if more positions exist", () => {
+    const profitableCandidates: TestPosition[] = [
+      {
+        marketId: "m1",
+        tokenId: "t1",
+        side: "YES",
+        size: 100,
+        entryPrice: 0.4,
+        currentPrice: 0.5,
+        pnlPct: 25,
+        grossValue: 100 * 0.5, // $50
+      },
+      {
+        marketId: "m2",
+        tokenId: "t2",
+        side: "NO",
+        size: 50,
+        entryPrice: 0.3,
+        currentPrice: 0.4,
+        pnlPct: 33,
+        grossValue: 50 * 0.4, // $20
+      },
+    ];
+
+    // Target $10 - first position alone yields ~$50 (net of fees), more than enough
+    const result = simulateMultiPositionSell(profitableCandidates, 10, new Set());
+
+    assert.strictEqual(
+      result.positionsSold.length,
+      1,
+      "Should only sell one position when it exceeds target",
+    );
+    assert.strictEqual(
+      result.reachedTarget,
+      true,
+      "Should have reached target amount",
+    );
+  });
+
+  test("Should calculate freed funds net of taker fees correctly", () => {
+    const grossValue = 100; // $100
+    const expectedFee = grossValue * (POLYMARKET_TAKER_FEE_BPS / BASIS_POINTS_DIVISOR); // $0.01
+    const expectedNetValue = grossValue - expectedFee; // $99.99
+
+    const netValue = calculateFreedFundsNetOfFees(grossValue);
+
+    assert.strictEqual(
+      netValue,
+      expectedNetValue,
+      `Freed funds should be $${expectedNetValue.toFixed(4)} after ${POLYMARKET_TAKER_FEE_BPS}bps fee`,
+    );
+    assert.strictEqual(
+      expectedFee,
+      0.01,
+      "Fee should be $0.01 for $100 at 1bps",
+    );
+  });
+
+  test("Should skip already hedged positions when selling multiple", () => {
+    const profitableCandidates: TestPosition[] = [
+      {
+        marketId: "m1",
+        tokenId: "t1",
+        side: "YES",
+        size: 50,
+        entryPrice: 0.4,
+        currentPrice: 0.44,
+        pnlPct: 10,
+        grossValue: 50 * 0.44, // $22 - already hedged
+      },
+      {
+        marketId: "m2",
+        tokenId: "t2",
+        side: "NO",
+        size: 30,
+        entryPrice: 0.3,
+        currentPrice: 0.36,
+        pnlPct: 20,
+        grossValue: 30 * 0.36, // $10.80
+      },
+      {
+        marketId: "m3",
+        tokenId: "t3",
+        side: "YES",
+        size: 100,
+        entryPrice: 0.5,
+        currentPrice: 0.65,
+        pnlPct: 30,
+        grossValue: 100 * 0.65, // $65
+      },
+    ];
+
+    const hedgedPositions = new Set(["m1-t1"]); // m1 is already hedged
+    const result = simulateMultiPositionSell(profitableCandidates, 25, hedgedPositions);
+
+    assert.strictEqual(
+      result.positionsSold.includes("m1-t1"),
+      false,
+      "Should not sell already hedged position",
+    );
+    assert.strictEqual(
+      result.positionsSold[0],
+      "m2-t2",
+      "Should start with first non-hedged position",
+    );
+  });
+
+  test("Should return correct values when insufficient positions to reach target", () => {
+    const profitableCandidates: TestPosition[] = [
+      {
+        marketId: "m1",
+        tokenId: "t1",
+        side: "YES",
+        size: 10,
+        entryPrice: 0.4,
+        currentPrice: 0.44,
+        pnlPct: 10,
+        grossValue: 10 * 0.44, // $4.40
+      },
+    ];
+
+    // Target $50 but only $4.40 (minus fees) available
+    const result = simulateMultiPositionSell(profitableCandidates, 50, new Set());
+
+    assert.strictEqual(
+      result.positionsSold.length,
+      1,
+      "Should sell all available positions",
+    );
+    assert.strictEqual(
+      result.reachedTarget,
+      false,
+      "Should NOT have reached target amount",
+    );
+    assert.ok(
+      result.totalFreedFunds < 50,
+      "Total freed funds should be less than target",
+    );
+  });
+
+  test("Should accumulate freed funds correctly across multiple positions", () => {
+    const profitableCandidates: TestPosition[] = [
+      {
+        marketId: "m1",
+        tokenId: "t1",
+        side: "YES",
+        size: 100,
+        entryPrice: 0.4,
+        currentPrice: 0.5,
+        pnlPct: 25,
+        grossValue: 100 * 0.5, // = $50
+      },
+      {
+        marketId: "m2",
+        tokenId: "t2",
+        side: "NO",
+        size: 50,
+        entryPrice: 0.3,
+        currentPrice: 0.4,
+        pnlPct: 33,
+        grossValue: 50 * 0.4, // = $20
+      },
+    ];
+
+    // Target $60 - need both positions
+    const result = simulateMultiPositionSell(profitableCandidates, 60, new Set());
+
+    const expectedTotal =
+      calculateFreedFundsNetOfFees(50) + calculateFreedFundsNetOfFees(20);
+
+    assert.strictEqual(
+      result.positionsSold.length,
+      2,
+      "Should sell both positions",
+    );
+    assert.strictEqual(
+      result.totalFreedFunds.toFixed(4),
+      expectedTotal.toFixed(4),
+      "Total freed funds should equal sum of individual net values",
+    );
+  });
+});
+
+/**
  * Tests for Partial Fill Protection
  *
  * When a hedge order is partially filled, the position should be marked as hedged

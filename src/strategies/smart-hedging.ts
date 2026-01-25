@@ -117,8 +117,15 @@ export interface SmartHedgingConfig {
   nearCloseLossPct: number;
 
   /**
-   * Minutes before market close to disable hedging entirely (default: 3)
-   * Inside this window, hedging is blocked (too late - just liquidate if needed)
+   * Minutes before market close for near-resolution hedging behavior (default: 3)
+   * 
+   * Inside this window:
+   * - Significant losses (>= triggerLossPct): HEDGE by buying inverse, then sell original
+   *   This is actually the BEST time to hedge since outcome is nearly certain.
+   * - Small losses (< triggerLossPct): Skip hedging (not worth the complexity)
+   * 
+   * The inverse purchase locks in recovery value, then selling the original
+   * completes the hedge by salvaging whatever the losing position is still worth.
    */
   noHedgeWindowMinutes: number;
 
@@ -192,7 +199,7 @@ export const DEFAULT_HEDGING_CONFIG: SmartHedgingConfig = {
   nearCloseWindowMinutes: 15, // Apply near-close rules in last 15 minutes
   nearClosePriceDropCents: 12, // Near close: hedge only on >= 12¢ adverse move
   nearCloseLossPct: 30, // Near close: hedge only on >= 30% loss
-  noHedgeWindowMinutes: 3, // Don't hedge at all in last 3 minutes (too late)
+  noHedgeWindowMinutes: 3, // Near-resolution: significant losses hedge (buy inverse + sell original)
   // Hedging up (high win probability) settings
   hedgeUpPriceThreshold: 0.85, // Buy more shares when price >= 85¢
   hedgeUpWindowMinutes: 30, // Enable hedging up in last 30 minutes before close
@@ -1536,10 +1543,17 @@ export class SmartHedgingStrategy {
     }
 
     // Check if opposite side is too expensive to hedge
-    if (oppositePrice >= priceThreshold) {
+    // For near-resolution hedges, allow hedging at exactly the threshold (93¢)
+    // since the goal is loss-capping, not profit. Normal hedges use >= for 90¢.
+    const isTooExpensive = isNearResolution
+      ? oppositePrice > priceThreshold  // Allow exactly 93¢ for near-resolution
+      : oppositePrice >= priceThreshold; // Block at 90¢+ for normal hedges
+    
+    if (isTooExpensive) {
       const thresholdLabel = isNearResolution ? "near-resolution max" : "normal max";
+      const comparisonOp = isNearResolution ? ">" : ">=";
       this.logger.warn(
-        `[SmartHedging] ${oppositeSide} at ${(oppositePrice * 100).toFixed(0)}¢ >= ${(priceThreshold * 100).toFixed(0)}¢ (${thresholdLabel}) - too expensive to hedge`,
+        `[SmartHedging] ${oppositeSide} at ${(oppositePrice * 100).toFixed(0)}¢ ${comparisonOp} ${(priceThreshold * 100).toFixed(0)}¢ (${thresholdLabel}) - too expensive to hedge`,
       );
       return { success: false, reason: "TOO_EXPENSIVE" };
     }
