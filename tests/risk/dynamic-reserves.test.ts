@@ -47,7 +47,7 @@ function createMockSnapshot(
 ): PortfolioSnapshot {
   const summary: PortfolioSummary = {
     activeTotal: positions.length,
-    prof: positions.filter((p) => p.pnlPct > 0).length,
+    win: positions.filter((p) => p.pnlPct > 0).length,
     lose: positions.filter((p) => p.pnlPct < 0).length,
     neutral: positions.filter((p) => p.pnlPct === 0).length,
     unknown: 0,

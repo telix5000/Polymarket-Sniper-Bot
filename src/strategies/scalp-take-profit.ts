@@ -969,7 +969,7 @@ export class ScalpTakeProfitStrategy {
               `but activePositions.length=0. ` +
               `rawCounts=${JSON.stringify(rawCounts ?? "unavailable")} ` +
               `classification_reasons=[${reasonsStr}] ` +
-              `Summary: prof=${effectiveSnapshot.summary.prof} ` +
+              `Summary: win=${effectiveSnapshot.summary.win} ` +
               `lose=${effectiveSnapshot.summary.lose} ` +
               `unknown=${effectiveSnapshot.summary.unknown}`,
           );
