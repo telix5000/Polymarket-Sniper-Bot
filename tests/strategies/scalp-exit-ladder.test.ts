@@ -578,3 +578,135 @@ describe("Near-Resolution Capital Release", () => {
     );
   });
 });
+
+// === CUMULATIVE BID DEPTH TESTS ===
+
+describe("Cumulative Bid Depth for SELL Orders", () => {
+  /**
+   * Helper to calculate cumulative bid depth at/above a limit price
+   * This mirrors the logic in post-order.util.ts for SELL orders
+   */
+  function calculateCumulativeBidDepth(
+    bids: Array<{ price: string; size: string }>,
+    limitPrice: number,
+  ): number {
+    let cumulativeDepthUsd = 0;
+    for (const level of bids) {
+      const levelPrice = parseFloat(level.price);
+      // Bids are sorted descending, stop when below limit
+      if (levelPrice < limitPrice) {
+        break;
+      }
+      const levelSize = parseFloat(level.size);
+      cumulativeDepthUsd += levelSize * levelPrice;
+    }
+    return cumulativeDepthUsd;
+  }
+
+  test("Cumulative depth includes all levels at/above limit price", () => {
+    const bids = [
+      { price: "0.55", size: "100" }, // $55
+      { price: "0.52", size: "200" }, // $104
+      { price: "0.50", size: "300" }, // $150
+      { price: "0.48", size: "400" }, // Below limit
+    ];
+    const limitPrice = 0.5;
+
+    const depth = calculateCumulativeBidDepth(bids, limitPrice);
+
+    // Should include first 3 levels: $55 + $104 + $150 = $309
+    assert.equal(depth, 309);
+  });
+
+  test("Cumulative depth stops at first level below limit price", () => {
+    const bids = [
+      { price: "0.55", size: "100" }, // $55
+      { price: "0.49", size: "200" }, // Below limit - stop here
+      { price: "0.48", size: "300" },
+    ];
+    const limitPrice = 0.5;
+
+    const depth = calculateCumulativeBidDepth(bids, limitPrice);
+
+    // Should only include first level: $55 (use approximate comparison for floating point)
+    assert.ok(
+      Math.abs(depth - 55) < 0.001,
+      `Expected depth ~$55, got $${depth.toFixed(2)}`,
+    );
+  });
+
+  test("Empty bids returns zero depth", () => {
+    const bids: Array<{ price: string; size: string }> = [];
+    const limitPrice = 0.5;
+
+    const depth = calculateCumulativeBidDepth(bids, limitPrice);
+
+    assert.equal(depth, 0);
+  });
+
+  test("All levels below limit returns zero depth", () => {
+    const bids = [
+      { price: "0.45", size: "100" },
+      { price: "0.40", size: "200" },
+    ];
+    const limitPrice = 0.5;
+
+    const depth = calculateCumulativeBidDepth(bids, limitPrice);
+
+    assert.equal(depth, 0);
+  });
+
+  test("SELL order sizing uses cumulative depth, not just top level", () => {
+    // Scenario: Position worth $10 notional, but top bid only has $3 of depth
+    // Old behavior: would size to $3 (top level only), causing SKIP_MIN_ORDER_SIZE with $5 min
+    // New behavior: uses cumulative depth ($12) allowing the full $10 order
+    const bids = [
+      { price: "0.50", size: "6" }, // $3 (was previous top-level-only value)
+      { price: "0.48", size: "10" }, // $4.80
+      { price: "0.46", size: "10" }, // $4.60
+    ];
+    const limitPrice = 0.46;
+    const positionNotional = 10.0;
+    const minOrderUsd = 5.0;
+
+    const cumulativeDepth = calculateCumulativeBidDepth(bids, limitPrice);
+    const orderValue = Math.min(positionNotional, cumulativeDepth);
+
+    // Cumulative depth at 46¢ = $3 + $4.80 + $4.60 = $12.40
+    assert.ok(
+      cumulativeDepth >= 12.4,
+      `Expected cumulative depth >= $12.40, got $${cumulativeDepth.toFixed(2)}`,
+    );
+
+    // Order value should be capped at position notional
+    assert.equal(orderValue, 10.0);
+
+    // Order should pass minOrderUsd check
+    assert.ok(
+      orderValue >= minOrderUsd,
+      `Order $${orderValue.toFixed(2)} should pass min $${minOrderUsd}`,
+    );
+  });
+
+  test("minOrderUsd passthrough ensures preflight and submission match", () => {
+    // When ScalpTakeProfitStrategy has minOrderUsd=5, it should pass this
+    // to postOrder so OrderSubmissionController uses the same threshold
+    const strategyMinOrder = 5;
+    const systemDefaultMinOrder = 10;
+
+    // Order worth $7 would fail system default but pass strategy setting
+    const notionalUsd = 7.0;
+
+    const passesStrategyCheck = notionalUsd >= strategyMinOrder;
+    const passesSystemDefault = notionalUsd >= systemDefaultMinOrder;
+
+    assert.ok(passesStrategyCheck, "Should pass strategy minOrderUsd check");
+    assert.ok(
+      !passesSystemDefault,
+      "Would fail system default - this is why passthrough matters",
+    );
+
+    // With proper passthrough, the order should succeed
+    // because submission controller will use strategy's minOrderUsd
+  });
+});

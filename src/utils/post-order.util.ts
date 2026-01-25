@@ -791,30 +791,58 @@ async function postOrderClobInner(
       break;
     }
 
-    const level = currentLevels[0];
-    const levelPrice = parseFloat(level.price);
-    const levelSize = parseFloat(level.size);
-
     let orderSize: number;
     let orderValue: number;
+    let orderPrice: number;
 
     if (isBuy) {
+      // BUY: Use top ask level pricing
+      const level = currentLevels[0];
+      const levelPrice = parseFloat(level.price);
+      const levelSize = parseFloat(level.size);
       const levelValue = levelSize * levelPrice;
       orderValue = Math.min(remaining, levelValue);
       orderSize = orderValue / levelPrice;
+      orderPrice = levelPrice;
     } else {
-      const levelValue = levelSize * levelPrice;
-      orderValue = Math.min(remaining, levelValue);
-      orderSize = orderValue / levelPrice;
+      // SELL: Compute cumulative bid depth at/above the limit price (minAcceptablePrice)
+      // This allows orders to fill across multiple bid levels, not just the top level.
+      // Submit at the limit price so the exchange can match against all levels >= limit.
+      const limitPrice = minAcceptablePrice ?? parseFloat(currentLevels[0].price);
+
+      // Calculate cumulative depth at/above limit price
+      let cumulativeDepthUsd = 0;
+      for (const level of currentLevels) {
+        const levelPrice = parseFloat(level.price);
+        // Bids are sorted descending, so stop when we go below limit price
+        if (levelPrice < limitPrice) {
+          break;
+        }
+        const levelSize = parseFloat(level.size);
+        cumulativeDepthUsd += levelSize * levelPrice;
+      }
+
+      // Log cumulative depth for debugging SKIP_MIN_ORDER_SIZE issues
+      logger.debug(
+        `[CLOB] SELL depth analysis: limitPrice=${(limitPrice * 100).toFixed(1)}¢ ` +
+          `cumulativeDepthUsd=$${cumulativeDepthUsd.toFixed(2)} remaining=$${remaining.toFixed(2)} ` +
+          `tokenId=${tokenId.slice(0, 12)}...`,
+      );
+
+      // Size the order based on cumulative depth and remaining amount
+      orderValue = Math.min(remaining, cumulativeDepthUsd);
+      // Use limit price for order submission so it can fill across multiple levels
+      orderPrice = limitPrice;
+      orderSize = orderValue / orderPrice;
     }
 
     const orderArgs = {
       side: orderSide,
       tokenID: tokenId,
       amount: orderSize,
-      price: levelPrice,
+      price: orderPrice,
     };
-    const orderFingerprint = `${tokenId}:${orderSide}:${levelPrice}:${orderSize}`;
+    const orderFingerprint = `${tokenId}:${orderSide}:${orderPrice}:${orderSize}`;
 
     const readiness = await checkFundsAndAllowance({
       client,

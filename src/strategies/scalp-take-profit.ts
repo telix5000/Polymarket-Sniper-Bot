@@ -1725,6 +1725,8 @@ export class ScalpTakeProfitStrategy {
         minAcceptablePrice: effectiveLimitPrice, // For SELL: floor protection (don't dump too cheap)
         logger: this.logger,
         skipDuplicatePrevention: true,
+        // Pass minOrderUsd so preflight and submission settings match
+        orderConfig: { minOrderUsd: this.config.minOrderUsd },
       });
 
       if (result.status === "submitted") {
