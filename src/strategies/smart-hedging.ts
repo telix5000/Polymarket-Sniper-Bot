@@ -69,6 +69,14 @@ export interface SmartHedgingConfig {
   forceLiquidationPct: number;
 
   /**
+   * Loss % threshold for emergency full protection (default: 30)
+   * When position drops beyond this %, hedge sizing targets absoluteMaxUsd directly
+   * (not the computed break-even size) to maximize protection for heavy reversals.
+   * Uses: hedgeUsd = min(absoluteMaxUsd, reserveBudget) or min(maxHedgeUsd, reserveBudget) if !allowExceedMax
+   */
+  emergencyLossPct: number;
+
+  /**
    * Minimum seconds to hold before hedging/liquidating (default: 120)
    * CRITICAL: Prevents immediate sell after buying due to bid-ask spread.
    * Without this, a position bought at 65¢ might immediately show a "loss"
@@ -155,6 +163,7 @@ export const DEFAULT_HEDGING_CONFIG: SmartHedgingConfig = {
   absoluteMaxUsd: 25,
   maxEntryPrice: 1.0, // Hedge ALL positions regardless of entry price
   forceLiquidationPct: 50,
+  emergencyLossPct: 30, // Emergency hedge mode at 30% loss - targets absoluteMaxUsd directly
   minHoldSeconds: 120, // Wait 2 minutes before hedging - prevents immediate sell after buy
   // Near-close hedging behavior
   nearCloseWindowMinutes: 15, // Apply near-close rules in last 15 minutes
@@ -658,7 +667,7 @@ export class SmartHedgingStrategy {
         `[SmartHedging] 🎯 Position losing ${lossPct.toFixed(1)}%${isCatastrophicLoss ? " (catastrophic)" : ""} - attempting hedge FIRST`,
       );
 
-      const hedgeResult = await this.executeHedge(position);
+      const hedgeResult = await this.executeHedge(position, lossPct);
       if (hedgeResult.success) {
         actionsCount++;
         this.hedgedPositions.add(key);
@@ -745,7 +754,7 @@ export class SmartHedgingStrategy {
             `[SmartHedging] 🔄 Retrying hedge after freeing funds...`,
           );
 
-          const retryResult = await this.executeHedge(position);
+          const retryResult = await this.executeHedge(position, lossPct);
           if (retryResult.success) {
             actionsCount++;
             this.hedgedPositions.add(key);
@@ -1063,6 +1072,9 @@ export class SmartHedgingStrategy {
    * Execute a hedge - buy the opposite side
    * Supports all binary market types: YES/NO, Over/Under, Team A/Team B, etc.
    *
+   * @param position - The position to hedge
+   * @param lossPct - Optional loss percentage for emergency hedge detection.
+   *                  When >= emergencyLossPct, targets absoluteMaxUsd directly instead of break-even calculation.
    * @returns Object with success status and reason for failure
    *          - reason "MARKET_RESOLVED" means opposite side >= 95¢, skip liquidation
    *          - reason "TOO_EXPENSIVE" means opposite side >= 90¢ but < 95¢, try liquidation
@@ -1071,6 +1083,7 @@ export class SmartHedgingStrategy {
    */
   private async executeHedge(
     position: Position,
+    lossPct?: number,
   ): Promise<{ success: boolean; reason?: string; filledAmountUsd?: number }> {
     const currentSide = position.side?.toUpperCase();
 
@@ -1127,21 +1140,54 @@ export class SmartHedgingStrategy {
     const breakEvenShares = originalInvestment / hedgeProfit;
     const profitableHedgeUsd = breakEvenShares * oppositePrice * 1.1; // 10% buffer
 
+    // === EMERGENCY HEDGE DETECTION ===
+    // When position is in heavy reversal (loss >= emergencyLossPct), target absoluteMaxUsd directly
+    // instead of the computed break-even size to maximize protection
+    const isEmergencyHedge = lossPct !== undefined && lossPct >= this.config.emergencyLossPct;
+
     // Determine actual hedge size based on limits
     let hedgeUsd: number;
-    if (this.config.allowExceedMax) {
-      hedgeUsd = Math.min(profitableHedgeUsd, this.config.absoluteMaxUsd);
+    if (isEmergencyHedge) {
+      // EMERGENCY HEDGE: Target absoluteMaxUsd directly for maximum protection
+      // hedgeUsd = min(absoluteMaxUsd, reserveBudget) or min(maxHedgeUsd, reserveBudget) if !allowExceedMax
+      if (this.config.allowExceedMax) {
+        hedgeUsd = this.config.absoluteMaxUsd;
+        this.logger.warn(
+          `[SmartHedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss >= ${this.config.emergencyLossPct}% threshold): ` +
+            `Targeting absoluteMaxUsd=$${this.config.absoluteMaxUsd} for maximum protection`,
+        );
+      } else {
+        hedgeUsd = this.config.maxHedgeUsd;
+        this.logger.warn(
+          `[SmartHedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss >= ${this.config.emergencyLossPct}% threshold): ` +
+            `Targeting maxHedgeUsd=$${this.config.maxHedgeUsd} (allowExceedMax=false)`,
+        );
+      }
     } else {
-      hedgeUsd = Math.min(profitableHedgeUsd, this.config.maxHedgeUsd);
+      // NORMAL HEDGE: Use break-even calculation with limits
+      if (this.config.allowExceedMax) {
+        hedgeUsd = Math.min(profitableHedgeUsd, this.config.absoluteMaxUsd);
+      } else {
+        hedgeUsd = Math.min(profitableHedgeUsd, this.config.maxHedgeUsd);
+      }
     }
 
     // === DYNAMIC RESERVES INTEGRATION ===
     // Apply reserve-aware sizing using per-cycle hedge budget
-    const reserveSizing = this.applyReserveAwareSizing(hedgeUsd, "HEDGE");
+    const operationLabel = isEmergencyHedge ? "EMERGENCY HEDGE" : "HEDGE";
+    const reserveSizing = this.applyReserveAwareSizing(hedgeUsd, operationLabel);
     if (reserveSizing.skip) {
       return { success: false, reason: reserveSizing.reason };
     }
     hedgeUsd = reserveSizing.cappedUsd;
+
+    // Log when reserve constraint affected emergency hedge sizing
+    if (isEmergencyHedge && reserveSizing.isPartial) {
+      this.logger.warn(
+        `[SmartHedging] 🚨 EMERGENCY HEDGE constrained by reserves: ` +
+          `targeting $${hedgeUsd.toFixed(2)} (reserve budget limited)`,
+      );
+    }
 
     // Check minimum
     if (hedgeUsd < this.config.minHedgeUsd) {

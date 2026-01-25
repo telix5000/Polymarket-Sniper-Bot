@@ -122,6 +122,7 @@ async function main(): Promise<void> {
         absoluteMaxUsd: strategyConfig.smartHedgingAbsoluteMaxUsd,
         allowExceedMax: strategyConfig.smartHedgingAllowExceedMax,
         forceLiquidationPct: strategyConfig.smartHedgingForceLiquidationLossPct,
+        emergencyLossPct: strategyConfig.smartHedgingEmergencyLossPct,
         // Near-close hedging behavior
         nearCloseWindowMinutes:
           strategyConfig.smartHedgingNearCloseWindowMinutes,
