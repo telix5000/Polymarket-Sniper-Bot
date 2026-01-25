@@ -109,7 +109,19 @@ async function main(): Promise<void> {
     // Load env config for balance fetching (needed for dynamic reserves)
     const envForBalances = loadMonitorConfig(cliOverrides);
 
+    // Initialize Telegram notifications BEFORE creating orchestrator
+    // This ensures telegram service is available for strategy injection
+    telegramService = createTelegramService(logger);
+    if (telegramService.isEnabled()) {
+      // Initialize centralized trade notification service for all strategies
+      initTradeNotificationService(telegramService, logger);
+      logger.info(
+        "📱 Telegram notifications initialized BEFORE orchestrator creation",
+      );
+    }
+
     // Create orchestrator with user's config
+    // Pass telegram service for direct injection into strategies
     orchestrator = new Orchestrator({
       client,
       logger,
@@ -118,6 +130,8 @@ async function main(): Promise<void> {
         | "conservative"
         | "balanced"
         | "aggressive",
+      // Pass telegram service for direct notification injection into strategies
+      telegram: telegramService,
       // Provide wallet balance fetcher for dynamic reserves to work
       // This enables the reserve system to track USDC balance and gate BUY orders
       getWalletBalances: async () => ({
@@ -217,13 +231,8 @@ async function main(): Promise<void> {
       "📊 P&L tracking enabled - all trades will be recorded to ledger",
     );
 
-    // Initialize Telegram notifications BEFORE starting orchestrator
-    // This ensures notifications are ready when the first trade happens
-    telegramService = createTelegramService(logger);
-    if (telegramService.isEnabled()) {
-      // Initialize centralized trade notification service for all strategies
-      initTradeNotificationService(telegramService, logger);
-
+    // Set up Telegram P&L callbacks and startup notification (if enabled)
+    if (telegramService?.isEnabled()) {
       // Set P&L callback for including balance snapshots with notifications
       setTradeNotificationPnLCallback(() =>
         orchestrator!.getSummaryWithBalances(),
@@ -256,9 +265,6 @@ async function main(): Promise<void> {
           );
         });
 
-      logger.info(
-        "📱 Telegram notifications initialized BEFORE trading starts",
-      );
       logger.info(
         "📱 Trade notifications enabled - will notify on buys/sells/hedges/redemptions",
       );

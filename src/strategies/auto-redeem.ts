@@ -540,21 +540,17 @@ export class AutoRedeemStrategy {
    * @param wallet - The wallet instance with provider
    * @param ctfAddress - CTF contract address
    * @param usdcAddress - USDC collateral token address
-   * @returns Object with price (0-1 scale) and value (USD)
+   * @returns Object with price (0-1 scale) and value (USD), or null if payout cannot be determined
    */
   private async calculatePayoutValue(
     position: RedeemablePosition,
     wallet: Wallet,
     ctfAddress: string,
     usdcAddress: string,
-  ): Promise<{ price: number; value: number }> {
-    // Default to zero if we can't determine the payout
-    // This is safer than overstating the value for losing positions
-    const zeroPayout = { price: 0, value: 0 };
-
+  ): Promise<{ price: number; value: number } | null> {
     try {
       if (!wallet.provider) {
-        return zeroPayout;
+        return null;
       }
 
       const ctfContract = new Contract(ctfAddress, CTF_ABI, wallet.provider);
@@ -578,8 +574,8 @@ export class AutoRedeemStrategy {
       }
 
       if (payoutDenominator === 0n) {
-        // Market not resolved - should not happen here, but be safe
-        return zeroPayout;
+        // Market not resolved - return null (payout undetermined)
+        return null;
       }
 
       // For binary markets, check both outcome slots to find which one matches our tokenId
@@ -627,17 +623,17 @@ export class AutoRedeemStrategy {
         }
       }
 
-      // Could not match tokenId to any outcome - return zero to be safe
+      // Could not match tokenId to any outcome - return null (payout undetermined)
       this.logger.debug(
         `[AutoRedeem] Could not match tokenId ${position.tokenId.slice(0, 16)}... to any outcome`,
       );
-      return zeroPayout;
+      return null;
     } catch (err) {
-      // On any error, return zero to avoid overstating value
+      // On any error, return null to indicate payout could not be determined
       this.logger.debug(
         `[AutoRedeem] calculatePayoutValue error: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return zeroPayout;
+      return null;
     }
   }
 
@@ -1042,9 +1038,14 @@ export class AutoRedeemStrategy {
         usdcAddress,
       );
 
-      // Calculate realized P&L if entry price is available
+      // Use -1 as sentinel value for unknown payout price (will display as "Unknown" in notifications)
+      // This happens when payout cannot be determined from on-chain data
+      const payoutPrice = payoutInfo?.price ?? -1;
+      const payoutValue = payoutInfo?.value ?? position.size; // Fallback to share count as estimate
+
+      // Calculate realized P&L if entry price is available and payout is known
       let realizedPnl: number | undefined;
-      if (this.getPositionPnL) {
+      if (this.getPositionPnL && payoutInfo !== null) {
         const pnlData = this.getPositionPnL(position.tokenId);
         if (pnlData) {
           // When redeeming, we get payoutInfo.price (0 or 1) per share
@@ -1060,8 +1061,8 @@ export class AutoRedeemStrategy {
         position.marketId,
         position.tokenId,
         position.size,
-        payoutInfo.price,
-        payoutInfo.value,
+        payoutPrice,
+        payoutValue,
         {
           txHash: tx.hash,
           pnl: realizedPnl,
