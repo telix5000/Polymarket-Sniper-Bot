@@ -754,16 +754,7 @@ export class Orchestrator {
           summary.totalValue = balances.usdcBalance + holdingsValue;
 
           // Calculate overall return if INITIAL_INVESTMENT_USD is set
-          const initialInvestmentStr = process.env.INITIAL_INVESTMENT_USD;
-          if (initialInvestmentStr) {
-            const initialInvestment = parseFloat(initialInvestmentStr);
-            if (!isNaN(initialInvestment) && initialInvestment > 0) {
-              summary.initialInvestment = initialInvestment;
-              summary.overallGainLoss = summary.totalValue - initialInvestment;
-              summary.overallReturnPct =
-                (summary.overallGainLoss / initialInvestment) * 100;
-            }
-          }
+          this.enrichWithInitialInvestment(summary, summary.totalValue);
         }
       } else if (this.getWalletBalances) {
         // If no snapshot available, only set USDC balance (don't set holdingsValue/totalValue)
@@ -771,19 +762,9 @@ export class Orchestrator {
         summary.usdcBalance = balances.usdcBalance;
 
         // Still calculate overall return based on USDC balance alone if no holdings
-        const initialInvestmentStr = process.env.INITIAL_INVESTMENT_USD;
-        if (initialInvestmentStr) {
-          const initialInvestment = parseFloat(initialInvestmentStr);
-          if (!isNaN(initialInvestment) && initialInvestment > 0) {
-            summary.initialInvestment = initialInvestment;
-            // Without holdings, total value is just USDC balance
-            const totalValue = balances.usdcBalance;
-            summary.totalValue = totalValue;
-            summary.overallGainLoss = totalValue - initialInvestment;
-            summary.overallReturnPct =
-              (summary.overallGainLoss / initialInvestment) * 100;
-          }
-        }
+        // Without holdings, total value is just USDC balance
+        summary.totalValue = balances.usdcBalance;
+        this.enrichWithInitialInvestment(summary, balances.usdcBalance);
       }
     } catch (err) {
       this.logger.debug(
@@ -793,6 +774,25 @@ export class Orchestrator {
     }
 
     return summary;
+  }
+
+  /**
+   * Enrich summary with initial investment tracking if INITIAL_INVESTMENT_USD is set.
+   * Calculates overall gain/loss and return percentage.
+   */
+  private enrichWithInitialInvestment(
+    summary: LedgerSummary,
+    totalValue: number,
+  ): void {
+    const initialInvestmentStr = process.env.INITIAL_INVESTMENT_USD;
+    if (!initialInvestmentStr) return;
+
+    const initialInvestment = parseFloat(initialInvestmentStr);
+    if (isNaN(initialInvestment) || initialInvestment <= 0) return;
+
+    summary.initialInvestment = initialInvestment;
+    summary.overallGainLoss = totalValue - initialInvestment;
+    summary.overallReturnPct = (summary.overallGainLoss / initialInvestment) * 100;
   }
 }
 
