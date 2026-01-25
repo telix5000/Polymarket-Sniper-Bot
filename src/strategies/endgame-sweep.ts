@@ -10,9 +10,10 @@
  *
  * That's it. No complex quality scoring, no elaborate spread analysis.
  *
- * DYNAMIC RESERVES INTEGRATION:
- * - If reservePlan is provided and mode is RISK_OFF, skip all BUY operations
- * - This prevents overtrading when we lack hedge/exit reserves
+ * RESERVE BEHAVIOR:
+ * Endgame sweeps are NEVER blocked by dynamic reserves. They have their own rules
+ * and target high-probability positions (85-99¢) that are almost guaranteed to pay $1.
+ * These are high-value opportunities that should proceed regardless of reserve status.
  */
 
 import type { ClobClient } from "@polymarket/clob-client";
@@ -67,6 +68,15 @@ export class EndgameSweepStrategy {
   // Track in-flight buys to prevent stacking
   private inFlightBuys: Map<string, number> = new Map();
 
+  // === PER-CYCLE SWEEP BUDGET ===
+  // Tracks remaining budget within a single execute() cycle.
+  // This ensures sweeps use min(configuredCap, availableCash).
+  // Reset at the start of each execute() call.
+  private cycleSweepBudgetRemaining: number | null = null;
+
+  // Minimum sweep amount (below this, skip the sweep)
+  private static readonly MIN_SWEEP_USD = 1;
+
   constructor(config: {
     client: ClobClient;
     logger: ConsoleLogger;
@@ -88,19 +98,23 @@ export class EndgameSweepStrategy {
    *
    * SINGLE-FLIGHT: Skips if already running (returns 0)
    *
-   * @param reservePlan Optional reserve plan for RISK_OFF gating. If mode is RISK_OFF, BUYs are blocked.
+   * RESERVE BEHAVIOR: Endgame sweeps are NEVER blocked by reserves.
+   * They have their own rules and target high-probability wins.
+   * UNLIMITED MODE: No ENV cap - uses full available cash.
+   *
+   * @param reservePlan Optional reserve plan to get available cash. Sweeps are never blocked.
    */
   async execute(reservePlan?: ReservePlan): Promise<number> {
     if (!this.config.enabled) {
       return 0;
     }
 
-    // RISK_OFF gate: block all BUYs when reserves are insufficient
-    if (reservePlan?.mode === "RISK_OFF") {
-      this.logger.debug(
-        `[EndgameSweep] RISK_OFF - skipping BUYs (shortfall=$${reservePlan.shortfall.toFixed(2)})`,
-      );
-      return 0;
+    // SWEEPS ARE NEVER BLOCKED BY RESERVES - they have their own rules
+    // UNLIMITED MODE: Initialize budget from available cash (no ENV cap)
+    if (reservePlan) {
+      this.cycleSweepBudgetRemaining = reservePlan.availableCash;
+    } else {
+      this.cycleSweepBudgetRemaining = null; // No budget tracking if no reserve plan
     }
 
     // Single-flight guard: prevent concurrent execution
@@ -261,6 +275,7 @@ export class EndgameSweepStrategy {
 
   /**
    * Buy a position
+   * UNLIMITED MODE: Uses available cash, no ENV cap
    */
   private async buyPosition(
     market: { id: string; tokenId: string; price: number; side: "YES" | "NO" },
@@ -279,11 +294,18 @@ export class EndgameSweepStrategy {
       return false;
     }
 
+    // UNLIMITED MODE: Use available cash, not ENV cap
+    // Apply budget-aware sizing using cycle budget (available cash)
+    const budgetResult = this.applyBudgetAwareSizing(maxUsd);
+    if (budgetResult.skip) {
+      return false;
+    }
+
     // Mark as in-flight
     this.inFlightBuys.set(market.id, Date.now());
 
     try {
-      const sizeUsd = Math.min(maxUsd, this.config.maxPositionUsd);
+      const sizeUsd = budgetResult.cappedUsd;
       const expectedProfit = ((1 - market.price) / market.price) * 100;
 
       this.logger.info(
@@ -303,6 +325,8 @@ export class EndgameSweepStrategy {
       });
 
       if (result.status === "submitted") {
+        // Deduct from budget after successful buy
+        this.deductFromCycleSweepBudget(sizeUsd);
         this.logger.info(`[EndgameSweep] ✅ Bought successfully`);
 
         // Send telegram notification for endgame sweep buy
@@ -336,6 +360,55 @@ export class EndgameSweepStrategy {
     } finally {
       // Clear in-flight after attempt
       this.inFlightBuys.delete(market.id);
+    }
+  }
+
+  /**
+   * Apply budget-aware sizing to a sweep amount.
+   * UNLIMITED MODE: Uses available cash, no ENV cap.
+   *
+   * @param computedUsd - The originally computed sweep amount
+   * @returns Object with { skip: false, cappedUsd: number, isPartial: boolean } - sweeps never skip due to reserves
+   */
+  private applyBudgetAwareSizing(
+    computedUsd: number,
+  ): { skip: true; reason: string } | { skip: false; cappedUsd: number; isPartial: boolean } {
+    // If no budget tracking, use full computed amount
+    if (this.cycleSweepBudgetRemaining === null) {
+      return { skip: false, cappedUsd: computedUsd, isPartial: false };
+    }
+
+    const minSweepUsd = EndgameSweepStrategy.MIN_SWEEP_USD;
+
+    // SWEEPS ARE NEVER BLOCKED BY RESERVES - they have their own rules
+    // If budget is below computed amount, cap to available budget (partial sweep)
+    if (this.cycleSweepBudgetRemaining < computedUsd) {
+      const cappedUsd = this.cycleSweepBudgetRemaining;
+      // Only proceed if we have enough for minimum sweep
+      if (cappedUsd >= minSweepUsd) {
+        this.logger.info(
+          `[EndgameSweep] 📉 PARTIAL SWEEP: Capping from $${computedUsd.toFixed(2)} to $${cappedUsd.toFixed(2)} (available cash)`,
+        );
+        return { skip: false, cappedUsd, isPartial: true };
+      }
+      // Skip only if below minimum amount (not enough funds)
+      this.logger.info(
+        `[EndgameSweep] 📋 Sweep skipped: available=$${cappedUsd.toFixed(2)} < min=$${minSweepUsd} (insufficient funds)`,
+      );
+      return { skip: true, reason: "INSUFFICIENT_FUNDS" };
+    }
+
+    // Full amount available
+    return { skip: false, cappedUsd: computedUsd, isPartial: false };
+  }
+
+  /**
+   * Deduct an amount from the per-cycle sweep budget after a successful BUY order.
+   * @param amountUsd - The USD amount spent on the sweep operation
+   */
+  private deductFromCycleSweepBudget(amountUsd: number): void {
+    if (this.cycleSweepBudgetRemaining !== null && amountUsd > 0) {
+      this.cycleSweepBudgetRemaining = Math.max(0, this.cycleSweepBudgetRemaining - amountUsd);
     }
   }
 
