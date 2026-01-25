@@ -755,7 +755,7 @@ export class SmartHedgingStrategy {
             continue;
           }
         }
-        // Inside near-close window (last 10-15 minutes): apply stricter thresholds
+        // Inside near-close window (default: last 30 minutes): apply stricter thresholds
         // Only hedge if it's a BIG adverse move (≥12¢) OR a BIG loss (≥30%)
         else if (minutesToClose <= this.config.nearCloseWindowMinutes) {
           const priceDropCents =
