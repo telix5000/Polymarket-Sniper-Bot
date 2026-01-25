@@ -485,6 +485,8 @@ That's it! The bot automatically:
 - ✅ Auto-detects your wallet type and auth method
 
 > 📖 **Full configuration options:** See [.env.example](./.env.example) for all available settings.
+> 
+> 📋 **Complete ENV Reference:** See **[docs/ENVIRONMENT_VARIABLES.md](./docs/ENVIRONMENT_VARIABLES.md)** for comprehensive documentation of ALL environment variables.
 
 ### ⚠️ Understanding API Credentials (IMPORTANT)
 
@@ -1544,13 +1546,21 @@ This will show you the **exact mismatch** between what we sign vs what we send t
 
 ## 📚 Documentation
 
+### Configuration
+- **[📋 Environment Variables Reference](./docs/ENVIRONMENT_VARIABLES.md)**: Comprehensive guide to ALL environment variables with defaults, examples, and categories
 - **[Complete Guide](./docs/GUIDE.md)**: Detailed setup, configuration, and troubleshooting
+
+### Authentication
 - **[Authentication Troubleshooting](./docs/AUTH_TROUBLESHOOTING.md)**: Fixing authentication issues
 - **[Credentials Explained](./docs/CREDENTIALS_EXPLAINED.md)**: Understanding CLOB vs Builder credentials
 - **[Authentication Fix](./AUTHENTICATION_FIX.md)**: Technical details about the authentication fix
 - **[HMAC Diagnostic Fix](./HMAC_DIAGNOSTIC_FIX.md)**: Advanced 401 error diagnostics
 - **[Next Steps for 401 Errors](./NEXT_STEPS_401_FIX.md)**: Step-by-step troubleshooting guide
+
+### Architecture & Operations
 - **[Architecture Overview](#-architecture)**: System design and component overview
+- **[Strategy Implementations](./docs/STRATEGY_IMPLEMENTATIONS.md)**: Details on trading strategies
+- **[Performance Optimization](./docs/PERFORMANCE_OPTIMIZATION.md)**: Tips for optimal performance
 
 ## 🤝 Contributing
 
