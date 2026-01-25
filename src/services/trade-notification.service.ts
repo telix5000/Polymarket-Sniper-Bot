@@ -181,7 +181,11 @@ function recordTradeToLedger(input: TradeNotificationInput): void {
       side,
       size: input.size,
       price: input.price,
-      fees: 0, // Fees are typically included in the price already
+      // Fees are set to 0 because:
+      // 1. Polymarket fees are deducted from the execution price, not charged separately
+      // 2. The P&L passed from strategies already accounts for any fees in the price difference
+      // 3. When pnlRealized is provided, it's the actual profit/loss after all costs
+      fees: 0,
       pnlRealized: input.pnl,
     };
 
