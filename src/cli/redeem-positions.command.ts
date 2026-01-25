@@ -2,11 +2,11 @@
  * CLI command to manually redeem resolved (winning/losing) positions
  *
  * Usage:
- *   npx ts-node src/cli/redeem-positions.command.ts [--exclude-losses] [--min-value=X]
+ *   npm run redeem [--min-value=X] [--exclude-losses]
  *
  * Options:
  *   --exclude-losses  Exclude $0 positions (losers) from redemption. Default: false (losses included)
- *   --min-value=X     Minimum position value in USD to redeem. Default: 0.01
+ *   --min-value=X     Minimum position value in USD to redeem. Default: 0 (no minimum)
  *
  * Environment variables:
  *   PRIVATE_KEY - Required: Your wallet private key
@@ -19,9 +19,15 @@
  *   4. Calls the CTF contract to redeem them for USDC
  *
  * By default:
+ *   - All positions are redeemed (no minimum value threshold)
  *   - $0 losers are INCLUDED (redeemed for cleanup)
  *   - Positions not yet resolved on-chain are SKIPPED
  *   - Use --exclude-losses to skip $0 positions if you want to save gas
+ *
+ * Examples:
+ *   npm run redeem                           # Redeem all (default)
+ *   npm run redeem --min-value=0.0001        # Only positions >= $0.0001
+ *   npm run redeem --exclude-losses          # Exclude $0 losers
  */
 
 import "dotenv/config";
@@ -29,12 +35,28 @@ import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 import { ConsoleLogger } from "../utils/logger.util";
 import { AutoRedeemStrategy } from "../strategies/auto-redeem";
 
-// Parse CLI arguments
+// Parse CLI arguments and npm config environment variables
 function parseArgs(): { includeLosses: boolean; minValueUsd: number } {
   const args = process.argv.slice(2);
   let includeLosses = true; // Default: include losses for cleanup
-  let minValueUsd = 0.01; // Default: skip positions worth less than 1 cent
+  let minValueUsd = 0; // Default: no minimum threshold, redeem anything
 
+  // First, check npm config environment variables (set when using npm run redeem --min-value=X)
+  // npm converts --min-value=X to npm_config_min_value=X environment variable
+  const npmConfigMinValue = process.env.npm_config_min_value;
+  if (npmConfigMinValue !== undefined && npmConfigMinValue !== "") {
+    const value = parseFloat(npmConfigMinValue);
+    if (!isNaN(value) && value >= 0) {
+      minValueUsd = value;
+    }
+  }
+
+  // Check for --exclude-losses in npm config (npm run redeem --exclude-losses)
+  if (process.env.npm_config_exclude_losses === "true") {
+    includeLosses = false;
+  }
+
+  // Then check CLI args (these take precedence if both are provided)
   for (const arg of args) {
     if (arg === "--exclude-losses" || arg === "--no-include-losses") {
       includeLosses = false;
@@ -48,23 +70,28 @@ function parseArgs(): { includeLosses: boolean; minValueUsd: number } {
       }
     } else if (arg === "--help" || arg === "-h") {
       console.log(`
-Usage: npx ts-node src/cli/redeem-positions.command.ts [options]
+Usage: npm run redeem [--min-value=X] [--exclude-losses]
 
 Options:
   --exclude-losses    Exclude $0 positions (losers) from redemption (saves gas)
-  --include-losses    Include $0 positions (losers) in redemption (default, for cleanup)
-  --min-value=X       Minimum position value in USD to redeem (default: 0.01)
+  --min-value=X       Minimum position value in USD to redeem (default: 0, no minimum)
   --help, -h          Show this help message
 
 Examples:
   # Redeem all positions including $0 losers (default)
-  npx ts-node src/cli/redeem-positions.command.ts
+  npm run redeem
 
-  # Exclude $0 losers (save gas, skip cleanup)
-  npx ts-node src/cli/redeem-positions.command.ts --exclude-losses
+  # Only redeem positions worth at least 0.0001 USD
+  npm run redeem --min-value=0.0001
 
   # Only redeem positions worth at least $1
-  npx ts-node src/cli/redeem-positions.command.ts --min-value=1
+  npm run redeem --min-value=1
+
+  # Exclude $0 losers (save gas, skip cleanup)
+  npm run redeem --exclude-losses
+
+  # Combine options
+  npm run redeem --min-value=0.001 --exclude-losses
 `);
       process.exit(0);
     }

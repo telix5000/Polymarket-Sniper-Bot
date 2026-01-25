@@ -176,7 +176,7 @@ export const STRATEGY_PRESETS = {
     ENDGAME_MAX_PRICE: 0.995,
     MAX_POSITION_USD: 25,
     AUTO_REDEEM_ENABLED: false,
-    AUTO_REDEEM_MIN_POSITION_USD: 0.1,
+    AUTO_REDEEM_MIN_POSITION_USD: 0, // No minimum, redeem everything
     // Smart Hedging - disabled in "off" preset (STRATEGY_ENABLED=false disables all strategies)
     SMART_HEDGING_ENABLED: false,
     SMART_HEDGING_TRIGGER_LOSS_PCT: 20,
@@ -275,7 +275,7 @@ export const STRATEGY_PRESETS = {
     MAX_POSITION_USD: 15, // Conservative position sizing
     // Auto-Redeem settings (claim resolved positions)
     AUTO_REDEEM_ENABLED: true,
-    AUTO_REDEEM_MIN_POSITION_USD: 0.1, // Skip dust below 10 cents
+    AUTO_REDEEM_MIN_POSITION_USD: 0, // No minimum, redeem everything
     /**
      * SMART HEDGING - Conservative settings
      * Instead of selling risky positions at a loss, hedge by buying the opposing side
@@ -407,7 +407,7 @@ export const STRATEGY_PRESETS = {
     MAX_POSITION_USD: 25, // Balanced position sizing
     // Auto-Redeem settings (claim resolved positions)
     AUTO_REDEEM_ENABLED: true,
-    AUTO_REDEEM_MIN_POSITION_USD: 0.1, // Skip dust below 10 cents
+    AUTO_REDEEM_MIN_POSITION_USD: 0, // No minimum, redeem everything
     /**
      * SMART HEDGING - Balanced settings
      * Instead of selling risky positions at a loss, hedge by buying the opposing side
@@ -579,7 +579,7 @@ export const STRATEGY_PRESETS = {
 
     // Auto-redeem resolved positions
     AUTO_REDEEM_ENABLED: true,
-    AUTO_REDEEM_MIN_POSITION_USD: 0.01,
+    AUTO_REDEEM_MIN_POSITION_USD: 0, // No minimum, redeem everything
 
     /**
      * SMART HEDGING - Aggressive settings
