@@ -540,10 +540,12 @@ export class PositionStackingStrategy {
       return { skip: false, cappedUsd: computedUsd, isPartial: false };
     }
 
+    const minStackUsd = PositionStackingStrategy.MIN_STACK_USD;
+
     // Check if budget is below minimum threshold
-    if (this.cycleStackBudgetRemaining < PositionStackingStrategy.MIN_STACK_USD) {
+    if (this.cycleStackBudgetRemaining < minStackUsd) {
       this.logger.info(
-        `[PositionStacking] 📋 Stack skipped (BUDGET_EXHAUSTED): budget=$${this.cycleStackBudgetRemaining.toFixed(2)} < min=$${PositionStackingStrategy.MIN_STACK_USD}`,
+        `[PositionStacking] 📋 Stack skipped (BUDGET_EXHAUSTED): budget=$${this.cycleStackBudgetRemaining.toFixed(2)} < min=$${minStackUsd}`,
       );
       return { skip: true, reason: "BUDGET_EXHAUSTED" };
     }
