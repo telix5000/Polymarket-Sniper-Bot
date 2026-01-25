@@ -753,10 +753,13 @@ export class SmartHedgingStrategy {
       }
 
       // === REASON-AWARE HEDGE FALLBACK ===
-      // When hedge fails due to insufficient funds, try to free funds by selling
-      // profitable positions (lowest profit first), then retry the hedge once.
+      // When hedge fails due to insufficient funds or reserve shortfall, try to free funds
+      // by selling profitable positions (lowest profit first), then retry the hedge once.
       // Only sell the losing position as a last resort.
-      if (hedgeResult.reason === "INSUFFICIENT_BALANCE_OR_ALLOWANCE") {
+      //
+      // IMPORTANT: This fund-freeing logic is ONLY for HEDGING DOWN (protecting losses).
+      // HEDGE UP (buying more of winning positions) should NOT sell other positions.
+      if (hedgeResult.reason === "INSUFFICIENT_BALANCE_OR_ALLOWANCE" || hedgeResult.reason === "RESERVE_SHORTFALL") {
         this.logger.info(
           `[SmartHedging] 💰 Hedge failed (insufficient funds) - attempting to free funds by selling profitable positions`,
         );
@@ -790,6 +793,14 @@ export class SmartHedgingStrategy {
             this.hedgedPositions.add(
               `${profitToSell.marketId}-${profitToSell.tokenId}`,
             );
+            // Update cycle budget with freed funds so retry can use them
+            const freedValue = profitToSell.size * profitToSell.currentPrice;
+            if (this.cycleHedgeBudgetRemaining !== null) {
+              this.cycleHedgeBudgetRemaining += freedValue;
+              this.logger.info(
+                `[SmartHedging] 💰 Freed $${freedValue.toFixed(2)} - cycle budget now $${this.cycleHedgeBudgetRemaining.toFixed(2)}`,
+              );
+            }
           } else {
             this.logger.warn(
               `[SmartHedging] ⚠️ Failed to sell profitable position for fund release`,
@@ -882,12 +893,27 @@ export class SmartHedgingStrategy {
     }
 
     // === LOG DEDUPLICATION: Emit aggregated skip summary (rate-limited) ===
+    // Use WARN level for significant issues (reserve shortfall, not tradable) to ensure visibility
     if (skipAggregator.hasSkips()) {
       const fingerprint = skipAggregator.getFingerprint();
       if (this.logDeduper.shouldLogSummary("Hedging", fingerprint)) {
-        this.logger.debug(
-          `[SmartHedging] Skipped ${skipAggregator.getTotalCount()} positions: ${skipAggregator.getSummary()} (cycle=${this.cycleCount})`,
-        );
+        const summary = skipAggregator.getSummary();
+        // Check for critical skip reasons that need visibility
+        const hasCriticalSkips = 
+          summary.includes("reserve") || 
+          summary.includes("untrusted") ||
+          summary.includes("not_tradable") ||
+          summary.includes("cooldown");
+        
+        if (hasCriticalSkips) {
+          this.logger.warn(
+            `[SmartHedging] ⚠️ Skipped ${skipAggregator.getTotalCount()} positions: ${summary} (cycle=${this.cycleCount})`,
+          );
+        } else {
+          this.logger.debug(
+            `[SmartHedging] Skipped ${skipAggregator.getTotalCount()} positions: ${summary} (cycle=${this.cycleCount})`,
+          );
+        }
       }
     }
 

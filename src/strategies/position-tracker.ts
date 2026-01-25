@@ -3851,6 +3851,24 @@ export class PositionTracker {
                 );
               }
 
+              // Log significant losses at WARN level for monitoring (rate-limited per tokenId)
+              // This ensures visibility - previously only gains were logged, making losses "silent"
+              if (pnlPct <= -20 && !finalRedeemable && pnlTrusted) {
+                // Rate-limit loss logging to once per minute per tokenId
+                const lossLogKey = `high_loss:${tokenId.slice(0, 16)}`;
+                if (this.logDeduper.shouldLog(lossLogKey, 60_000)) {
+                  const sourceDescription =
+                    pnlSource === "DATA_API"
+                      ? "Polymarket Data API"
+                      : pnlSource === "EXECUTABLE_BOOK"
+                        ? "CLOB order book best bid"
+                        : "fallback price API";
+                  this.logger.warn(
+                    `[PositionTracker] 📉 High loss position: ${side} entry=${(entryPrice * 100).toFixed(1)}¢ → current=${(currentPrice * 100).toFixed(1)}¢ = ${pnlPct.toFixed(1)}% ($${pnlUsd.toFixed(2)}) [source: ${sourceDescription}]`,
+                  );
+                }
+              }
+
               // Fetch market end time for active positions (needed for near-close hedging)
               // Skip for redeemable positions since they're already resolved
               let marketEndTime: number | undefined;
