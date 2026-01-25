@@ -70,6 +70,12 @@ let matrixBackoffMs = PREFLIGHT_BACKOFF_BASE_MS;
 let lastMatrixAttemptMs = 0;
 let matrixCompleted = false;
 
+/**
+ * Track whether the NON_STANDARD_RESPONSE warning has been logged this boot.
+ * This prevents repeated logging of "response without HTTP status" messages.
+ */
+let nonStandardResponseLoggedThisBoot = false;
+
 type AuthModeConfig = {
   signatureType: number;
   secretDecoding: SecretDecodingMode;
@@ -1016,41 +1022,59 @@ export const runClobAuthPreflight = async (params: {
     const hasError = isObject && "error" in response;
     const responseKeys = isObject ? Object.keys(response).join(",") : "none";
 
-    logPreflightFailure({
-      logger: params.logger,
-      stage: "auth",
-      status,
-      message: responseErrorMessage || "unknown_error",
-      data: (response as { data?: unknown })?.data,
-    });
+    // Classify as NON_STANDARD_RESPONSE and only log ONCE per boot
     const issue = classifyPreflightIssue({
       status,
       message: responseErrorMessage || "unknown_error",
       data: (response as { data?: unknown })?.data,
     });
-    logPreflightHint(params.logger, issue);
     const severity = classifyPreflightSeverity({
       status,
       code: null,
       issue,
     });
 
-    if (isStructuredLogger(params.logger)) {
-      params.logger.warn("Preflight: response without HTTP status (benign)", {
-        ...logContext,
-        status: status ?? "undefined",
-        severity,
-        issue,
-        responseType,
-        hasData,
-        hasError,
-        responseKeys,
-        note: "Credentials valid, trading allowed",
+    // Only log the full warning once per boot to avoid repeated log spam
+    if (!nonStandardResponseLoggedThisBoot) {
+      nonStandardResponseLoggedThisBoot = true;
+      logPreflightFailure({
+        logger: params.logger,
+        stage: "auth",
+        status,
+        message: responseErrorMessage || "NON_STANDARD_RESPONSE",
+        data: (response as { data?: unknown })?.data,
       });
+      logPreflightHint(params.logger, issue);
+
+      if (isStructuredLogger(params.logger)) {
+        params.logger.warn("Preflight: NON_STANDARD_RESPONSE (logged once)", {
+          ...logContext,
+          status: status ?? "undefined",
+          severity,
+          issue,
+          responseType,
+          hasData,
+          hasError,
+          responseKeys,
+          note: "Credentials valid, trading allowed. This warning will not repeat.",
+        });
+      } else {
+        params.logger.warn(
+          `[CLOB][Preflight] NON_STANDARD_RESPONSE (once per boot): credentials OK, trading allowed. status=${status ?? "undefined"} severity=${severity} issue=${issue} responseType=${responseType} hasData=${hasData} hasError=${hasError} keys=${responseKeys}`,
+        );
+      }
     } else {
-      params.logger.warn(
-        `[CLOB][Preflight] BENIGN: response without HTTP status - credentials OK, trading allowed. Details: status=${status ?? "undefined"} severity=${severity} issue=${issue} responseType=${responseType} hasData=${hasData} hasError=${hasError} keys=${responseKeys}`,
-      );
+      // Subsequent occurrences: only log at debug level
+      if (isStructuredLogger(params.logger)) {
+        params.logger.debug("Preflight: NON_STANDARD_RESPONSE (suppressed)", {
+          ...logContext,
+          status: status ?? "undefined",
+        });
+      } else {
+        params.logger.debug(
+          `[CLOB][Preflight] NON_STANDARD_RESPONSE (suppressed, see first occurrence for details)`,
+        );
+      }
     }
 
     preflightBackoffMs = Math.min(

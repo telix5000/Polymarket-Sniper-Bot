@@ -524,11 +524,19 @@ describe("Near-Resolution Capital Release", () => {
 
     // Entry 61¢ (just above threshold), current 95¢ - should NOT be excluded
     const case3 = shouldExcludeFromTimeExit(0.61, 0.95, 0.6);
-    assert.strictEqual(case3, false, "61¢→95¢ should NOT be protected (entry above threshold)");
+    assert.strictEqual(
+      case3,
+      false,
+      "61¢→95¢ should NOT be protected (entry above threshold)",
+    );
 
     // Entry 50¢, current 89¢ - should NOT be excluded (not near resolution)
     const case4 = shouldExcludeFromTimeExit(0.5, 0.89, 0.6);
-    assert.strictEqual(case4, false, "50¢→89¢ should NOT be protected (not near resolution)");
+    assert.strictEqual(
+      case4,
+      false,
+      "50¢→89¢ should NOT be protected (not near resolution)",
+    );
   });
 
   test("Capital release happens at exactly maxHoldMinutes", () => {

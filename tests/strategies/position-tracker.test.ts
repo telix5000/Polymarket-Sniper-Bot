@@ -746,11 +746,7 @@ describe("PositionTracker Strict State Machine", () => {
     const priceNearResolution = currentPrice >= RESOLVED_PRICE_HIGH_THRESHOLD;
 
     let positionState: string;
-    if (
-      priceNearResolution &&
-      hasNoBids &&
-      onChainPayoutDenominator > 0n
-    ) {
+    if (priceNearResolution && hasNoBids && onChainPayoutDenominator > 0n) {
       positionState = "REDEEMABLE";
     } else {
       positionState = "ACTIVE";
@@ -3299,10 +3295,23 @@ describe("Crash-Proof Recovery: Snapshot Validation", () => {
       cycleId: 1,
       addressUsed: "0x1234567890123456789012345678901234567890",
       fetchedAtMs: Date.now() - 30000,
-      activePositions: Object.freeze([{ marketId: "m1", tokenId: "t1" }]) as any,
+      activePositions: Object.freeze([
+        { marketId: "m1", tokenId: "t1" },
+      ]) as any,
       redeemablePositions: Object.freeze([]) as any,
-      summary: { activeTotal: 1, prof: 0, lose: 1, neutral: 0, unknown: 0, redeemableTotal: 0 },
-      rawCounts: { rawTotal: 1, rawActiveCandidates: 1, rawRedeemableCandidates: 0 },
+      summary: {
+        activeTotal: 1,
+        prof: 0,
+        lose: 1,
+        neutral: 0,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
+      rawCounts: {
+        rawTotal: 1,
+        rawActiveCandidates: 1,
+        rawRedeemableCandidates: 0,
+      },
     };
 
     // New snapshot has raw positions but 0 final active (ACTIVE_COLLAPSE_BUG)
@@ -3312,13 +3321,25 @@ describe("Crash-Proof Recovery: Snapshot Validation", () => {
       fetchedAtMs: Date.now(),
       activePositions: Object.freeze([]) as any, // BUG: Empty even though raw has positions
       redeemablePositions: Object.freeze([]) as any,
-      summary: { activeTotal: 0, prof: 0, lose: 0, neutral: 0, unknown: 0, redeemableTotal: 0 },
-      rawCounts: { rawTotal: 33, rawActiveCandidates: 33, rawRedeemableCandidates: 0 },
+      summary: {
+        activeTotal: 0,
+        prof: 0,
+        lose: 0,
+        neutral: 0,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
+      rawCounts: {
+        rawTotal: 33,
+        rawActiveCandidates: 33,
+        rawRedeemableCandidates: 0,
+      },
     };
 
     // Simulate validation logic
     const rawTotal = mockNewSnapshot.rawCounts?.rawTotal ?? 0;
-    const rawActiveCandidates = mockNewSnapshot.rawCounts?.rawActiveCandidates ?? 0;
+    const rawActiveCandidates =
+      mockNewSnapshot.rawCounts?.rawActiveCandidates ?? 0;
     const finalActiveCount = mockNewSnapshot.activePositions.length;
 
     const isActiveCollapseBug =
@@ -3327,7 +3348,7 @@ describe("Crash-Proof Recovery: Snapshot Validation", () => {
     assert.strictEqual(
       isActiveCollapseBug,
       true,
-      "Should detect ACTIVE_COLLAPSE_BUG when raw has positions but final has none"
+      "Should detect ACTIVE_COLLAPSE_BUG when raw has positions but final has none",
     );
   });
 
@@ -3341,16 +3362,17 @@ describe("Crash-Proof Recovery: Snapshot Validation", () => {
     assert.strictEqual(
       isFetchRegression,
       true,
-      "Should detect FETCH_REGRESSION when new total is dramatically lower"
+      "Should detect FETCH_REGRESSION when new total is dramatically lower",
     );
 
     // Test borderline case (exactly 20% - should pass)
     const borderlineRawTotal = 10; // 20% of 50
-    const isBorderlineRegression = borderlineRawTotal < prevRawTotal * threshold;
+    const isBorderlineRegression =
+      borderlineRawTotal < prevRawTotal * threshold;
     assert.strictEqual(
       isBorderlineRegression,
       false,
-      "Should NOT detect FETCH_REGRESSION when exactly at threshold"
+      "Should NOT detect FETCH_REGRESSION when exactly at threshold",
     );
   });
 
@@ -3372,7 +3394,7 @@ describe("Crash-Proof Recovery: Snapshot Validation", () => {
     assert.strictEqual(
       isAddressFlipCollapse,
       true,
-      "Should detect ADDRESS_FLIP_COLLAPSE when address changes and counts collapse"
+      "Should detect ADDRESS_FLIP_COLLAPSE when address changes and counts collapse",
     );
 
     // Test: Same address, counts collapse - should NOT be address flip collapse
@@ -3382,7 +3404,7 @@ describe("Crash-Proof Recovery: Snapshot Validation", () => {
     assert.strictEqual(
       sameAddressFlipCollapse,
       false,
-      "Collapse without address change should NOT be ADDRESS_FLIP_COLLAPSE"
+      "Collapse without address change should NOT be ADDRESS_FLIP_COLLAPSE",
     );
   });
 
@@ -3395,14 +3417,22 @@ describe("Crash-Proof Recovery: Snapshot Validation", () => {
       activePositions: [{ id: 1 }, { id: 2 }],
       redeemablePositions: [{ id: 3 }],
       addressUsed: "0x1234567890123456789012345678901234567890",
-      rawCounts: { rawTotal: newRawTotal, rawActiveCandidates: 2, rawRedeemableCandidates: 1 },
+      rawCounts: {
+        rawTotal: newRawTotal,
+        rawActiveCandidates: 2,
+        rawRedeemableCandidates: 1,
+      },
     };
 
     const mockPrevSnapshot = {
       activePositions: [{ id: 1 }, { id: 2 }, { id: 4 }],
       redeemablePositions: [],
       addressUsed: "0x1234567890123456789012345678901234567890",
-      rawCounts: { rawTotal: prevRawTotal, rawActiveCandidates: 3, rawRedeemableCandidates: 0 },
+      rawCounts: {
+        rawTotal: prevRawTotal,
+        rawActiveCandidates: 3,
+        rawRedeemableCandidates: 0,
+      },
     };
 
     // Check all validations
@@ -3418,14 +3448,16 @@ describe("Crash-Proof Recovery: Snapshot Validation", () => {
     const isFetchRegression = newRawTotal < prevRawTotal * threshold;
 
     // Rule C: ADDRESS_FLIP_COLLAPSE
-    const addressChanged = mockNewSnapshot.addressUsed !== mockPrevSnapshot.addressUsed;
+    const addressChanged =
+      mockNewSnapshot.addressUsed !== mockPrevSnapshot.addressUsed;
     const countsCollapsed =
       mockPrevSnapshot.activePositions.length > 0 &&
       finalActiveCount === 0 &&
       mockNewSnapshot.redeemablePositions.length === 0;
     const isAddressFlipCollapse = addressChanged && countsCollapsed;
 
-    const isValid = !isActiveCollapseBug && !isFetchRegression && !isAddressFlipCollapse;
+    const isValid =
+      !isActiveCollapseBug && !isFetchRegression && !isAddressFlipCollapse;
 
     assert.strictEqual(isValid, true, "Valid snapshot should pass all checks");
   });
@@ -3443,7 +3475,14 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
         { tokenId: "t2", marketId: "m2", size: 50 },
       ]) as any,
       redeemablePositions: Object.freeze([]) as any,
-      summary: { activeTotal: 2, prof: 1, lose: 1, neutral: 0, unknown: 0, redeemableTotal: 0 },
+      summary: {
+        activeTotal: 2,
+        prof: 1,
+        lose: 1,
+        neutral: 0,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
     };
 
     // Simulate creating stale snapshot
@@ -3461,17 +3500,24 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
 
     // Verify stale snapshot properties
     assert.strictEqual(staleSnapshot.stale, true, "Should be marked as stale");
-    assert.ok(staleSnapshot.staleAgeMs >= 60000, "Should have stale age >= 60s");
-    assert.strictEqual(staleSnapshot.staleReason, staleReason, "Should preserve stale reason");
+    assert.ok(
+      staleSnapshot.staleAgeMs >= 60000,
+      "Should have stale age >= 60s",
+    );
+    assert.strictEqual(
+      staleSnapshot.staleReason,
+      staleReason,
+      "Should preserve stale reason",
+    );
     assert.strictEqual(
       staleSnapshot.activePositions.length,
       2,
-      "Should preserve active positions from lastGoodSnapshot"
+      "Should preserve active positions from lastGoodSnapshot",
     );
     assert.strictEqual(
       staleSnapshot.addressUsed,
       lastGoodSnapshot.addressUsed,
-      "Should preserve address from lastGoodSnapshot"
+      "Should preserve address from lastGoodSnapshot",
     );
   });
 
@@ -3490,12 +3536,16 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
       lastErrorAtMs = Date.now();
       currentBackoffMs = Math.min(
         BASE_BACKOFF_MS * Math.pow(2, consecutiveFailures - 1),
-        MAX_BACKOFF_MS
+        MAX_BACKOFF_MS,
       );
     }
 
     assert.strictEqual(consecutiveFailures, 3, "Should track 3 failures");
-    assert.strictEqual(currentBackoffMs, 20000, "Backoff should be 5000 * 2^2 = 20000ms");
+    assert.strictEqual(
+      currentBackoffMs,
+      20000,
+      "Backoff should be 5000 * 2^2 = 20000ms",
+    );
 
     // Simulate recovery (successful refresh)
     const wasInFailedState = consecutiveFailures > 0;
@@ -3503,8 +3553,16 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
     currentBackoffMs = 0;
     lastGoodAtMs = Date.now();
 
-    assert.strictEqual(wasInFailedState, true, "Should detect we were in failed state");
-    assert.strictEqual(consecutiveFailures, 0, "Should reset failure count on success");
+    assert.strictEqual(
+      wasInFailedState,
+      true,
+      "Should detect we were in failed state",
+    );
+    assert.strictEqual(
+      consecutiveFailures,
+      0,
+      "Should reset failure count on success",
+    );
     assert.strictEqual(currentBackoffMs, 0, "Should reset backoff on success");
   });
 
@@ -3516,16 +3574,24 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
     for (let failures = 1; failures <= 10; failures++) {
       const backoff = Math.min(
         BASE_BACKOFF_MS * Math.pow(2, failures - 1),
-        MAX_BACKOFF_MS
+        MAX_BACKOFF_MS,
       );
 
       if (failures <= 5) {
         // Before cap: 5000, 10000, 20000, 40000, 80000
         const expected = BASE_BACKOFF_MS * Math.pow(2, failures - 1);
-        assert.strictEqual(backoff, expected, `Failure ${failures} backoff should be ${expected}ms`);
+        assert.strictEqual(
+          backoff,
+          expected,
+          `Failure ${failures} backoff should be ${expected}ms`,
+        );
       } else {
         // After cap: all should be MAX_BACKOFF_MS
-        assert.strictEqual(backoff, MAX_BACKOFF_MS, `Failure ${failures} backoff should be capped at ${MAX_BACKOFF_MS}ms`);
+        assert.strictEqual(
+          backoff,
+          MAX_BACKOFF_MS,
+          `Failure ${failures} backoff should be capped at ${MAX_BACKOFF_MS}ms`,
+        );
       }
     }
   });
@@ -3534,7 +3600,7 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
     // This test validates the auto-recovery mechanism that prevents indefinite stale state
     // Similar to what happens on container restart, but automatic
     const MAX_STALE_AGE_MS = 60_000; // 60 seconds (HFT-friendly threshold)
-    
+
     // Simulate a lastGoodSnapshot that is now very stale
     const lastGoodFetchedAt = Date.now() - 65_000; // 65 seconds ago (exceeds threshold)
     let lastGoodSnapshot: any = {
@@ -3545,7 +3611,14 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
         { tokenId: "t1", marketId: "m1", size: 100 },
       ]) as any,
       redeemablePositions: Object.freeze([]) as any,
-      summary: { activeTotal: 1, prof: 0, lose: 1, neutral: 0, unknown: 0, redeemableTotal: 0 },
+      summary: {
+        activeTotal: 1,
+        prof: 0,
+        lose: 1,
+        neutral: 0,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
     };
     let lastGoodAtMs = lastGoodFetchedAt;
     let consecutiveFailures = 8;
@@ -3556,8 +3629,10 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
     const staleAgeMs = now - lastGoodSnapshot.fetchedAtMs;
 
     // Verify stale age exceeds threshold
-    assert.ok(staleAgeMs >= MAX_STALE_AGE_MS, 
-      `Stale age (${staleAgeMs}ms) should exceed threshold (${MAX_STALE_AGE_MS}ms)`);
+    assert.ok(
+      staleAgeMs >= MAX_STALE_AGE_MS,
+      `Stale age (${staleAgeMs}ms) should exceed threshold (${MAX_STALE_AGE_MS}ms)`,
+    );
 
     // Simulate auto-recovery logic: clear lastGoodSnapshot when too stale
     if (staleAgeMs >= MAX_STALE_AGE_MS) {
@@ -3568,19 +3643,27 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
     }
 
     // Verify auto-recovery cleared the state
-    assert.strictEqual(lastGoodSnapshot, null, 
-      "Should clear lastGoodSnapshot when stale age exceeds threshold");
-    assert.strictEqual(lastGoodAtMs, 0, 
-      "Should reset lastGoodAtMs");
-    assert.strictEqual(consecutiveFailures, 0, 
-      "Should reset consecutiveFailures to allow immediate retry");
-    assert.strictEqual(currentBackoffMs, 0, 
-      "Should reset backoff to allow immediate retry");
+    assert.strictEqual(
+      lastGoodSnapshot,
+      null,
+      "Should clear lastGoodSnapshot when stale age exceeds threshold",
+    );
+    assert.strictEqual(lastGoodAtMs, 0, "Should reset lastGoodAtMs");
+    assert.strictEqual(
+      consecutiveFailures,
+      0,
+      "Should reset consecutiveFailures to allow immediate retry",
+    );
+    assert.strictEqual(
+      currentBackoffMs,
+      0,
+      "Should reset backoff to allow immediate retry",
+    );
   });
 
   test("AUTO-RECOVERY: Does NOT clear lastGoodSnapshot when stale age is below threshold", () => {
     const MAX_STALE_AGE_MS = 60_000; // 60 seconds
-    
+
     // Simulate a lastGoodSnapshot that is stale but within threshold
     const lastGoodFetchedAt = Date.now() - 30_000; // 30 seconds ago (below threshold)
     let lastGoodSnapshot: any = {
@@ -3591,7 +3674,14 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
         { tokenId: "t1", marketId: "m1", size: 100 },
       ]) as any,
       redeemablePositions: Object.freeze([]) as any,
-      summary: { activeTotal: 1, prof: 0, lose: 1, neutral: 0, unknown: 0, redeemableTotal: 0 },
+      summary: {
+        activeTotal: 1,
+        prof: 0,
+        lose: 1,
+        neutral: 0,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
     };
     let consecutiveFailures = 3;
 
@@ -3600,8 +3690,10 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
     const staleAgeMs = now - lastGoodSnapshot.fetchedAtMs;
 
     // Verify stale age is below threshold
-    assert.ok(staleAgeMs < MAX_STALE_AGE_MS, 
-      `Stale age (${staleAgeMs}ms) should be below threshold (${MAX_STALE_AGE_MS}ms)`);
+    assert.ok(
+      staleAgeMs < MAX_STALE_AGE_MS,
+      `Stale age (${staleAgeMs}ms) should be below threshold (${MAX_STALE_AGE_MS}ms)`,
+    );
 
     // Auto-recovery should NOT trigger
     if (staleAgeMs >= MAX_STALE_AGE_MS) {
@@ -3610,16 +3702,22 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
     }
 
     // Verify lastGoodSnapshot is preserved
-    assert.notStrictEqual(lastGoodSnapshot, null, 
-      "Should preserve lastGoodSnapshot when stale age is below threshold");
-    assert.strictEqual(consecutiveFailures, 3, 
-      "Should preserve failure count when below threshold");
+    assert.notStrictEqual(
+      lastGoodSnapshot,
+      null,
+      "Should preserve lastGoodSnapshot when stale age is below threshold",
+    );
+    assert.strictEqual(
+      consecutiveFailures,
+      3,
+      "Should preserve failure count when below threshold",
+    );
   });
 
   test("BOOTSTRAP_RECOVERY: After auto-recovery clears state, next snapshot bypasses ACTIVE_COLLAPSE_BUG validation", () => {
     // This test validates the bootstrap recovery mechanism that allows the service
     // to recover from persistent ACTIVE_COLLAPSE_BUG conditions without container restart.
-    // 
+    //
     // Scenario being tested:
     // 1. Service encounters repeated ACTIVE_COLLAPSE_BUG rejections
     // 2. Stale snapshot exceeds MAX_STALE_AGE_MS threshold
@@ -3641,10 +3739,17 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
       activePositions: [], // finalActive = 0
       redeemablePositions: [],
       rawCounts: {
-        rawTotal: 2,           // API returned 2 positions
-        rawActiveCandidates: 2  // 2 were active candidates
+        rawTotal: 2, // API returned 2 positions
+        rawActiveCandidates: 2, // 2 were active candidates
       },
-      summary: { activeTotal: 0, prof: 0, lose: 0, neutral: 0, unknown: 0, redeemableTotal: 0 },
+      summary: {
+        activeTotal: 0,
+        prof: 0,
+        lose: 0,
+        neutral: 0,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
     };
 
     // Validation logic (mirrors actual validateSnapshot behavior)
@@ -3653,12 +3758,14 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
     const finalActiveCount = newSnapshot.activePositions.length;
 
     // Check for ACTIVE_COLLAPSE_BUG condition
-    const wouldTriggerActivCollapseBug = 
+    const wouldTriggerActivCollapseBug =
       rawTotal > 0 && rawActiveCandidates > 0 && finalActiveCount === 0;
 
     // Verify the condition would normally trigger ACTIVE_COLLAPSE_BUG
-    assert.ok(wouldTriggerActivCollapseBug, 
-      "Should detect ACTIVE_COLLAPSE_BUG condition");
+    assert.ok(
+      wouldTriggerActivCollapseBug,
+      "Should detect ACTIVE_COLLAPSE_BUG condition",
+    );
 
     // In bootstrap mode, the snapshot should be ACCEPTED despite the bug
     let validationResult: { ok: boolean; reason?: string };
@@ -3674,8 +3781,11 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
     }
 
     // Verify snapshot was ACCEPTED in bootstrap mode
-    assert.strictEqual(validationResult.ok, true, 
-      "Snapshot should be ACCEPTED in bootstrap mode despite ACTIVE_COLLAPSE_BUG");
+    assert.strictEqual(
+      validationResult.ok,
+      true,
+      "Snapshot should be ACCEPTED in bootstrap mode despite ACTIVE_COLLAPSE_BUG",
+    );
 
     // After successful acceptance, bootstrap mode should be cleared
     if (validationResult.ok) {
@@ -3683,10 +3793,16 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
       lastGoodSnapshot = newSnapshot;
     }
 
-    assert.strictEqual(allowBootstrapAfterAutoRecovery, false, 
-      "Bootstrap mode should be cleared after successful snapshot acceptance");
-    assert.notStrictEqual(lastGoodSnapshot, null, 
-      "lastGoodSnapshot should be updated after successful acceptance");
+    assert.strictEqual(
+      allowBootstrapAfterAutoRecovery,
+      false,
+      "Bootstrap mode should be cleared after successful snapshot acceptance",
+    );
+    assert.notStrictEqual(
+      lastGoodSnapshot,
+      null,
+      "lastGoodSnapshot should be updated after successful acceptance",
+    );
   });
 
   test("BOOTSTRAP_RECOVERY: Without bootstrap mode, ACTIVE_COLLAPSE_BUG is still rejected", () => {
@@ -3705,7 +3821,7 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
       redeemablePositions: [],
       rawCounts: {
         rawTotal: 2,
-        rawActiveCandidates: 2
+        rawActiveCandidates: 2,
       },
     };
 
@@ -3713,7 +3829,7 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
     const rawActiveCandidates = newSnapshot.rawCounts?.rawActiveCandidates ?? 0;
     const finalActiveCount = newSnapshot.activePositions.length;
 
-    const wouldTriggerActivCollapseBug = 
+    const wouldTriggerActivCollapseBug =
       rawTotal > 0 && rawActiveCandidates > 0 && finalActiveCount === 0;
 
     // Validation should REJECT when not in bootstrap mode
@@ -3728,10 +3844,16 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
       validationResult = { ok: true };
     }
 
-    assert.strictEqual(validationResult.ok, false, 
-      "Snapshot should be REJECTED when not in bootstrap mode");
-    assert.strictEqual(validationResult.reason, "ACTIVE_COLLAPSE_BUG", 
-      "Rejection reason should be ACTIVE_COLLAPSE_BUG");
+    assert.strictEqual(
+      validationResult.ok,
+      false,
+      "Snapshot should be REJECTED when not in bootstrap mode",
+    );
+    assert.strictEqual(
+      validationResult.reason,
+      "ACTIVE_COLLAPSE_BUG",
+      "Rejection reason should be ACTIVE_COLLAPSE_BUG",
+    );
   });
 
   test("BOOTSTRAP_RECOVERY: Auto-recovery sets bootstrap flag when clearing stale state", () => {
@@ -3768,24 +3890,35 @@ describe("Crash-Proof Recovery: Stale Snapshot Handling", () => {
     }
 
     // Verify auto-recovery enabled bootstrap mode
-    assert.strictEqual(allowBootstrapAfterAutoRecovery, true, 
-      "Auto-recovery should enable bootstrap mode when clearing stale state");
-    assert.strictEqual(lastGoodSnapshot, null, 
-      "lastGoodSnapshot should be cleared");
-    assert.strictEqual(consecutiveFailures, 0, 
-      "consecutiveFailures should be reset");
-    assert.strictEqual(currentBackoffMs, 0, 
-      "backoff should be reset");
+    assert.strictEqual(
+      allowBootstrapAfterAutoRecovery,
+      true,
+      "Auto-recovery should enable bootstrap mode when clearing stale state",
+    );
+    assert.strictEqual(
+      lastGoodSnapshot,
+      null,
+      "lastGoodSnapshot should be cleared",
+    );
+    assert.strictEqual(
+      consecutiveFailures,
+      0,
+      "consecutiveFailures should be reset",
+    );
+    assert.strictEqual(currentBackoffMs, 0, "backoff should be reset");
   });
 });
 
 describe("Crash-Proof Recovery: Circuit Breaker", () => {
   test("Circuit breaker opens after threshold failures", () => {
-    const circuitBreaker = new Map<string, {
-      failureCount: number;
-      firstFailureAtMs: number;
-      openedAtMs: number;
-    }>();
+    const circuitBreaker = new Map<
+      string,
+      {
+        failureCount: number;
+        firstFailureAtMs: number;
+        openedAtMs: number;
+      }
+    >();
 
     const THRESHOLD = 3;
     const WINDOW_MS = 30000;
@@ -3799,17 +3932,21 @@ describe("Crash-Proof Recovery: Circuit Breaker", () => {
         entry = { failureCount: 0, firstFailureAtMs: now, openedAtMs: 0 };
       }
       entry.failureCount++;
-      
+
       if (entry.failureCount >= THRESHOLD) {
         entry.openedAtMs = now;
       }
-      
+
       circuitBreaker.set(tokenId, entry);
     }
 
     const finalEntry = circuitBreaker.get(tokenId);
     assert.ok(finalEntry, "Entry should exist");
-    assert.strictEqual(finalEntry!.failureCount, THRESHOLD, "Should have threshold failures");
+    assert.strictEqual(
+      finalEntry!.failureCount,
+      THRESHOLD,
+      "Should have threshold failures",
+    );
     assert.ok(finalEntry!.openedAtMs > 0, "Circuit should be open");
   });
 
@@ -3818,10 +3955,13 @@ describe("Crash-Proof Recovery: Circuit Breaker", () => {
     const tokenId = "test-token-456";
 
     // Simulate circuit that was opened 65 seconds ago
-    const circuitBreaker = new Map<string, {
-      failureCount: number;
-      openedAtMs: number;
-    }>();
+    const circuitBreaker = new Map<
+      string,
+      {
+        failureCount: number;
+        openedAtMs: number;
+      }
+    >();
 
     const openedAtMs = Date.now() - 65000; // 65 seconds ago
     circuitBreaker.set(tokenId, {
@@ -3838,16 +3978,23 @@ describe("Crash-Proof Recovery: Circuit Breaker", () => {
       circuitBreaker.delete(tokenId);
     }
 
-    assert.strictEqual(cooldownExpired, true, "Cooldown should be expired after 65s");
+    assert.strictEqual(
+      cooldownExpired,
+      true,
+      "Cooldown should be expired after 65s",
+    );
     assert.strictEqual(
       circuitBreaker.has(tokenId),
       false,
-      "Entry should be deleted after cooldown"
+      "Entry should be deleted after cooldown",
     );
   });
 
   test("Successful API call resets circuit breaker for token", () => {
-    const circuitBreaker = new Map<string, { failureCount: number; openedAtMs: number }>();
+    const circuitBreaker = new Map<
+      string,
+      { failureCount: number; openedAtMs: number }
+    >();
     const tokenId = "test-token-789";
 
     // Set up an open circuit
@@ -3856,7 +4003,11 @@ describe("Crash-Proof Recovery: Circuit Breaker", () => {
       openedAtMs: Date.now(),
     });
 
-    assert.strictEqual(circuitBreaker.has(tokenId), true, "Circuit should exist");
+    assert.strictEqual(
+      circuitBreaker.has(tokenId),
+      true,
+      "Circuit should exist",
+    );
 
     // Simulate successful call - should delete entry
     circuitBreaker.delete(tokenId);
@@ -3864,7 +4015,7 @@ describe("Crash-Proof Recovery: Circuit Breaker", () => {
     assert.strictEqual(
       circuitBreaker.has(tokenId),
       false,
-      "Circuit should be reset on success"
+      "Circuit should be reset on success",
     );
   });
 });
@@ -3880,7 +4031,14 @@ describe("Crash-Proof Recovery: Downstream Strategy Hardening", () => {
         { tokenId: "t1", pnlPct: 8.5, pnlTrusted: true },
         { tokenId: "t2", pnlPct: -3.2, pnlTrusted: true },
       ],
-      summary: { activeTotal: 2, prof: 1, lose: 1, neutral: 0, unknown: 0, redeemableTotal: 0 },
+      summary: {
+        activeTotal: 2,
+        prof: 1,
+        lose: 1,
+        neutral: 0,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
     };
 
     // Strategy should still operate on stale data
@@ -3888,8 +4046,16 @@ describe("Crash-Proof Recovery: Downstream Strategy Hardening", () => {
     const shouldLogWarning = staleSnapshot.stale === true;
     const staleAgeSec = Math.round((staleSnapshot.staleAgeMs ?? 0) / 1000);
 
-    assert.strictEqual(shouldTrade, true, "Should still trade with stale snapshot");
-    assert.strictEqual(shouldLogWarning, true, "Should log warning about stale data");
+    assert.strictEqual(
+      shouldTrade,
+      true,
+      "Should still trade with stale snapshot",
+    );
+    assert.strictEqual(
+      shouldLogWarning,
+      true,
+      "Should log warning about stale data",
+    );
     assert.strictEqual(staleAgeSec, 45, "Should report stale age correctly");
   });
 
@@ -3898,7 +4064,14 @@ describe("Crash-Proof Recovery: Downstream Strategy Hardening", () => {
     const currentSnapshot = {
       stale: false,
       activePositions: [] as any[],
-      summary: { activeTotal: 0, prof: 0, lose: 0, neutral: 0, unknown: 0, redeemableTotal: 0 },
+      summary: {
+        activeTotal: 0,
+        prof: 0,
+        lose: 0,
+        neutral: 0,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
     };
 
     const lastGoodSnapshot = {
@@ -3907,7 +4080,14 @@ describe("Crash-Proof Recovery: Downstream Strategy Hardening", () => {
         { tokenId: "t1", pnlPct: 5.0 },
         { tokenId: "t2", pnlPct: -2.0 },
       ],
-      summary: { activeTotal: 2, prof: 1, lose: 1, neutral: 0, unknown: 0, redeemableTotal: 0 },
+      summary: {
+        activeTotal: 2,
+        prof: 1,
+        lose: 1,
+        neutral: 0,
+        unknown: 0,
+        redeemableTotal: 0,
+      },
     };
 
     // Strategy logic: If current is empty but lastGood has positions, use lastGood
@@ -3917,13 +4097,19 @@ describe("Crash-Proof Recovery: Downstream Strategy Hardening", () => {
       lastGoodSnapshot.activePositions.length > 0 &&
       !currentSnapshot.stale;
 
-    const effectiveSnapshot = shouldUseFallback ? lastGoodSnapshot : currentSnapshot;
+    const effectiveSnapshot = shouldUseFallback
+      ? lastGoodSnapshot
+      : currentSnapshot;
 
-    assert.strictEqual(shouldUseFallback, true, "Should detect need for fallback");
+    assert.strictEqual(
+      shouldUseFallback,
+      true,
+      "Should detect need for fallback",
+    );
     assert.strictEqual(
       effectiveSnapshot.activePositions.length,
       2,
-      "Should use lastGoodSnapshot positions"
+      "Should use lastGoodSnapshot positions",
     );
   });
 });
@@ -3932,7 +4118,7 @@ describe("Crash-Proof Recovery: Non-Fatal External Lookups", () => {
   test("CLOB 404 error should NOT drop position", () => {
     // When CLOB orderbook returns 404, position should be kept ACTIVE
     // with pnlTrusted=false, not dropped entirely
-    
+
     interface MockPosition {
       tokenId: string;
       status: string;
@@ -3953,15 +4139,27 @@ describe("Crash-Proof Recovery: Non-Fatal External Lookups", () => {
     const isPnlMarkedUntrusted = position.pnlTrusted === false;
     const hasUntrustedReason = position.pnlUntrustedReason !== undefined;
 
-    assert.strictEqual(isPositionKept, true, "Position should NOT be dropped on 404");
-    assert.strictEqual(isPnlMarkedUntrusted, true, "P&L should be marked as untrusted");
-    assert.strictEqual(hasUntrustedReason, true, "Should record reason for untrusted P&L");
+    assert.strictEqual(
+      isPositionKept,
+      true,
+      "Position should NOT be dropped on 404",
+    );
+    assert.strictEqual(
+      isPnlMarkedUntrusted,
+      true,
+      "P&L should be marked as untrusted",
+    );
+    assert.strictEqual(
+      hasUntrustedReason,
+      true,
+      "Should record reason for untrusted P&L",
+    );
   });
 
   test("Gamma API 422 error should NOT mark position as redeemable", () => {
     // When Gamma API returns 422 for outcome lookup, position should
     // remain ACTIVE with classification tracking, not marked as redeemable
-    
+
     const position = {
       tokenId: "test-token",
       positionState: "ACTIVE" as const,
@@ -3974,29 +4172,32 @@ describe("Crash-Proof Recovery: Non-Fatal External Lookups", () => {
     assert.strictEqual(
       position.positionState,
       "ACTIVE",
-      "Position should remain ACTIVE on API error"
+      "Position should remain ACTIVE on API error",
     );
     assert.strictEqual(
       position.redeemable,
       false,
-      "Position should NOT be marked redeemable on API error"
+      "Position should NOT be marked redeemable on API error",
     );
     assert.strictEqual(
       position.classificationReason,
       "GAMMA_API_422",
-      "Should record classification reason"
+      "Should record classification reason",
     );
   });
 
   test("Network timeout should trigger circuit breaker, not drop positions", () => {
     // When network times out repeatedly, circuit breaker should open
     // but positions should be kept with fallback pricing
-    
-    const circuitBreakerEntries = new Map<string, {
-      failureCount: number;
-      errorType: string;
-      lastKnownPrice: number;
-    }>();
+
+    const circuitBreakerEntries = new Map<
+      string,
+      {
+        failureCount: number;
+        errorType: string;
+        lastKnownPrice: number;
+      }
+    >();
 
     const tokenId = "timeout-token";
     const lastKnownPrice = 0.65; // From previous Data-API fetch
@@ -4014,14 +4215,22 @@ describe("Crash-Proof Recovery: Non-Fatal External Lookups", () => {
     }
 
     const finalEntry = circuitBreakerEntries.get(tokenId);
-    
+
     assert.ok(finalEntry, "Should have circuit breaker entry");
-    assert.strictEqual(finalEntry!.failureCount, 3, "Should track 3 timeout failures");
-    assert.strictEqual(finalEntry!.errorType, "TIMEOUT", "Should record error type");
+    assert.strictEqual(
+      finalEntry!.failureCount,
+      3,
+      "Should track 3 timeout failures",
+    );
+    assert.strictEqual(
+      finalEntry!.errorType,
+      "TIMEOUT",
+      "Should record error type",
+    );
     assert.strictEqual(
       finalEntry!.lastKnownPrice,
       lastKnownPrice,
-      "Should preserve last known price for fallback"
+      "Should preserve last known price for fallback",
     );
   });
 });
@@ -4053,8 +4262,15 @@ describe("Self-Healing: Bounded Failure Policy", () => {
     }
 
     assert.ok(result, "Should recommend self-heal");
-    assert.strictEqual(result!.level, "SOFT_RESET", "Should recommend SOFT_RESET for failures");
-    assert.ok(result!.reason.includes("consecutiveFailures"), "Reason should mention failures");
+    assert.strictEqual(
+      result!.level,
+      "SOFT_RESET",
+      "Should recommend SOFT_RESET for failures",
+    );
+    assert.ok(
+      result!.reason.includes("consecutiveFailures"),
+      "Reason should mention failures",
+    );
   });
 
   test("checkSelfHealNeeded returns SOFT_RESET when stale age exceeds threshold", () => {
@@ -4072,7 +4288,11 @@ describe("Self-Healing: Bounded Failure Policy", () => {
     }
 
     assert.ok(result, "Should recommend self-heal for stale data");
-    assert.strictEqual(result!.level, "SOFT_RESET", "Should recommend SOFT_RESET for stale age");
+    assert.strictEqual(
+      result!.level,
+      "SOFT_RESET",
+      "Should recommend SOFT_RESET for stale age",
+    );
   });
 
   test("checkSelfHealNeeded returns HARD_RESET when degraded too long", () => {
@@ -4088,7 +4308,11 @@ describe("Self-Healing: Bounded Failure Policy", () => {
     }
 
     assert.ok(result, "Should recommend self-heal");
-    assert.strictEqual(result!.level, "HARD_RESET", "Should recommend HARD_RESET for long degraded mode");
+    assert.strictEqual(
+      result!.level,
+      "HARD_RESET",
+      "Should recommend HARD_RESET for long degraded mode",
+    );
   });
 
   test("checkSelfHealNeeded returns null when healthy", () => {
@@ -4106,7 +4330,11 @@ describe("Self-Healing: Bounded Failure Policy", () => {
       result = { level: "HARD_RESET", reason: "degraded" };
     }
 
-    assert.strictEqual(result, null, "Should not recommend self-heal when healthy");
+    assert.strictEqual(
+      result,
+      null,
+      "Should not recommend self-heal when healthy",
+    );
   });
 });
 
@@ -4134,10 +4362,25 @@ describe("Self-Healing: Reset State Behavior", () => {
       marketOutcomeCacheSize: beforeReset.marketOutcomeCacheSize, // Preserved in SOFT_RESET
     };
 
-    assert.strictEqual(afterSoftReset.orderbookCacheSize, 0, "Orderbook cache should be cleared");
-    assert.strictEqual(afterSoftReset.consecutiveFailures, 0, "Failures should be reset");
-    assert.strictEqual(afterSoftReset.currentBackoffMs, 0, "Backoff should be reset");
-    assert.ok(afterSoftReset.addressProbeCompleted, "Address probe should be preserved in SOFT_RESET");
+    assert.strictEqual(
+      afterSoftReset.orderbookCacheSize,
+      0,
+      "Orderbook cache should be cleared",
+    );
+    assert.strictEqual(
+      afterSoftReset.consecutiveFailures,
+      0,
+      "Failures should be reset",
+    );
+    assert.strictEqual(
+      afterSoftReset.currentBackoffMs,
+      0,
+      "Backoff should be reset",
+    );
+    assert.ok(
+      afterSoftReset.addressProbeCompleted,
+      "Address probe should be preserved in SOFT_RESET",
+    );
   });
 
   test("HARD_RESET clears all caches including address probe", () => {
@@ -4153,10 +4396,26 @@ describe("Self-Healing: Reset State Behavior", () => {
       circuitBreakerSize: 0, // Cleared in HARD_RESET
     };
 
-    assert.strictEqual(afterHardReset.addressProbeCompleted, false, "Address probe should be reset in HARD_RESET");
-    assert.strictEqual(afterHardReset.cachedHoldingAddress, null, "Holding address should be cleared in HARD_RESET");
-    assert.strictEqual(afterHardReset.marketOutcomeCacheSize, 0, "Outcome cache should be cleared in HARD_RESET");
-    assert.strictEqual(afterHardReset.circuitBreakerSize, 0, "Circuit breaker should be cleared in HARD_RESET");
+    assert.strictEqual(
+      afterHardReset.addressProbeCompleted,
+      false,
+      "Address probe should be reset in HARD_RESET",
+    );
+    assert.strictEqual(
+      afterHardReset.cachedHoldingAddress,
+      null,
+      "Holding address should be cleared in HARD_RESET",
+    );
+    assert.strictEqual(
+      afterHardReset.marketOutcomeCacheSize,
+      0,
+      "Outcome cache should be cleared in HARD_RESET",
+    );
+    assert.strictEqual(
+      afterHardReset.circuitBreakerSize,
+      0,
+      "Circuit breaker should be cleared in HARD_RESET",
+    );
   });
 });
 
@@ -4173,12 +4432,17 @@ describe("Self-Healing: Recovery Mode Behavior", () => {
     };
 
     // In recovery mode, this should be accepted with a warning
-    const shouldReject = snapshot.rawTotal > 0 && 
-      snapshot.rawActiveCandidates > 0 && 
+    const shouldReject =
+      snapshot.rawTotal > 0 &&
+      snapshot.rawActiveCandidates > 0 &&
       snapshot.finalActiveCount === 0 &&
       !snapshot.recoveryMode; // Recovery mode bypasses rejection
 
-    assert.strictEqual(shouldReject, false, "Should NOT reject in recovery mode");
+    assert.strictEqual(
+      shouldReject,
+      false,
+      "Should NOT reject in recovery mode",
+    );
   });
 
   test("Recovery mode exits after successful cycles with active positions", () => {
@@ -4189,15 +4453,22 @@ describe("Self-Healing: Recovery Mode Behavior", () => {
     // Simulate successful refresh
     if (recoveryMode) {
       recoveryCycleCount++;
-      
+
       // Exit condition: active positions > 0 OR enough cycles
-      if (activePositions > 0 || recoveryCycleCount >= RECOVERY_MODE_MAX_CYCLES) {
+      if (
+        activePositions > 0 ||
+        recoveryCycleCount >= RECOVERY_MODE_MAX_CYCLES
+      ) {
         recoveryMode = false;
         recoveryCycleCount = 0;
       }
     }
 
-    assert.strictEqual(recoveryMode, false, "Should exit recovery mode with active positions");
+    assert.strictEqual(
+      recoveryMode,
+      false,
+      "Should exit recovery mode with active positions",
+    );
   });
 
   test("Recovery mode exits after max cycles even without active positions", () => {
@@ -4209,15 +4480,22 @@ describe("Self-Healing: Recovery Mode Behavior", () => {
       if (recoveryMode) {
         recoveryCycleCount++;
         const activePositions = 0;
-        
-        if (activePositions > 0 || recoveryCycleCount >= RECOVERY_MODE_MAX_CYCLES) {
+
+        if (
+          activePositions > 0 ||
+          recoveryCycleCount >= RECOVERY_MODE_MAX_CYCLES
+        ) {
           recoveryMode = false;
           recoveryCycleCount = 0;
         }
       }
     }
 
-    assert.strictEqual(recoveryMode, false, "Should exit recovery mode after max cycles");
+    assert.strictEqual(
+      recoveryMode,
+      false,
+      "Should exit recovery mode after max cycles",
+    );
   });
 });
 
@@ -4248,38 +4526,43 @@ describe("Self-Healing: Classification Reasons Cannot Be Empty", () => {
 
     assert.ok(reasonsStr.length > 0, "Reasons string should never be empty");
     assert.ok(!reasonsStr.includes("none"), "Reasons should never be 'none'");
-    assert.ok(reasonsStr.includes("FILTERED_NO_REASON=5"), "Should have fallback reason");
+    assert.ok(
+      reasonsStr.includes("FILTERED_NO_REASON=5"),
+      "Should have fallback reason",
+    );
   });
 
   test("Minimal acceptance rule allows small raw counts through with warning", () => {
     // Mirror constant from PositionTracker
     const MINIMAL_ACCEPTANCE_MAX_RAW_COUNT = 5;
-    
+
     // The specific case mentioned in the issue:
     // rawTotal=2, rawActiveCandidates=2, finalActive=0, reasons=[none]
     const rawTotal = 2;
     const rawActiveCandidates = 2;
     const finalActiveCount = 0;
     const skipReasons = new Map<string, number>(); // Empty
-    
+
     // Build reasons with fallback
     const reasonCounts: string[] = [];
     for (const [reason, count] of skipReasons) {
       reasonCounts.push(`${reason}=${count}`);
     }
     if (reasonCounts.length === 0) {
-      reasonCounts.push(`FILTERED_NO_REASON=${rawActiveCandidates - finalActiveCount}`);
+      reasonCounts.push(
+        `FILTERED_NO_REASON=${rawActiveCandidates - finalActiveCount}`,
+      );
     }
     const reasonsStr = reasonCounts.join(", ");
 
     // Check minimal acceptance rule
-    const isMinimalAcceptanceCase = 
-      rawTotal === rawActiveCandidates && 
+    const isMinimalAcceptanceCase =
+      rawTotal === rawActiveCandidates &&
       rawTotal <= MINIMAL_ACCEPTANCE_MAX_RAW_COUNT &&
       reasonsStr.includes("FILTERED_NO_REASON");
 
     assert.ok(isMinimalAcceptanceCase, "Should match minimal acceptance rule");
-    
+
     // Should be accepted with warning, not rejected
     const shouldAccept = isMinimalAcceptanceCase;
     assert.ok(shouldAccept, "Minimal acceptance case should be accepted");
@@ -4304,12 +4587,25 @@ describe("Self-Healing: Watchdog Integration Points", () => {
       isHealthy: false, // Has failures
     };
 
-    assert.ok(typeof status.consecutiveFailures === "number", "Should have consecutiveFailures");
+    assert.ok(
+      typeof status.consecutiveFailures === "number",
+      "Should have consecutiveFailures",
+    );
     assert.ok(typeof status.staleAgeMs === "number", "Should have staleAgeMs");
-    assert.ok(typeof status.degradedDurationMs === "number", "Should have degradedDurationMs");
-    assert.ok(typeof status.recoveryMode === "boolean", "Should have recoveryMode");
+    assert.ok(
+      typeof status.degradedDurationMs === "number",
+      "Should have degradedDurationMs",
+    );
+    assert.ok(
+      typeof status.recoveryMode === "boolean",
+      "Should have recoveryMode",
+    );
     assert.ok(typeof status.isHealthy === "boolean", "Should have isHealthy");
-    assert.strictEqual(status.isHealthy, false, "Should be unhealthy with failures");
+    assert.strictEqual(
+      status.isHealthy,
+      false,
+      "Should be unhealthy with failures",
+    );
   });
 
   test("Watchdog can trigger resetState based on status", () => {
@@ -4344,89 +4640,121 @@ describe("Self-Healing: Watchdog Integration Points", () => {
 describe("Self-Healing: HFT Timing Constraints", () => {
   test("MAX_STALE_AGE_MS is HFT-appropriate (30 seconds)", () => {
     const MAX_STALE_AGE_MS = 30_000;
-    
+
     // HFT constraint: stale data is unacceptable, must be <= 30s
-    assert.ok(MAX_STALE_AGE_MS <= 30_000, "Stale age threshold should be <= 30s for HFT");
+    assert.ok(
+      MAX_STALE_AGE_MS <= 30_000,
+      "Stale age threshold should be <= 30s for HFT",
+    );
     assert.ok(MAX_STALE_AGE_MS > 0, "Stale age threshold must be positive");
   });
 
   test("MAX_CONSECUTIVE_FAILURES is HFT-appropriate (5 failures)", () => {
     const MAX_CONSECUTIVE_FAILURES = 5;
-    
+
     // HFT constraint: recover quickly, don't wait for too many failures
-    assert.ok(MAX_CONSECUTIVE_FAILURES <= 10, "Max failures should be <= 10 for HFT");
-    assert.ok(MAX_CONSECUTIVE_FAILURES >= 3, "Max failures should be >= 3 to avoid thrashing");
+    assert.ok(
+      MAX_CONSECUTIVE_FAILURES <= 10,
+      "Max failures should be <= 10 for HFT",
+    );
+    assert.ok(
+      MAX_CONSECUTIVE_FAILURES >= 3,
+      "Max failures should be >= 3 to avoid thrashing",
+    );
   });
 
   test("MAX_DEGRADED_DURATION_MS is HFT-appropriate (2 minutes)", () => {
     const MAX_DEGRADED_DURATION_MS = 120_000;
-    
+
     // HFT constraint: don't stay degraded for long
-    assert.ok(MAX_DEGRADED_DURATION_MS <= 300_000, "Degraded duration should be <= 5min for HFT");
-    assert.ok(MAX_DEGRADED_DURATION_MS >= 60_000, "Degraded duration should be >= 1min to avoid premature HARD_RESET");
+    assert.ok(
+      MAX_DEGRADED_DURATION_MS <= 300_000,
+      "Degraded duration should be <= 5min for HFT",
+    );
+    assert.ok(
+      MAX_DEGRADED_DURATION_MS >= 60_000,
+      "Degraded duration should be >= 1min to avoid premature HARD_RESET",
+    );
   });
 
   test("REFRESH_WATCHDOG_TIMEOUT_MS is HFT-appropriate (15 seconds)", () => {
     const REFRESH_WATCHDOG_TIMEOUT_MS = 15_000;
-    
+
     // HFT constraint: single refresh should not take forever
-    assert.ok(REFRESH_WATCHDOG_TIMEOUT_MS <= 30_000, "Refresh timeout should be <= 30s");
-    assert.ok(REFRESH_WATCHDOG_TIMEOUT_MS >= 5_000, "Refresh timeout should be >= 5s for network latency");
+    assert.ok(
+      REFRESH_WATCHDOG_TIMEOUT_MS <= 30_000,
+      "Refresh timeout should be <= 30s",
+    );
+    assert.ok(
+      REFRESH_WATCHDOG_TIMEOUT_MS >= 5_000,
+      "Refresh timeout should be >= 5s for network latency",
+    );
   });
 });
 
 describe("Self-Healing: Refresh Watchdog Timeout", () => {
   test("Watchdog timeout aborts stuck refresh and counts as failure", async () => {
     const REFRESH_WATCHDOG_TIMEOUT_MS = 15_000;
-    
+
     // Simulate a refresh that takes too long
     let abortCalled = false;
     const mockAbortController = {
-      abort: () => { abortCalled = true; },
+      abort: () => {
+        abortCalled = true;
+      },
     };
 
     // Simulate watchdog timeout logic
     const refreshStartTime = Date.now();
     const simulatedRefreshDuration = 20_000; // 20 seconds - exceeds 15s timeout
-    
+
     const wouldTimeout = simulatedRefreshDuration > REFRESH_WATCHDOG_TIMEOUT_MS;
     if (wouldTimeout) {
       mockAbortController.abort();
     }
 
     assert.ok(wouldTimeout, "Refresh exceeding timeout should be detected");
-    assert.ok(abortCalled, "AbortController.abort() should be called on timeout");
+    assert.ok(
+      abortCalled,
+      "AbortController.abort() should be called on timeout",
+    );
   });
 
   test("Refresh completing within timeout is not aborted", () => {
     const REFRESH_WATCHDOG_TIMEOUT_MS = 15_000;
-    
+
     let abortCalled = false;
     const mockAbortController = {
-      abort: () => { abortCalled = true; },
+      abort: () => {
+        abortCalled = true;
+      },
     };
 
     // Simulate a fast refresh
     const simulatedRefreshDuration = 5_000; // 5 seconds - well within timeout
-    
+
     const wouldTimeout = simulatedRefreshDuration > REFRESH_WATCHDOG_TIMEOUT_MS;
     if (wouldTimeout) {
       mockAbortController.abort();
     }
 
     assert.strictEqual(wouldTimeout, false, "Fast refresh should not timeout");
-    assert.strictEqual(abortCalled, false, "AbortController should NOT be called for fast refresh");
+    assert.strictEqual(
+      abortCalled,
+      false,
+      "AbortController should NOT be called for fast refresh",
+    );
   });
 
   test("awaitWithWatchdog races promise against timeout", async () => {
     // Test the race logic conceptually
     const TIMEOUT_MS = 100; // Short timeout for testing
-    
+
     // Fast promise should win
     const fastPromise = new Promise<string>((resolve) => {
       setTimeout(() => resolve("success"), 10);
     });
-    
+
     const timeoutPromise = new Promise<string>((_, reject) => {
       setTimeout(() => reject(new Error("TIMEOUT")), TIMEOUT_MS);
     });
@@ -4437,14 +4765,17 @@ describe("Self-Healing: Refresh Watchdog Timeout", () => {
 
   test("awaitWithWatchdog timeout wins against slow promise", async () => {
     const TIMEOUT_MS = 50; // Short timeout
-    
+
     // Slow promise should lose
     const slowPromise = new Promise<string>((resolve) => {
       setTimeout(() => resolve("success"), 200);
     });
-    
+
     const timeoutPromise = new Promise<string>((_, reject) => {
-      setTimeout(() => reject(new Error("REFRESH_WATCHDOG_TIMEOUT")), TIMEOUT_MS);
+      setTimeout(
+        () => reject(new Error("REFRESH_WATCHDOG_TIMEOUT")),
+        TIMEOUT_MS,
+      );
     });
 
     let caughtError: Error | null = null;
@@ -4455,10 +4786,12 @@ describe("Self-Healing: Refresh Watchdog Timeout", () => {
     }
 
     assert.ok(caughtError, "Should have caught an error");
-    assert.ok(caughtError!.message.includes("REFRESH_WATCHDOG_TIMEOUT"), "Should be watchdog timeout error");
+    assert.ok(
+      caughtError!.message.includes("REFRESH_WATCHDOG_TIMEOUT"),
+      "Should be watchdog timeout error",
+    );
   });
 });
-
 
 // ============================================================================
 // ORDERBOOK DECOUPLING TESTS (Jan 2025 Fix)
@@ -4469,13 +4802,32 @@ describe("Self-Healing: Refresh Watchdog Timeout", () => {
 describe("Orderbook Decoupling: BookStatus and ExecutionStatus", () => {
   test("BookStatus types are correctly defined", () => {
     // Verify the new BookStatus type exists and has expected values
-    const validBookStatuses = ["AVAILABLE", "EMPTY_BOOK", "NO_BOOK_404", "BOOK_ANOMALY", "NOT_FETCHED"];
-    const validExecutionStatuses = ["TRADABLE", "NOT_TRADABLE_ON_CLOB", "EXECUTION_BLOCKED"];
-    
+    const validBookStatuses = [
+      "AVAILABLE",
+      "EMPTY_BOOK",
+      "NO_BOOK_404",
+      "BOOK_ANOMALY",
+      "NOT_FETCHED",
+    ];
+    const validExecutionStatuses = [
+      "TRADABLE",
+      "NOT_TRADABLE_ON_CLOB",
+      "EXECUTION_BLOCKED",
+    ];
+
     // These are type-only checks - we just verify the expected values exist
-    assert.ok(validBookStatuses.includes("NO_BOOK_404"), "NO_BOOK_404 should be a valid BookStatus");
-    assert.ok(validBookStatuses.includes("EMPTY_BOOK"), "EMPTY_BOOK should be a valid BookStatus");
-    assert.ok(validExecutionStatuses.includes("NOT_TRADABLE_ON_CLOB"), "NOT_TRADABLE_ON_CLOB should be a valid ExecutionStatus");
+    assert.ok(
+      validBookStatuses.includes("NO_BOOK_404"),
+      "NO_BOOK_404 should be a valid BookStatus",
+    );
+    assert.ok(
+      validBookStatuses.includes("EMPTY_BOOK"),
+      "EMPTY_BOOK should be a valid BookStatus",
+    );
+    assert.ok(
+      validExecutionStatuses.includes("NOT_TRADABLE_ON_CLOB"),
+      "NOT_TRADABLE_ON_CLOB should be a valid ExecutionStatus",
+    );
   });
 
   test("Position with NO_BOOK_404 bookStatus can still be ACTIVE", () => {
@@ -4486,7 +4838,7 @@ describe("Orderbook Decoupling: BookStatus and ExecutionStatus", () => {
       side: "YES",
       size: 100,
       entryPrice: 0.65,
-      currentPrice: 0.70, // From Data-API fallback
+      currentPrice: 0.7, // From Data-API fallback
       pnlPct: 7.69,
       pnlUsd: 5.0,
       pnlTrusted: true, // Can be true if Data-API provided pricing
@@ -4500,11 +4852,31 @@ describe("Orderbook Decoupling: BookStatus and ExecutionStatus", () => {
     };
 
     // Key assertions: position is ACTIVE but not tradable
-    assert.strictEqual(position.positionState, "ACTIVE", "Position should be ACTIVE despite orderbook 404");
-    assert.strictEqual(position.bookStatus, "NO_BOOK_404", "BookStatus should indicate 404");
-    assert.strictEqual(position.executionStatus, "NOT_TRADABLE_ON_CLOB", "ExecutionStatus should indicate non-tradable");
-    assert.strictEqual(position.execPriceTrusted, false, "Executable price should not be trusted");
-    assert.strictEqual(position.pnlTrusted, true, "P&L can still be trusted if Data-API provided pricing");
+    assert.strictEqual(
+      position.positionState,
+      "ACTIVE",
+      "Position should be ACTIVE despite orderbook 404",
+    );
+    assert.strictEqual(
+      position.bookStatus,
+      "NO_BOOK_404",
+      "BookStatus should indicate 404",
+    );
+    assert.strictEqual(
+      position.executionStatus,
+      "NOT_TRADABLE_ON_CLOB",
+      "ExecutionStatus should indicate non-tradable",
+    );
+    assert.strictEqual(
+      position.execPriceTrusted,
+      false,
+      "Executable price should not be trusted",
+    );
+    assert.strictEqual(
+      position.pnlTrusted,
+      true,
+      "P&L can still be trusted if Data-API provided pricing",
+    );
   });
 
   test("Position with AVAILABLE bookStatus is TRADABLE", () => {
@@ -4513,7 +4885,7 @@ describe("Orderbook Decoupling: BookStatus and ExecutionStatus", () => {
       tokenId: "token456",
       side: "NO",
       size: 50,
-      entryPrice: 0.40,
+      entryPrice: 0.4,
       currentPrice: 0.45, // From orderbook best bid
       currentBidPrice: 0.45,
       currentAskPrice: 0.47,
@@ -4529,9 +4901,21 @@ describe("Orderbook Decoupling: BookStatus and ExecutionStatus", () => {
       execPriceTrusted: true,
     };
 
-    assert.strictEqual(position.bookStatus, "AVAILABLE", "BookStatus should be AVAILABLE");
-    assert.strictEqual(position.executionStatus, "TRADABLE", "ExecutionStatus should be TRADABLE");
-    assert.strictEqual(position.execPriceTrusted, true, "Executable price should be trusted");
+    assert.strictEqual(
+      position.bookStatus,
+      "AVAILABLE",
+      "BookStatus should be AVAILABLE",
+    );
+    assert.strictEqual(
+      position.executionStatus,
+      "TRADABLE",
+      "ExecutionStatus should be TRADABLE",
+    );
+    assert.strictEqual(
+      position.execPriceTrusted,
+      true,
+      "Executable price should be trusted",
+    );
   });
 });
 
@@ -4541,52 +4925,60 @@ describe("Orderbook Decoupling: ACTIVE_COLLAPSE_BUG Validation", () => {
     // - rawTotal > 0, rawActiveCandidates > 0, finalActive = 0
     // - BUT the reason is orderbook failures (404, empty book)
     // - This should be ACCEPTED, not rejected
-    
+
     const rawTotal = 10;
     const rawActiveCandidates = 10;
     const finalActiveCount = 0;
-    
+
     // Classification reasons indicate orderbook failures
     // Using named constants for test data clarity
-    const ENRICH_FAILED_COUNT = 8;  // Enrichment failed due to 404
-    const NO_BOOK_COUNT = 2;        // Empty orderbook
-    
+    const ENRICH_FAILED_COUNT = 8; // Enrichment failed due to 404
+    const NO_BOOK_COUNT = 2; // Empty orderbook
+
     const classificationReasons = new Map<string, number>();
     classificationReasons.set("ENRICH_FAILED", ENRICH_FAILED_COUNT);
     classificationReasons.set("NO_BOOK", NO_BOOK_COUNT);
-    
+
     // Build reasons string
     const reasonCounts: string[] = [];
     for (const [reason, count] of classificationReasons) {
       reasonCounts.push(`${reason}=${count}`);
     }
     const reasonsStr = reasonCounts.join(", ");
-    
+
     // Check for orderbook failure case using Map keys (more reliable than string matching)
-    const hasOrderbookFailureReasons = 
+    const hasOrderbookFailureReasons =
       classificationReasons.has("ENRICH_FAILED") ||
       classificationReasons.has("NO_BOOK") ||
       classificationReasons.has("BOOK_404") ||
       classificationReasons.has("PRICING_FETCH_FAILED");
-    
+
     // Fallback string matching for completeness
-    const isOrderbookFailureFromString = 
+    const isOrderbookFailureFromString =
       reasonsStr.includes("ENRICH_FAILED=") ||
       reasonsStr.includes("NO_BOOK=") ||
       reasonsStr.includes("BOOK_404=") ||
       reasonsStr.includes("PRICING_FETCH_FAILED=");
-    
-    const isOrderbookFailureCase = hasOrderbookFailureReasons || isOrderbookFailureFromString;
-    
+
+    const isOrderbookFailureCase =
+      hasOrderbookFailureReasons || isOrderbookFailureFromString;
+
     // This is the bug condition
-    const isActiveCollapseBugCondition = rawTotal > 0 && rawActiveCandidates > 0 && finalActiveCount === 0;
-    
+    const isActiveCollapseBugCondition =
+      rawTotal > 0 && rawActiveCandidates > 0 && finalActiveCount === 0;
+
     // With the fix, orderbook failure case should be accepted
     const shouldAccept = isActiveCollapseBugCondition && isOrderbookFailureCase;
-    
-    assert.ok(isActiveCollapseBugCondition, "Should detect ACTIVE_COLLAPSE_BUG condition");
+
+    assert.ok(
+      isActiveCollapseBugCondition,
+      "Should detect ACTIVE_COLLAPSE_BUG condition",
+    );
     assert.ok(isOrderbookFailureCase, "Should detect orderbook failure case");
-    assert.ok(shouldAccept, "Orderbook failure case should be accepted (not rejected)");
+    assert.ok(
+      shouldAccept,
+      "Orderbook failure case should be accepted (not rejected)",
+    );
   });
 
   test("Legitimate ACTIVE_COLLAPSE_BUG is still rejected", () => {
@@ -4594,31 +4986,39 @@ describe("Orderbook Decoupling: ACTIVE_COLLAPSE_BUG Validation", () => {
     const rawTotal = 10;
     const rawActiveCandidates = 10;
     const finalActiveCount = 0;
-    
+
     // Classification reasons that are NOT orderbook failures
     const classificationReasons = new Map<string, number>();
     classificationReasons.set("MISSING_FIELDS", 5);
     classificationReasons.set("INVALID_SIZE_PRICE", 5);
-    
+
     const reasonCounts: string[] = [];
     for (const [reason, count] of classificationReasons) {
       reasonCounts.push(`${reason}=${count}`);
     }
     const reasonsStr = reasonCounts.join(", ");
-    
+
     // Check for orderbook failure case
-    const isOrderbookFailureCase = 
+    const isOrderbookFailureCase =
       reasonsStr.includes("ENRICH_FAILED") ||
       reasonsStr.includes("NO_BOOK") ||
       reasonsStr.includes("BOOK_404") ||
       reasonsStr.includes("PRICING_FETCH_FAILED");
-    
+
     // Not orderbook failure, so should be rejected
-    assert.strictEqual(isOrderbookFailureCase, false, "Should NOT be orderbook failure case");
-    
+    assert.strictEqual(
+      isOrderbookFailureCase,
+      false,
+      "Should NOT be orderbook failure case",
+    );
+
     // Without any exception, this should be rejected
-    const isActiveCollapseBugCondition = rawTotal > 0 && rawActiveCandidates > 0 && finalActiveCount === 0;
-    assert.ok(isActiveCollapseBugCondition, "Should detect as ACTIVE_COLLAPSE_BUG");
+    const isActiveCollapseBugCondition =
+      rawTotal > 0 && rawActiveCandidates > 0 && finalActiveCount === 0;
+    assert.ok(
+      isActiveCollapseBugCondition,
+      "Should detect as ACTIVE_COLLAPSE_BUG",
+    );
   });
 });
 
@@ -4630,13 +5030,16 @@ describe("Orderbook Decoupling: Strategy Execution Gating", () => {
       executionStatus: "NOT_TRADABLE_ON_CLOB" as const,
       bookStatus: "NO_BOOK_404" as const,
     };
-    
+
     // Strategy gating check
-    const shouldSkip = 
+    const shouldSkip =
       position.executionStatus === "NOT_TRADABLE_ON_CLOB" ||
       position.executionStatus === "EXECUTION_BLOCKED";
-    
-    assert.ok(shouldSkip, "Strategy should skip NOT_TRADABLE_ON_CLOB positions");
+
+    assert.ok(
+      shouldSkip,
+      "Strategy should skip NOT_TRADABLE_ON_CLOB positions",
+    );
   });
 
   test("Strategy should execute on TRADABLE positions", () => {
@@ -4645,12 +5048,16 @@ describe("Orderbook Decoupling: Strategy Execution Gating", () => {
       executionStatus: "TRADABLE" as const,
       bookStatus: "AVAILABLE" as const,
     };
-    
-    const shouldSkip = 
+
+    const shouldSkip =
       position.executionStatus === "NOT_TRADABLE_ON_CLOB" ||
       position.executionStatus === "EXECUTION_BLOCKED";
-    
-    assert.strictEqual(shouldSkip, false, "Strategy should NOT skip TRADABLE positions");
+
+    assert.strictEqual(
+      shouldSkip,
+      false,
+      "Strategy should NOT skip TRADABLE positions",
+    );
   });
 
   test("Strategy should skip EXECUTION_BLOCKED positions", () => {
@@ -4659,11 +5066,11 @@ describe("Orderbook Decoupling: Strategy Execution Gating", () => {
       executionStatus: "EXECUTION_BLOCKED" as const,
       bookStatus: "AVAILABLE" as const, // Book might be available but execution blocked (cooldown)
     };
-    
-    const shouldSkip = 
+
+    const shouldSkip =
       position.executionStatus === "NOT_TRADABLE_ON_CLOB" ||
       position.executionStatus === "EXECUTION_BLOCKED";
-    
+
     assert.ok(shouldSkip, "Strategy should skip EXECUTION_BLOCKED positions");
   });
 });
@@ -4674,10 +5081,10 @@ describe("Orderbook Decoupling: P&L Calculation Source", () => {
     const position = {
       tokenId: "token123",
       pnlSource: "DATA_API" as const,
-      dataApiPnlUsd: 5.50,
+      dataApiPnlUsd: 5.5,
       dataApiPnlPct: 8.5,
-      dataApiCurPrice: 0.70,
-      pnlUsd: 5.50,
+      dataApiCurPrice: 0.7,
+      pnlUsd: 5.5,
       pnlPct: 8.5,
       pnlTrusted: true, // Should be true because Data-API provided values
       currentBidPrice: undefined, // No orderbook
@@ -4687,12 +5094,28 @@ describe("Orderbook Decoupling: P&L Calculation Source", () => {
     };
 
     // P&L is trusted because Data-API provided it
-    assert.strictEqual(position.pnlTrusted, true, "P&L should be trusted from Data-API");
-    assert.strictEqual(position.pnlSource, "DATA_API", "P&L source should be DATA_API");
-    
+    assert.strictEqual(
+      position.pnlTrusted,
+      true,
+      "P&L should be trusted from Data-API",
+    );
+    assert.strictEqual(
+      position.pnlSource,
+      "DATA_API",
+      "P&L source should be DATA_API",
+    );
+
     // But execution is not trusted
-    assert.strictEqual(position.execPriceTrusted, false, "Exec price should NOT be trusted");
-    assert.strictEqual(position.executionStatus, "NOT_TRADABLE_ON_CLOB", "Cannot execute without orderbook");
+    assert.strictEqual(
+      position.execPriceTrusted,
+      false,
+      "Exec price should NOT be trusted",
+    );
+    assert.strictEqual(
+      position.executionStatus,
+      "NOT_TRADABLE_ON_CLOB",
+      "Cannot execute without orderbook",
+    );
   });
 
   test("P&L is UNKNOWN when neither Data-API nor orderbook available", () => {
@@ -4712,14 +5135,22 @@ describe("Orderbook Decoupling: P&L Calculation Source", () => {
       executionStatus: "NOT_TRADABLE_ON_CLOB" as const,
     };
 
-    assert.strictEqual(position.pnlTrusted, false, "P&L should NOT be trusted from fallback alone");
-    assert.strictEqual(position.pnlClassification, "UNKNOWN", "P&L classification should be UNKNOWN");
+    assert.strictEqual(
+      position.pnlTrusted,
+      false,
+      "P&L should NOT be trusted from fallback alone",
+    );
+    assert.strictEqual(
+      position.pnlClassification,
+      "UNKNOWN",
+      "P&L classification should be UNKNOWN",
+    );
   });
 });
 
 /**
  * Portfolio Collapse Regression Tests (Jan 2025)
- * 
+ *
  * These tests verify the fix for the "portfolio collapse to 0" regression where:
  * - Tracker flips to proxy address
  * - Data API returns raw_total=2
@@ -4739,7 +5170,7 @@ describe("PositionTracker Portfolio Collapse Prevention", () => {
 
     // Should trigger SUSPICIOUS_SHRINK
     const shrinkRatio = newRawTotal / lastGoodRawTotal;
-    const isSuspiciousShrink = 
+    const isSuspiciousShrink =
       lastGoodRawTotal >= MIN_POSITIONS_FOR_SHRINK_CHECK &&
       newRawTotal <= lastGoodRawTotal * SUSPICIOUS_SHRINK_THRESHOLD;
 
@@ -4755,7 +5186,7 @@ describe("PositionTracker Portfolio Collapse Prevention", () => {
     const newRawTotal = 48; // 61% of lastGood - normal
 
     const shrinkRatio = newRawTotal / lastGoodRawTotal;
-    const isSuspiciousShrink = 
+    const isSuspiciousShrink =
       lastGoodRawTotal >= MIN_POSITIONS_FOR_SHRINK_CHECK &&
       newRawTotal <= lastGoodRawTotal * SUSPICIOUS_SHRINK_THRESHOLD;
 
@@ -4770,7 +5201,7 @@ describe("PositionTracker Portfolio Collapse Prevention", () => {
     const lastGoodRawTotal = 10; // Too small to trigger shrink check
     const newRawTotal = 2;
 
-    const isSuspiciousShrink = 
+    const isSuspiciousShrink =
       lastGoodRawTotal >= MIN_POSITIONS_FOR_SHRINK_CHECK &&
       newRawTotal <= lastGoodRawTotal * SUSPICIOUS_SHRINK_THRESHOLD;
 
@@ -4786,7 +5217,7 @@ describe("PositionTracker Portfolio Collapse Prevention", () => {
     const newActive = 0;
     const newRawTotal = 2;
 
-    const isActiveWipeout = 
+    const isActiveWipeout =
       lastGoodActive >= MIN_ACTIVE_FOR_WIPEOUT_CHECK &&
       newActive === 0 &&
       newRawTotal > 0;
@@ -4803,7 +5234,7 @@ describe("PositionTracker Portfolio Collapse Prevention", () => {
     const newActive = 0;
     const newRawTotal = 2;
 
-    const isActiveWipeout = 
+    const isActiveWipeout =
       lastGoodActive >= MIN_ACTIVE_FOR_WIPEOUT_CHECK &&
       newActive === 0 &&
       newRawTotal > 0;
@@ -4868,12 +5299,20 @@ describe("PositionTracker Gamma Batch Fetch Error Handling", () => {
     }
 
     // Verify all tokenIds are in results (not dropped)
-    assert.strictEqual(results.size, tokenIds.length, "All tokenIds should be in results");
+    assert.strictEqual(
+      results.size,
+      tokenIds.length,
+      "All tokenIds should be in results",
+    );
 
     // Verify positions remain with null outcome (ACTIVE with unknown outcome, not dropped)
     for (const tokenId of tokenIds) {
       assert.ok(results.has(tokenId), `TokenId ${tokenId} should be present`);
-      assert.strictEqual(results.get(tokenId), null, `TokenId ${tokenId} outcome should be null (unknown)`);
+      assert.strictEqual(
+        results.get(tokenId),
+        null,
+        `TokenId ${tokenId} outcome should be null (unknown)`,
+      );
     }
   });
 });
@@ -4886,9 +5325,10 @@ describe("PositionTracker Sticky Address Selection", () => {
   test("Address should remain sticky within duration", () => {
     const addressStickySince = Date.now() - 300_000; // 5 minutes ago
     const now = Date.now();
-    
-    const isSticky = addressStickySince > 0 && 
-      (now - addressStickySince) < ADDRESS_STICKY_DURATION_MS;
+
+    const isSticky =
+      addressStickySince > 0 &&
+      now - addressStickySince < ADDRESS_STICKY_DURATION_MS;
 
     assert.ok(isSticky, "Address should be sticky within 10 minute window");
   });
@@ -4896,9 +5336,10 @@ describe("PositionTracker Sticky Address Selection", () => {
   test("Address should become unsticky after duration expires", () => {
     const addressStickySince = Date.now() - 700_000; // 11+ minutes ago
     const now = Date.now();
-    
-    const isSticky = addressStickySince > 0 && 
-      (now - addressStickySince) < ADDRESS_STICKY_DURATION_MS;
+
+    const isSticky =
+      addressStickySince > 0 &&
+      now - addressStickySince < ADDRESS_STICKY_DURATION_MS;
 
     assert.ok(!isSticky, "Address should become unsticky after 10 minutes");
   });
@@ -4906,8 +5347,9 @@ describe("PositionTracker Sticky Address Selection", () => {
   test("Should switch when alternate has 3x more positions", () => {
     const currentCount = 2;
     const alternateCount = 78;
-    
-    const shouldSwitchDueToRatio = alternateCount >= currentCount * ADDRESS_SWITCH_RATIO_THRESHOLD;
+
+    const shouldSwitchDueToRatio =
+      alternateCount >= currentCount * ADDRESS_SWITCH_RATIO_THRESHOLD;
 
     assert.ok(
       shouldSwitchDueToRatio,
@@ -4918,8 +5360,9 @@ describe("PositionTracker Sticky Address Selection", () => {
   test("Should NOT switch when alternate has less than 3x positions", () => {
     const currentCount = 30;
     const alternateCount = 40;
-    
-    const shouldSwitchDueToRatio = alternateCount >= currentCount * ADDRESS_SWITCH_RATIO_THRESHOLD;
+
+    const shouldSwitchDueToRatio =
+      alternateCount >= currentCount * ADDRESS_SWITCH_RATIO_THRESHOLD;
 
     assert.ok(
       !shouldSwitchDueToRatio,
@@ -4931,10 +5374,10 @@ describe("PositionTracker Sticky Address Selection", () => {
     const consecutiveZeroRefreshes = 2;
     const currentCount = 0;
     const alternateCount = 10;
-    
-    const shouldSwitchDueToZero = 
-      currentCount === 0 && 
-      alternateCount > 0 && 
+
+    const shouldSwitchDueToZero =
+      currentCount === 0 &&
+      alternateCount > 0 &&
       consecutiveZeroRefreshes >= CONSECUTIVE_ZERO_THRESHOLD;
 
     assert.ok(
@@ -4953,21 +5396,31 @@ describe("PositionTracker Gamma Batch URL Encoding", () => {
       "token+with+plus",
     ];
 
-    const encoded = tokenIds.map(id => encodeURIComponent(id.trim())).join(",");
-    
+    const encoded = tokenIds
+      .map((id) => encodeURIComponent(id.trim()))
+      .join(",");
+
     // Verify encoding
     assert.ok(!encoded.includes("+"), "Plus signs should be encoded");
     assert.ok(encoded.includes(","), "Comma separator should be present");
-    assert.ok(encoded.includes("token%2Bwith%2Bplus"), "Plus in tokenId should be encoded as %2B");
+    assert.ok(
+      encoded.includes("token%2Bwith%2Bplus"),
+      "Plus in tokenId should be encoded as %2B",
+    );
   });
 
   test("Batch URL should use clob_token_ids parameter", () => {
     const baseUrl = "https://gamma-api.polymarket.com";
     const tokenIds = ["token1", "token2"];
-    const encodedIds = tokenIds.map(id => encodeURIComponent(id.trim())).join(",");
+    const encodedIds = tokenIds
+      .map((id) => encodeURIComponent(id.trim()))
+      .join(",");
     const url = `${baseUrl}/markets?clob_token_ids=${encodedIds}`;
 
-    assert.ok(url.includes("clob_token_ids="), "URL should use clob_token_ids parameter");
+    assert.ok(
+      url.includes("clob_token_ids="),
+      "URL should use clob_token_ids parameter",
+    );
     assert.ok(url.includes("token1"), "URL should contain first tokenId");
     assert.ok(url.includes("token2"), "URL should contain second tokenId");
   });

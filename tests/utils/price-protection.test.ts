@@ -293,7 +293,7 @@ describe("validatePriceProtection", () => {
         bestBid: 0.64,
         bestAsk: 0.65,
         minAcceptablePrice: 0.637,
-        maxAcceptablePrice: 0.70,
+        maxAcceptablePrice: 0.7,
       });
 
       assert.ok(result.diagnostics !== undefined);
@@ -302,7 +302,7 @@ describe("validatePriceProtection", () => {
       assert.equal(result.diagnostics.bestBid, 0.64);
       assert.equal(result.diagnostics.bestAsk, 0.65);
       assert.equal(result.diagnostics.minAcceptablePrice, 0.637);
-      assert.equal(result.diagnostics.maxAcceptablePrice, 0.70);
+      assert.equal(result.diagnostics.maxAcceptablePrice, 0.7);
       assert.equal(result.diagnostics.priceUnits, "dollars");
     });
 

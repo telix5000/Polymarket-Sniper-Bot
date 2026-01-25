@@ -2585,6 +2585,36 @@ export class PositionTracker {
         this.logger.info(`[PositionTracker] positions_url=${positionsUrl}`);
       }
 
+      // === ADDRESS INVARIANT CHECK (D) ===
+      // Verify positions_url user param matches cachedHoldingAddress (addressUsed).
+      // If mismatch occurs, reject snapshot, log high-severity diagnostic, and retry.
+      let urlAddress: string | null = null;
+      try {
+        // Use URL API for robust parameter extraction
+        const parsedUrl = new URL(positionsUrl);
+        urlAddress = parsedUrl.searchParams.get("user");
+      } catch {
+        // Fall back to regex if URL parsing fails (shouldn't happen in practice)
+        const urlAddressMatch = positionsUrl.match(/user=([^&]+)/);
+        urlAddress = urlAddressMatch ? urlAddressMatch[1] : null;
+      }
+      if (
+        urlAddress &&
+        urlAddress.toLowerCase() !== holdingAddress.toLowerCase()
+      ) {
+        this.logger.error(
+          `[PositionTracker] 🐛 ADDRESS_INVARIANT_VIOLATION: positions_url user param (${urlAddress.slice(0, 10)}...) != holdingAddress (${holdingAddress.slice(0, 10)}...)`,
+        );
+        this.logger.error(
+          `[PositionTracker] This is a critical bug that risks the "portfolio collapse" issue. Rejecting fetch, forcing re-probe.`,
+        );
+        // Force re-probe on next cycle
+        this.addressProbeCompleted = false;
+        this.cachedHoldingAddress = null;
+        this.holdingAddressCacheMs = 0;
+        return [];
+      }
+
       let apiPositions = await httpGet<ApiPosition[]>(positionsUrl, {
         timeout: PositionTracker.API_TIMEOUT_MS,
       });
@@ -4230,9 +4260,10 @@ export class PositionTracker {
 
         if (is422 || is429 || is5xx) {
           // Log at WARN level for batch failures that trigger fallback
+          // Mark enrichment as DEGRADED - positions remain ACTIVE but outcome unknown
           this.logger.warn(
-            `[PositionTracker] ⚠️ GAMMA_BATCH_FAILURE: ${is422 ? "422" : is429 ? "429" : "5xx"} error for batch of ${chunk.length} tokenIds. ` +
-              `Falling back to single-token requests. error="${errMsg.slice(0, 100)}"`,
+            `[PositionTracker] ⚠️ GAMMA_BATCH_FAILURE (enrichment degraded): ${is422 ? "422" : is429 ? "429" : "5xx"} error for batch of ${chunk.length} tokenIds. ` +
+              `Auto-fallback to single-token requests. Positions remain ACTIVE. error="${errMsg.slice(0, 100)}"`,
           );
           fallbackToSingleRequests = true;
           failedTokenIds.push(...chunk);
@@ -4656,7 +4687,19 @@ export class PositionTracker {
     };
 
     try {
+      // OPTIMIZATION: Check cached outcome FIRST to skip unnecessary orderbook fetches
+      // If we already know the market outcome, we can trust the redeemable flag
+      // and skip the orderbook check entirely.
+      const cachedOutcome = this.marketOutcomeCache.get(marketId);
+      if (cachedOutcome !== undefined) {
+        result.winningOutcome = cachedOutcome;
+        result.isResolved = true;
+        // Skip orderbook fetch - already know market is resolved
+        return result;
+      }
+
       // Check if orderbook exists (indicates active market)
+      // Skip if already known to be missing (avoid repeated 404s)
       if (!this.missingOrderbooks.has(tokenId)) {
         try {
           const orderbook = await this.client.getOrderBook(tokenId);
@@ -4668,26 +4711,27 @@ export class PositionTracker {
             orderbookErr instanceof Error
               ? orderbookErr.message
               : String(orderbookErr);
-          // 404 or not found means no orderbook
-          if (
-            !errMsg.includes("404") &&
-            !errMsg.includes("not found") &&
-            !errMsg.includes("No orderbook exists")
-          ) {
+          // 404, 422, or not found means no orderbook - cache this to avoid repeated fetches
+          const isExpectedError =
+            errMsg.includes("404") ||
+            errMsg.includes("422") ||
+            errMsg.includes("not found") ||
+            errMsg.includes("No orderbook exists");
+
+          if (isExpectedError) {
+            // Add to missingOrderbooks to prevent repeated API calls
+            this.missingOrderbooks.add(tokenId);
+            // Log at DEBUG level - expected for resolved/redeemable markets
+            this.logger.debug(
+              `[PositionTracker] verifyMarketResolutionStatus: No orderbook for tokenId=${tokenId.slice(0, 16)}... (expected for resolved market)`,
+            );
+          } else {
             // Log unexpected errors at debug level
             this.logger.debug(
-              `[PositionTracker] verifyMarketResolutionStatus: Unexpected orderbook error for tokenId=${tokenId}: ${errMsg}`,
+              `[PositionTracker] verifyMarketResolutionStatus: Unexpected orderbook error for tokenId=${tokenId.slice(0, 16)}...: ${errMsg}`,
             );
           }
         }
-      }
-
-      // Check if market outcome is cached
-      const cachedOutcome = this.marketOutcomeCache.get(marketId);
-      if (cachedOutcome !== undefined) {
-        result.winningOutcome = cachedOutcome;
-        result.isResolved = true;
-        return result;
       }
 
       // Fetch market details from Gamma API to check resolved/closed flags
