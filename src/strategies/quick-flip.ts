@@ -21,6 +21,7 @@ import type { Wallet } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker } from "./position-tracker";
 import { postOrder } from "../utils/post-order.util";
+import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
 
 /**
  * Quick Flip Configuration
@@ -325,6 +326,9 @@ export class QuickFlipStrategy {
         outcome: (position.side?.toUpperCase() as "YES" | "NO") || "YES",
         side: "SELL",
         sizeUsd,
+        // Apply 2% slippage tolerance to ensure profitable quick-flip sells execute
+        // Quick-flip targets 5%+ profit, so 2% slippage still leaves ~3%+ profit
+        minAcceptablePrice: calculateMinAcceptablePrice(position.currentPrice, DEFAULT_SELL_SLIPPAGE_PCT),
         logger: this.logger,
         skipDuplicatePrevention: true,
       });
