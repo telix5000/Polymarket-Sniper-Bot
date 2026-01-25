@@ -235,10 +235,15 @@ export class SmartHedgingStrategy {
     this.positionTracker = config.positionTracker;
     this.config = config.config;
 
+    const hedgeUpStatus =
+      this.config.direction !== "down"
+        ? `@${(this.config.hedgeUpPriceThreshold * 100).toFixed(0)}¢-${(this.config.hedgeUpMaxPrice * 100).toFixed(0)}¢/$${this.config.hedgeUpMaxUsd}`
+        : "disabled";
+
     this.logger.info(
       `[SmartHedging] Initialized: direction=${this.config.direction}, trigger=-${this.config.triggerLossPct}%, ` +
         `maxHedge=$${this.config.maxHedgeUsd}, absoluteMax=$${this.config.absoluteMaxUsd}, ` +
-        `hedgeUp=${this.config.direction !== "down" ? `@${(this.config.hedgeUpPriceThreshold * 100).toFixed(0)}¢/$${this.config.hedgeUpMaxUsd}` : "disabled"}`,
+        `hedgeUp=${hedgeUpStatus}`,
     );
   }
 
@@ -676,7 +681,7 @@ export class SmartHedgingStrategy {
         );
       }
     }
-    } // End of PHASE 2 (hedging down) if block
+    }
 
     // === LOG DEDUPLICATION: Emit aggregated skip summary (rate-limited) ===
     if (skipAggregator.hasSkips()) {

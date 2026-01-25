@@ -3,6 +3,7 @@ import { test, describe } from "node:test";
 import {
   DEFAULT_HEDGING_CONFIG,
   type SmartHedgingConfig,
+  type SmartHedgingDirection,
 } from "../../src/strategies/smart-hedging";
 
 /**
@@ -1479,7 +1480,8 @@ describe("Smart Hedging Up (High Win Probability)", () => {
 
   describe("Direction setting", () => {
     test("should not hedge up when direction is 'down'", () => {
-      const config = { ...DEFAULT_HEDGING_CONFIG, direction: "down" as const };
+      const direction: SmartHedgingDirection = "down";
+      const config = { ...DEFAULT_HEDGING_CONFIG, direction };
       const now = Date.now();
       const marketEndTime = now + 15 * 60 * 1000; // 15 minutes from now
 
@@ -1497,7 +1499,8 @@ describe("Smart Hedging Up (High Win Probability)", () => {
     });
 
     test("should hedge up when direction is 'up'", () => {
-      const config = { ...DEFAULT_HEDGING_CONFIG, direction: "up" as const };
+      const direction: SmartHedgingDirection = "up";
+      const config = { ...DEFAULT_HEDGING_CONFIG, direction };
       const now = Date.now();
       const marketEndTime = now + 15 * 60 * 1000;
 
