@@ -1577,6 +1577,28 @@ export type StrategyConfig = {
    * Default: 24 (sell profitable positions held for 24+ hours)
    */
   autoSellStalePositionHours: number;
+  /**
+   * Enable quick win exit for positions with massive gains in short time
+   * When enabled, positions held less than quickWinMaxHoldMinutes with gains
+   * >= quickWinProfitPct will be sold to lock in profit before momentum reverses.
+   * Uses profit % based on purchase price (not share price) to avoid conflicts
+   * with positions bought at high prices (e.g., 80¢).
+   * Default: false (opt-in feature)
+   */
+  autoSellQuickWinEnabled: boolean;
+  /**
+   * Maximum hold time (minutes) for quick win exit
+   * Positions held less than this time with massive gains will be sold.
+   * Default: 60 minutes (1 hour)
+   */
+  autoSellQuickWinMaxHoldMinutes: number;
+  /**
+   * Profit % threshold for quick win exit
+   * Positions with profit % >= this value (held < quickWinMaxHoldMinutes) will be sold.
+   * Example: 90% means bought at 10¢, now 19¢ = 90% gain → quick win exit
+   * Default: 90%
+   */
+  autoSellQuickWinProfitPct: number;
   // === ON-CHAIN EXIT STRATEGY SETTINGS ===
   // Handles positions that are NOT_TRADABLE_ON_CLOB but have high price (≥99¢)
   // Routes to on-chain redemption when market is resolved
@@ -2231,6 +2253,27 @@ export function loadStrategyConfig(
         ? (preset as { AUTO_SELL_STALE_POSITION_HOURS: number }).AUTO_SELL_STALE_POSITION_HOURS
         : undefined) ??
       24, // Default: 24 hours - sell profitable positions held for 24+ hours
+    // AUTO_SELL_QUICK_WIN_ENABLED: Enable quick win exit for positions with massive gains in short time
+    autoSellQuickWinEnabled:
+      parseBool(readEnv("AUTO_SELL_QUICK_WIN_ENABLED", overrides) ?? "") ??
+      ("AUTO_SELL_QUICK_WIN_ENABLED" in preset
+        ? (preset as { AUTO_SELL_QUICK_WIN_ENABLED: boolean }).AUTO_SELL_QUICK_WIN_ENABLED
+        : undefined) ??
+      false, // Default: disabled - opt-in feature
+    // AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES: Max hold time for quick win (minutes)
+    autoSellQuickWinMaxHoldMinutes:
+      parseNumber(readEnv("AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES", overrides) ?? "") ??
+      ("AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES" in preset
+        ? (preset as { AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES: number }).AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES
+        : undefined) ??
+      60, // Default: 60 minutes (1 hour)
+    // AUTO_SELL_QUICK_WIN_PROFIT_PCT: Profit % threshold for quick win
+    autoSellQuickWinProfitPct:
+      parseNumber(readEnv("AUTO_SELL_QUICK_WIN_PROFIT_PCT", overrides) ?? "") ??
+      ("AUTO_SELL_QUICK_WIN_PROFIT_PCT" in preset
+        ? (preset as { AUTO_SELL_QUICK_WIN_PROFIT_PCT: number }).AUTO_SELL_QUICK_WIN_PROFIT_PCT
+        : undefined) ??
+      90, // Default: 90% profit
     // === ON-CHAIN EXIT STRATEGY (routes NOT_TRADABLE positions to redemption) ===
     // ON_CHAIN_EXIT_ENABLED: Enable on-chain exit for positions that cannot trade on CLOB
     onChainExitEnabled:

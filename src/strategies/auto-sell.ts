@@ -42,6 +42,27 @@ export interface AutoSellConfig {
    * Default: 24 hours - positions in the green for 24+ hours are sold.
    */
   stalePositionHours?: number; // Hours before a profitable position is considered "stale" (0 = disabled)
+  /**
+   * QUICK WIN EXIT SETTINGS
+   * Positions held for a short time with massive gains should be sold to lock in profit.
+   * This targets positions that have spiked significantly in a short time window.
+   *
+   * Key differences from share price thresholds:
+   * - Uses profit % based on purchase price (e.g., bought at 10¢, now 19¢ = 90% gain)
+   * - Avoids conflicts with high-entry positions (e.g., bought at 80¢)
+   * - Focuses on quick momentum wins rather than waiting for resolution
+   *
+   * When enabled (quickWinEnabled = true), the strategy will:
+   * 1. Find positions held less than quickWinMaxHoldMinutes (default: 60 minutes)
+   * 2. Check if profit % >= quickWinProfitPct (default: 90%)
+   * 3. Sell immediately at current bid to lock in the quick gain
+   *
+   * Set quickWinEnabled to false to disable.
+   * Default: Disabled (false) - opt-in feature via ENV variable
+   */
+  quickWinEnabled?: boolean; // Enable quick win exit (default: false)
+  quickWinMaxHoldMinutes?: number; // Max hold time for quick win (default: 60 minutes)
+  quickWinProfitPct?: number; // Profit % threshold for quick win (default: 90%)
 }
 
 /**
@@ -50,6 +71,7 @@ export interface AutoSellConfig {
  * - Normal threshold at 99.9¢ (0.999)
  * - Dispute exit at 99.9¢ (0.999) for faster capital recovery
  * - Stale position exit at 24 hours for profitable positions
+ * - Quick win exit disabled by default (opt-in feature)
  */
 export const DEFAULT_AUTO_SELL_CONFIG: AutoSellConfig = {
   enabled: true,
@@ -59,6 +81,9 @@ export const DEFAULT_AUTO_SELL_CONFIG: AutoSellConfig = {
   disputeWindowExitEnabled: true, // Enable dispute window exit
   disputeWindowExitPrice: 0.999, // Sell at 99.9¢ for dispute exit
   stalePositionHours: 24, // Sell profitable positions held for 24+ hours to free capital
+  quickWinEnabled: false, // Disabled by default - opt-in via ENV
+  quickWinMaxHoldMinutes: 60, // Quick win window: 1 hour
+  quickWinProfitPct: 90, // Quick win threshold: 90% profit
 };
 
 export interface AutoSellStrategyConfig {
@@ -122,8 +147,11 @@ export class AutoSellStrategy {
       const staleInfo = this.config.stalePositionHours && this.config.stalePositionHours > 0
         ? ` stalePositionHours=${this.config.stalePositionHours}`
         : "";
+      const quickWinInfo = this.config.quickWinEnabled
+        ? ` quickWin=${this.config.quickWinMaxHoldMinutes}m@${this.config.quickWinProfitPct}%`
+        : "";
       this.logger.info(
-        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}${staleInfo}`,
+        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}${staleInfo}${quickWinInfo}`,
       );
     }
   }
@@ -230,10 +258,33 @@ export class AutoSellStrategy {
       }
     }
 
+    // === QUICK WIN EXIT ===
+    // Sell positions held less than quickWinMaxHoldMinutes with massive gains (>quickWinProfitPct%)
+    // This locks in quick momentum wins before they reverse.
+    // Key feature: Uses profit % based on purchase price, not share price,
+    // avoiding conflicts with positions bought in the "overly confident zone" (e.g., 80¢+)
+    let quickWinSoldCount = 0;
+    if (this.config.quickWinEnabled) {
+      const quickWinPositions = this.getQuickWinPositions(
+        this.config.quickWinMaxHoldMinutes ?? 60,
+        this.config.quickWinProfitPct ?? 90,
+      );
+
+      for (const position of quickWinPositions) {
+        scannedCount++;
+        const sold = await this.processQuickWinPosition(position);
+        if (sold) {
+          soldCount++;
+          quickWinSoldCount++;
+        }
+      }
+    }
+
     // Log once-per-cycle summary
     const staleInfo = staleHours > 0 ? ` stale_sold=${staleSoldCount}` : "";
+    const quickWinInfo = this.config.quickWinEnabled ? ` quick_win_sold=${quickWinSoldCount}` : "";
     this.logger.info(
-      `[AutoSell] scanned=${scannedCount} sold=${soldCount}${staleInfo} skipped_redeemable=${skipReasons.redeemable} skipped_not_tradable=${skipReasons.notTradable} skipped_no_bid=${skipReasons.noBid}`,
+      `[AutoSell] scanned=${scannedCount} sold=${soldCount}${staleInfo}${quickWinInfo} skipped_redeemable=${skipReasons.redeemable} skipped_not_tradable=${skipReasons.notTradable} skipped_no_bid=${skipReasons.noBid}`,
     );
 
     // Log aggregated skip summary (rate-limited DEBUG)
@@ -842,6 +893,123 @@ export class AutoSellStrategy {
       );
       throw err;
     }
+  }
+
+  /**
+   * Get positions eligible for quick win exit
+   * These are positions held for a short time with massive gains (>90% by default)
+   *
+   * Key feature: Uses profit % based on purchase price, not share price
+   * Example: Bought at 10¢, now 19¢ = 90% gain → eligible for quick win
+   * This avoids conflicts with positions bought at high prices (e.g., 80¢)
+   *
+   * @param maxHoldMinutes - Maximum hold time in minutes (default: 60)
+   * @param minProfitPct - Minimum profit percentage (default: 90)
+   * @returns Array of quick win positions
+   */
+  private getQuickWinPositions(
+    maxHoldMinutes: number,
+    minProfitPct: number,
+  ): Position[] {
+    const positions = this.positionTracker.getPositions();
+    const maxHoldMs = maxHoldMinutes * 60 * 1000; // Convert minutes to milliseconds
+    const now = Date.now();
+
+    return positions.filter((pos) => {
+      // Must be profitable (green)
+      if (!pos.pnlTrusted || pos.pnlPct <= 0) {
+        return false;
+      }
+
+      // Must exceed minimum profit threshold
+      if (pos.pnlPct < minProfitPct) {
+        return false;
+      }
+
+      // Must have entry time info from trade history
+      if (pos.firstAcquiredAt === undefined || pos.timeHeldSec === undefined) {
+        return false;
+      }
+
+      // Entry metadata must be trusted to use timestamps for hold time
+      // When entryMetaTrusted === false, trade history doesn't match live shares,
+      // so firstAcquiredAt/timeHeldSec may be inaccurate
+      if (pos.entryMetaTrusted === false) {
+        return false;
+      }
+
+      // Check if held LESS than maxHoldMinutes
+      const heldMs = now - pos.firstAcquiredAt;
+      if (heldMs >= maxHoldMs) {
+        return false;
+      }
+
+      // Must have a valid bid price to sell
+      if (pos.currentBidPrice === undefined) {
+        return false;
+      }
+
+      // Skip already sold positions
+      const positionKey = `${pos.marketId}-${pos.tokenId}`;
+      if (this.soldPositions.has(positionKey)) {
+        return false;
+      }
+
+      // Skip if not tradable
+      const tradabilityIssue = this.checkTradability(pos);
+      if (tradabilityIssue) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  /**
+   * Process a quick win position for selling
+   * These are positions with massive gains in a short time window
+   * that should be sold to lock in the profit before momentum reverses.
+   *
+   * @param position - The quick win position to sell
+   * @returns true if position was sold
+   */
+  private async processQuickWinPosition(position: Position): Promise<boolean> {
+    const positionKey = `${position.marketId}-${position.tokenId}`;
+    const tokenIdShort = position.tokenId.slice(0, 12);
+
+    // Calculate time held in minutes
+    const timeHeldMinutes = (position.timeHeldSec ?? 0) / 60;
+
+    // Log the quick win detection
+    this.logger.info(
+      `[AutoSell] QUICK_WIN: Position held ${timeHeldMinutes.toFixed(1)}m at +${position.pnlPct.toFixed(1)}% profit: tokenId=${tokenIdShort}... marketId=${position.marketId.slice(0, 16)}...`,
+    );
+
+    try {
+      // Use sellStalePosition method which has appropriate slippage controls
+      // Quick wins should use tighter slippage to protect the large gains
+      const sold = await this.sellStalePosition(position);
+
+      if (sold) {
+        this.soldPositions.add(positionKey);
+
+        // Calculate and log profit captured based on actual realized P&L
+        const profitUsd = position.pnlUsd;
+        const freedCapital = position.size * (position.currentBidPrice ?? position.currentPrice);
+
+        this.logger.info(
+          `[AutoSell] ✅ QUICK_WIN: Sold position held ${timeHeldMinutes.toFixed(1)}m, realized profit $${profitUsd.toFixed(2)} (+${position.pnlPct.toFixed(1)}%), freed $${freedCapital.toFixed(2)} capital`,
+        );
+        return true;
+      }
+    } catch (err) {
+      this.logger.error(
+        `[AutoSell] Failed to sell quick win position ${position.marketId.slice(0, 16)}...`,
+        err as Error,
+      );
+    }
+
+    return false;
   }
 
   /**

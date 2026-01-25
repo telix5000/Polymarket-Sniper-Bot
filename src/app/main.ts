@@ -184,6 +184,9 @@ async function main(): Promise<void> {
         disputeWindowExitEnabled: strategyConfig.autoSellDisputeExitEnabled,
         disputeWindowExitPrice: strategyConfig.autoSellDisputeExitPrice,
         stalePositionHours: strategyConfig.autoSellStalePositionHours,
+        quickWinEnabled: strategyConfig.autoSellQuickWinEnabled,
+        quickWinMaxHoldMinutes: strategyConfig.autoSellQuickWinMaxHoldMinutes,
+        quickWinProfitPct: strategyConfig.autoSellQuickWinProfitPct,
       },
       // Pass position stacking config for doubling down on winners
       positionStackingConfig: {
