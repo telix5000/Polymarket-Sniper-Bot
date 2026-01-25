@@ -579,134 +579,141 @@ describe("Near-Resolution Capital Release", () => {
   });
 });
 
-// === CUMULATIVE BID DEPTH TESTS ===
+// === ILLIQUID EXIT DETECTION TESTS ===
 
-describe("Cumulative Bid Depth for SELL Orders", () => {
-  /**
-   * Helper to calculate cumulative bid depth at/above a limit price
-   * This mirrors the logic in post-order.util.ts for SELL orders
-   */
-  function calculateCumulativeBidDepth(
-    bids: Array<{ price: string; size: string }>,
-    limitPrice: number,
-  ): number {
-    let cumulativeDepthUsd = 0;
-    for (const level of bids) {
-      const levelPrice = parseFloat(level.price);
-      // Bids are sorted descending, stop when below limit
-      if (levelPrice < limitPrice) {
-        break;
-      }
-      const levelSize = parseFloat(level.size);
-      cumulativeDepthUsd += levelSize * levelPrice;
-    }
-    return cumulativeDepthUsd;
-  }
+import {
+  checkIlliquidExit,
+  ILLIQUID_EXIT_THRESHOLDS,
+  ILLIQUID_BACKOFF_MS,
+  MAX_ILLIQUID_RECHECKS,
+} from "../../src/strategies/scalp-take-profit";
 
-  test("Cumulative depth includes all levels at/above limit price", () => {
-    const bids = [
-      { price: "0.55", size: "100" }, // $55
-      { price: "0.52", size: "200" }, // $104
-      { price: "0.50", size: "300" }, // $150
-      { price: "0.48", size: "400" }, // Below limit
-    ];
-    const limitPrice = 0.5;
+describe("Illiquid Exit Detection", () => {
+  test("Extreme spread triggers illiquid exit (spread > 30¢)", () => {
+    // bestBid=30¢, bestAsk=65¢ -> spread=35¢ > 30¢ threshold
+    const result = checkIlliquidExit(0.30, 0.65, 0.50, 0.40);
 
-    const depth = calculateCumulativeBidDepth(bids, limitPrice);
-
-    // Should include first 3 levels: $55 + $104 + $150 = $309
-    assert.equal(depth, 309);
-  });
-
-  test("Cumulative depth stops at first level below limit price", () => {
-    const bids = [
-      { price: "0.55", size: "100" }, // $55
-      { price: "0.49", size: "200" }, // Below limit - stop here
-      { price: "0.48", size: "300" },
-    ];
-    const limitPrice = 0.5;
-
-    const depth = calculateCumulativeBidDepth(bids, limitPrice);
-
-    // Should only include first level: $55 (0.55 * 100 may have floating point error)
+    assert.strictEqual(result.isIlliquid, true, "Should detect as illiquid");
     assert.ok(
-      Math.abs(depth - 55) < 0.001,
-      `Expected depth ~$55, got $${depth.toFixed(2)}`,
+      result.reason?.includes("Extreme spread"),
+      `Expected extreme spread reason, got: ${result.reason}`,
     );
   });
 
-  test("Empty bids returns zero depth", () => {
-    const bids: Array<{ price: string; size: string }> = [];
-    const limitPrice = 0.5;
+  test("Normal spread does not trigger illiquid exit", () => {
+    // bestBid=60¢, bestAsk=65¢ -> spread=5¢ < 30¢ threshold
+    const result = checkIlliquidExit(0.60, 0.65, 0.55, 0.50);
 
-    const depth = calculateCumulativeBidDepth(bids, limitPrice);
-
-    assert.equal(depth, 0);
+    assert.strictEqual(result.isIlliquid, false, "Should not be illiquid");
   });
 
-  test("All levels below limit returns zero depth", () => {
-    const bids = [
-      { price: "0.45", size: "100" },
-      { price: "0.40", size: "200" },
-    ];
-    const limitPrice = 0.5;
+  test("Tiny bid triggers illiquid when target is high (no extreme spread)", () => {
+    // bestBid=2¢, bestAsk=30¢ (spread=28¢ < 30¢ threshold, no extreme spread)
+    // But bid=2¢ ≤ 2¢ AND target=65¢ > 50¢ -> tiny bid trigger
+    const result = checkIlliquidExit(0.02, 0.30, 0.65, 0.50);
 
-    const depth = calculateCumulativeBidDepth(bids, limitPrice);
-
-    assert.equal(depth, 0);
-  });
-
-  test("SELL order sizing uses cumulative depth, not just top level", () => {
-    // Scenario: Position worth $10 notional, but top bid only has $3 of depth
-    // Old behavior: would size to $3 (top level only), causing SKIP_MIN_ORDER_SIZE with $5 min
-    // New behavior: uses cumulative depth ($12) allowing the full $10 order
-    const bids = [
-      { price: "0.50", size: "6" }, // $3 (was previous top-level-only value)
-      { price: "0.48", size: "10" }, // $4.80
-      { price: "0.46", size: "10" }, // $4.60
-    ];
-    const limitPrice = 0.46;
-    const positionNotional = 10.0;
-    const minOrderUsd = 5.0;
-
-    const cumulativeDepth = calculateCumulativeBidDepth(bids, limitPrice);
-    const orderValue = Math.min(positionNotional, cumulativeDepth);
-
-    // Cumulative depth at 46¢ = $3 + $4.80 + $4.60 = $12.40
+    assert.strictEqual(result.isIlliquid, true, "Should detect as illiquid");
     assert.ok(
-      cumulativeDepth >= 12.4,
-      `Expected cumulative depth >= $12.40, got $${cumulativeDepth.toFixed(2)}`,
-    );
-
-    // Order value should be capped at position notional
-    assert.equal(orderValue, 10.0);
-
-    // Order should pass minOrderUsd check
-    assert.ok(
-      orderValue >= minOrderUsd,
-      `Order $${orderValue.toFixed(2)} should pass min $${minOrderUsd}`,
+      result.reason?.includes("Tiny bid"),
+      `Expected tiny bid reason, got: ${result.reason}`,
     );
   });
 
-  test("minOrderUsd passthrough ensures preflight and submission match", () => {
-    // When ScalpTakeProfitStrategy has minOrderUsd=5, it should pass this
-    // to postOrder so OrderSubmissionController uses the same threshold
-    const strategyMinOrder = 5;
-    const systemDefaultMinOrder = 10;
+  test("Tiny bid does not trigger illiquid when target is also low", () => {
+    // bestBid=1¢, bestAsk=5¢ (spread=4¢ < 30¢, no extreme spread)
+    // bid=1¢ ≤ 2¢ BUT target=10¢ < 50¢ (tiny bid threshold won't trigger)
+    // minAcceptable=8¢ * 0.5 = 4¢, and bid=1¢ < 4¢ (far below acceptable WILL trigger)
+    const result = checkIlliquidExit(0.01, 0.05, 0.10, 0.08);
 
-    // Order worth $7 would fail system default but pass strategy setting
-    const notionalUsd = 7.0;
-
-    const passesStrategyCheck = notionalUsd >= strategyMinOrder;
-    const passesSystemDefault = notionalUsd >= systemDefaultMinOrder;
-
-    assert.ok(passesStrategyCheck, "Should pass strategy minOrderUsd check");
+    // In this case, the "far below acceptable" condition triggers because
+    // bestBid (1¢) < minAcceptable (8¢) * 0.5 = 4¢
+    assert.strictEqual(
+      result.isIlliquid,
+      true,
+      "Should still detect illiquid due to bid far below acceptable",
+    );
     assert.ok(
-      !passesSystemDefault,
-      "Would fail system default - this is why passthrough matters",
+      result.reason?.includes("far below acceptable"),
+      `Expected far below acceptable reason, got: ${result.reason}`,
+    );
+  });
+
+  test("Bid far below acceptable triggers illiquid (no spread or tiny bid)", () => {
+    // bestBid=20¢, bestAsk=45¢ (spread=25¢ < 30¢, no extreme spread)
+    // bid=20¢ > 2¢ (no tiny bid)
+    // But minAcceptable=65¢ * 0.5 = 32.5¢, and bid=20¢ < 32.5¢
+    const result = checkIlliquidExit(0.20, 0.45, 0.75, 0.65);
+
+    assert.strictEqual(result.isIlliquid, true, "Should detect as illiquid");
+    assert.ok(
+      result.reason?.includes("far below acceptable"),
+      `Expected far below acceptable reason, got: ${result.reason}`,
+    );
+  });
+
+  test("No bid returns not illiquid (handled separately)", () => {
+    const result = checkIlliquidExit(null, null, 0.65, 0.50);
+
+    // null/0 bid is handled by NO_BID check, not illiquid check
+    assert.strictEqual(result.isIlliquid, false, "Null bid handled elsewhere");
+  });
+
+  test("Illiquid thresholds have expected values", () => {
+    assert.strictEqual(
+      ILLIQUID_EXIT_THRESHOLDS.EXTREME_SPREAD_DOLLARS,
+      0.30,
+      "Extreme spread threshold should be 30¢",
+    );
+    assert.strictEqual(
+      ILLIQUID_EXIT_THRESHOLDS.TINY_BID_DOLLARS,
+      0.02,
+      "Tiny bid threshold should be 2¢",
+    );
+    assert.strictEqual(
+      ILLIQUID_EXIT_THRESHOLDS.MIN_TARGET_FOR_TINY_BID_CHECK,
+      0.50,
+      "Min target for tiny bid check should be 50¢",
+    );
+  });
+
+  test("Illiquid backoff ladder has escalating values", () => {
+    assert.strictEqual(ILLIQUID_BACKOFF_MS.length, 3, "Should have 3 backoff levels");
+    assert.strictEqual(ILLIQUID_BACKOFF_MS[0], 60_000, "Level 0: 1 minute");
+    assert.strictEqual(ILLIQUID_BACKOFF_MS[1], 300_000, "Level 1: 5 minutes");
+    assert.strictEqual(ILLIQUID_BACKOFF_MS[2], 900_000, "Level 2: 15 minutes");
+  });
+
+  test("MAX_ILLIQUID_RECHECKS limits retries", () => {
+    assert.strictEqual(MAX_ILLIQUID_RECHECKS, 10, "Should limit to 10 rechecks");
+  });
+
+  test("ExitLadderStage type supports EXIT_DEFERRED_ILLQ", () => {
+    const illiq: ExitLadderStage = "EXIT_DEFERRED_ILLQ";
+    assert.equal(illiq, "EXIT_DEFERRED_ILLQ");
+  });
+
+  test("Real production bug scenario: bestBid=1¢, target=65¢", () => {
+    // This is the exact scenario from the bug report:
+    // Price protection blocks SELL because bestBid=0.01 (1¢) while minAcceptable ≈ 0.646 (64.6¢)
+    const result = checkIlliquidExit(
+      0.01, // bestBid = 1¢
+      0.99, // bestAsk = 99¢ (extreme spread)
+      0.70, // target = 70¢
+      0.646, // minAcceptable ≈ 64.6¢
     );
 
-    // With proper passthrough, the order should succeed
-    // because submission controller will use strategy's minOrderUsd
+    assert.strictEqual(
+      result.isIlliquid,
+      true,
+      "Production bug scenario should detect as illiquid",
+    );
+
+    // Should match at least one of the conditions
+    assert.ok(
+      result.reason?.includes("Extreme spread") ||
+        result.reason?.includes("Tiny bid") ||
+        result.reason?.includes("far below acceptable"),
+      `Should have a valid illiquid reason, got: ${result.reason}`,
+    );
   });
 });
