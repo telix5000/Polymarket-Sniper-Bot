@@ -162,6 +162,10 @@ export class AutoRedeemStrategy {
   // Bytes32 hex string length (0x + 64 hex chars)
   private static readonly BYTES32_HEX_LENGTH = 66;
 
+  // Precision multiplier for payout calculations (6 decimal places)
+  // Using integer arithmetic to avoid floating-point precision errors
+  private static readonly PAYOUT_PRECISION = 1000000n;
+
   // Track redemption attempts to avoid spamming failed markets
   private redemptionAttempts = new Map<
     string,
@@ -573,10 +577,14 @@ export class AutoRedeemStrategy {
             outcomeIndex,
           )) as bigint;
 
-          // Calculate payout price (0-1 scale)
+          // Calculate payout price (0-1 scale) using integer arithmetic
           // payoutPrice = payoutNumerator / payoutDenominator
+          // Multiply by precision first to preserve decimal places
+          const scaledPayout =
+            (payoutNumerator * AutoRedeemStrategy.PAYOUT_PRECISION) /
+            payoutDenominator;
           const price =
-            Number((payoutNumerator * 1000000n) / payoutDenominator) / 1000000;
+            Number(scaledPayout) / Number(AutoRedeemStrategy.PAYOUT_PRECISION);
           const value = price * position.size;
 
           this.logger.debug(

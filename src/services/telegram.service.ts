@@ -325,6 +325,23 @@ export class TelegramService {
       );
     }
 
+    // Skip sending if there's no meaningful data to report
+    // (no trades, no P&L, no fees - all zeros)
+    const totalTrades = summary.winningTrades + summary.losingTrades;
+    const hasActivity =
+      totalTrades > 0 ||
+      summary.netPnl !== 0 ||
+      summary.totalRealizedPnl !== 0 ||
+      summary.totalUnrealizedPnl !== 0 ||
+      summary.totalFees !== 0;
+
+    if (!hasActivity) {
+      this.logger.debug(
+        "[Telegram] Skipping P&L update - no trading activity to report",
+      );
+      return false;
+    }
+
     const netEmoji = summary.netPnl >= 0 ? "🟢" : "🔴";
 
     let message = `📊 <b>${this.escapeHtml(this.config.notificationName)} - P&amp;L Update</b>\n\n`;
@@ -333,7 +350,6 @@ export class TelegramService {
     message += `📈 Unrealized: ${summary.totalUnrealizedPnl >= 0 ? "+" : ""}$${summary.totalUnrealizedPnl.toFixed(2)}\n`;
     message += `💸 Fees: $${summary.totalFees.toFixed(2)}\n\n`;
 
-    const totalTrades = summary.winningTrades + summary.losingTrades;
     if (totalTrades > 0) {
       message += `📉 Win Rate: ${(summary.winRate * 100).toFixed(1)}% (${summary.winningTrades}W / ${summary.losingTrades}L)\n`;
       message += `✅ Avg Win: $${summary.avgWin.toFixed(2)}\n`;
