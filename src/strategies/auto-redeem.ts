@@ -503,6 +503,105 @@ export class AutoRedeemStrategy {
   }
 
   /**
+   * Calculate the actual payout value for a position based on on-chain payout data.
+   *
+   * For binary markets, determines which outcome (YES/NO) the position corresponds to
+   * by checking both possible indexSets. The payout is calculated as:
+   * payoutValue = (payoutNumerator / payoutDenominator) * positionSize
+   *
+   * If the outcome cannot be determined (e.g., RPC errors), returns a zero value
+   * to avoid overstating redemption amounts in notifications.
+   *
+   * @param position - The position being redeemed
+   * @param wallet - The wallet instance with provider
+   * @param ctfAddress - CTF contract address
+   * @param usdcAddress - USDC collateral token address
+   * @returns Object with price (0-1 scale) and value (USD)
+   */
+  private async calculatePayoutValue(
+    position: RedeemablePosition,
+    wallet: Wallet,
+    ctfAddress: string,
+    usdcAddress: string,
+  ): Promise<{ price: number; value: number }> {
+    // Default to zero if we can't determine the payout
+    // This is safer than overstating the value for losing positions
+    const zeroPayout = { price: 0, value: 0 };
+
+    try {
+      if (!wallet.provider) {
+        return zeroPayout;
+      }
+
+      const ctfContract = new Contract(ctfAddress, CTF_ABI, wallet.provider);
+      const conditionId = position.marketId;
+
+      // Get payout denominator (same for all outcomes)
+      const payoutDenominator = (await ctfContract.payoutDenominator(
+        conditionId,
+      )) as bigint;
+
+      if (payoutDenominator === 0n) {
+        // Market not resolved - should not happen here, but be safe
+        return zeroPayout;
+      }
+
+      // For binary markets, check both outcome slots to find which one matches our tokenId
+      // indexSet 1 = outcome 0 (typically YES), indexSet 2 = outcome 1 (typically NO)
+      for (const outcomeIndex of [0, 1]) {
+        const indexSet = outcomeIndex + 1; // indexSet is 1-indexed: 1 for YES, 2 for NO
+
+        // Calculate the expected tokenId for this outcome
+        // 1. Get collectionId from (parentCollectionId=0, conditionId, indexSet)
+        // 2. Get positionId from (collateralToken, collectionId)
+        const collectionId = (await ctfContract.getCollectionId(
+          "0x0000000000000000000000000000000000000000000000000000000000000000", // parentCollectionId (always 0 for Polymarket)
+          conditionId,
+          indexSet,
+        )) as string;
+
+        const positionId = (await ctfContract.getPositionId(
+          usdcAddress,
+          collectionId,
+        )) as bigint;
+
+        // Check if this positionId matches our tokenId
+        if (positionId.toString() === position.tokenId) {
+          // Found the matching outcome - get its payout numerator
+          const payoutNumerator = (await ctfContract.payoutNumerators(
+            conditionId,
+            outcomeIndex,
+          )) as bigint;
+
+          // Calculate payout price (0-1 scale)
+          // payoutPrice = payoutNumerator / payoutDenominator
+          const price =
+            Number((payoutNumerator * 1000000n) / payoutDenominator) / 1000000;
+          const value = price * position.size;
+
+          this.logger.debug(
+            `[AutoRedeem] Payout calculated: outcome=${outcomeIndex} numerator=${payoutNumerator} denominator=${payoutDenominator} price=${price.toFixed(4)} value=$${value.toFixed(2)}`,
+          );
+
+          return { price, value };
+        }
+      }
+
+      // Could not match tokenId to any outcome - return zero to be safe
+      this.logger.debug(
+        `[AutoRedeem] Could not match tokenId ${position.tokenId.slice(0, 16)}... to any outcome`,
+      );
+      return zeroPayout;
+    } catch (err) {
+      // On any error, return zero to avoid overstating value
+      this.logger.debug(
+        `[AutoRedeem] calculatePayoutValue error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return zeroPayout;
+    }
+  }
+
+  /**
    * Fetch all positions from Data API.
    * This is the source of tokenIds/conditionIds to check for redemption.
    * The Data API `redeemable` flag is NOT used - on-chain payoutDenominator is authoritative.
@@ -895,14 +994,19 @@ export class AutoRedeemStrategy {
       );
 
       // Send telegram notification for successful redemption
-      // Estimate value as size * 1.0 since resolved positions pay $1
-      const estimatedValue = position.size;
+      // Calculate actual payout value from on-chain payout ratio
+      const payoutInfo = await this.calculatePayoutValue(
+        position,
+        wallet,
+        ctfAddress,
+        usdcAddress,
+      );
       void notifyRedeem(
         position.marketId,
         position.tokenId,
         position.size,
-        1.0, // Redemption price is always $1
-        estimatedValue,
+        payoutInfo.price,
+        payoutInfo.value,
         {
           txHash: tx.hash,
         },
