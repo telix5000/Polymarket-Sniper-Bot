@@ -342,7 +342,7 @@ export interface Position {
    * - No orderbook bids available (mark price unknown)
    * - Price data is stale or contradictory
    *
-   * CRITICAL: SmartHedging, ScalpTakeProfit, and StopLoss MUST skip
+   * CRITICAL: SmartHedging, ScalpTrade, and StopLoss MUST skip
    * positions where pnlTrusted === false.
    */
   pnlTrusted: boolean;
@@ -351,7 +351,7 @@ export interface Position {
    * The classification of this position for strategy routing.
    * ONLY VALID when pnlTrusted === true.
    *
-   * - PROFITABLE: pnlPct > 0 (candidate for ScalpTakeProfit)
+   * - PROFITABLE: pnlPct > 0 (candidate for ScalpTrade)
    * - LOSING: pnlPct < 0 (candidate for SmartHedging, StopLoss)
    * - NEUTRAL: pnlPct === 0 (breakeven)
    * - UNKNOWN: pnlTrusted === false (DO NOT ACT)
@@ -5657,7 +5657,7 @@ export class PositionTracker {
    * Enrich ACTIVE positions with entry metadata from trade history.
    *
    * WHY THIS EXISTS:
-   * ScalpTakeProfit previously calculated "time held" based on container uptime.
+   * ScalpTrade previously calculated "time held" based on container uptime.
    * After container restarts, the clock reset and the scalper missed valid
    * take-profit opportunities on positions already in the green.
    *

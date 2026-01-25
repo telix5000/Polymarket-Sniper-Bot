@@ -218,6 +218,9 @@ export const STRATEGY_PRESETS = {
     AUTO_SELL_DISPUTE_EXIT_ENABLED: true, // Enable dispute window exit
     AUTO_SELL_MIN_HOLD_SEC: 60, // Avoid conflict with endgame sweep
     AUTO_SELL_STALE_POSITION_HOURS: 24, // Sell profitable positions held for 24+ hours
+    AUTO_SELL_QUICK_WIN_ENABLED: false, // Disabled by default - opt-in feature
+    AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES: 60, // Quick win window: 1 hour
+    AUTO_SELL_QUICK_WIN_PROFIT_PCT: 90, // Quick win threshold: 90% profit
     /**
      * ON-CHAIN EXIT - Routes NOT_TRADABLE positions to redemption (Jan 2025)
      * When positions can't be sold via CLOB (executionStatus=NOT_TRADABLE_ON_CLOB)
@@ -330,6 +333,9 @@ export const STRATEGY_PRESETS = {
     AUTO_SELL_DISPUTE_EXIT_ENABLED: true, // Enable dispute window exit
     AUTO_SELL_MIN_HOLD_SEC: 60, // Conservative: wait 60s before selling
     AUTO_SELL_STALE_POSITION_HOURS: 24, // Sell profitable positions held for 24+ hours
+    AUTO_SELL_QUICK_WIN_ENABLED: false, // Disabled by default - opt-in feature
+    AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES: 60, // Quick win window: 1 hour
+    AUTO_SELL_QUICK_WIN_PROFIT_PCT: 90, // Quick win threshold: 90% profit
     /**
      * ON-CHAIN EXIT - Routes NOT_TRADABLE positions to redemption (Jan 2025)
      * When positions can't be sold via CLOB (executionStatus=NOT_TRADABLE_ON_CLOB)
@@ -460,6 +466,9 @@ export const STRATEGY_PRESETS = {
     AUTO_SELL_DISPUTE_EXIT_ENABLED: true, // Enable dispute window exit
     AUTO_SELL_MIN_HOLD_SEC: 60, // Balanced: wait 60s before selling
     AUTO_SELL_STALE_POSITION_HOURS: 24, // Sell profitable positions held for 24+ hours
+    AUTO_SELL_QUICK_WIN_ENABLED: false, // Disabled by default - opt-in feature
+    AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES: 60, // Quick win window: 1 hour
+    AUTO_SELL_QUICK_WIN_PROFIT_PCT: 90, // Quick win threshold: 90% profit
     /**
      * ON-CHAIN EXIT - Routes NOT_TRADABLE positions to redemption (Jan 2025)
      * When positions can't be sold via CLOB (executionStatus=NOT_TRADABLE_ON_CLOB)
@@ -648,6 +657,9 @@ export const STRATEGY_PRESETS = {
     AUTO_SELL_DISPUTE_EXIT_ENABLED: true, // Enable dispute window exit
     AUTO_SELL_MIN_HOLD_SEC: 30, // Aggressive: only 30s hold time
     AUTO_SELL_STALE_POSITION_HOURS: 12, // Aggressive: sell profitable positions held for 12+ hours
+    AUTO_SELL_QUICK_WIN_ENABLED: false, // Disabled by default - opt-in feature
+    AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES: 60, // Quick win window: 1 hour
+    AUTO_SELL_QUICK_WIN_PROFIT_PCT: 90, // Quick win threshold: 90% profit
 
     /**
      * ON-CHAIN EXIT - Routes NOT_TRADABLE positions to redemption (Jan 2025)

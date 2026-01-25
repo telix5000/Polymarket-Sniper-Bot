@@ -8,7 +8,7 @@ import {
   DUST_COOLDOWN_MS,
   type OrderbookQualityStatus,
   type OrderbookQualityResult,
-} from "../../src/strategies/scalp-take-profit";
+} from "../../src/strategies/scalp-trade";
 import {
   OrderbookQualityError,
   extractOrderbookPrices,

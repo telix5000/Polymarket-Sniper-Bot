@@ -555,7 +555,7 @@ describe("TelegramService Class", () => {
       sizeUsd: 42.5,
       entryPrice: 0.65,
       pnl: 10,
-      strategy: "ScalpTakeProfit",
+      strategy: "ScalpTrade",
       marketQuestion: "Will BTC hit $100k?",
     };
     const pnlSnapshot = {
@@ -576,7 +576,7 @@ describe("TelegramService Class", () => {
     const body = JSON.parse(options.body);
     // Check that the message contains key information
     assert.ok(body.text.includes("Position Sold"));
-    assert.ok(body.text.includes("ScalpTakeProfit"));
+    assert.ok(body.text.includes("ScalpTrade"));
     assert.ok(body.text.includes("Portfolio Update"));
     assert.ok(body.text.includes("$150.00")); // Net P&L
     assert.ok(body.text.includes("75.0%")); // Win rate

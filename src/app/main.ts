@@ -149,7 +149,7 @@ async function main(): Promise<void> {
         // Hedge exit monitoring
         hedgeExitThreshold: strategyConfig.smartHedgingHedgeExitThreshold,
       },
-      // Quick flip module removed - functionality covered by ScalpTakeProfit
+      // Quick flip module removed - functionality covered by ScalpTrade
       // Pass endgame config
       endgameConfig: {
         enabled: strategyConfig.endgameSweepEnabled,
@@ -184,6 +184,9 @@ async function main(): Promise<void> {
         disputeWindowExitEnabled: strategyConfig.autoSellDisputeExitEnabled,
         disputeWindowExitPrice: strategyConfig.autoSellDisputeExitPrice,
         stalePositionHours: strategyConfig.autoSellStalePositionHours,
+        quickWinEnabled: strategyConfig.autoSellQuickWinEnabled,
+        quickWinMaxHoldMinutes: strategyConfig.autoSellQuickWinMaxHoldMinutes,
+        quickWinProfitPct: strategyConfig.autoSellQuickWinProfitPct,
       },
       // Pass position stacking config for doubling down on winners
       positionStackingConfig: {

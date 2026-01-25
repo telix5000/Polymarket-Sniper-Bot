@@ -37,17 +37,17 @@ import {
   type EndgameSweepConfig,
   DEFAULT_ENDGAME_CONFIG,
 } from "./endgame-sweep";
-// Quick Flip module removed - functionality covered by ScalpTakeProfit
+// Quick Flip module removed - functionality covered by ScalpTrade
 // import {
 //   QuickFlipStrategy,
 //   type QuickFlipConfig,
 //   DEFAULT_QUICKFLIP_CONFIG,
 // } from "./quick-flip";
 import {
-  ScalpTakeProfitStrategy,
-  type ScalpTakeProfitConfig,
-  DEFAULT_SCALP_TAKE_PROFIT_CONFIG,
-} from "./scalp-take-profit";
+  ScalpTradeStrategy,
+  type ScalpTradeConfig,
+  DEFAULT_SCALP_TRADE_CONFIG,
+} from './scalp-trade';
 import { AutoRedeemStrategy, type AutoRedeemConfig } from "./auto-redeem";
 import {
   SellEarlyStrategy,
@@ -96,7 +96,7 @@ export interface OrchestratorConfig {
   hedgingConfig?: Partial<SmartHedgingConfig>;
   endgameConfig?: Partial<EndgameSweepConfig>;
   // quickFlipConfig removed - module deprecated
-  scalpConfig?: Partial<ScalpTakeProfitConfig>;
+  scalpConfig?: Partial<ScalpTradeConfig>;
   autoRedeemConfig?: Partial<AutoRedeemConfig>;
   sellEarlyConfig?: Partial<SellEarlyConfig>;
   autoSellConfig?: Partial<AutoSellConfig>;
@@ -124,7 +124,7 @@ export class Orchestrator {
   private autoRedeemStrategy: AutoRedeemStrategy;
   private hedgingStrategy: SmartHedgingStrategy;
   private stopLossStrategy: UniversalStopLossStrategy;
-  private scalpStrategy: ScalpTakeProfitStrategy;
+  private scalpStrategy: ScalpTradeStrategy;
   private endgameStrategy: EndgameSweepStrategy;
   private positionStackingStrategy: PositionStackingStrategy;
   // quickFlipStrategy removed - module deprecated
@@ -321,12 +321,12 @@ export class Orchestrator {
     // Enabled by default - takes profits on positions after holding 45-90 min
     // with 5%+ profit, or captures sudden spikes (15%+ in 10 min)
     // CRITICAL: Never forces time-exit on ≤60¢ entries that reach 90¢+
-    this.scalpStrategy = new ScalpTakeProfitStrategy({
+    this.scalpStrategy = new ScalpTradeStrategy({
       client: config.client,
       logger: config.logger,
       positionTracker: this.positionTracker,
       config: {
-        ...DEFAULT_SCALP_TAKE_PROFIT_CONFIG,
+        ...DEFAULT_SCALP_TRADE_CONFIG,
         ...config.scalpConfig,
       },
     });
@@ -345,7 +345,7 @@ export class Orchestrator {
       },
     });
 
-    // Quick Flip module removed - ScalpTakeProfit handles profit-taking
+    // Quick Flip module removed - ScalpTrade handles profit-taking
 
     this.logger.info(
       `[Orchestrator] Initialized with maxPosition=$${config.maxPositionUsd}`,
@@ -533,9 +533,9 @@ export class Orchestrator {
 
       // Phase 4: Trading strategies
       // 6. Scalp Take-Profit - time-based profit taking with momentum checks
-      // CRITICAL: Pass snapshot to ensure ScalpTakeProfit uses same data as PositionTracker
+      // CRITICAL: Pass snapshot to ensure ScalpTrade uses same data as PositionTracker
       await this.runStrategyTimed(
-        "ScalpTakeProfit",
+        "ScalpTrade",
         () => this.scalpStrategy.execute(snapshot),
         strategyTimings,
       );
@@ -562,7 +562,7 @@ export class Orchestrator {
         strategyTimings,
       );
 
-      // Quick Flip removed - functionality covered by ScalpTakeProfit
+      // Quick Flip removed - functionality covered by ScalpTrade
     } catch (err) {
       this.logger.error(
         `[Orchestrator] Error in cycle=${currentCycleId}: ${err instanceof Error ? err.message : String(err)}`,

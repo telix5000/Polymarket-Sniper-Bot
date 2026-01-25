@@ -77,7 +77,7 @@ import { notifyScalp } from "../services/trade-notification.service";
 /**
  * Scalp Take-Profit Configuration
  */
-export interface ScalpTakeProfitConfig {
+export interface ScalpTradeConfig {
   /** Enable the strategy */
   enabled: boolean;
 
@@ -662,7 +662,7 @@ export interface ExitPlanResult {
  *
  * See EntryMetaResolver and Position.timeHeldSec for implementation details.
  */
-export const DEFAULT_SCALP_TAKE_PROFIT_CONFIG: ScalpTakeProfitConfig = {
+export const DEFAULT_SCALP_TRADE_CONFIG: ScalpTradeConfig = {
   enabled: true,
   minHoldMinutes: 45,
   maxHoldMinutes: 90,
@@ -697,7 +697,7 @@ export const DEFAULT_SCALP_TAKE_PROFIT_CONFIG: ScalpTakeProfitConfig = {
  * $2.00 minimum profit ensures trades are truly worthwhile.
  * Higher spike threshold (20%) - only capture truly massive moves.
  */
-export const CONSERVATIVE_SCALP_CONFIG: Partial<ScalpTakeProfitConfig> = {
+export const CONSERVATIVE_SCALP_CONFIG: Partial<ScalpTradeConfig> = {
   minHoldMinutes: 60,
   maxHoldMinutes: 120,
   minProfitPct: 8.0, // 8% minimum - well above costs
@@ -714,7 +714,7 @@ export const CONSERVATIVE_SCALP_CONFIG: Partial<ScalpTakeProfitConfig> = {
  * $1.00 minimum profit ensures trades matter after fees.
  * 15% spike threshold for sudden moves.
  */
-export const BALANCED_SCALP_CONFIG: Partial<ScalpTakeProfitConfig> = {
+export const BALANCED_SCALP_CONFIG: Partial<ScalpTradeConfig> = {
   minHoldMinutes: 45,
   maxHoldMinutes: 90,
   minProfitPct: 5.0, // 5% minimum - clears typical costs
@@ -734,7 +734,7 @@ export const BALANCED_SCALP_CONFIG: Partial<ScalpTakeProfitConfig> = {
  * A 2% "profit" after fees/slippage is basically break-even.
  * Don't waste time and risk for nothing.
  */
-export const AGGRESSIVE_SCALP_CONFIG: Partial<ScalpTakeProfitConfig> = {
+export const AGGRESSIVE_SCALP_CONFIG: Partial<ScalpTradeConfig> = {
   minHoldMinutes: 30,
   maxHoldMinutes: 60,
   minProfitPct: 4.0, // 4% minimum - even aggressive needs real profit
@@ -750,11 +750,11 @@ export const AGGRESSIVE_SCALP_CONFIG: Partial<ScalpTakeProfitConfig> = {
 /**
  * Scalp Take-Profit Strategy Implementation
  */
-export class ScalpTakeProfitStrategy {
+export class ScalpTradeStrategy {
   private client: ClobClient;
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
-  private config: ScalpTakeProfitConfig;
+  private config: ScalpTradeConfig;
 
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
@@ -833,7 +833,7 @@ export class ScalpTakeProfitStrategy {
     client: ClobClient;
     logger: ConsoleLogger;
     positionTracker: PositionTracker;
-    config: ScalpTakeProfitConfig;
+    config: ScalpTradeConfig;
   }) {
     this.client = config.client;
     this.logger = config.logger;
@@ -890,7 +890,7 @@ export class ScalpTakeProfitStrategy {
         );
         if (
           this.logDeduper.shouldLog(
-            "ScalpTakeProfit:stale_snapshot",
+            "ScalpTrade:stale_snapshot",
             30_000, // Log at most every 30 seconds
           )
         ) {
@@ -915,7 +915,7 @@ export class ScalpTakeProfitStrategy {
         // Snapshot reports 0 but lastGood had positions - treat as upstream failure
         if (
           this.logDeduper.shouldLog(
-            "ScalpTakeProfit:zero_active_fallback",
+            "ScalpTrade:zero_active_fallback",
             30_000,
           )
         ) {
@@ -970,7 +970,7 @@ export class ScalpTakeProfitStrategy {
         // Rate-limit this error log to avoid spam
         if (
           this.logDeduper.shouldLog(
-            "ScalpTakeProfit:SNAPSHOT_MISMATCH",
+            "ScalpTrade:SNAPSHOT_MISMATCH",
             60_000, // 60 second TTL
           )
         ) {
@@ -1041,7 +1041,7 @@ export class ScalpTakeProfitStrategy {
       );
     } else if (
       this.logDeduper.shouldLog(
-        "ScalpTakeProfit:active_count",
+        "ScalpTrade:active_count",
         SKIP_LOG_TTL_MS,
         String(activePositions.length),
       )
@@ -1062,7 +1062,7 @@ export class ScalpTakeProfitStrategy {
     const shouldLogSummary =
       countsChanged ||
       now - this.lastSummaryLogAt >=
-        ScalpTakeProfitStrategy.SUMMARY_LOG_INTERVAL_MS;
+        ScalpTradeStrategy.SUMMARY_LOG_INTERVAL_MS;
 
     if (shouldLogSummary) {
       this.lastSummaryLogAt = now;
@@ -1214,7 +1214,7 @@ export class ScalpTakeProfitStrategy {
           bypassHoldTimeChecks = true;
           if (
             this.logDeduper.shouldLog(
-              `ScalpTakeProfit:legacy_profitable:${position.tokenId}`,
+              `ScalpTrade:legacy_profitable:${position.tokenId}`,
               60_000, // Log at most once per minute per position
             )
           ) {
@@ -1514,14 +1514,14 @@ export class ScalpTakeProfitStrategy {
       } else {
         // If no entry time at all, treat position as "old enough" (assume external purchase)
         // Use a very large holdMinutes value so all hold time checks pass
-        holdMinutes = ScalpTakeProfitStrategy.NO_ENTRY_TIME_HOLD_MINUTES;
+        holdMinutes = ScalpTradeStrategy.NO_ENTRY_TIME_HOLD_MINUTES;
       }
     }
 
     // Log if we couldn't get trade history time (important diagnostic)
     if (
       !hasTradeHistoryTime &&
-      holdMinutes < ScalpTakeProfitStrategy.NO_ENTRY_TIME_HOLD_MINUTES
+      holdMinutes < ScalpTradeStrategy.NO_ENTRY_TIME_HOLD_MINUTES
     ) {
       this.logger.debug(
         `[ProfitTaker] Position ${position.tokenId.slice(0, 8)}... using FALLBACK entry time (container uptime). ` +
@@ -1769,7 +1769,7 @@ export class ScalpTakeProfitStrategy {
     // A position at 92¢ is almost certainly going to $1.00 - let it ride!
     const nearResolution =
       position.currentPrice >=
-      ScalpTakeProfitStrategy.NEAR_RESOLUTION_THRESHOLD;
+      ScalpTradeStrategy.NEAR_RESOLUTION_THRESHOLD;
 
     if (nearResolution) {
       this.logger.debug(
@@ -2196,7 +2196,7 @@ export class ScalpTakeProfitStrategy {
           return {
             limitCents:
               plan.avgEntryCents +
-              ScalpTakeProfitStrategy.MIN_PROFIT_ABOVE_ENTRY_CENTS,
+              ScalpTradeStrategy.MIN_PROFIT_ABOVE_ENTRY_CENTS,
             reason: "PROFIT_MIN_ABOVE_ENTRY",
           };
         }
@@ -2532,7 +2532,7 @@ export class ScalpTakeProfitStrategy {
       // Give FORCE stage extra time (multiplier * window) before giving up
       const maxForceWindowSec =
         this.config.exitWindowSec *
-        ScalpTakeProfitStrategy.FORCE_STAGE_WINDOW_MULTIPLIER;
+        ScalpTradeStrategy.FORCE_STAGE_WINDOW_MULTIPLIER;
       if (elapsedSec > maxForceWindowSec) {
         this.logger.warn(
           `[ProfitTaker] ABANDONED tokenId=${plan.tokenId.slice(0, 12)}... ` +
@@ -2728,14 +2728,14 @@ export class ScalpTakeProfitStrategy {
     // Check cooldown
     if (
       now - tracker.lastLogAt >=
-      ScalpTakeProfitStrategy.SKIP_LOG_COOLDOWN_MS
+      ScalpTradeStrategy.SKIP_LOG_COOLDOWN_MS
     ) {
       return true;
     }
 
     // Check P&L change threshold (hysteresis)
     const pnlChange = Math.abs(currentPnlPct - tracker.lastPnlPct);
-    if (pnlChange >= ScalpTakeProfitStrategy.SKIP_LOG_HYSTERESIS_PCT) {
+    if (pnlChange >= ScalpTradeStrategy.SKIP_LOG_HYSTERESIS_PCT) {
       return true;
     }
 

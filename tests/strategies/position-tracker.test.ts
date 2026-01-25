@@ -1911,8 +1911,8 @@ describe("PositionTracker Status and NO_BOOK Handling", () => {
     assert.strictEqual(status, "REDEEMABLE", "Status should be REDEEMABLE");
   });
 
-  test("NO_BOOK positions should be excluded from ScalpTakeProfit", () => {
-    // ScalpTakeProfit should skip positions with NO_BOOK status
+  test("NO_BOOK positions should be excluded from ScalpTrade", () => {
+    // ScalpTrade should skip positions with NO_BOOK status
     // because P&L calculation uses fallback pricing which may be inaccurate
     type Position = { status?: string; pnlPct: number; redeemable?: boolean };
     const positions: Position[] = [
@@ -4022,7 +4022,7 @@ describe("Crash-Proof Recovery: Circuit Breaker", () => {
 
 describe("Crash-Proof Recovery: Downstream Strategy Hardening", () => {
   test("Strategy detects stale snapshot and continues operating", () => {
-    // Simulate what ScalpTakeProfit does with stale snapshot
+    // Simulate what ScalpTrade does with stale snapshot
     const staleSnapshot = {
       stale: true,
       staleAgeMs: 45000, // 45 seconds stale
