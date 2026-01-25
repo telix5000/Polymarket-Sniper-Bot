@@ -76,14 +76,74 @@ export const POLYMARKET_ROUND_TRIP_FEE_PCT = 0.02; // 0.02% total for buy + sell
  * A 2% slippage on a highly profitable trade (e.g., +42% gain) is acceptable
  * to ensure the trade executes rather than missing the opportunity entirely.
  *
- * Different strategies may use higher slippage:
- * - Stop-loss/urgent exits: 10% (accept any reasonable price to exit)
- * - Stale position cleanup: 3% (tighter to protect small profits)
+ * SLIPPAGE TIERS (from tightest to most liberal):
  * - Normal profit-taking: 2% (default - balance execution vs value)
+ * - Stale position cleanup: 3% (slightly looser to protect small profits)
+ * - Urgent exits: 10% (accept reasonable price to exit quickly)
+ * - Falling knife exits: 25% (liberal slippage for rapidly declining positions)
+ * - Emergency exits: 50% (very liberal - "beggars can't be choosers")
+ *
+ * For stop-loss and liquidation scenarios, use FALLING_KNIFE_SLIPPAGE_PCT
+ * or EMERGENCY_SELL_SLIPPAGE_PCT to ensure positions can be exited even
+ * in volatile, rapidly declining markets.
  *
  * Can be overridden via environment variable SELL_SLIPPAGE_PCT
  */
 export const DEFAULT_SELL_SLIPPAGE_PCT = 2; // 2% default slippage tolerance for sells
+
+/**
+ * Stale position sell slippage tolerance percentage.
+ *
+ * Used when selling positions that have been held for a long time
+ * and we want to exit but don't need to rush. Slightly looser than
+ * the default to ensure fills while still protecting small profits.
+ */
+export const STALE_SELL_SLIPPAGE_PCT = 3; // 3% for stale position cleanup
+
+/**
+ * Urgent sell slippage tolerance percentage.
+ *
+ * Used for near-resolution sells or other time-sensitive exits
+ * where getting out quickly matters more than optimal price.
+ */
+export const URGENT_SELL_SLIPPAGE_PCT = 10; // 10% for time-sensitive exits
+
+/**
+ * Falling knife slippage tolerance percentage.
+ *
+ * Used when a position is rapidly losing value and we need to exit
+ * to salvage whatever capital remains. This is more liberal than
+ * urgent sells because on a downslide, the 10% tolerance may be
+ * too tight to actually capture a sell.
+ *
+ * "Beggars can't be choosers" - getting back 75% of current value
+ * is better than watching it fall to zero while waiting for a
+ * better price that may never come.
+ *
+ * Use cases:
+ * - Stop-loss triggers where price is actively declining
+ * - Smart hedging liquidations after hedge fails
+ * - Any scenario where the position is "falling knife" territory
+ */
+export const FALLING_KNIFE_SLIPPAGE_PCT = 25; // 25% for rapidly declining positions
+
+/**
+ * Emergency sell slippage tolerance percentage.
+ *
+ * The most liberal slippage setting short of "accept any price".
+ * Used for worst-case scenarios where we absolutely must exit
+ * and salvage whatever we can. At 50% slippage, we're saying
+ * "I'll accept half the current bid price just to get out."
+ *
+ * This replaces the hardcoded 1¢ minimum in most scenarios,
+ * providing a more graceful degradation that still recovers
+ * meaningful value from the position.
+ *
+ * Example: At a 50¢ bid, 50% slippage accepts down to 25¢.
+ * This is much better than the old 1¢ floor while still
+ * being aggressive enough to fill in any market conditions.
+ */
+export const EMERGENCY_SELL_SLIPPAGE_PCT = 50; // 50% for emergency exits
 
 /**
  * Helper function to calculate minimum acceptable price with slippage tolerance.
