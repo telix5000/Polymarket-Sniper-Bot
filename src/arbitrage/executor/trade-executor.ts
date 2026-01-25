@@ -230,6 +230,7 @@ export class ArbTradeExecutor implements TradeExecutor {
       );
 
       // Send telegram notification for first leg BUY
+      // notifyBuy handles its own logging; we just catch any unexpected errors
       notifyBuy(
         plan.marketId,
         first.tokenId,
@@ -240,24 +241,9 @@ export class ArbTradeExecutor implements TradeExecutor {
           strategy: "Arbitrage",
           outcome: first.outcome,
         },
-      )
-        .then((sent) => {
-          if (sent) {
-            this.logger.info(
-              `[ARB] 📱 Telegram notification sent for first-leg BUY`,
-            );
-          } else {
-            this.logger.warn(
-              `[ARB] 📱 Telegram notification failed to send for first-leg BUY (returned false)`,
-            );
-          }
-        })
-        .catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
-          this.logger.warn(
-            `[ARB] Failed to send first-leg BUY notification: ${message}`,
-          );
-        });
+      ).catch(() => {
+        // Swallow errors here; notifyBuy is responsible for logging its own failures.
+      });
 
       const refreshedFirst = await this.provider.getOrderBookTop(first.tokenId);
       const refreshedSecond = await this.provider.getOrderBookTop(
@@ -296,6 +282,7 @@ export class ArbTradeExecutor implements TradeExecutor {
       );
 
       // Send telegram notification for second leg BUY
+      // notifyBuy handles its own logging; we just catch any unexpected errors
       notifyBuy(
         plan.marketId,
         second.tokenId,
@@ -306,24 +293,9 @@ export class ArbTradeExecutor implements TradeExecutor {
           strategy: "Arbitrage",
           outcome: second.outcome,
         },
-      )
-        .then((sent) => {
-          if (sent) {
-            this.logger.info(
-              `[ARB] 📱 Telegram notification sent for second-leg BUY`,
-            );
-          } else {
-            this.logger.warn(
-              `[ARB] 📱 Telegram notification failed to send for second-leg BUY (returned false)`,
-            );
-          }
-        })
-        .catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
-          this.logger.warn(
-            `[ARB] Failed to send second-leg BUY notification: ${message}`,
-          );
-        });
+      ).catch(() => {
+        // Swallow errors here; notifyBuy is responsible for logging its own failures.
+      });
 
       return {
         status: "submitted",

@@ -559,6 +559,7 @@ export class PositionStackingStrategy {
         );
 
         // Send telegram notification for position stacking
+        // notifyStack handles its own logging; we just catch any unexpected errors
         const entryPrice = position.avgEntryPriceCents
           ? position.avgEntryPriceCents / 100
           : position.entryPrice;
@@ -572,23 +573,9 @@ export class PositionStackingStrategy {
             entryPrice,
             outcome: outcome,
           },
-        )
-          .then((sent) => {
-            if (sent) {
-              this.logger.info(
-                `[PositionStacking] 📱 Telegram notification sent for STACK`,
-              );
-            } else {
-              this.logger.warn(
-                `[PositionStacking] 📱 Telegram notification failed to send (returned false) - check Telegram config`,
-              );
-            }
-          })
-          .catch((err) => {
-            this.logger.warn(
-              `[PositionStacking] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
+        ).catch(() => {
+          // Swallow errors here; notifyStack is responsible for logging its own failures.
+        });
 
         return true;
       }

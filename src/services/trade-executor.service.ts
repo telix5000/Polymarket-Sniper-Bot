@@ -260,7 +260,7 @@ export class TradeExecutorService {
         );
 
         // Send telegram notification for successful frontrun/copy trade
-        // Use .then() to log success/failure since notifyFrontrun returns Promise<boolean>
+        // notifyFrontrun handles its own logging; we just catch any unexpected errors
         notifyFrontrun(
           signal.marketId,
           signal.tokenId,
@@ -270,24 +270,9 @@ export class TradeExecutorService {
           {
             outcome: signal.outcome,
           },
-        )
-          .then((sent) => {
-            if (sent) {
-              logger.info(
-                `[Frontrun] 📱 Telegram notification sent for ${signal.side} order`,
-              );
-            } else {
-              logger.warn(
-                `[Frontrun] 📱 Telegram notification failed to send (returned false) - check Telegram config`,
-              );
-            }
-          })
-          .catch((err) => {
-            // Log notification errors for debugging
-            logger.warn(
-              `[Frontrun] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
+        ).catch(() => {
+          // Swallow errors here; notifyFrontrun is responsible for logging its own failures.
+        });
       } else if (submissionResult.status === "skipped") {
         logger.warn(
           `[Frontrun] ⏭️ Order skipped: ${submissionResult.reason ?? "unknown reason"}`,
@@ -319,23 +304,9 @@ export class TradeExecutorService {
               {
                 outcome: signal.outcome,
               },
-            )
-              .then((sent) => {
-                if (sent) {
-                  logger.info(
-                    `[Frontrun] 📱 Telegram notification sent for partial fill`,
-                  );
-                } else {
-                  logger.warn(
-                    `[Frontrun] 📱 Telegram notification failed to send for partial fill (returned false)`,
-                  );
-                }
-              })
-              .catch((err) => {
-                logger.warn(
-                  `[Frontrun] Failed to send Telegram notification for partial fill: ${err instanceof Error ? err.message : String(err)}`,
-                );
-              });
+            ).catch(() => {
+              // Swallow errors here; notifyFrontrun is responsible for logging its own failures.
+            });
           }
         } else {
           logger.warn(
