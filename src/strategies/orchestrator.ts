@@ -700,9 +700,9 @@ export class Orchestrator {
       // Calculate unrealized P&L and holdings value from active positions
       // The position tracker's pnlUsd is authoritative for unrealized P&L since
       // it's calculated from actual entry prices and current bid prices.
-      let holdingsValue = 0;
-      let unrealizedPnl = 0;
       if (snapshot) {
+        let holdingsValue = 0;
+        let unrealizedPnl = 0;
         for (const pos of snapshot.activePositions) {
           // Use current price (bid price for what we can sell at)
           holdingsValue += pos.size * pos.currentPrice;
@@ -711,20 +711,25 @@ export class Orchestrator {
             unrealizedPnl += pos.pnlUsd;
           }
         }
-      }
 
-      // Override the ledger's unrealized P&L with the position tracker's value
-      // since the ledger isn't being populated with trades by strategies
-      summary.totalUnrealizedPnl = unrealizedPnl;
-      // Recalculate net P&L: realized (from ledger) + unrealized (from positions)
-      summary.netPnl = summary.totalRealizedPnl + unrealizedPnl;
-      summary.holdingsValue = holdingsValue;
+        // Override the ledger's unrealized P&L with the position tracker's value
+        // since the ledger isn't being populated with trades by strategies
+        summary.totalUnrealizedPnl = unrealizedPnl;
+        // Recalculate net P&L: realized (from ledger) + unrealized (from positions)
+        summary.netPnl = summary.totalRealizedPnl + unrealizedPnl;
+        summary.holdingsValue = holdingsValue;
 
-      // Add USDC balance if wallet balance fetcher is available
-      if (this.getWalletBalances) {
+        // Add USDC balance and total value if wallet balance fetcher is available
+        // Only set totalValue when we have a valid snapshot to avoid incorrect calculations
+        if (this.getWalletBalances) {
+          const balances = await this.getWalletBalances();
+          summary.usdcBalance = balances.usdcBalance;
+          summary.totalValue = balances.usdcBalance + holdingsValue;
+        }
+      } else if (this.getWalletBalances) {
+        // If no snapshot available, only set USDC balance (don't set holdingsValue/totalValue)
         const balances = await this.getWalletBalances();
         summary.usdcBalance = balances.usdcBalance;
-        summary.totalValue = balances.usdcBalance + holdingsValue;
       }
     } catch (err) {
       this.logger.debug(
