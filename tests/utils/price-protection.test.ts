@@ -3,7 +3,21 @@ import assert from "node:assert/strict";
 import {
   validatePriceProtection,
   type PriceProtectionResult,
+  ABSOLUTE_MIN_TRADEABLE_PRICE,
 } from "../../src/utils/post-order.util";
+
+describe("ABSOLUTE_MIN_TRADEABLE_PRICE constant", () => {
+  test("ABSOLUTE_MIN_TRADEABLE_PRICE is set to 0.001 (0.1¢)", () => {
+    // This constant is the hard floor for all orders - you can't trade at $0
+    // It's intentionally very low (0.1¢) to only catch truly invalid prices
+    assert.equal(ABSOLUTE_MIN_TRADEABLE_PRICE, 0.001);
+  });
+
+  test("ABSOLUTE_MIN_TRADEABLE_PRICE is greater than zero", () => {
+    // The constant must be positive to prevent $0 orders
+    assert.ok(ABSOLUTE_MIN_TRADEABLE_PRICE > 0);
+  });
+});
 
 describe("validatePriceProtection", () => {
   // === SELL PROTECTION TESTS (floor check - don't dump too cheap) ===
