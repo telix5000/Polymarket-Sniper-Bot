@@ -2529,3 +2529,156 @@ describe("Emergency Hedge Sizing", () => {
     });
   });
 });
+
+/**
+ * Tests for Hedge Exit Monitoring
+ *
+ * These tests verify the hedge exit monitoring behavior when positions are in paired
+ * hedge states (original + hedge position). When either side drops below hedgeExitThreshold,
+ * it should be sold to recover remaining value.
+ */
+describe("Hedge Exit Monitoring", () => {
+  /**
+   * Simplified test helper function to simulate the hedge exit decision logic.
+   * This mirrors the core logic in SmartHedgingStrategy.monitorHedgeExits().
+   *
+   * @param config - Smart hedging config
+   * @param originalPrice - Current price of the original position
+   * @param hedgePrice - Current price of the hedge position
+   * @returns Object indicating which position should be exited (if any)
+   */
+  function checkHedgeExit(
+    config: SmartHedgingConfig,
+    originalPrice: number | null, // null means position not held
+    hedgePrice: number | null, // null means position not held
+  ): { shouldExitOriginal: boolean; shouldExitHedge: boolean; reason: string } {
+    // If hedge exit monitoring is disabled
+    if (config.hedgeExitThreshold <= 0) {
+      return { shouldExitOriginal: false, shouldExitHedge: false, reason: "monitoring_disabled" };
+    }
+
+    // If neither position is held, nothing to monitor
+    if (originalPrice === null && hedgePrice === null) {
+      return { shouldExitOriginal: false, shouldExitHedge: false, reason: "no_positions" };
+    }
+
+    // Check original position for exit
+    if (originalPrice !== null && originalPrice < config.hedgeExitThreshold) {
+      return { shouldExitOriginal: true, shouldExitHedge: false, reason: "original_below_threshold" };
+    }
+
+    // Check hedge position for exit
+    if (hedgePrice !== null && hedgePrice < config.hedgeExitThreshold) {
+      return { shouldExitOriginal: false, shouldExitHedge: true, reason: "hedge_below_threshold" };
+    }
+
+    return { shouldExitOriginal: false, shouldExitHedge: false, reason: "both_above_threshold" };
+  }
+
+  describe("Default Configuration", () => {
+    test("default hedgeExitThreshold should be 0.25 (25¢)", () => {
+      assert.strictEqual(
+        DEFAULT_HEDGING_CONFIG.hedgeExitThreshold,
+        0.25,
+        "Default hedgeExitThreshold should be 25¢",
+      );
+    });
+  });
+
+  describe("Hedge Exit Detection", () => {
+    test("should exit original when price drops below threshold", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
+      const result = checkHedgeExit(config, 0.20, 0.80); // Original at 20¢, hedge at 80¢
+
+      assert.strictEqual(result.shouldExitOriginal, true);
+      assert.strictEqual(result.shouldExitHedge, false);
+      assert.strictEqual(result.reason, "original_below_threshold");
+    });
+
+    test("should exit hedge when price drops below threshold", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
+      const result = checkHedgeExit(config, 0.80, 0.20); // Original at 80¢, hedge at 20¢
+
+      assert.strictEqual(result.shouldExitOriginal, false);
+      assert.strictEqual(result.shouldExitHedge, true);
+      assert.strictEqual(result.reason, "hedge_below_threshold");
+    });
+
+    test("should NOT exit when both prices above threshold", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
+      const result = checkHedgeExit(config, 0.50, 0.50); // Both at 50¢
+
+      assert.strictEqual(result.shouldExitOriginal, false);
+      assert.strictEqual(result.shouldExitHedge, false);
+      assert.strictEqual(result.reason, "both_above_threshold");
+    });
+
+    test("should NOT exit when original at exactly threshold", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
+      const result = checkHedgeExit(config, 0.25, 0.75); // Original exactly at threshold
+
+      assert.strictEqual(result.shouldExitOriginal, false, "Should not exit at exact threshold");
+      assert.strictEqual(result.shouldExitHedge, false);
+    });
+  });
+
+  describe("Disabled Monitoring", () => {
+    test("should NOT exit when hedgeExitThreshold is 0", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0 };
+      const result = checkHedgeExit(config, 0.10, 0.90); // Original at 10¢ (would trigger if enabled)
+
+      assert.strictEqual(result.shouldExitOriginal, false);
+      assert.strictEqual(result.shouldExitHedge, false);
+      assert.strictEqual(result.reason, "monitoring_disabled");
+    });
+  });
+
+  describe("Position Not Held", () => {
+    test("should handle only original position held", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
+      const result = checkHedgeExit(config, 0.20, null); // Only original held, below threshold
+
+      assert.strictEqual(result.shouldExitOriginal, true);
+      assert.strictEqual(result.shouldExitHedge, false);
+    });
+
+    test("should handle only hedge position held", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
+      const result = checkHedgeExit(config, null, 0.20); // Only hedge held, below threshold
+
+      assert.strictEqual(result.shouldExitOriginal, false);
+      assert.strictEqual(result.shouldExitHedge, true);
+    });
+
+    test("should handle neither position held", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
+      const result = checkHedgeExit(config, null, null);
+
+      assert.strictEqual(result.shouldExitOriginal, false);
+      assert.strictEqual(result.shouldExitHedge, false);
+      assert.strictEqual(result.reason, "no_positions");
+    });
+  });
+
+  describe("Custom Threshold", () => {
+    test("should respect custom threshold of 15¢", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.15 };
+
+      // At 20¢, should NOT exit (above 15¢ threshold)
+      const result1 = checkHedgeExit(config, 0.20, 0.80);
+      assert.strictEqual(result1.shouldExitOriginal, false);
+
+      // At 10¢, should exit (below 15¢ threshold)
+      const result2 = checkHedgeExit(config, 0.10, 0.90);
+      assert.strictEqual(result2.shouldExitOriginal, true);
+    });
+
+    test("should respect custom threshold of 30¢", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.30 };
+
+      // At 25¢, should exit (below 30¢ threshold)
+      const result = checkHedgeExit(config, 0.25, 0.75);
+      assert.strictEqual(result.shouldExitOriginal, true);
+    });
+  });
+});

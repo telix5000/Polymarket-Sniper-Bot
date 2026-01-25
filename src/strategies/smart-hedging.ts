@@ -151,6 +151,19 @@ export interface SmartHedgingConfig {
    * This is the safer default - near close, the outcome is more certain.
    */
   hedgeUpAnytime: boolean;
+
+  // === HEDGE EXIT MONITORING ===
+  // When holding paired hedge positions, monitor when to exit the losing side
+
+  /**
+   * Price threshold to exit the losing side of a hedged position (default: 0.25 = 25¢)
+   * When either side of a hedged position drops below this price, it's essentially
+   * a guaranteed loss for that side. The system will sell that position to recover
+   * remaining value before it goes to zero.
+   *
+   * Set to 0 to disable hedge exit monitoring.
+   */
+  hedgeExitThreshold: number;
 }
 
 export const DEFAULT_HEDGING_CONFIG: SmartHedgingConfig = {
@@ -176,6 +189,8 @@ export const DEFAULT_HEDGING_CONFIG: SmartHedgingConfig = {
   hedgeUpMaxUsd: 25, // Max USD to spend per position on hedging up (matches absoluteMaxUsd)
   hedgeUpMaxPrice: 0.95, // Don't buy at 95¢+ (too close to resolved, minimal profit margin)
   hedgeUpAnytime: false, // Default: only hedge up near close (safer - more certainty of outcome)
+  // Hedge exit monitoring
+  hedgeExitThreshold: 0.25, // Exit losing side when it drops below 25¢ (guaranteed loss)
 };
 
 /**
@@ -235,6 +250,15 @@ export class SmartHedgingStrategy {
   // Track what we've already hedged to avoid double-hedging
   private hedgedPositions: Set<string> = new Set();
 
+  // === PAIRED HEDGE TRACKING ===
+  // Track relationships between original positions and their hedge positions
+  // Key: original position key (marketId-tokenId), Value: { marketId, hedgeTokenId, originalTokenId }
+  // Used for monitoring both sides and determining when to exit the losing side
+  private pairedHedges: Map<string, { marketId: string; hedgeTokenId: string; originalTokenId: string }> = new Map();
+
+  // Track positions that have been exited via hedge exit monitoring
+  private hedgeExitedPositions: Set<string> = new Set();
+
   // Track failed liquidation attempts with cooldown to prevent repeated retries
   // Key: position key (marketId-tokenId), Value: timestamp when cooldown expires
   private failedLiquidationCooldowns: Map<string, number> = new Map();
@@ -266,10 +290,15 @@ export class SmartHedgingStrategy {
         ? `@${(this.config.hedgeUpPriceThreshold * 100).toFixed(0)}¢-${(this.config.hedgeUpMaxPrice * 100).toFixed(0)}¢/$${this.config.hedgeUpMaxUsd}`
         : "disabled";
 
+    const hedgeExitStatus =
+      this.config.hedgeExitThreshold > 0
+        ? `${(this.config.hedgeExitThreshold * 100).toFixed(0)}¢`
+        : "disabled";
+
     this.logger.info(
       `[SmartHedging] Initialized: direction=${this.config.direction}, trigger=-${this.config.triggerLossPct}%, ` +
         `maxHedge=$${this.config.maxHedgeUsd}, absoluteMax=$${this.config.absoluteMaxUsd}, ` +
-        `hedgeUp=${hedgeUpStatus}`,
+        `hedgeUp=${hedgeUpStatus}, hedgeExit=${hedgeExitStatus}`,
     );
   }
 
@@ -671,6 +700,17 @@ export class SmartHedgingStrategy {
       if (hedgeResult.success) {
         actionsCount++;
         this.hedgedPositions.add(key);
+        // Track paired hedge for exit monitoring
+        if (hedgeResult.hedgeTokenId) {
+          this.pairedHedges.set(key, {
+            marketId: position.marketId,
+            hedgeTokenId: hedgeResult.hedgeTokenId,
+            originalTokenId: position.tokenId,
+          });
+          this.logger.debug(
+            `[SmartHedging] 📊 Tracking paired hedge: original=${position.tokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}... hedge=${hedgeResult.hedgeTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}...`,
+          );
+        }
         continue;
       }
 
@@ -684,6 +724,14 @@ export class SmartHedgingStrategy {
           `[SmartHedging] 🛑 Partial hedge fill ($${hedgeResult.filledAmountUsd.toFixed(2)}) - marking position as hedged to prevent exceeding ABSOLUTE_MAX`,
         );
         this.hedgedPositions.add(key);
+        // Track paired hedge even for partial fills
+        if (hedgeResult.hedgeTokenId) {
+          this.pairedHedges.set(key, {
+            marketId: position.marketId,
+            hedgeTokenId: hedgeResult.hedgeTokenId,
+            originalTokenId: position.tokenId,
+          });
+        }
         actionsCount++;
         continue;
       }
@@ -818,6 +866,14 @@ export class SmartHedgingStrategy {
         );
       }
     }
+    }
+
+    // === PHASE 3: HEDGE EXIT MONITORING ===
+    // Monitor paired hedge positions and exit the losing side when it drops below threshold
+    // This recovers value from guaranteed losing positions before they go to zero
+    if (this.config.hedgeExitThreshold > 0 && this.pairedHedges.size > 0) {
+      const exitActionsCount = await this.monitorHedgeExits(positions, now);
+      actionsCount += exitActionsCount;
     }
 
     // === LOG DEDUPLICATION: Emit aggregated skip summary (rate-limited) ===
@@ -1069,6 +1125,92 @@ export class SmartHedgingStrategy {
   }
 
   /**
+   * Monitor paired hedge positions and exit the losing side when it drops below threshold.
+   *
+   * When we hold both sides of a binary market (original position + hedge position),
+   * one side is guaranteed to lose. When a side drops below hedgeExitThreshold (e.g., 25¢),
+   * it's essentially a guaranteed loss - we should sell it to recover remaining value
+   * before it goes to zero.
+   *
+   * @param positions - All current positions from position tracker
+   * @param now - Current timestamp
+   * @returns Number of exit actions taken
+   */
+  private async monitorHedgeExits(
+    positions: Position[],
+    now: number,
+  ): Promise<number> {
+    let exitActionsCount = 0;
+
+    // Create a map for quick position lookup by marketId-tokenId
+    const positionMap = new Map<string, Position>();
+    for (const pos of positions) {
+      positionMap.set(`${pos.marketId}-${pos.tokenId}`, pos);
+    }
+
+    // Check each paired hedge
+    for (const [originalKey, pairedInfo] of this.pairedHedges.entries()) {
+      // Skip if already exited
+      if (this.hedgeExitedPositions.has(originalKey)) {
+        continue;
+      }
+
+      const { marketId, hedgeTokenId, originalTokenId } = pairedInfo;
+      const hedgeKey = `${marketId}-${hedgeTokenId}`;
+
+      // Get both positions
+      const originalPosition = positionMap.get(originalKey);
+      const hedgePosition = positionMap.get(hedgeKey);
+
+      // Skip if either position is no longer held
+      if (!originalPosition && !hedgePosition) {
+        // Both positions gone - clean up tracking
+        this.pairedHedges.delete(originalKey);
+        continue;
+      }
+
+      // Check original position for exit (if still held)
+      if (originalPosition && originalPosition.currentPrice < this.config.hedgeExitThreshold) {
+        const tokenIdShort = originalTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH);
+        this.logger.warn(
+          `[SmartHedging] 🔻 HEDGE EXIT: Original ${originalPosition.side} ${tokenIdShort}... at ` +
+            `${formatCents(originalPosition.currentPrice)} < ${formatCents(this.config.hedgeExitThreshold)} threshold - SELLING to recover value`,
+        );
+
+        const sold = await this.sellPosition(originalPosition);
+        if (sold) {
+          exitActionsCount++;
+          this.hedgeExitedPositions.add(originalKey);
+          this.logger.info(
+            `[SmartHedging] ✅ HEDGE EXIT: Sold losing original position ${tokenIdShort}...`,
+          );
+        }
+        continue; // Don't check hedge side in same cycle
+      }
+
+      // Check hedge position for exit (if still held)
+      if (hedgePosition && hedgePosition.currentPrice < this.config.hedgeExitThreshold) {
+        const tokenIdShort = hedgeTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH);
+        this.logger.warn(
+          `[SmartHedging] 🔻 HEDGE EXIT: Hedge ${hedgePosition.side} ${tokenIdShort}... at ` +
+            `${formatCents(hedgePosition.currentPrice)} < ${formatCents(this.config.hedgeExitThreshold)} threshold - SELLING to recover value`,
+        );
+
+        const sold = await this.sellPosition(hedgePosition);
+        if (sold) {
+          exitActionsCount++;
+          this.hedgeExitedPositions.add(hedgeKey);
+          this.logger.info(
+            `[SmartHedging] ✅ HEDGE EXIT: Sold losing hedge position ${tokenIdShort}...`,
+          );
+        }
+      }
+    }
+
+    return exitActionsCount;
+  }
+
+  /**
    * Execute a hedge - buy the opposite side
    * Supports all binary market types: YES/NO, Over/Under, Team A/Team B, etc.
    *
@@ -1080,11 +1222,12 @@ export class SmartHedgingStrategy {
    *          - reason "TOO_EXPENSIVE" means opposite side >= 90¢ but < 95¢, try liquidation
    *          - other reasons indicate hedge attempt failed, try liquidation
    *          - filledAmountUsd: Amount spent on partial fills (prevents re-hedging if > 0)
+   *          - hedgeTokenId: The token ID of the hedge position (for paired tracking)
    */
   private async executeHedge(
     position: Position,
     lossPct?: number,
-  ): Promise<{ success: boolean; reason?: string; filledAmountUsd?: number }> {
+  ): Promise<{ success: boolean; reason?: string; filledAmountUsd?: number; hedgeTokenId?: string }> {
     const currentSide = position.side?.toUpperCase();
 
     // Get the opposite token (works for any binary market)
@@ -1238,7 +1381,7 @@ export class SmartHedgingStrategy {
         // Deduct from per-cycle hedge budget to prevent exceeding reserves
         this.deductFromCycleHedgeBudget(hedgeUsd);
         this.logger.info(`[SmartHedging] ✅ Hedge executed successfully`);
-        return { success: true };
+        return { success: true, hedgeTokenId: oppositeTokenId };
       }
 
       // Check for partial fill - money was spent even though order didn't fully complete
@@ -1250,10 +1393,12 @@ export class SmartHedgingStrategy {
           `[SmartHedging] ⚠️ Hedge partially filled: $${filledUsd.toFixed(2)} spent (order incomplete)`,
         );
         // Return partial fill info so caller can mark position as hedged
+        // Include hedgeTokenId for paired tracking even on partial fill
         return {
           success: false,
           reason: result.reason ?? "ORDER_NOT_FILLED",
           filledAmountUsd: filledUsd,
+          hedgeTokenId: oppositeTokenId,
         };
       }
 

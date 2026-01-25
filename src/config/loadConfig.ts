@@ -1323,6 +1323,12 @@ export type StrategyConfig = {
    */
   smartHedgingEmergencyLossPct: number;
   /**
+   * Price threshold to exit the losing side of a hedged position (default: 0.25 = 25¢)
+   * When either side of a hedged position drops below this price, sell to recover value.
+   * Set to 0 to disable hedge exit monitoring.
+   */
+  smartHedgingHedgeExitThreshold: number;
+  /**
    * Enable fallback liquidation when hedging fails
    * When true, if a hedge cannot execute, the position will be sold to stop further losses
    * Default: true - don't let losers sit and go to zero
@@ -1791,6 +1797,20 @@ export function loadStrategyConfig(
             .SMART_HEDGING_EMERGENCY_LOSS_PCT
         : undefined) ??
       30, // Default: emergency mode at 30% loss
+    /**
+     * SMART_HEDGING_HEDGE_EXIT_THRESHOLD: Price threshold to exit losing side of hedged position
+     * When either side of a hedged position drops below this price, sell to recover value.
+     * Default: 0.25 (25¢)
+     */
+    smartHedgingHedgeExitThreshold:
+      parseNumber(
+        readEnv("SMART_HEDGING_HEDGE_EXIT_THRESHOLD", overrides) ?? "",
+      ) ??
+      ("SMART_HEDGING_HEDGE_EXIT_THRESHOLD" in preset
+        ? (preset as { SMART_HEDGING_HEDGE_EXIT_THRESHOLD: number })
+            .SMART_HEDGING_HEDGE_EXIT_THRESHOLD
+        : undefined) ??
+      0.25, // Default: exit losing side when it drops below 25¢
     /**
      * SMART_HEDGING_ENABLE_FALLBACK_LIQUIDATION: Enable fallback liquidation when hedging fails
      * When true, if a hedge cannot execute, the position will be sold to stop further losses
