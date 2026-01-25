@@ -260,7 +260,8 @@ export class TradeExecutorService {
         );
 
         // Send telegram notification for successful frontrun/copy trade
-        void notifyFrontrun(
+        // notifyFrontrun handles its own logging; we just catch any unexpected errors
+        notifyFrontrun(
           signal.marketId,
           signal.tokenId,
           frontrunSize / signal.price, // Calculate shares from USD
@@ -269,11 +270,8 @@ export class TradeExecutorService {
           {
             outcome: signal.outcome,
           },
-        ).catch((err) => {
-          // Log notification errors for debugging
-          logger.warn(
-            `[Frontrun] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`,
-          );
+        ).catch(() => {
+          // Swallow errors here; notifyFrontrun is responsible for logging its own failures.
         });
       } else if (submissionResult.status === "skipped") {
         logger.warn(
@@ -297,7 +295,7 @@ export class TradeExecutorService {
               `[Frontrun] Skipping partial fill notification due to invalid signal price: ${signal.price}`,
             );
           } else {
-            void notifyFrontrun(
+            notifyFrontrun(
               signal.marketId,
               signal.tokenId,
               partialFill / signal.price,
@@ -306,10 +304,8 @@ export class TradeExecutorService {
               {
                 outcome: signal.outcome,
               },
-            ).catch((err) => {
-              logger.warn(
-                `[Frontrun] Failed to send Telegram notification for partial fill: ${err instanceof Error ? err.message : String(err)}`,
-              );
+            ).catch(() => {
+              // Swallow errors here; notifyFrontrun is responsible for logging its own failures.
             });
           }
         } else {

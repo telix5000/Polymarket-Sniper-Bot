@@ -230,7 +230,8 @@ export class ArbTradeExecutor implements TradeExecutor {
       );
 
       // Send telegram notification for first leg BUY
-      void notifyBuy(
+      // notifyBuy handles its own logging; we just catch any unexpected errors
+      notifyBuy(
         plan.marketId,
         first.tokenId,
         plan.sizeUsd / first.ask, // Calculate shares from USD
@@ -240,11 +241,8 @@ export class ArbTradeExecutor implements TradeExecutor {
           strategy: "Arbitrage",
           outcome: first.outcome,
         },
-      ).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.warn(
-          `[ARB] Failed to send first-leg BUY notification: ${message}`,
-        );
+      ).catch(() => {
+        // Swallow errors here; notifyBuy is responsible for logging its own failures.
       });
 
       const refreshedFirst = await this.provider.getOrderBookTop(first.tokenId);
@@ -284,7 +282,8 @@ export class ArbTradeExecutor implements TradeExecutor {
       );
 
       // Send telegram notification for second leg BUY
-      void notifyBuy(
+      // notifyBuy handles its own logging; we just catch any unexpected errors
+      notifyBuy(
         plan.marketId,
         second.tokenId,
         plan.sizeUsd / refreshedSecond.bestAsk, // Calculate shares from USD
@@ -294,11 +293,8 @@ export class ArbTradeExecutor implements TradeExecutor {
           strategy: "Arbitrage",
           outcome: second.outcome,
         },
-      ).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.warn(
-          `[ARB] Failed to send second-leg BUY notification: ${message}`,
-        );
+      ).catch(() => {
+        // Swallow errors here; notifyBuy is responsible for logging its own failures.
       });
 
       return {

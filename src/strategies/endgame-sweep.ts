@@ -306,7 +306,8 @@ export class EndgameSweepStrategy {
         this.logger.info(`[EndgameSweep] ✅ Bought successfully`);
 
         // Send telegram notification for endgame sweep buy
-        void notifyBuy(
+        // notifyBuy handles its own logging; we just catch any unexpected errors
+        notifyBuy(
           market.id,
           market.tokenId,
           sizeUsd / market.price, // Estimate shares from USD
@@ -317,7 +318,7 @@ export class EndgameSweepStrategy {
             outcome: market.side,
           },
         ).catch(() => {
-          // Ignore notification errors - logging is handled by the service
+          // Swallow errors here; notifyBuy is responsible for logging its own failures.
         });
 
         return true;

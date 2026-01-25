@@ -332,7 +332,7 @@ export class PositionStackingStrategy {
 
     for (const position of positions) {
       const existingBaseline = this.positionBaselines.get(position.tokenId);
-      
+
       if (existingBaseline) {
         // Position already has a baseline - just update the lastUpdatedAtMs
         // to indicate this position is still active (prevents stale cleanup)
@@ -645,10 +645,11 @@ export class PositionStackingStrategy {
         );
 
         // Send telegram notification for position stacking
+        // notifyStack handles its own logging; we just catch any unexpected errors
         const entryPrice = position.avgEntryPriceCents
           ? position.avgEntryPriceCents / 100
           : position.entryPrice;
-        void notifyStack(
+        notifyStack(
           position.marketId,
           position.tokenId,
           sizeUsd / position.currentPrice, // Estimate shares from USD
@@ -659,7 +660,7 @@ export class PositionStackingStrategy {
             outcome: outcome,
           },
         ).catch(() => {
-          // Ignore notification errors - logging is handled by the service
+          // Swallow errors here; notifyStack is responsible for logging its own failures.
         });
 
         return true;
@@ -720,8 +721,7 @@ export class PositionStackingStrategy {
    */
   private cleanupStaleBaselines(): void {
     const now = Date.now();
-    const staleThreshold =
-      now - PositionStackingStrategy.BASELINE_STALE_MS;
+    const staleThreshold = now - PositionStackingStrategy.BASELINE_STALE_MS;
 
     for (const [tokenId, baseline] of this.positionBaselines) {
       // If baseline hasn't been updated in 2 hours, it's for a position
@@ -772,6 +772,8 @@ export class PositionStackingStrategy {
     this.stackedPositions.clear();
     this.cooldowns.clear();
     this.positionBaselines.clear();
-    this.logger.info("[PositionStacking] Cleared all stacked positions and baselines");
+    this.logger.info(
+      "[PositionStacking] Cleared all stacked positions and baselines",
+    );
   }
 }
