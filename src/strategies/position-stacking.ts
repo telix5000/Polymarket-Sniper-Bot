@@ -528,12 +528,12 @@ export class PositionStackingStrategy {
   /**
    * Apply budget-aware sizing to a stack amount.
    * 
-   * CRITICAL: Stacking is NEVER blocked by dynamic reserves. Stacking has its own rules
+   * CRITICAL: Stacking is NEVER blocked by RISK_OFF mode or reserve shortfall. Stacking has its own rules
    * and capitalizes on winning momentum - a high-value opportunity that should proceed.
-   * The only constraint is the available cash.
+   * It only skips when available cash is below the minimum stack amount.
    *
    * @param computedUsd - The originally computed stack amount
-   * @returns Object with { skip: false, cappedUsd: number, isPartial: boolean } - stacking never skips due to reserves
+   * @returns Object with { skip: true; reason: string } or { skip: false, cappedUsd: number, isPartial: boolean }
    */
   private applyBudgetAwareSizing(
     computedUsd: number,

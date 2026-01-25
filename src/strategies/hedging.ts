@@ -392,13 +392,14 @@ export class HedgingStrategy {
   /**
    * Apply budget-aware sizing to a computed hedge/buy amount.
    * 
-   * CRITICAL: Hedging is NEVER blocked by dynamic reserves. Hedging has its own rules
+   * CRITICAL: Hedging is NEVER blocked by RISK_OFF mode or reserve shortfall. Hedging has its own rules
    * and is a high-priority risk management operation that must be allowed to proceed.
-   * The only constraint is the available cash and minimum hedge amount (hedging-specific rule).
+   * It only skips when there's literally zero cash available. The minimum hedge amount check
+   * happens in the calling function (executeHedge/tryBuyMoreShares).
    *
    * @param computedUsd - The originally computed hedge/buy amount
    * @param operationLabel - Label for logging (e.g., "HEDGE" or "HEDGE UP")
-   * @returns Object with { skip: false, cappedUsd: number, isPartial: boolean } - hedging never skips due to reserves
+   * @returns Object with { skip: true; reason: string } or { skip: false, cappedUsd: number, isPartial: boolean }
    */
   private applyReserveAwareSizing(
     computedUsd: number,
@@ -912,13 +913,13 @@ export class HedgingStrategy {
         }
 
         // === REASON-AWARE HEDGE FALLBACK ===
-        // When hedge fails due to insufficient funds or reserve shortfall, try to free funds
+        // When hedge fails due to insufficient funds or no cash available, try to free funds
         // by selling profitable positions (lowest profit first), then retry the hedge.
         // Keep selling positions until we have enough funds for the hedge.
         //
         // IMPORTANT: This fund-freeing logic is ONLY for HEDGING DOWN (protecting losses).
         // HEDGE UP (buying more of winning positions) should NOT sell other positions.
-        if (hedgeResult.reason === "INSUFFICIENT_BALANCE_OR_ALLOWANCE" || hedgeResult.reason === "RESERVE_SHORTFALL") {
+        if (hedgeResult.reason === "INSUFFICIENT_BALANCE_OR_ALLOWANCE" || hedgeResult.reason === "NO_CASH_AVAILABLE") {
           // Calculate how much we need for the hedge
           // Use absoluteMaxUsd as the target since that's the max we'd spend on a hedge
           const targetHedgeAmount = this.config.allowExceedMax 
@@ -1125,7 +1126,7 @@ export class HedgingStrategy {
         // Check for critical skip reasons that need visibility
         // Use specific patterns to avoid false positives (e.g., matching 'reserve' in unrelated text)
         const hasCriticalSkips = 
-          summary.includes("RESERVE_SHORTFALL") || 
+          summary.includes("NO_CASH_AVAILABLE") || 
           summary.includes("untrusted_pnl") ||
           summary.includes("not_tradable") ||
           summary.includes("cooldown") ||

@@ -295,6 +295,13 @@ export class EndgameSweepStrategy {
     }
 
     // UNLIMITED MODE: Use available cash, not ENV cap
+    // Log unlimited mode for consistency with hedging and stacking strategies
+    if (this.cycleSweepBudgetRemaining !== null) {
+      this.logger.info(
+        `[EndgameSweep] 📊 SWEEP SIZING: UNLIMITED MODE - using available cash $${this.cycleSweepBudgetRemaining.toFixed(2)}`,
+      );
+    }
+
     // Apply budget-aware sizing using cycle budget (available cash)
     const budgetResult = this.applyBudgetAwareSizing(maxUsd);
     if (budgetResult.skip) {
@@ -368,7 +375,9 @@ export class EndgameSweepStrategy {
    * UNLIMITED MODE: Uses available cash, no ENV cap.
    *
    * @param computedUsd - The originally computed sweep amount
-   * @returns Object with { skip: false, cappedUsd: number, isPartial: boolean } - sweeps never skip due to reserves
+   * @returns Object with { skip: true; reason: string } or { skip: false, cappedUsd: number, isPartial: boolean }.
+   *          Sweeps are never blocked by RISK_OFF mode or reserve shortfall; they only skip when
+   *          available cash is below the minimum sweep amount.
    */
   private applyBudgetAwareSizing(
     computedUsd: number,
