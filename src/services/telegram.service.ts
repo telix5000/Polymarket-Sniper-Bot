@@ -630,7 +630,8 @@ export class TelegramService {
  */
 export function formatPrice(price: number): string {
   // Return "Unknown" for negative prices (sentinel value for undetermined payout)
-  if (price < 0) {
+  // or for special numeric values like NaN/Infinity that indicate calculation errors
+  if (price < 0 || !Number.isFinite(price) || Number.isNaN(price)) {
     return "Unknown";
   }
   // Show as dollars if price is essentially $1 or more (handles rounding)

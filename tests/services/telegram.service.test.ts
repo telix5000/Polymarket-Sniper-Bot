@@ -204,6 +204,12 @@ describe("Telegram Service Message Formatting - formatPrice", () => {
     assert.strictEqual(formatPrice(-100), "Unknown");
   });
 
+  test("should return 'Unknown' for NaN and Infinity", () => {
+    assert.strictEqual(formatPrice(NaN), "Unknown");
+    assert.strictEqual(formatPrice(Infinity), "Unknown");
+    assert.strictEqual(formatPrice(-Infinity), "Unknown");
+  });
+
   test("should format prices >= $0.995 as dollars", () => {
     assert.strictEqual(formatPrice(1.0), "$1.00");
     assert.strictEqual(formatPrice(0.995), "$1.00");

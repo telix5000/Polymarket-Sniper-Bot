@@ -110,7 +110,8 @@ async function main(): Promise<void> {
     const envForBalances = loadMonitorConfig(cliOverrides);
 
     // Initialize Telegram notifications BEFORE creating orchestrator
-    // This ensures telegram service is available for strategy injection
+    // This ensures the singleton trade-notification.service.ts is initialized
+    // before strategies start executing and calling notifyBuy/notifySell
     telegramService = createTelegramService(logger);
     if (telegramService.isEnabled()) {
       // Initialize centralized trade notification service for all strategies
@@ -121,7 +122,6 @@ async function main(): Promise<void> {
     }
 
     // Create orchestrator with user's config
-    // Pass telegram service for direct injection into strategies
     orchestrator = new Orchestrator({
       client,
       logger,
@@ -130,8 +130,6 @@ async function main(): Promise<void> {
         | "conservative"
         | "balanced"
         | "aggressive",
-      // Pass telegram service for direct notification injection into strategies
-      telegram: telegramService,
       // Provide wallet balance fetcher for dynamic reserves to work
       // This enables the reserve system to track USDC balance and gate BUY orders
       getWalletBalances: async () => ({
