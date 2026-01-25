@@ -1793,8 +1793,10 @@ describe("Smart Hedging Up (High Win Probability)", () => {
 
 describe("Smart Hedging Reserve-Aware Sizing", () => {
   /**
-   * Helper function to simulate the reserve-aware hedge sizing logic.
-   * This mirrors the logic in SmartHedgingStrategy.applyReserveAwareSizing().
+   * Simplified test helper function to simulate the reserve-aware hedge sizing logic.
+   * This mirrors the core logic in SmartHedgingStrategy.applyReserveAwareSizing() but
+   * does not include all edge cases, error handling, or logging present in the actual
+   * implementation.
    *
    * The actual implementation uses a per-cycle budget that is:
    * 1. Initialized at the start of each execute() cycle from (availableCash - reserveRequired)

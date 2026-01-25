@@ -284,10 +284,10 @@ export class SmartHedgingStrategy {
 
   /**
    * Deduct an amount from the per-cycle hedge budget after a successful BUY order.
-   * @param amountUsd - The USD amount spent on the hedge/buy-more operation
+   * @param amountUsd - The USD amount spent on the hedge/buy-more operation (must be non-negative)
    */
   private deductFromCycleHedgeBudget(amountUsd: number): void {
-    if (this.cycleHedgeBudgetRemaining !== null) {
+    if (this.cycleHedgeBudgetRemaining !== null && amountUsd > 0) {
       this.cycleHedgeBudgetRemaining = Math.max(0, this.cycleHedgeBudgetRemaining - amountUsd);
     }
   }
