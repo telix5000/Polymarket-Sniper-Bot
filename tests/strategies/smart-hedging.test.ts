@@ -616,8 +616,8 @@ describe("Default Configuration Values", () => {
   test("default config has correct near-close values", () => {
     assert.strictEqual(
       DEFAULT_HEDGING_CONFIG.nearCloseWindowMinutes,
-      15,
-      "nearCloseWindowMinutes should default to 15",
+      30,
+      "nearCloseWindowMinutes should default to 30",
     );
     assert.strictEqual(
       DEFAULT_HEDGING_CONFIG.nearClosePriceDropCents,
