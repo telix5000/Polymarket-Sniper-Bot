@@ -68,6 +68,11 @@ import {
   UniversalStopLossStrategy,
   type UniversalStopLossConfig,
 } from "./universal-stop-loss";
+import {
+  PositionStackingStrategy,
+  type PositionStackingConfig,
+  DEFAULT_POSITION_STACKING_CONFIG,
+} from "./position-stacking";
 import { RiskManager, createRiskManager } from "./risk-manager";
 import { PnLLedger } from "./pnl-ledger";
 import type { RelayerContext } from "../polymarket/relayer";
@@ -98,6 +103,7 @@ export interface OrchestratorConfig {
   onChainExitConfig?: Partial<OnChainExitConfig>;
   stopLossConfig?: Partial<UniversalStopLossConfig>;
   dynamicReservesConfig?: Partial<DynamicReservesConfig>;
+  positionStackingConfig?: Partial<PositionStackingConfig>;
   /** Wallet balance fetcher for dynamic reserves (optional - if not provided, reserves are disabled) */
   getWalletBalances?: () => Promise<WalletBalances>;
 }
@@ -120,6 +126,7 @@ export class Orchestrator {
   private stopLossStrategy: UniversalStopLossStrategy;
   private scalpStrategy: ScalpTakeProfitStrategy;
   private endgameStrategy: EndgameSweepStrategy;
+  private positionStackingStrategy: PositionStackingStrategy;
   // quickFlipStrategy removed - module deprecated
 
   private executionTimer?: NodeJS.Timeout;
@@ -303,6 +310,20 @@ export class Orchestrator {
       config: {
         ...DEFAULT_SCALP_TAKE_PROFIT_CONFIG,
         ...config.scalpConfig,
+      },
+    });
+
+    // 8. Position Stacking - Double down on winning positions
+    // Stack once at MAX_POSITION_USD when position is up 20+ cents from entry
+    // Enabled by default - capitalizes on momentum in winning positions
+    this.positionStackingStrategy = new PositionStackingStrategy({
+      client: config.client,
+      logger: config.logger,
+      positionTracker: this.positionTracker,
+      config: {
+        ...DEFAULT_POSITION_STACKING_CONFIG,
+        maxStackUsd: config.maxPositionUsd,
+        ...config.positionStackingConfig,
       },
     });
 
@@ -501,7 +522,20 @@ export class Orchestrator {
         strategyTimings,
       );
 
-      // 7. Endgame Sweep - buy high-confidence positions (85-99¢)
+      // 7. Position Stacking - double down on winning positions
+      // Stack once per position at MAX_POSITION_USD when up 20+ cents from entry
+      // Pass snapshot and reserve plan for RISK_OFF gating
+      await this.runStrategyTimed(
+        "PositionStacking",
+        () =>
+          this.positionStackingStrategy.execute(
+            snapshot,
+            this.currentReservePlan ?? undefined,
+          ),
+        strategyTimings,
+      );
+
+      // 8. Endgame Sweep - buy high-confidence positions (85-99¢)
       // Pass reserve plan for RISK_OFF gating (blocks BUYs when reserves insufficient)
       await this.runStrategyTimed(
         "Endgame",

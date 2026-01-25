@@ -168,6 +168,12 @@ async function main(): Promise<void> {
         disputeWindowExitPrice: strategyConfig.autoSellDisputeExitPrice,
         stalePositionHours: strategyConfig.autoSellStalePositionHours,
       },
+      // Pass position stacking config for doubling down on winners
+      positionStackingConfig: {
+        enabled: strategyConfig.positionStackingEnabled,
+        minGainCents: strategyConfig.positionStackingMinGainCents,
+        maxCurrentPrice: strategyConfig.positionStackingMaxCurrentPrice,
+      },
     });
 
     await orchestrator.start();
