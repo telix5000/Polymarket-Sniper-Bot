@@ -3913,9 +3913,9 @@ export class PositionTracker {
           };
 
           // Log summary using new enterprise format:
-          // ACTIVE: total=N (prof=X lose=Y neutral=Z unknown=W) | REDEEMABLE: M
+          // ACTIVE: total=N (win=X lose=Y neutral=Z unknown=W) | REDEEMABLE: M
           this.logger.info(
-            `[PositionTracker] 📊 P&L Summary: ACTIVE: total=${activePositions.length} (prof=${activeProfitable.length} lose=${activeLosing.length} neutral=${activeNeutral.length} unknown=${activeUnknown.length}) | REDEEMABLE: ${redeemablePositions.length}`,
+            `[PositionTracker] 📊 P&L Summary: ACTIVE: total=${activePositions.length} (win=${activeProfitable.length} lose=${activeLosing.length} neutral=${activeNeutral.length} unknown=${activeUnknown.length}) | REDEEMABLE: ${redeemablePositions.length}`,
           );
 
           // === STRICT STATE MACHINE DIAGNOSTIC ===
