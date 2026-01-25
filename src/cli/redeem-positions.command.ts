@@ -2,10 +2,10 @@
  * CLI command to manually redeem resolved (winning/losing) positions
  *
  * Usage:
- *   npx ts-node src/cli/redeem-positions.command.ts [--include-losses] [--min-value=X]
+ *   npx ts-node src/cli/redeem-positions.command.ts [--exclude-losses] [--min-value=X]
  *
  * Options:
- *   --include-losses  Include $0 positions (losers) in redemption. Default: false
+ *   --exclude-losses  Exclude $0 positions (losers) from redemption. Default: false (losses included)
  *   --min-value=X     Minimum position value in USD to redeem. Default: 0.01
  *
  * Environment variables:
@@ -19,9 +19,9 @@
  *   4. Calls the CTF contract to redeem them for USDC
  *
  * By default:
- *   - $0 losers are SKIPPED (costs gas, returns nothing)
+ *   - $0 losers are INCLUDED (redeemed for cleanup)
  *   - Positions not yet resolved on-chain are SKIPPED
- *   - Use --include-losses to redeem $0 positions for cleanup
+ *   - Use --exclude-losses to skip $0 positions if you want to save gas
  */
 
 import "dotenv/config";
@@ -33,11 +33,14 @@ import { AutoRedeemStrategy } from "../strategies/auto-redeem";
 // Parse CLI arguments
 function parseArgs(): { includeLosses: boolean; minValueUsd: number } {
   const args = process.argv.slice(2);
-  let includeLosses = false;
+  let includeLosses = true; // Default: include losses for cleanup
   let minValueUsd = 0.01; // Default: skip positions worth less than 1 cent
 
   for (const arg of args) {
-    if (arg === "--include-losses") {
+    if (arg === "--exclude-losses" || arg === "--no-include-losses") {
+      includeLosses = false;
+    } else if (arg === "--include-losses") {
+      // Keep for backward compatibility (now a no-op since it's the default)
       includeLosses = true;
     } else if (arg.startsWith("--min-value=")) {
       const value = parseFloat(arg.split("=")[1]);
@@ -49,16 +52,17 @@ function parseArgs(): { includeLosses: boolean; minValueUsd: number } {
 Usage: npx ts-node src/cli/redeem-positions.command.ts [options]
 
 Options:
-  --include-losses    Include $0 positions (losers) in redemption
+  --exclude-losses    Exclude $0 positions (losers) from redemption (saves gas)
+  --include-losses    Include $0 positions (losers) in redemption (default, for cleanup)
   --min-value=X       Minimum position value in USD to redeem (default: 0.01)
   --help, -h          Show this help message
 
 Examples:
-  # Redeem only winning positions worth at least $0.01
+  # Redeem all positions including $0 losers (default)
   npx ts-node src/cli/redeem-positions.command.ts
 
-  # Include $0 losers (cleanup mode)
-  npx ts-node src/cli/redeem-positions.command.ts --include-losses
+  # Exclude $0 losers (save gas, skip cleanup)
+  npx ts-node src/cli/redeem-positions.command.ts --exclude-losses
 
   # Only redeem positions worth at least $1
   npx ts-node src/cli/redeem-positions.command.ts --min-value=1
