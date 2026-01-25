@@ -281,17 +281,22 @@ export class TradeExecutorService {
         );
       } else if (submissionResult.status === "failed") {
         // Check if there was a partial fill (money was spent but order not fully filled)
-        const partialFill = (submissionResult as { filledAmountUsd?: number })
-          .filledAmountUsd;
-        if (partialFill && partialFill > 0) {
+        // The postOrder function returns filledAmountUsd when an order partially fills
+        const partialFill =
+          "filledAmountUsd" in submissionResult
+            ? submissionResult.filledAmountUsd
+            : undefined;
+        if (typeof partialFill === "number" && partialFill > 0) {
           logger.warn(
             `[Frontrun] ⚠️ Partial fill: $${partialFill.toFixed(2)} of $${frontrunSize.toFixed(2)} USD filled`,
           );
           // Send notification for partial fills too - money was spent!
+          // Validate price to avoid division by zero or extreme values
+          const safePrice = signal.price > 0.001 ? signal.price : 0.5;
           void notifyFrontrun(
             signal.marketId,
             signal.tokenId,
-            partialFill / signal.price,
+            partialFill / safePrice,
             signal.price,
             partialFill,
             {
