@@ -246,7 +246,7 @@ async function main(): Promise<void> {
           smartHedging: strategyConfig.smartHedgingEnabled,
           stopLoss: true, // Always enabled when orchestrator runs
           autoRedeem: strategyConfig.autoRedeemEnabled,
-          frontrun: mempoolWillRun, // Copy trading enabled when mempool mode runs
+          frontrun: mempoolWillRun, // Frontrun/copy trading enabled when mempool mode runs
         })
         .catch((err) => {
           logger.warn(
