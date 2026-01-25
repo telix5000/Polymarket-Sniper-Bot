@@ -2252,6 +2252,7 @@ describe("PositionTracker.getProfitLiquidationCandidates Logic", () => {
     pnlPct: number;
     pnlUsd: number;
     redeemable?: boolean;
+    firstAcquiredAt?: number;
   }
 
   /**
@@ -2296,8 +2297,18 @@ describe("PositionTracker.getProfitLiquidationCandidates Logic", () => {
 
           return true;
         })
-        // Sort by lowest profit first (ascending pnlPct)
-        .sort((a, b) => a.pnlPct - b.pnlPct)
+        // Sort by lowest profit first (ascending pnlPct), then by longest held first (oldest firstAcquiredAt)
+        .sort((a, b) => {
+          // Primary sort: lowest profit first
+          const pnlDiff = a.pnlPct - b.pnlPct;
+          if (pnlDiff !== 0) return pnlDiff;
+
+          // Secondary sort: longest held first (smallest firstAcquiredAt = oldest)
+          // Positions without firstAcquiredAt are sorted last (treated as newest)
+          const aAcquired = a.firstAcquiredAt ?? Number.MAX_SAFE_INTEGER;
+          const bAcquired = b.firstAcquiredAt ?? Number.MAX_SAFE_INTEGER;
+          return aAcquired - bAcquired;
+        })
     );
   }
 
@@ -2749,6 +2760,188 @@ describe("PositionTracker.getProfitLiquidationCandidates Logic", () => {
       candidates[1].marketId,
       "m1",
       "Second should be m1 (20% profit)",
+    );
+  });
+
+  test("Secondary sort by longest held when profit is equal", () => {
+    const now = Date.now();
+    const positions: TestProfitPosition[] = [
+      {
+        marketId: "m1",
+        tokenId: "t1",
+        side: "YES",
+        size: 100,
+        entryPrice: 0.5,
+        currentPrice: 0.6,
+        pnlPct: 20, // Same profit %
+        pnlUsd: 10,
+        firstAcquiredAt: now - 3600000, // 1 hour ago
+      },
+      {
+        marketId: "m2",
+        tokenId: "t2",
+        side: "NO",
+        size: 50,
+        entryPrice: 0.4,
+        currentPrice: 0.48,
+        pnlPct: 20, // Same profit %
+        pnlUsd: 4,
+        firstAcquiredAt: now - 86400000, // 24 hours ago (oldest)
+      },
+      {
+        marketId: "m3",
+        tokenId: "t3",
+        side: "YES",
+        size: 75,
+        entryPrice: 0.3,
+        currentPrice: 0.36,
+        pnlPct: 20, // Same profit %
+        pnlUsd: 4.5,
+        firstAcquiredAt: now - 7200000, // 2 hours ago
+      },
+    ];
+    const entryTimes = new Map<string, number>();
+    positions.forEach((p) =>
+      entryTimes.set(`${p.marketId}-${p.tokenId}`, now - 300000),
+    );
+
+    const candidates = filterProfitCandidates(positions, entryTimes, {
+      minProfitPct: 0,
+      minHoldSeconds: 60,
+    });
+
+    assert.strictEqual(candidates.length, 3, "Should return all 3 positions");
+    // When profit % is equal, should be sorted by longest held first (oldest firstAcquiredAt)
+    assert.strictEqual(
+      candidates[0].marketId,
+      "m2",
+      "First should be m2 (longest held - 24 hours)",
+    );
+    assert.strictEqual(
+      candidates[1].marketId,
+      "m3",
+      "Second should be m3 (2 hours held)",
+    );
+    assert.strictEqual(
+      candidates[2].marketId,
+      "m1",
+      "Third should be m1 (1 hour held)",
+    );
+  });
+
+  test("Secondary sort handles missing firstAcquiredAt (treated as newest)", () => {
+    const now = Date.now();
+    const positions: TestProfitPosition[] = [
+      {
+        marketId: "m1",
+        tokenId: "t1",
+        side: "YES",
+        size: 100,
+        entryPrice: 0.5,
+        currentPrice: 0.6,
+        pnlPct: 15, // Same profit %
+        pnlUsd: 10,
+        firstAcquiredAt: now - 3600000, // 1 hour ago
+      },
+      {
+        marketId: "m2",
+        tokenId: "t2",
+        side: "NO",
+        size: 50,
+        entryPrice: 0.4,
+        currentPrice: 0.46,
+        pnlPct: 15, // Same profit %
+        pnlUsd: 3,
+        // No firstAcquiredAt - should be treated as newest
+      },
+      {
+        marketId: "m3",
+        tokenId: "t3",
+        side: "YES",
+        size: 75,
+        entryPrice: 0.3,
+        currentPrice: 0.345,
+        pnlPct: 15, // Same profit %
+        pnlUsd: 3.375,
+        firstAcquiredAt: now - 7200000, // 2 hours ago (oldest)
+      },
+    ];
+    const entryTimes = new Map<string, number>();
+    positions.forEach((p) =>
+      entryTimes.set(`${p.marketId}-${p.tokenId}`, now - 300000),
+    );
+
+    const candidates = filterProfitCandidates(positions, entryTimes, {
+      minProfitPct: 0,
+      minHoldSeconds: 60,
+    });
+
+    assert.strictEqual(candidates.length, 3, "Should return all 3 positions");
+    // m3 should be first (oldest), m1 second (1 hour), m2 last (no firstAcquiredAt = newest)
+    assert.strictEqual(
+      candidates[0].marketId,
+      "m3",
+      "First should be m3 (longest held - 2 hours)",
+    );
+    assert.strictEqual(
+      candidates[1].marketId,
+      "m1",
+      "Second should be m1 (1 hour held)",
+    );
+    assert.strictEqual(
+      candidates[2].marketId,
+      "m2",
+      "Third should be m2 (no firstAcquiredAt = newest)",
+    );
+  });
+
+  test("Primary sort by profit takes precedence over secondary sort", () => {
+    const now = Date.now();
+    const positions: TestProfitPosition[] = [
+      {
+        marketId: "m1",
+        tokenId: "t1",
+        side: "YES",
+        size: 100,
+        entryPrice: 0.5,
+        currentPrice: 0.65,
+        pnlPct: 30, // Higher profit
+        pnlUsd: 15,
+        firstAcquiredAt: now - 86400000, // 24 hours ago (oldest)
+      },
+      {
+        marketId: "m2",
+        tokenId: "t2",
+        side: "NO",
+        size: 50,
+        entryPrice: 0.4,
+        currentPrice: 0.44,
+        pnlPct: 10, // Lower profit
+        pnlUsd: 2,
+        firstAcquiredAt: now - 3600000, // 1 hour ago (newest)
+      },
+    ];
+    const entryTimes = new Map<string, number>();
+    positions.forEach((p) =>
+      entryTimes.set(`${p.marketId}-${p.tokenId}`, now - 300000),
+    );
+
+    const candidates = filterProfitCandidates(positions, entryTimes, {
+      minProfitPct: 0,
+      minHoldSeconds: 60,
+    });
+
+    assert.strictEqual(candidates.length, 2, "Should return both positions");
+    // m2 should be first (lower profit) even though m1 is oldest
+    assert.strictEqual(
+      candidates[0].marketId,
+      "m2",
+      "First should be m2 (lowest profit 10%)",
+    );
+    assert.strictEqual(
+      candidates[1].marketId,
+      "m1",
+      "Second should be m1 (higher profit 30%)",
     );
   });
 });

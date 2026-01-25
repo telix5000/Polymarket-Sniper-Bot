@@ -2482,14 +2482,18 @@ export class PositionTracker {
    * wallet balance is insufficient for hedging, before resorting to selling losing positions.
    *
    * Returns active, non-redeemable, **profitable** positions sorted by lowest profit
-   * (pnlPct ascending), excluding:
+   * (pnlPct ascending), then by longest held first (oldest firstAcquiredAt).
+   * This ensures long-term low-profit positions are recycled first rather than kept
+   * when funds need to be freed up for hedging.
+   *
+   * Excludes:
    * - Positions near resolution (currentPrice >= 0.9)
    * - Positions without a valid side
    * - Positions failing the minimum hold time gate
    *
    * @param minProfitPct - Minimum profit percentage to consider (default: 0 = any profit)
    * @param minHoldSeconds - Minimum hold time in seconds before a position can be sold (default: 60)
-   * @returns Array of profitable positions suitable for liquidation, sorted by lowest profit first
+   * @returns Array of profitable positions suitable for liquidation, sorted by lowest profit first, then longest held first
    */
   getProfitLiquidationCandidates(
     minProfitPct = 0,
@@ -2531,8 +2535,19 @@ export class PositionTracker {
 
           return true;
         })
-        // Sort by lowest profit first (ascending pnlPct) - sell smallest winners first
-        .sort((a, b) => a.pnlPct - b.pnlPct)
+        // Sort by lowest profit first (ascending pnlPct), then by longest held first (oldest firstAcquiredAt).
+        // This ensures we recycle long-term low-profit positions first rather than keeping them.
+        .sort((a, b) => {
+          // Primary sort: lowest profit first
+          const pnlDiff = a.pnlPct - b.pnlPct;
+          if (pnlDiff !== 0) return pnlDiff;
+
+          // Secondary sort: longest held first (smallest firstAcquiredAt = oldest)
+          // Positions without firstAcquiredAt are sorted last (treated as newest)
+          const aAcquired = a.firstAcquiredAt ?? Number.MAX_SAFE_INTEGER;
+          const bAcquired = b.firstAcquiredAt ?? Number.MAX_SAFE_INTEGER;
+          return aAcquired - bAcquired;
+        })
     );
   }
 
