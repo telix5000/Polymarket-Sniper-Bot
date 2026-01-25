@@ -202,10 +202,10 @@ export class AutoRedeemStrategy {
    * Force redeem all positions (for CLI use)
    * Includes on-chain preflight checks to avoid failed redemptions.
    *
-   * @param includeLosses - If true, includes $0 positions (losses). Default is false.
+   * @param includeLosses - If true, includes $0 positions (losses). Default is true.
    * @returns Array of redemption results with detailed skip reasons
    */
-  async forceRedeemAll(includeLosses = false): Promise<RedemptionResult[]> {
+  async forceRedeemAll(includeLosses = true): Promise<RedemptionResult[]> {
     // Get all redeemable positions first (before min value filter)
     const allRedeemable = this.positionTracker
       .getPositions()
@@ -226,8 +226,8 @@ export class AutoRedeemStrategy {
       const positionValue = position.size * position.currentPrice;
 
       // Check min value filter:
-      // - If includeLosses is false (default): skip $0 positions (losers) AND positions below minPositionUsd
-      // - If includeLosses is true: only skip if below minPositionUsd (allows $0 losers to be redeemed for cleanup)
+      // - If includeLosses is false (--exclude-losses): skip $0 positions (losers) AND positions below minPositionUsd
+      // - If includeLosses is true (default): only skip if below minPositionUsd (allows $0 losers to be redeemed for cleanup)
       //
       // A $0 loser is a position where currentPrice ≈ 0 (the outcome lost), so positionValue ≈ 0.
       // Redeeming $0 losers costs gas but returns nothing - usually pointless.
@@ -236,7 +236,7 @@ export class AutoRedeemStrategy {
 
       if (!includeLosses && isZeroValueLoser) {
         this.logger.info(
-          `[AutoRedeem] ⏭️ SKIPPED ($0 loser): ${position.marketId.slice(0, 16)}... | Value: $${positionValue.toFixed(4)} (use --include-losses to redeem)`,
+          `[AutoRedeem] ⏭️ SKIPPED ($0 loser): ${position.marketId.slice(0, 16)}... | Value: $${positionValue.toFixed(4)} (excluded via --exclude-losses)`,
         );
         results.push({
           tokenId: position.tokenId,

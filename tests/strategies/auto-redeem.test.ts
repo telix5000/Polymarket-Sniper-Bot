@@ -587,7 +587,26 @@ describe("Auto-Redeem Preflight Check and Skip Reasons", () => {
   });
 
   describe("Skip Logic with includeLosses Flag", () => {
-    test("should skip $0 losers by default (includeLosses=false)", () => {
+    test("should NOT skip $0 losers by default (includeLosses=true)", () => {
+      const losingPosition: MockPosition = {
+        tokenId: "token-loser",
+        marketId: "0x" + "1".repeat(64),
+        size: 100,
+        currentPrice: 0,
+        redeemable: true,
+      };
+
+      // New default: includeLosses=true
+      const result = shouldSkipPosition(losingPosition, 0.01, true);
+
+      assert.strictEqual(
+        result.skip,
+        false,
+        "Should NOT skip $0 loser by default (includeLosses=true)",
+      );
+    });
+
+    test("should skip $0 losers when includeLosses=false (--exclude-losses)", () => {
       const losingPosition: MockPosition = {
         tokenId: "token-loser",
         marketId: "0x" + "1".repeat(64),
@@ -598,29 +617,15 @@ describe("Auto-Redeem Preflight Check and Skip Reasons", () => {
 
       const result = shouldSkipPosition(losingPosition, 0.01, false);
 
-      assert.strictEqual(result.skip, true, "Should skip $0 loser by default");
+      assert.strictEqual(
+        result.skip,
+        true,
+        "Should skip $0 loser when includeLosses=false",
+      );
       assert.strictEqual(
         result.reason,
         "BELOW_MIN_VALUE",
         "Skip reason should be BELOW_MIN_VALUE",
-      );
-    });
-
-    test("should NOT skip $0 losers when includeLosses=true", () => {
-      const losingPosition: MockPosition = {
-        tokenId: "token-loser",
-        marketId: "0x" + "1".repeat(64),
-        size: 100,
-        currentPrice: 0,
-        redeemable: true,
-      };
-
-      const result = shouldSkipPosition(losingPosition, 0.01, true);
-
-      assert.strictEqual(
-        result.skip,
-        false,
-        "Should NOT skip $0 loser when includeLosses=true",
       );
     });
 
