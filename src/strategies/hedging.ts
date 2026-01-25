@@ -1315,7 +1315,7 @@ export class HedgingStrategy {
     // === UNLIMITED MODE FOR HEDGE UP ===
     // Use full available cash - no ENV cap.
     let buyUsd: number;
-    if (this.cycleHedgeBudgetRemaining !== null && this.cycleHedgeBudgetRemaining > 0) {
+    if (this.cycleHedgeBudgetRemaining !== null) {
       buyUsd = this.cycleHedgeBudgetRemaining;
       this.logger.info(
         `[Hedging] 📈 HEDGE UP SIZING: UNLIMITED MODE - using full available cash $${buyUsd.toFixed(2)}`,
@@ -1603,12 +1603,12 @@ export class HedgingStrategy {
     // Hedging uses full available cash - no ENV cap.
     // The hedge amount is determined by available cash, not config limits.
     // This ensures we can always protect against losses.
+    const isEmergencyHedge = lossPct !== undefined && lossPct >= this.config.emergencyLossPct;
     let hedgeUsd: number;
     
     // Use the full available budget (will be capped by applyReserveAwareSizing)
-    if (this.cycleHedgeBudgetRemaining !== null && this.cycleHedgeBudgetRemaining > 0) {
+    if (this.cycleHedgeBudgetRemaining !== null) {
       hedgeUsd = this.cycleHedgeBudgetRemaining;
-      const isEmergencyHedge = lossPct !== undefined && lossPct >= this.config.emergencyLossPct;
       if (isEmergencyHedge) {
         this.logger.warn(
           `[Hedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss): UNLIMITED MODE - using full available cash $${hedgeUsd.toFixed(2)}`,
@@ -1620,7 +1620,6 @@ export class HedgingStrategy {
       }
     } else {
       // Fallback to config limits if no budget tracking
-      const isEmergencyHedge = lossPct !== undefined && lossPct >= this.config.emergencyLossPct;
       if (isEmergencyHedge) {
         hedgeUsd = this.config.allowExceedMax ? this.config.absoluteMaxUsd : this.config.maxHedgeUsd;
         this.logger.warn(
@@ -1636,7 +1635,6 @@ export class HedgingStrategy {
 
     // === BUDGET-AWARE SIZING ===
     // Apply sizing using per-cycle hedge budget (available cash)
-    const isEmergencyHedge = lossPct !== undefined && lossPct >= this.config.emergencyLossPct;
     const operationLabel = isEmergencyHedge ? "EMERGENCY HEDGE" : "HEDGE";
     const reserveSizing = this.applyReserveAwareSizing(hedgeUsd, operationLabel);
     if (reserveSizing.skip) {

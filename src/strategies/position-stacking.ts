@@ -591,7 +591,7 @@ export class PositionStackingStrategy {
     // === UNLIMITED MODE FOR STACKING ===
     // Use full available cash - no ENV cap.
     let stackUsd: number;
-    if (this.cycleStackBudgetRemaining !== null && this.cycleStackBudgetRemaining > 0) {
+    if (this.cycleStackBudgetRemaining !== null) {
       stackUsd = this.cycleStackBudgetRemaining;
       this.logger.info(
         `[PositionStacking] 📊 STACK SIZING: UNLIMITED MODE - using full available cash $${stackUsd.toFixed(2)}`,
