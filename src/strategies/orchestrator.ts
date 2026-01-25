@@ -757,11 +757,10 @@ export class Orchestrator {
           this.enrichWithInitialInvestment(summary, summary.totalValue);
         }
       } else if (this.getWalletBalances) {
-        // If no snapshot available, only set USDC balance (don't set holdingsValue/totalValue)
+        // If no snapshot available, set USDC balance and totalValue (but not holdingsValue)
         const balances = await this.getWalletBalances();
         summary.usdcBalance = balances.usdcBalance;
 
-        // Still calculate overall return based on USDC balance alone if no holdings
         // Without holdings, total value is just USDC balance
         summary.totalValue = balances.usdcBalance;
         this.enrichWithInitialInvestment(summary, balances.usdcBalance);
