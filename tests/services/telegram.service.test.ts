@@ -196,6 +196,30 @@ describe("Telegram Service Message Formatting - escapeHtml", () => {
   });
 });
 
+describe("Telegram Service Message Formatting - formatPrice", () => {
+  // Import formatPrice for testing
+  const { formatPrice } = require("../../src/services/telegram.service");
+
+  test("should format zero price as 0.0¢", () => {
+    assert.strictEqual(formatPrice(0), "0.0¢");
+  });
+
+  test("should format low prices as cents", () => {
+    assert.strictEqual(formatPrice(0.65), "65.0¢");
+    assert.strictEqual(formatPrice(0.123), "12.3¢");
+  });
+
+  test("should format $1 prices as dollars", () => {
+    assert.strictEqual(formatPrice(1.0), "$1.00");
+    assert.strictEqual(formatPrice(0.995), "$1.00");
+  });
+
+  test("should return Unknown for negative prices (sentinel value)", () => {
+    assert.strictEqual(formatPrice(-1), "Unknown");
+    assert.strictEqual(formatPrice(-0.5), "Unknown");
+  });
+});
+
 describe("Telegram Trade Notification Types - getTradeEmoji", () => {
   test("should return correct emoji for BUY", () => {
     assert.strictEqual(getTradeEmoji("BUY"), "🛒");
@@ -663,6 +687,61 @@ describe("TelegramService Class", () => {
     const body = JSON.parse(options.body);
     assert.ok(body.text.includes("Tx:")); // Tx hash label
     assert.ok(body.text.includes("0xabcdef12345678")); // Truncated tx hash
+  });
+
+  test("sendTradeNotification handles unknown price (negative sentinel)", async () => {
+    const logger = createMockLogger();
+    const service = new TelegramService(
+      { botToken: "test-token", chatId: "123456" },
+      logger,
+    );
+    const trade: TradeNotification = {
+      type: "REDEEM",
+      marketId: "0x1234567890abcdef1234567890abcdef",
+      tokenId: "token123",
+      size: 50,
+      price: -1, // Unknown price sentinel
+      sizeUsd: -1, // Unknown value sentinel
+    };
+
+    const result = await service.sendTradeNotification(trade);
+
+    assert.strictEqual(result, true);
+
+    const [, options] = mockFetch.mock.calls[0].arguments;
+    const body = JSON.parse(options.body);
+    assert.ok(body.text.includes("Price: Unknown")); // Unknown price
+    assert.ok(body.text.includes("Value: Unknown")); // Unknown value
+    // Should NOT include entry price gain calculation for unknown price
+    assert.ok(!body.text.includes("Entry:"));
+  });
+
+  test("sendTradeNotificationWithPnL handles unknown price (negative sentinel)", async () => {
+    const logger = createMockLogger();
+    const service = new TelegramService(
+      { botToken: "test-token", chatId: "123456" },
+      logger,
+    );
+    const trade: TradeNotification = {
+      type: "REDEEM",
+      marketId: "0x1234567890abcdef1234567890abcdef",
+      tokenId: "token123",
+      size: 50,
+      price: -1, // Unknown price sentinel
+      sizeUsd: -1, // Unknown value sentinel
+      entryPrice: 0.65, // Entry price should be ignored when price is unknown
+    };
+
+    const result = await service.sendTradeNotificationWithPnL(trade);
+
+    assert.strictEqual(result, true);
+
+    const [, options] = mockFetch.mock.calls[0].arguments;
+    const body = JSON.parse(options.body);
+    assert.ok(body.text.includes("Price: Unknown")); // Unknown price
+    assert.ok(body.text.includes("Value: Unknown")); // Unknown value
+    // Should NOT include entry price gain calculation for unknown price
+    assert.ok(!body.text.includes("Entry:"));
   });
 });
 

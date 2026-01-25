@@ -540,31 +540,23 @@ export class AutoRedeemStrategy {
    * @param wallet - The wallet instance with provider
    * @param ctfAddress - CTF contract address
    * @param usdcAddress - USDC collateral token address
-   * @param assumeWinner - If true, assume position is a winner when payout can't be determined
-   *                       (default: true, since this is called after successful redemption)
-   * @returns Object with price (0-1 scale) and value (USD)
+   * @returns Object with price (0-1 scale) and value (USD), or null if payout cannot be determined
    */
   private async calculatePayoutValue(
     position: RedeemablePosition,
     wallet: Wallet,
     ctfAddress: string,
     usdcAddress: string,
-    assumeWinner: boolean = true,
-  ): Promise<{ price: number; value: number }> {
-    // Default payout when we can't determine the exact value:
-    // - If assumeWinner is true (post-successful-redemption), default to $1.00 per share
-    //   because the transaction would have reverted if the position was worthless
-    // - If assumeWinner is false, default to zero to avoid overstating value
-    const defaultPayout = assumeWinner
-      ? { price: 1.0, value: position.size }
-      : { price: 0, value: 0 };
+  ): Promise<{ price: number; value: number } | null> {
+    // Return null when payout cannot be determined - this is safer than guessing
+    // The caller should handle null gracefully (e.g., show "Unknown" in notifications)
 
     try {
       if (!wallet.provider) {
         this.logger.debug(
-          `[AutoRedeem] No wallet provider - using default payout (assumeWinner=${assumeWinner})`,
+          `[AutoRedeem] No wallet provider - cannot determine payout`,
         );
-        return defaultPayout;
+        return null;
       }
 
       const ctfContract = new Contract(ctfAddress, CTF_ABI, wallet.provider);
@@ -588,11 +580,11 @@ export class AutoRedeemStrategy {
       }
 
       if (payoutDenominator === 0n) {
-        // Market not resolved - should not happen here, but use default payout
+        // Market not resolved - should not happen here, but be safe
         this.logger.debug(
-          `[AutoRedeem] payoutDenominator is 0 - using default payout (assumeWinner=${assumeWinner})`,
+          `[AutoRedeem] payoutDenominator is 0 - market not resolved, cannot determine payout`,
         );
-        return defaultPayout;
+        return null;
       }
 
       // For binary markets, check both outcome slots to find which one matches our tokenId
@@ -640,17 +632,17 @@ export class AutoRedeemStrategy {
         }
       }
 
-      // Could not match tokenId to any outcome - use default payout
+      // Could not match tokenId to any outcome - cannot determine payout
       this.logger.debug(
-        `[AutoRedeem] Could not match tokenId ${position.tokenId.slice(0, 16)}... to any outcome - using default payout (assumeWinner=${assumeWinner})`,
+        `[AutoRedeem] Could not match tokenId ${position.tokenId.slice(0, 16)}... to any outcome - cannot determine payout`,
       );
-      return defaultPayout;
+      return null;
     } catch (err) {
-      // On error, use default payout based on assumeWinner flag
+      // On error, return null to indicate payout could not be determined
       this.logger.debug(
-        `[AutoRedeem] calculatePayoutValue error: ${err instanceof Error ? err.message : String(err)} - using default payout (assumeWinner=${assumeWinner})`,
+        `[AutoRedeem] calculatePayoutValue error: ${err instanceof Error ? err.message : String(err)} - cannot determine payout`,
       );
-      return defaultPayout;
+      return null;
     }
   }
 
@@ -1055,9 +1047,10 @@ export class AutoRedeemStrategy {
         usdcAddress,
       );
 
-      // Calculate realized P&L if entry price is available
+      // Calculate realized P&L only if we could determine the payout price
+      // If payoutInfo is null, we can't reliably calculate P&L
       let realizedPnl: number | undefined;
-      if (this.getPositionPnL) {
+      if (payoutInfo !== null && this.getPositionPnL) {
         const pnlData = this.getPositionPnL(position.tokenId);
         if (pnlData) {
           // When redeeming, we get payoutInfo.price (0 or 1) per share
@@ -1069,12 +1062,17 @@ export class AutoRedeemStrategy {
         }
       }
 
+      // Use -1 as a sentinel value to indicate "unknown" price
+      // The notification service will display this appropriately
+      const notificationPrice = payoutInfo?.price ?? -1;
+      const notificationValue = payoutInfo?.value ?? -1;
+
       void notifyRedeem(
         position.marketId,
         position.tokenId,
         position.size,
-        payoutInfo.price,
-        payoutInfo.value,
+        notificationPrice,
+        notificationValue,
         {
           txHash: tx.hash,
           pnl: realizedPnl,

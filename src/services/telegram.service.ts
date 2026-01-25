@@ -246,10 +246,11 @@ export class TelegramService {
 
     message += `💵 Size: ${trade.size.toFixed(2)} shares\n`;
     message += `💰 Price: ${this.formatPrice(trade.price)}\n`;
-    message += `📊 Value: $${trade.sizeUsd.toFixed(2)}\n`;
+    // Show "Unknown" for value if price is unknown (negative sentinel)
+    message += `📊 Value: ${trade.sizeUsd < 0 ? "Unknown" : `$${trade.sizeUsd.toFixed(2)}`}\n`;
 
-    // Show entry price and gain for sells
-    if (trade.entryPrice !== undefined && trade.entryPrice > 0) {
+    // Show entry price and gain for sells (only if price is known)
+    if (trade.entryPrice !== undefined && trade.entryPrice > 0 && trade.price >= 0) {
       const gainCents = (trade.price - trade.entryPrice) * 100;
       const gainEmoji = gainCents >= 0 ? "📈" : "📉";
       message += `${gainEmoji} Entry: ${this.formatPrice(trade.entryPrice)} → ${this.formatPrice(trade.price)} (${gainCents >= 0 ? "+" : ""}${gainCents.toFixed(1)}¢)\n`;
@@ -301,10 +302,11 @@ export class TelegramService {
 
     message += `💵 Size: ${trade.size.toFixed(2)} shares\n`;
     message += `💰 Price: ${this.formatPrice(trade.price)}\n`;
-    message += `📊 Value: $${trade.sizeUsd.toFixed(2)}\n`;
+    // Show "Unknown" for value if price is unknown (negative sentinel)
+    message += `📊 Value: ${trade.sizeUsd < 0 ? "Unknown" : `$${trade.sizeUsd.toFixed(2)}`}\n`;
 
-    // Show entry price and gain for sells
-    if (trade.entryPrice !== undefined && trade.entryPrice > 0) {
+    // Show entry price and gain for sells (only if price is known)
+    if (trade.entryPrice !== undefined && trade.entryPrice > 0 && trade.price >= 0) {
       const gainCents = (trade.price - trade.entryPrice) * 100;
       const gainEmoji = gainCents >= 0 ? "📈" : "📉";
       message += `${gainEmoji} Entry: ${this.formatPrice(trade.entryPrice)} → ${this.formatPrice(trade.price)} (${gainCents >= 0 ? "+" : ""}${gainCents.toFixed(1)}¢)\n`;
@@ -626,8 +628,13 @@ export class TelegramService {
 
 /**
  * Format price for display - shows $X.XX for prices >= $0.995, otherwise XX.X¢
+ * Returns "Unknown" for negative prices (used as sentinel for undetermined values)
  */
 export function formatPrice(price: number): string {
+  // Handle unknown/undetermined prices (negative values used as sentinel)
+  if (price < 0) {
+    return "Unknown";
+  }
   // Show as dollars if price is essentially $1 or more (handles rounding)
   if (price >= 0.995) {
     // Round to avoid floating-point issues (e.g., 0.995.toFixed(2) may yield "0.99")
