@@ -214,6 +214,26 @@ export interface ScalpTakeProfitConfig {
    * Default: 5 (from MIN_ORDER_USD or config)
    */
   minOrderUsd: number;
+
+  /**
+   * Mode for handling positions with untrusted entry metadata (legacy positions).
+   *
+   * Legacy positions are those where EntryMetaResolver cannot accurately reconstruct
+   * entry timestamps from trade history (e.g., positions held for months, incomplete
+   * trade history, API limits exceeded).
+   *
+   * Options:
+   * - "skip": Skip all positions with untrusted entry metadata (safest, may block valid exits)
+   * - "allow_profitable_only": Allow exits ONLY if position is profitable AND P&L is trusted.
+   *   IMPORTANT: This mode uses P&L-only evaluation (bypasses hold-time checks entirely)
+   *   since the unreliable timeHeldSec cannot be trusted for timing decisions.
+   *   Positions meeting minProfitPct and minProfitUsd thresholds will be exited.
+   * - "allow_all": Allow all positions regardless of entry metadata trust
+   *   (legacy behavior - may incorrectly use unreliable timeHeldSec for hold-time decisions)
+   *
+   * Default: "allow_profitable_only"
+   */
+  legacyPositionMode: "skip" | "allow_profitable_only" | "allow_all";
 }
 
 /**
@@ -664,6 +684,8 @@ export const DEFAULT_SCALP_TAKE_PROFIT_CONFIG: ScalpTakeProfitConfig = {
   exitWindowSec: 120, // 2 minute exit window
   profitRetrySec: 15, // Retry every 15 seconds during PROFIT stage
   minOrderUsd: 5, // Minimum order size (positions below this are DUST)
+  // Legacy position handling (safer default)
+  legacyPositionMode: "allow_profitable_only", // Only exit profitable positions with trusted P&L
 };
 
 /**
@@ -1155,6 +1177,55 @@ export class ScalpTakeProfitStrategy {
         continue;
       }
 
+      // === LEGACY POSITION HANDLING (Jan 2025) ===
+      // Positions with untrusted entry metadata may be long-held legacy positions
+      // where trade history is incomplete. We need to be careful not to treat
+      // these as scalp candidates based on incorrect timeHeldSec values.
+      //
+      // CRITICAL: When entry metadata is untrusted, we CANNOT use timeHeldSec for
+      // hold-time decisions. The variable `bypassHoldTimeChecks` signals to later
+      // code that this position should use P&L-only evaluation.
+      let bypassHoldTimeChecks = false;
+
+      if (position.entryMetaTrusted === false) {
+        const mode = this.config.legacyPositionMode;
+
+        if (mode === "skip") {
+          // Most conservative: skip all positions with untrusted entry metadata
+          skipAggregator.add(tokenIdShort, "untrusted_entry_skip");
+          continue;
+        } else if (mode === "allow_profitable_only") {
+          // Safer behavior: only allow if profitable AND P&L is trusted.
+          // P&L trust was verified earlier in this function (see "CRITICAL: P&L TRUST CHECK"
+          // section around line 1166-1177). If we reach here, pnlTrusted === true.
+          //
+          // CRITICAL: We do NOT use evaluateScalpExit() for these positions because
+          // that function relies on timeHeldSec for hold-time decisions. Since entry
+          // metadata is untrusted, timeHeldSec may be wrong.
+          //
+          // Instead, we bypass hold-time checks and evaluate based on P&L only.
+          if (position.pnlPct <= 0) {
+            // Not profitable - skip this legacy position to avoid bad decisions
+            skipAggregator.add(tokenIdShort, "untrusted_entry_not_profitable");
+            continue;
+          }
+          // Profitable with trusted P&L - set flag to bypass hold-time checks
+          bypassHoldTimeChecks = true;
+          if (
+            this.logDeduper.shouldLog(
+              `ScalpTakeProfit:legacy_profitable:${position.tokenId}`,
+              60_000, // Log at most once per minute per position
+            )
+          ) {
+            this.logger.debug(
+              `[ScalpTakeProfit] Legacy position ${tokenIdShort} has untrusted entry (${position.entryMetaUntrustedReason ?? "unknown"}), ` +
+                `allowing P&L-only exit since profitable (+${position.pnlPct.toFixed(1)}%) and P&L trusted (bypassing hold-time checks)`,
+            );
+          }
+        }
+        // mode === "allow_all": proceed with normal evaluation (legacy behavior)
+      }
+
       // STRATEGY GATE: Skip positions with NO_BOOK status
       // These positions have no orderbook data - P&L calculation uses fallback pricing
       // which may be inaccurate. Better to skip than make bad decisions.
@@ -1235,7 +1306,17 @@ export class ScalpTakeProfitStrategy {
       }
 
       // Check if position qualifies for scalp exit
-      const exitDecision = await this.evaluateScalpExit(position, now);
+      let exitDecision: { shouldExit: boolean; reason?: string };
+
+      if (bypassHoldTimeChecks) {
+        // LEGACY POSITION WITH UNTRUSTED ENTRY: Use P&L-only evaluation
+        // We already verified pnlPct > 0 and pnlTrusted === true above.
+        // Now check if the profit meets our thresholds (no hold-time checks).
+        exitDecision = this.evaluatePnlOnlyExit(position);
+      } else {
+        // Normal path: full evaluation including hold-time checks
+        exitDecision = await this.evaluateScalpExit(position, now);
+      }
 
       if (!exitDecision.shouldExit) {
         // Categorize skip reason for aggregation using case-insensitive pattern matching
@@ -1346,6 +1427,56 @@ export class ScalpTakeProfitStrategy {
     this.cleanupStaleData(enrichedPositions);
 
     return scalpedCount;
+  }
+
+  /**
+   * Evaluate whether a position should be scalped using P&L-only criteria.
+   *
+   * This method is used for positions with UNTRUSTED entry metadata in
+   * "allow_profitable_only" mode. Since entry metadata (including timeHeldSec)
+   * is unreliable, we CANNOT use hold-time based decisions.
+   *
+   * Instead, we evaluate based solely on P&L thresholds:
+   * - Must meet minimum profit percentage
+   * - Must meet minimum profit in USD
+   * - Target profit percentage for immediate exit
+   *
+   * This is safer than using potentially incorrect hold-time data.
+   */
+  private evaluatePnlOnlyExit(
+    position: Position,
+  ): { shouldExit: boolean; reason?: string } {
+    // === Check 1: Must meet minimum profit percentage ===
+    if (position.pnlPct < this.config.minProfitPct) {
+      return {
+        shouldExit: false,
+        reason: `Legacy P&L-only: Profit ${position.pnlPct.toFixed(1)}% < min ${this.config.minProfitPct}%`,
+      };
+    }
+
+    // === Check 2: Must meet minimum profit in USD ===
+    if (position.pnlUsd < this.config.minProfitUsd) {
+      return {
+        shouldExit: false,
+        reason: `Legacy P&L-only: Profit $${position.pnlUsd.toFixed(2)} < min $${this.config.minProfitUsd}`,
+      };
+    }
+
+    // === Check 3: Target profit reached - TAKE IT! ===
+    // For legacy positions, we're more eager to exit since we can't use timing
+    if (position.pnlPct >= this.config.targetProfitPct) {
+      return {
+        shouldExit: true,
+        reason: `🎯 LEGACY P&L-ONLY: Target profit reached +${position.pnlPct.toFixed(1)}% >= ${this.config.targetProfitPct}% (entry metadata untrusted, bypassing hold-time checks)`,
+      };
+    }
+
+    // === Check 4: Minimum profit reached - also exit for legacy positions ===
+    // Since we can't trust hold-time data, take profits when minimum threshold is met
+    return {
+      shouldExit: true,
+      reason: `🎯 LEGACY P&L-ONLY: Min profit reached +${position.pnlPct.toFixed(1)}% >= ${this.config.minProfitPct}% (entry metadata untrusted, bypassing hold-time checks)`,
+    };
   }
 
   /**

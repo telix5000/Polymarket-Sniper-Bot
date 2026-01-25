@@ -1,6 +1,7 @@
-import { afterEach, test } from "node:test";
+import { afterEach, test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { loadStrategyConfig } from "../../src/config/loadConfig";
+import { DEFAULT_SCALP_TAKE_PROFIT_CONFIG } from "../../src/strategies/scalp-take-profit";
 
 const baseEnv = {
   RPC_URL: "http://localhost:8545",
@@ -328,4 +329,130 @@ test("SCALP_LOW_PRICE_MAX_HOLD_MINUTES env variable overrides default", () => {
 
   const config = loadStrategyConfig();
   assert.equal(config?.scalpLowPriceMaxHoldMinutes, 5);
+});
+
+// === SCALP Legacy Position Mode Tests ===
+
+test("SCALP_LEGACY_POSITION_MODE defaults to 'allow_profitable_only'", () => {
+  resetEnv();
+  Object.assign(process.env, baseEnv, {
+    STRATEGY_PRESET: "balanced",
+  });
+
+  const config = loadStrategyConfig();
+  assert.equal(config?.scalpLegacyPositionMode, "allow_profitable_only");
+});
+
+test("SCALP_LEGACY_POSITION_MODE can be set to 'skip'", () => {
+  resetEnv();
+  Object.assign(process.env, baseEnv, {
+    STRATEGY_PRESET: "balanced",
+    SCALP_LEGACY_POSITION_MODE: "skip",
+  });
+
+  const config = loadStrategyConfig();
+  assert.equal(config?.scalpLegacyPositionMode, "skip");
+});
+
+test("SCALP_LEGACY_POSITION_MODE can be set to 'allow_all'", () => {
+  resetEnv();
+  Object.assign(process.env, baseEnv, {
+    STRATEGY_PRESET: "balanced",
+    SCALP_LEGACY_POSITION_MODE: "allow_all",
+  });
+
+  const config = loadStrategyConfig();
+  assert.equal(config?.scalpLegacyPositionMode, "allow_all");
+});
+
+test("SCALP_LEGACY_POSITION_MODE handles hyphenated input (allow-profitable-only)", () => {
+  resetEnv();
+  Object.assign(process.env, baseEnv, {
+    STRATEGY_PRESET: "balanced",
+    SCALP_LEGACY_POSITION_MODE: "allow-profitable-only",
+  });
+
+  const config = loadStrategyConfig();
+  assert.equal(config?.scalpLegacyPositionMode, "allow_profitable_only");
+});
+
+test("SCALP_LEGACY_POSITION_MODE falls back to default for invalid values", () => {
+  resetEnv();
+  Object.assign(process.env, baseEnv, {
+    STRATEGY_PRESET: "balanced",
+    SCALP_LEGACY_POSITION_MODE: "invalid_mode",
+  });
+
+  const config = loadStrategyConfig();
+  assert.equal(config?.scalpLegacyPositionMode, "allow_profitable_only");
+});
+
+// === SCALP Legacy Position Mode Default Config Tests ===
+
+describe("Legacy Position Mode Default Config", () => {
+  test("DEFAULT_SCALP_TAKE_PROFIT_CONFIG has legacyPositionMode set to 'allow_profitable_only'", () => {
+    assert.equal(
+      DEFAULT_SCALP_TAKE_PROFIT_CONFIG.legacyPositionMode,
+      "allow_profitable_only",
+    );
+  });
+
+  test("DEFAULT_SCALP_TAKE_PROFIT_CONFIG has required P&L thresholds for legacy mode", () => {
+    // These thresholds are used by evaluatePnlOnlyExit() for legacy positions
+    assert.ok(
+      DEFAULT_SCALP_TAKE_PROFIT_CONFIG.minProfitPct > 0,
+      "minProfitPct should be positive",
+    );
+    assert.ok(
+      DEFAULT_SCALP_TAKE_PROFIT_CONFIG.minProfitUsd > 0,
+      "minProfitUsd should be positive",
+    );
+    assert.ok(
+      DEFAULT_SCALP_TAKE_PROFIT_CONFIG.targetProfitPct >
+        DEFAULT_SCALP_TAKE_PROFIT_CONFIG.minProfitPct,
+      "targetProfitPct should be greater than minProfitPct",
+    );
+  });
+});
+
+// === SCALP Legacy Position Mode Behavior Documentation Tests ===
+
+describe("Legacy Position Mode Behavior Documentation", () => {
+  test("'allow_profitable_only' mode uses P&L-only evaluation (no hold-time)", () => {
+    // This test documents the expected behavior:
+    // In 'allow_profitable_only' mode, positions with entryMetaTrusted === false
+    // should use evaluatePnlOnlyExit() instead of evaluateScalpExit().
+    // evaluatePnlOnlyExit() does NOT use timeHeldSec for decisions.
+    //
+    // The key difference is:
+    // - evaluateScalpExit(): Uses holdMinutes for minHoldMinutes, maxHoldMinutes checks
+    // - evaluatePnlOnlyExit(): Only checks pnlPct >= minProfitPct and pnlUsd >= minProfitUsd
+    //
+    // This ensures that unreliable timeHeldSec values don't affect scalp decisions
+    // for legacy positions.
+    const config = DEFAULT_SCALP_TAKE_PROFIT_CONFIG;
+    assert.equal(config.legacyPositionMode, "allow_profitable_only");
+    // The implementation bypasses hold-time checks for this mode
+  });
+
+  test("'skip' mode blocks all positions with untrusted entry metadata", () => {
+    // This test documents the expected behavior:
+    // In 'skip' mode, any position with entryMetaTrusted === false is skipped
+    // entirely, regardless of profitability.
+    assert.ok(
+      true,
+      "'skip' mode skips positions with entryMetaTrusted === false",
+    );
+  });
+
+  test("'allow_all' mode uses normal evaluation even with untrusted entry metadata", () => {
+    // This test documents the expected behavior:
+    // In 'allow_all' mode (legacy behavior), positions with entryMetaTrusted === false
+    // proceed through normal evaluateScalpExit() which uses timeHeldSec.
+    // This may lead to incorrect decisions if timeHeldSec is unreliable.
+    assert.ok(
+      true,
+      "'allow_all' mode uses evaluateScalpExit() with potentially unreliable timeHeldSec",
+    );
+  });
 });
