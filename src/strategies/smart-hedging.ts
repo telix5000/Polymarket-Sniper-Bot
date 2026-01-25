@@ -256,25 +256,78 @@ export class SmartHedgingStrategy {
   // Track positions that have been "hedged up" (bought more shares) this cycle
   private hedgedUpPositions: Set<string> = new Set();
 
+  // === PER-CYCLE HEDGE BUDGET ===
+  // Tracks remaining hedge budget within a single execute() cycle.
+  // This prevents multiple hedges in the same cycle from exceeding (availableCash - reserveRequired).
+  // Reset at the start of each executeInternal() call.
+  private cycleHedgeBudgetRemaining: number | null = null;
+
   /**
-   * Compute available cash for hedging operations after respecting reserve requirements.
-   *
-   * @returns availableCashAfterReserve: Cash available for hedging (availableCash - reserveRequired), or null if no plan available
+   * Initialize the per-cycle hedge budget from the current reserve plan.
+   * Called at the start of executeInternal() to set the budget for this cycle.
    */
-  private getAvailableCashAfterReserve(): number | null {
+  private initCycleHedgeBudget(): void {
     if (!this.getReservePlan) {
-      return null; // No reserve plan getter provided - no reserve gating
+      this.cycleHedgeBudgetRemaining = null;
+      return;
     }
 
     const plan = this.getReservePlan();
     if (!plan) {
-      return null; // No plan computed yet - no reserve gating
+      this.cycleHedgeBudgetRemaining = null;
+      return;
     }
 
-    // availableCashAfterReserve = availableCash - reserveRequired
-    // This is the amount we can safely use for hedging without depleting reserves
-    const availableCashAfterReserve = Math.max(0, plan.availableCash - plan.reserveRequired);
-    return availableCashAfterReserve;
+    // Initialize budget: availableCash - reserveRequired
+    this.cycleHedgeBudgetRemaining = Math.max(0, plan.availableCash - plan.reserveRequired);
+  }
+
+  /**
+   * Deduct an amount from the per-cycle hedge budget after a successful BUY order.
+   * @param amountUsd - The USD amount spent on the hedge/buy-more operation
+   */
+  private deductFromCycleHedgeBudget(amountUsd: number): void {
+    if (this.cycleHedgeBudgetRemaining !== null) {
+      this.cycleHedgeBudgetRemaining = Math.max(0, this.cycleHedgeBudgetRemaining - amountUsd);
+    }
+  }
+
+  /**
+   * Apply reserve-aware sizing to a computed hedge/buy amount.
+   * Uses the per-cycle hedge budget to prevent multiple operations from exceeding reserves.
+   *
+   * @param computedUsd - The originally computed hedge/buy amount
+   * @param operationLabel - Label for logging (e.g., "HEDGE" or "HEDGE UP")
+   * @returns Object with either { skip: true, reason: string } or { skip: false, cappedUsd: number, isPartial: boolean }
+   */
+  private applyReserveAwareSizing(
+    computedUsd: number,
+    operationLabel: string,
+  ): { skip: true; reason: string } | { skip: false; cappedUsd: number; isPartial: boolean } {
+    // If no reserve budget tracking, use full computed amount
+    if (this.cycleHedgeBudgetRemaining === null) {
+      return { skip: false, cappedUsd: computedUsd, isPartial: false };
+    }
+
+    // Check if budget is below minimum hedge threshold
+    if (this.cycleHedgeBudgetRemaining < this.config.minHedgeUsd) {
+      this.logger.info(
+        `[SmartHedging] 📋 ${operationLabel} skipped (RESERVE_SHORTFALL): budget=$${this.cycleHedgeBudgetRemaining.toFixed(2)} < minHedge=$${this.config.minHedgeUsd}`,
+      );
+      return { skip: true, reason: "RESERVE_SHORTFALL" };
+    }
+
+    // Check if budget is less than computed amount - submit partial
+    if (this.cycleHedgeBudgetRemaining < computedUsd) {
+      const cappedUsd = this.cycleHedgeBudgetRemaining;
+      this.logger.info(
+        `[SmartHedging] 📉 PARTIAL ${operationLabel}: Capping from $${computedUsd.toFixed(2)} to $${cappedUsd.toFixed(2)} (reserve constraint)`,
+      );
+      return { skip: false, cappedUsd, isPartial: true };
+    }
+
+    // Full amount available
+    return { skip: false, cappedUsd: computedUsd, isPartial: false };
   }
 
   /**
@@ -307,6 +360,10 @@ export class SmartHedgingStrategy {
   private async executeInternal(): Promise<number> {
     // Clean up expired cooldown entries periodically to prevent memory leaks
     this.cleanupExpiredCooldowns();
+
+    // === INITIALIZE PER-CYCLE HEDGE BUDGET ===
+    // This ensures multiple hedges in the same cycle don't exceed reserves
+    this.initCycleHedgeBudget();
 
     const positions = this.positionTracker.getPositions();
     let actionsCount = 0;
@@ -882,26 +939,12 @@ export class SmartHedgingStrategy {
     }
 
     // === DYNAMIC RESERVES INTEGRATION ===
-    // Cap buy size to available cash after respecting reserve requirements
-    const availableCashAfterReserve = this.getAvailableCashAfterReserve();
-    if (availableCashAfterReserve !== null) {
-      if (availableCashAfterReserve < this.config.minHedgeUsd) {
-        // Insufficient funds for even a minimum buy - skip with clear log
-        this.logger.info(
-          `[SmartHedging] 📋 HEDGE UP skipped (RESERVE_SHORTFALL): available=$${availableCashAfterReserve.toFixed(2)} < minHedge=$${this.config.minHedgeUsd}`,
-        );
-        return { success: false, reason: "RESERVE_SHORTFALL" };
-      }
-
-      if (availableCashAfterReserve < buyUsd) {
-        // Available cash is less than computed buy size but >= minHedgeUsd - submit partial buy
-        const originalBuyUsd = buyUsd;
-        buyUsd = availableCashAfterReserve;
-        this.logger.info(
-          `[SmartHedging] 📉 PARTIAL HEDGE UP: Capping buy from $${originalBuyUsd.toFixed(2)} to $${buyUsd.toFixed(2)} (reserve constraint)`,
-        );
-      }
+    // Apply reserve-aware sizing using per-cycle hedge budget
+    const reserveSizing = this.applyReserveAwareSizing(buyUsd, "HEDGE UP");
+    if (reserveSizing.skip) {
+      return { success: false, reason: reserveSizing.reason };
     }
+    buyUsd = reserveSizing.cappedUsd;
 
     // Check minimum
     if (buyUsd < this.config.minHedgeUsd) {
@@ -939,6 +982,8 @@ export class SmartHedgingStrategy {
       });
 
       if (result.status === "submitted") {
+        // Deduct from per-cycle hedge budget to prevent exceeding reserves
+        this.deductFromCycleHedgeBudget(buyUsd);
         this.logger.info(`[SmartHedging] ✅ Buy more executed successfully`);
         return { success: true, amountUsd: buyUsd };
       }
@@ -1032,26 +1077,12 @@ export class SmartHedgingStrategy {
     }
 
     // === DYNAMIC RESERVES INTEGRATION ===
-    // Cap hedge size to available cash after respecting reserve requirements
-    const availableCashAfterReserve = this.getAvailableCashAfterReserve();
-    if (availableCashAfterReserve !== null) {
-      if (availableCashAfterReserve < this.config.minHedgeUsd) {
-        // Insufficient funds for even a minimum hedge - skip with clear log
-        this.logger.info(
-          `[SmartHedging] 📋 HEDGE skipped (RESERVE_SHORTFALL): available=$${availableCashAfterReserve.toFixed(2)} < minHedge=$${this.config.minHedgeUsd}`,
-        );
-        return { success: false, reason: "RESERVE_SHORTFALL" };
-      }
-
-      if (availableCashAfterReserve < hedgeUsd) {
-        // Available cash is less than computed hedge size but >= minHedgeUsd - submit partial hedge
-        const originalHedgeUsd = hedgeUsd;
-        hedgeUsd = availableCashAfterReserve;
-        this.logger.info(
-          `[SmartHedging] 📉 PARTIAL HEDGE: Capping hedge from $${originalHedgeUsd.toFixed(2)} to $${hedgeUsd.toFixed(2)} (reserve constraint)`,
-        );
-      }
+    // Apply reserve-aware sizing using per-cycle hedge budget
+    const reserveSizing = this.applyReserveAwareSizing(hedgeUsd, "HEDGE");
+    if (reserveSizing.skip) {
+      return { success: false, reason: reserveSizing.reason };
     }
+    hedgeUsd = reserveSizing.cappedUsd;
 
     // Check minimum
     if (hedgeUsd < this.config.minHedgeUsd) {
@@ -1099,6 +1130,8 @@ export class SmartHedgingStrategy {
       });
 
       if (result.status === "submitted") {
+        // Deduct from per-cycle hedge budget to prevent exceeding reserves
+        this.deductFromCycleHedgeBudget(hedgeUsd);
         this.logger.info(`[SmartHedging] ✅ Hedge executed successfully`);
         return { success: true };
       }
@@ -1106,6 +1139,8 @@ export class SmartHedgingStrategy {
       // Check for partial fill - money was spent even though order didn't fully complete
       const filledUsd = result.filledAmountUsd;
       if (filledUsd && filledUsd > 0) {
+        // Deduct partial fill from budget too
+        this.deductFromCycleHedgeBudget(filledUsd);
         this.logger.warn(
           `[SmartHedging] ⚠️ Hedge partially filled: $${filledUsd.toFixed(2)} spent (order incomplete)`,
         );

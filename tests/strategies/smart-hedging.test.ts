@@ -1794,31 +1794,36 @@ describe("Smart Hedging Up (High Win Probability)", () => {
 describe("Smart Hedging Reserve-Aware Sizing", () => {
   /**
    * Helper function to simulate the reserve-aware hedge sizing logic.
-   * This mirrors the logic in SmartHedgingStrategy.executeBuyMore() and executeHedge().
+   * This mirrors the logic in SmartHedgingStrategy.applyReserveAwareSizing().
+   *
+   * The actual implementation uses a per-cycle budget that is:
+   * 1. Initialized at the start of each execute() cycle from (availableCash - reserveRequired)
+   * 2. Decremented after each successful BUY order
+   * 3. Checked before each hedge to prevent multiple hedges from exceeding reserves
    *
    * @param config - Smart hedging config
    * @param computedHedgeUsd - The originally computed hedge/buy amount based on position
-   * @param availableCashAfterReserve - Available cash after respecting reserves (null = no reserve plan)
+   * @param cycleHedgeBudgetRemaining - Remaining budget for this cycle (null = no reserve plan)
    * @returns Object with final size and reason
    */
   function computeReserveAwareSize(
     config: SmartHedgingConfig,
     computedHedgeUsd: number,
-    availableCashAfterReserve: number | null,
+    cycleHedgeBudgetRemaining: number | null,
   ): { finalSize: number; reason: "full" | "partial" | "skipped" | "no_reserve_plan" } {
     // If no reserve plan, use full computed size
-    if (availableCashAfterReserve === null) {
+    if (cycleHedgeBudgetRemaining === null) {
       return { finalSize: computedHedgeUsd, reason: "no_reserve_plan" };
     }
 
-    // If available cash < minHedgeUsd, skip entirely
-    if (availableCashAfterReserve < config.minHedgeUsd) {
+    // If budget < minHedgeUsd, skip entirely
+    if (cycleHedgeBudgetRemaining < config.minHedgeUsd) {
       return { finalSize: 0, reason: "skipped" };
     }
 
-    // If available cash < computed hedge, submit partial
-    if (availableCashAfterReserve < computedHedgeUsd) {
-      return { finalSize: availableCashAfterReserve, reason: "partial" };
+    // If budget < computed hedge, submit partial
+    if (cycleHedgeBudgetRemaining < computedHedgeUsd) {
+      return { finalSize: cycleHedgeBudgetRemaining, reason: "partial" };
     }
 
     // Full size available
@@ -1839,22 +1844,22 @@ describe("Smart Hedging Reserve-Aware Sizing", () => {
   });
 
   describe("Reserve Shortfall Handling", () => {
-    test("skips hedge when available cash is below minHedgeUsd", () => {
+    test("skips hedge when budget is below minHedgeUsd", () => {
       const result = computeReserveAwareSize(
         { ...DEFAULT_HEDGING_CONFIG, minHedgeUsd: 1.0 },
         15.0, // computed hedge
-        0.5, // only 50¢ available after reserves
+        0.5, // only 50¢ remaining in budget
       );
 
       assert.strictEqual(result.finalSize, 0, "Should skip hedge");
       assert.strictEqual(result.reason, "skipped", "Should indicate skipped due to shortfall");
     });
 
-    test("skips hedge when available cash is exactly zero", () => {
+    test("skips hedge when budget is exactly zero", () => {
       const result = computeReserveAwareSize(
         DEFAULT_HEDGING_CONFIG,
         20.0, // computed hedge
-        0, // no cash available after reserves
+        0, // no budget remaining
       );
 
       assert.strictEqual(result.finalSize, 0, "Should skip hedge");
@@ -1863,54 +1868,54 @@ describe("Smart Hedging Reserve-Aware Sizing", () => {
   });
 
   describe("Partial Hedge Sizing", () => {
-    test("caps hedge to available cash when below computed size", () => {
+    test("caps hedge to remaining budget when below computed size", () => {
       const result = computeReserveAwareSize(
         DEFAULT_HEDGING_CONFIG,
         25.0, // computed hedge
-        10.0, // only $10 available after reserves
+        10.0, // only $10 remaining in budget
       );
 
-      assert.strictEqual(result.finalSize, 10.0, "Should cap to available cash");
+      assert.strictEqual(result.finalSize, 10.0, "Should cap to remaining budget");
       assert.strictEqual(result.reason, "partial", "Should indicate partial hedge");
     });
 
-    test("submits partial hedge at exactly minHedgeUsd when available cash equals minHedgeUsd", () => {
+    test("submits partial hedge at exactly minHedgeUsd when budget equals minHedgeUsd", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, minHedgeUsd: 1.0 };
       const result = computeReserveAwareSize(
         config,
         20.0, // computed hedge
-        1.0, // exactly minHedgeUsd available
+        1.0, // exactly minHedgeUsd remaining
       );
 
-      assert.strictEqual(result.finalSize, 1.0, "Should use available cash at minHedgeUsd");
+      assert.strictEqual(result.finalSize, 1.0, "Should use remaining budget at minHedgeUsd");
       assert.strictEqual(result.reason, "partial", "Should indicate partial hedge");
     });
 
-    test("submits partial hedge when available cash is between minHedgeUsd and computed size", () => {
+    test("submits partial hedge when budget is between minHedgeUsd and computed size", () => {
       const result = computeReserveAwareSize(
         { ...DEFAULT_HEDGING_CONFIG, minHedgeUsd: 1.0 },
         20.0, // computed hedge
-        5.5, // $5.50 available
+        5.5, // $5.50 remaining
       );
 
-      assert.strictEqual(result.finalSize, 5.5, "Should use all available cash");
+      assert.strictEqual(result.finalSize, 5.5, "Should use all remaining budget");
       assert.strictEqual(result.reason, "partial", "Should indicate partial hedge");
     });
   });
 
   describe("Full Hedge (No Reserve Constraint)", () => {
-    test("uses full computed size when available cash exceeds computed hedge", () => {
+    test("uses full computed size when budget exceeds computed hedge", () => {
       const result = computeReserveAwareSize(
         DEFAULT_HEDGING_CONFIG,
         15.0, // computed hedge
-        100.0, // plenty of cash available
+        100.0, // plenty of budget
       );
 
       assert.strictEqual(result.finalSize, 15.0, "Should use full computed size");
       assert.strictEqual(result.reason, "full", "Should indicate full hedge");
     });
 
-    test("uses full computed size when available cash equals computed hedge", () => {
+    test("uses full computed size when budget equals computed hedge", () => {
       const result = computeReserveAwareSize(
         DEFAULT_HEDGING_CONFIG,
         25.0, // computed hedge
@@ -1922,27 +1927,63 @@ describe("Smart Hedging Reserve-Aware Sizing", () => {
     });
   });
 
-  describe("SELL/Liquidation Path (not affected by reserves)", () => {
+  describe("Per-Cycle Budget Tracking", () => {
     /**
-     * CRITICAL: SELL and liquidation operations MUST NOT be blocked by reserve constraints.
-     * This test documents that sells use different logic that doesn't check reserves.
+     * Test that simulates multiple hedges in a single cycle.
+     * The per-cycle budget should be decremented after each successful hedge,
+     * preventing multiple hedges from exceeding (availableCash - reserveRequired).
      */
-    test("SELL operations are not gated by reserve constraints (documented behavior)", () => {
-      // This test documents the expected behavior:
-      // - executeBuyMore() and executeHedge() ARE gated by reserves (BUY operations)
-      // - sellPosition() is NOT gated by reserves (SELL operations)
-      // 
-      // The reserve check only happens in executeBuyMore() and executeHedge(),
-      // and sellPosition() does not call getAvailableCashAfterReserve().
-      //
-      // This ensures that:
-      // 1. We can always liquidate positions to stop bleeding
-      // 2. Reserve shortfall doesn't prevent exiting bad positions
-      // 3. Only new BUY operations (hedges, buy-more) are constrained
+    test("multiple hedges in same cycle decrement the budget correctly", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, minHedgeUsd: 1.0 };
+      let budgetRemaining = 50.0; // Initial budget for cycle
+
+      // First hedge: $20
+      const result1 = computeReserveAwareSize(config, 20.0, budgetRemaining);
+      assert.strictEqual(result1.finalSize, 20.0, "First hedge should use full $20");
+      assert.strictEqual(result1.reason, "full", "First hedge should be full");
       
-      // No actual assertion needed - this test documents the architecture.
-      // The implementation ensures sellPosition() doesn't check reserves.
-      assert.ok(true, "SELL operations are not reserve-gated by design");
+      // Simulate deducting from budget after successful BUY
+      budgetRemaining -= result1.finalSize; // Now $30
+
+      // Second hedge: $20
+      const result2 = computeReserveAwareSize(config, 20.0, budgetRemaining);
+      assert.strictEqual(result2.finalSize, 20.0, "Second hedge should use full $20");
+      assert.strictEqual(result2.reason, "full", "Second hedge should be full");
+      
+      // Simulate deducting from budget after successful BUY
+      budgetRemaining -= result2.finalSize; // Now $10
+
+      // Third hedge: $20 - should be capped to $10 (partial)
+      const result3 = computeReserveAwareSize(config, 20.0, budgetRemaining);
+      assert.strictEqual(result3.finalSize, 10.0, "Third hedge should be capped to $10");
+      assert.strictEqual(result3.reason, "partial", "Third hedge should be partial");
+      
+      // Simulate deducting from budget after successful BUY
+      budgetRemaining -= result3.finalSize; // Now $0
+
+      // Fourth hedge: should be skipped (budget exhausted)
+      const result4 = computeReserveAwareSize(config, 20.0, budgetRemaining);
+      assert.strictEqual(result4.finalSize, 0, "Fourth hedge should be skipped");
+      assert.strictEqual(result4.reason, "skipped", "Fourth hedge should indicate budget exhausted");
+    });
+
+    test("partial fills also decrement the budget", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, minHedgeUsd: 1.0 };
+      let budgetRemaining = 15.0;
+
+      // First hedge request: $20, but budget only has $15 - partial
+      const result1 = computeReserveAwareSize(config, 20.0, budgetRemaining);
+      assert.strictEqual(result1.finalSize, 15.0, "Should cap to budget");
+      assert.strictEqual(result1.reason, "partial", "Should be partial");
+      
+      // Assume only $10 of the $15 actually filled (partial fill from market)
+      const actualFilled = 10.0;
+      budgetRemaining -= actualFilled; // Now $5
+
+      // Second hedge: $20 - should be capped to $5
+      const result2 = computeReserveAwareSize(config, 20.0, budgetRemaining);
+      assert.strictEqual(result2.finalSize, 5.0, "Should cap to remaining $5");
+      assert.strictEqual(result2.reason, "partial", "Should be partial");
     });
   });
 });
