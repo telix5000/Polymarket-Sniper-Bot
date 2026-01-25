@@ -309,8 +309,11 @@ Smart hedging protects against losses by buying the opposing side instead of sel
 | `HEDGING_ENABLED` | Enable hedging | `true` |
 | `HEDGING_DIRECTION` | Hedging direction | `both` |
 | `HEDGING_TRIGGER_LOSS_PCT` | Loss percentage to trigger hedge | `20` |
-| `HEDGING_MAX_HEDGE_USD` | Maximum USD per hedge | Varies (10-50) |
+| `HEDGING_MAX_HEDGE_USD` | Maximum USD per hedge (normal mode) | Varies (10-50) |
 | `HEDGING_RESERVE_PCT` | Percentage reserved for hedging | `20` |
+| `HEDGING_ALLOW_EXCEED_MAX` | Allow exceeding maxHedgeUsd for heavy losses | `true` |
+| `HEDGING_ABSOLUTE_MAX_USD` | Absolute max USD per hedge (safety cap) | `100` |
+| `HEDGING_EMERGENCY_LOSS_PCT` | Loss % threshold to use absoluteMaxUsd | `30` |
 
 ### Hedge Up Settings (Buy More When Winning)
 
@@ -334,6 +337,8 @@ HEDGING_DIRECTION=both
 HEDGING_TRIGGER_LOSS_PCT=20
 HEDGING_MAX_HEDGE_USD=25
 HEDGING_RESERVE_PCT=20
+HEDGING_ALLOW_EXCEED_MAX=true
+HEDGING_ABSOLUTE_MAX_USD=10
 ```
 
 ---
