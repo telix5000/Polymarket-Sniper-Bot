@@ -122,6 +122,10 @@ function toPnLSnapshot(summary: LedgerSummary): PnLSnapshot {
     usdcBalance: summary.usdcBalance,
     holdingsValue: summary.holdingsValue,
     totalValue: summary.totalValue,
+    // Include initial investment tracking if available
+    initialInvestment: summary.initialInvestment,
+    overallReturnPct: summary.overallReturnPct,
+    overallGainLoss: summary.overallGainLoss,
   };
 }
 

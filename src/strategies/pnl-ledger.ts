@@ -60,6 +60,14 @@ export interface LedgerSummary {
   holdingsValue?: number;
   /** Grand total (USDC + holdings value) */
   totalValue?: number;
+
+  // === INITIAL INVESTMENT TRACKING (optional - from INITIAL_INVESTMENT_USD env) ===
+  /** Initial investment amount for calculating overall return */
+  initialInvestment?: number;
+  /** Overall return: (totalValue - initialInvestment) / initialInvestment * 100 */
+  overallReturnPct?: number;
+  /** Absolute gain/loss: totalValue - initialInvestment */
+  overallGainLoss?: number;
 }
 
 export class PnLLedger {

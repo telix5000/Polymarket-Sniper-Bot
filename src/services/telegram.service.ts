@@ -116,6 +116,14 @@ export interface PnLSnapshot {
   holdingsValue?: number;
   /** Grand total (USDC + holdings value) */
   totalValue?: number;
+
+  // === INITIAL INVESTMENT TRACKING (optional) ===
+  /** Initial investment amount for calculating overall return */
+  initialInvestment?: number;
+  /** Overall return: (totalValue - initialInvestment) / initialInvestment * 100 */
+  overallReturnPct?: number;
+  /** Absolute gain/loss: totalValue - initialInvestment */
+  overallGainLoss?: number;
 }
 
 /**
@@ -328,6 +336,16 @@ export class TelegramService {
         message += `🏦 USDC: $${pnlSnapshot.usdcBalance.toFixed(2)}\n`;
         message += `📊 Holdings: $${pnlSnapshot.holdingsValue.toFixed(2)}\n`;
         message += `💎 Total: $${pnlSnapshot.totalValue.toFixed(2)}\n`;
+
+        // Add overall return if initial investment is set
+        if (
+          pnlSnapshot.initialInvestment !== undefined &&
+          pnlSnapshot.overallReturnPct !== undefined &&
+          pnlSnapshot.overallGainLoss !== undefined
+        ) {
+          const returnEmoji = pnlSnapshot.overallGainLoss >= 0 ? "📈" : "📉";
+          message += `${returnEmoji} Overall: ${pnlSnapshot.overallGainLoss >= 0 ? "+" : ""}$${pnlSnapshot.overallGainLoss.toFixed(2)} (${pnlSnapshot.overallReturnPct >= 0 ? "+" : ""}${pnlSnapshot.overallReturnPct.toFixed(1)}%)\n`;
+        }
       }
     }
 
@@ -410,6 +428,17 @@ export class TelegramService {
       message += `🏦 USDC: $${summary.usdcBalance.toFixed(2)}\n`;
       message += `📊 Holdings: $${summary.holdingsValue.toFixed(2)}\n`;
       message += `💎 Total: $${summary.totalValue.toFixed(2)}\n`;
+
+      // Add overall return if initial investment is set
+      if (
+        summary.initialInvestment !== undefined &&
+        summary.overallReturnPct !== undefined &&
+        summary.overallGainLoss !== undefined
+      ) {
+        const returnEmoji = summary.overallGainLoss >= 0 ? "📈" : "📉";
+        message += `${returnEmoji} Overall: ${summary.overallGainLoss >= 0 ? "+" : ""}$${summary.overallGainLoss.toFixed(2)} (${summary.overallReturnPct >= 0 ? "+" : ""}${summary.overallReturnPct.toFixed(1)}%)\n`;
+        message += `💵 Initial: $${summary.initialInvestment.toFixed(2)}\n`;
+      }
     }
 
     this.lastPnlUpdateTime = Date.now();
