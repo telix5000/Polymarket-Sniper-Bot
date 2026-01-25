@@ -117,6 +117,8 @@ export interface SmartHedgingConfig {
   /**
    * Minutes before market close to enable "hedging up" behavior (default: 30)
    * Only buy more shares when within this window AND price >= hedgeUpPriceThreshold
+   * Set to 0 to disable time window restriction (hedge up anytime price is in range).
+   * Note: If hedgeUpAnytime is true, this setting is ignored.
    */
   hedgeUpWindowMinutes: number;
 
@@ -133,6 +135,14 @@ export interface SmartHedgingConfig {
    * The sweet spot for hedging up is between hedgeUpPriceThreshold (85¢) and this max (95¢).
    */
   hedgeUpMaxPrice: number;
+
+  /**
+   * Allow "hedging up" at any time, not just near market close (default: true)
+   * When true, positions at high win probability (>= hedgeUpPriceThreshold) can be
+   * hedged up immediately, regardless of time to close.
+   * When false, hedging up only occurs within hedgeUpWindowMinutes of market close.
+   */
+  hedgeUpAnytime: boolean;
 }
 
 export const DEFAULT_HEDGING_CONFIG: SmartHedgingConfig = {
@@ -153,9 +163,10 @@ export const DEFAULT_HEDGING_CONFIG: SmartHedgingConfig = {
   noHedgeWindowMinutes: 3, // Don't hedge at all in last 3 minutes (too late)
   // Hedging up (high win probability) settings
   hedgeUpPriceThreshold: 0.85, // Buy more shares when price >= 85¢
-  hedgeUpWindowMinutes: 30, // Enable hedging up in last 30 minutes before close
+  hedgeUpWindowMinutes: 30, // Enable hedging up in last 30 minutes before close (ignored if hedgeUpAnytime=true)
   hedgeUpMaxUsd: 25, // Max USD to spend per position on hedging up (matches absoluteMaxUsd)
   hedgeUpMaxPrice: 0.95, // Don't buy at 95¢+ (too close to resolved, minimal profit margin)
+  hedgeUpAnytime: true, // Allow hedging up at any time, not just near close
 };
 
 /**
@@ -838,22 +849,33 @@ export class SmartHedgingStrategy {
     }
 
     // === TIME WINDOW CHECK ===
-    // Only hedge up when near market close
-    if (!position.marketEndTime || position.marketEndTime <= now) {
-      // No end time available or market already ended
-      return { action: "not_applicable", reason: "no_end_time" };
-    }
+    // If hedgeUpAnytime is enabled, skip the time window check entirely
+    // Otherwise, only hedge up when near market close
+    if (!this.config.hedgeUpAnytime) {
+      if (!position.marketEndTime || position.marketEndTime <= now) {
+        // No end time available or market already ended
+        return { action: "not_applicable", reason: "no_end_time" };
+      }
 
-    const minutesToClose = (position.marketEndTime - now) / (60 * 1000);
+      const minutesToClose = (position.marketEndTime - now) / (60 * 1000);
 
-    // Must be within the hedge up window
-    if (minutesToClose > this.config.hedgeUpWindowMinutes) {
-      return { action: "not_applicable", reason: "outside_window" };
-    }
+      // Must be within the hedge up window
+      if (minutesToClose > this.config.hedgeUpWindowMinutes) {
+        return { action: "not_applicable", reason: "outside_window" };
+      }
 
-    // Don't hedge up in the very last minutes (same as no-hedge window)
-    if (minutesToClose <= this.config.noHedgeWindowMinutes) {
-      return { action: "skipped", reason: "no_hedge_window" };
+      // Don't hedge up in the very last minutes (same as no-hedge window)
+      if (minutesToClose <= this.config.noHedgeWindowMinutes) {
+        return { action: "skipped", reason: "no_hedge_window" };
+      }
+    } else {
+      // Even with hedgeUpAnytime, respect the no-hedge window if market end time is known
+      if (position.marketEndTime && position.marketEndTime > now) {
+        const minutesToClose = (position.marketEndTime - now) / (60 * 1000);
+        if (minutesToClose <= this.config.noHedgeWindowMinutes) {
+          return { action: "skipped", reason: "no_hedge_window" };
+        }
+      }
     }
 
     // === ORDERBOOK QUALITY CHECK ===
@@ -868,9 +890,13 @@ export class SmartHedgingStrategy {
     }
 
     // === EXECUTE HEDGE UP ===
+    // Compute time to close for logging (may be undefined if no marketEndTime)
+    const timeToCloseStr = position.marketEndTime && position.marketEndTime > now
+      ? `${((position.marketEndTime - now) / (60 * 1000)).toFixed(1)}min to close`
+      : "no close time";
     this.logger.info(
       `[SmartHedging] 📈 HEDGE UP candidate: ${position.side} ${tokenIdShort}... ` +
-        `at ${formatCents(position.currentPrice)}, ${minutesToClose.toFixed(1)}min to close`,
+        `at ${formatCents(position.currentPrice)}, ${timeToCloseStr}`,
     );
 
     const result = await this.executeBuyMore(position);
