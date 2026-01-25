@@ -71,9 +71,14 @@ export function initTradeNotificationService(
   log?: Logger,
 ): void {
   telegramService = telegram;
-  if (log) {
-    logger = log;
-    logger.debug("[TradeNotification] Service initialized");
+  logger = log ?? null;
+  
+  // Always log initialization status (use console as fallback)
+  const msg = `[TradeNotification] Service initialized (telegram enabled: ${telegram.isEnabled()})`;
+  if (logger) {
+    logger.info(msg);
+  } else {
+    console.log(msg);
   }
 }
 
@@ -235,23 +240,34 @@ export async function notifyTrade(
   recordTradeToLedger(input);
 
   if (!telegramService) {
-    logger?.warn(
-      `[TradeNotification] Cannot send ${input.type} notification - telegramService not initialized`,
-    );
+    // Use console.warn as fallback if logger isn't set
+    const msg = `[TradeNotification] Cannot send ${input.type} notification - telegramService not initialized`;
+    if (logger) {
+      logger.warn(msg);
+    } else {
+      console.warn(msg);
+    }
     return false;
   }
 
   if (!telegramService.isEnabled()) {
-    logger?.debug(
-      `[TradeNotification] Cannot send ${input.type} notification - Telegram not enabled`,
-    );
+    // Upgraded from debug to info so users can see when notifications are disabled
+    const msg = `[TradeNotification] Skipping ${input.type} notification - Telegram not enabled`;
+    if (logger) {
+      logger.info(msg);
+    } else {
+      console.log(msg);
+    }
     return false;
   }
 
   // Log that we're attempting to send a notification
-  logger?.info(
-    `[TradeNotification] Sending ${input.type} notification for market ${input.marketId.slice(0, 12)}...`,
-  );
+  const attemptMsg = `[TradeNotification] Sending ${input.type} notification for market ${input.marketId.slice(0, 12)}...`;
+  if (logger) {
+    logger.info(attemptMsg);
+  } else {
+    console.log(attemptMsg);
+  }
 
   const trade: TradeNotification = {
     type: input.type,
@@ -276,9 +292,12 @@ export async function notifyTrade(
         const summary = await Promise.resolve(getPnLSummary());
         pnlSnapshot = toPnLSnapshot(summary);
       } catch (err) {
-        logger?.warn(
-          `[TradeNotification] Failed to get P&L summary: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        const warnMsg = `[TradeNotification] Failed to get P&L summary: ${err instanceof Error ? err.message : String(err)}`;
+        if (logger) {
+          logger.warn(warnMsg);
+        } else {
+          console.warn(warnMsg);
+        }
       }
     }
 
@@ -289,20 +308,29 @@ export async function notifyTrade(
     );
 
     if (success) {
-      logger?.info(
-        `[TradeNotification] ✅ Sent ${input.type} notification for ${input.marketId.slice(0, 8)}... (strategy: ${input.strategy ?? "unknown"})`,
-      );
+      const successMsg = `[TradeNotification] ✅ Sent ${input.type} notification for ${input.marketId.slice(0, 8)}... (strategy: ${input.strategy ?? "unknown"})`;
+      if (logger) {
+        logger.info(successMsg);
+      } else {
+        console.log(successMsg);
+      }
     } else {
-      logger?.warn(
-        `[TradeNotification] ❌ Failed to send ${input.type} notification for ${input.marketId.slice(0, 8)}... - Telegram API returned false`,
-      );
+      const failMsg = `[TradeNotification] ❌ Failed to send ${input.type} notification for ${input.marketId.slice(0, 8)}... - Telegram API returned false`;
+      if (logger) {
+        logger.warn(failMsg);
+      } else {
+        console.warn(failMsg);
+      }
     }
 
     return success;
   } catch (err) {
-    logger?.error(
-      `[TradeNotification] Error sending notification: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const errorMsg = `[TradeNotification] Error sending notification: ${err instanceof Error ? err.message : String(err)}`;
+    if (logger) {
+      logger.error(errorMsg);
+    } else {
+      console.error(errorMsg);
+    }
     return false;
   }
 }

@@ -83,6 +83,7 @@ import {
   type ReservePlan,
   type WalletBalances,
 } from "../risk";
+import type { TelegramService } from "../services/telegram.service";
 
 const POSITION_REFRESH_MS = 5000; // 5 seconds
 const EXECUTION_INTERVAL_MS = 2000; // 2 seconds
@@ -106,6 +107,8 @@ export interface OrchestratorConfig {
   positionStackingConfig?: Partial<PositionStackingConfig>;
   /** Wallet balance fetcher for dynamic reserves (optional - if not provided, reserves are disabled) */
   getWalletBalances?: () => Promise<WalletBalances>;
+  /** Telegram service for direct notifications (optional - if provided, strategies send notifications directly) */
+  telegram?: TelegramService;
 }
 
 export class Orchestrator {
@@ -116,6 +119,7 @@ export class Orchestrator {
   private pnlLedger: PnLLedger;
   private dynamicReserves: DynamicReservesController;
   private getWalletBalances?: () => Promise<WalletBalances>;
+  private telegram?: TelegramService;
 
   // All strategies
   private sellEarlyStrategy: SellEarlyStrategy;
@@ -159,6 +163,7 @@ export class Orchestrator {
   constructor(config: OrchestratorConfig) {
     this.client = config.client;
     this.logger = config.logger;
+    this.telegram = config.telegram;
 
     // Generate unique boot ID to detect multiple orchestrator instances
     this.bootId = randomUUID().slice(0, 8);
@@ -310,6 +315,7 @@ export class Orchestrator {
       client: config.client,
       logger: config.logger,
       positionTracker: this.positionTracker,
+      telegram: this.telegram,
       config: {
         ...DEFAULT_ENDGAME_CONFIG,
         maxPositionUsd: config.maxPositionUsd,

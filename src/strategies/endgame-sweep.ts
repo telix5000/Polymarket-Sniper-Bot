@@ -22,7 +22,7 @@ import type { PositionTracker } from "./position-tracker";
 import { postOrder } from "../utils/post-order.util";
 import { isLiveTradingEnabled } from "../utils/live-trading.util";
 import type { ReservePlan } from "../risk";
-import { notifyBuy } from "../services/trade-notification.service";
+import type { TelegramService } from "../services/telegram.service";
 
 /**
  * Endgame Sweep Configuration
@@ -56,6 +56,7 @@ export class EndgameSweepStrategy {
   private logger: ConsoleLogger;
   private config: EndgameSweepConfig;
   private positionTracker?: PositionTracker;
+  private telegram?: TelegramService;
 
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
@@ -72,11 +73,13 @@ export class EndgameSweepStrategy {
     logger: ConsoleLogger;
     config: EndgameSweepConfig;
     positionTracker?: PositionTracker;
+    telegram?: TelegramService;
   }) {
     this.client = config.client;
     this.logger = config.logger;
     this.config = config.config;
     this.positionTracker = config.positionTracker;
+    this.telegram = config.telegram;
 
     this.logger.info(
       `[EndgameSweep] Initialized: price range ${(this.config.minPrice * 100).toFixed(0)}-${(this.config.maxPrice * 100).toFixed(0)}¢, maxPosition=$${this.config.maxPositionUsd}`,
@@ -305,21 +308,24 @@ export class EndgameSweepStrategy {
       if (result.status === "submitted") {
         this.logger.info(`[EndgameSweep] ✅ Bought successfully`);
 
-        // Send telegram notification for endgame sweep buy
-        // notifyBuy handles its own logging; we just catch any unexpected errors
-        notifyBuy(
-          market.id,
-          market.tokenId,
-          sizeUsd / market.price, // Estimate shares from USD
-          market.price,
-          sizeUsd,
-          {
+        // Send telegram notification directly (bypasses singleton service)
+        if (this.telegram?.isEnabled()) {
+          const size = sizeUsd / market.price;
+          void this.telegram.sendTradeNotificationWithPnL({
+            type: "BUY",
+            marketId: market.id,
+            tokenId: market.tokenId,
+            size,
+            price: market.price,
+            sizeUsd,
             strategy: "EndgameSweep",
             outcome: market.side,
-          },
-        ).catch(() => {
-          // Swallow errors here; notifyBuy is responsible for logging its own failures.
-        });
+          }).catch((err) => {
+            this.logger.warn(
+              `[EndgameSweep] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+        }
 
         return true;
       }
