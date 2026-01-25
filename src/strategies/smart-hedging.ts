@@ -33,7 +33,6 @@ import {
   releaseHedgeLock,
 } from "../utils/funds-allowance.util";
 import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR, calculateMinAcceptablePrice, FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
-import { EMERGENCY_EXIT_MIN_PRICE } from "./stop-loss";
 
 /**
  * Smart Hedging Direction - determines when smart hedging is active
