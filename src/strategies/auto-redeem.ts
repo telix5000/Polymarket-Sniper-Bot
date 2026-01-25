@@ -513,7 +513,7 @@ export class AutoRedeemStrategy {
       const walletAddress = resolveSignerAddress(this.client);
       if (!walletAddress || walletAddress === "unknown") {
         this.logger.debug(
-          "[AutoRedeem] Cannot resolve wallet address for Data API fetch",
+          `[AutoRedeem] Cannot resolve wallet address for Data API fetch (got: ${walletAddress ?? "null"})`,
         );
         return [];
       }
@@ -525,7 +525,7 @@ export class AutoRedeemStrategy {
 
       if (!Array.isArray(apiPositions)) {
         this.logger.debug(
-          "[AutoRedeem] Data API returned non-array response",
+          `[AutoRedeem] Data API returned non-array response (type: ${typeof apiPositions})`,
         );
         return [];
       }
@@ -577,19 +577,30 @@ export class AutoRedeemStrategy {
       (pos) => pos.size * pos.currentPrice >= this.config.minPositionUsd,
     );
 
-    // 3. Check on-chain payoutDenominator for each position
+    // 3. Filter out positions in cooldown
+    const notInCooldown = aboveMinValue.filter(
+      (pos) => !this.shouldSkipRedemption(pos.marketId),
+    );
+
+    if (notInCooldown.length === 0) {
+      return [];
+    }
+
+    // 4. Check on-chain payoutDenominator for all positions in parallel
     // This is the AUTHORITATIVE check for redeemability
+    // Using Promise.allSettled to handle individual failures gracefully
+    const checkResults = await Promise.allSettled(
+      notInCooldown.map(async (pos) => ({
+        position: pos,
+        isResolved: await this.checkOnChainResolved(pos.marketId),
+      })),
+    );
+
+    // 5. Filter to only resolved positions
     const redeemable: RedeemablePosition[] = [];
-
-    for (const pos of aboveMinValue) {
-      // Skip if in cooldown due to recent failures
-      if (this.shouldSkipRedemption(pos.marketId)) {
-        continue;
-      }
-
-      const isOnChainResolved = await this.checkOnChainResolved(pos.marketId);
-      if (isOnChainResolved) {
-        redeemable.push(pos);
+    for (const result of checkResults) {
+      if (result.status === "fulfilled" && result.value.isResolved) {
+        redeemable.push(result.value.position);
       }
     }
 
