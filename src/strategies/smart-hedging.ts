@@ -98,7 +98,7 @@ export interface SmartHedgingConfig {
   // Near market close, apply stricter hedging thresholds to avoid dumb hedges
 
   /**
-   * Minutes before market close to apply near-close behavior (default: 15)
+   * Minutes before market close to apply near-close behavior (default: 30)
    * When position is within this window, stricter hedge triggers apply
    */
   nearCloseWindowMinutes: number;
@@ -196,7 +196,7 @@ export const DEFAULT_HEDGING_CONFIG: SmartHedgingConfig = {
   emergencyLossPct: 30, // Emergency hedge mode at 30% loss - targets absoluteMaxUsd directly
   minHoldSeconds: 120, // Wait 2 minutes before hedging - prevents immediate sell after buy
   // Near-close hedging behavior
-  nearCloseWindowMinutes: 15, // Apply near-close rules in last 15 minutes
+  nearCloseWindowMinutes: 30, // Apply near-close rules in last 30 minutes
   nearClosePriceDropCents: 12, // Near close: hedge only on >= 12¢ adverse move
   nearCloseLossPct: 30, // Near close: hedge only on >= 30% loss
   noHedgeWindowMinutes: 3, // Near-resolution: significant losses hedge (buy inverse + sell original)
@@ -755,7 +755,7 @@ export class SmartHedgingStrategy {
             continue;
           }
         }
-        // Inside near-close window (last 10-15 minutes): apply stricter thresholds
+        // Inside near-close window (default: last 30 minutes): apply stricter thresholds
         // Only hedge if it's a BIG adverse move (≥12¢) OR a BIG loss (≥30%)
         else if (minutesToClose <= this.config.nearCloseWindowMinutes) {
           const priceDropCents =

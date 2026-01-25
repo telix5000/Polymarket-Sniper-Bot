@@ -1842,7 +1842,7 @@ export function loadStrategyConfig(
     /**
      * SMART_HEDGING_NEAR_CLOSE_WINDOW_MINUTES: Minutes before market close to apply stricter hedge rules
      * Inside this window, only hedge on big adverse moves or big losses
-     * Default: 15 minutes
+     * Default: 30 minutes
      */
     smartHedgingNearCloseWindowMinutes:
       parseNumber(
@@ -1852,7 +1852,7 @@ export function loadStrategyConfig(
         ? (preset as { SMART_HEDGING_NEAR_CLOSE_WINDOW_MINUTES: number })
             .SMART_HEDGING_NEAR_CLOSE_WINDOW_MINUTES
         : undefined) ??
-      15, // Default: apply near-close rules in last 15 minutes
+      30, // Default: apply near-close rules in last 30 minutes
     /**
      * SMART_HEDGING_NEAR_CLOSE_PRICE_DROP_CENTS: Minimum price drop (cents) to trigger near-close hedge
      * Near close, only hedge if price dropped by at least this amount (OR condition with loss %)

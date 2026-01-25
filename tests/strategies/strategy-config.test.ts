@@ -288,8 +288,8 @@ test("SMART_HEDGING_NEAR_CLOSE_WINDOW_MINUTES defaults to 15", () => {
   });
 
   const config = loadStrategyConfig();
-  // Default near-close window is 15 minutes
-  assert.equal(config.smartHedgingNearCloseWindowMinutes, 15);
+  // Default near-close window is 30 minutes
+  assert.equal(config.smartHedgingNearCloseWindowMinutes, 30);
 });
 
 test("SMART_HEDGING_NEAR_CLOSE_WINDOW_MINUTES env variable overrides default", () => {

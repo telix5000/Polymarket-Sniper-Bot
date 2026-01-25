@@ -329,9 +329,9 @@ describe("Smart Hedging Near-Close Logic", () => {
   });
 
   describe("Normal Hedging (outside near-close window)", () => {
-    test("should hedge with 20% loss when 30 minutes from close", () => {
+    test("should hedge with 20% loss when 45 minutes from close", () => {
       const now = Date.now();
-      const marketEndTime = now + 30 * 60 * 1000; // 30 minutes from now
+      const marketEndTime = now + 45 * 60 * 1000; // 45 minutes from now
 
       const result = shouldHedgePosition(
         DEFAULT_HEDGING_CONFIG,
@@ -396,7 +396,7 @@ describe("Smart Hedging Near-Close Logic", () => {
 
     test("should not hedge when loss is below 20% threshold", () => {
       const now = Date.now();
-      const marketEndTime = now + 30 * 60 * 1000; // 30 minutes from now
+      const marketEndTime = now + 45 * 60 * 1000; // 45 minutes from now
 
       const result = shouldHedgePosition(
         DEFAULT_HEDGING_CONFIG,
@@ -472,8 +472,8 @@ describe("Smart Hedging Near-Close Logic", () => {
 
     test("should handle exactly at boundary between near-close and normal", () => {
       const now = Date.now();
-      // Just over 15 minutes (should be outside near-close window)
-      const marketEndTime = now + 15 * 60 * 1000 + 1000; // 15 min + 1 second
+      // Just over 30 minutes (should be outside near-close window)
+      const marketEndTime = now + 30 * 60 * 1000 + 1000; // 30 min + 1 second
 
       const result = shouldHedgePosition(
         DEFAULT_HEDGING_CONFIG,
@@ -489,7 +489,7 @@ describe("Smart Hedging Near-Close Logic", () => {
       assert.strictEqual(
         result.shouldHedge,
         true,
-        "Just outside 15 min window should use normal hedging",
+        "Just outside 30 min window should use normal hedging",
       );
     });
   });
@@ -616,8 +616,8 @@ describe("Default Configuration Values", () => {
   test("default config has correct near-close values", () => {
     assert.strictEqual(
       DEFAULT_HEDGING_CONFIG.nearCloseWindowMinutes,
-      15,
-      "nearCloseWindowMinutes should default to 15",
+      30,
+      "nearCloseWindowMinutes should default to 30",
     );
     assert.strictEqual(
       DEFAULT_HEDGING_CONFIG.nearClosePriceDropCents,

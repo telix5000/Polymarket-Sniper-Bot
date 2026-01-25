@@ -78,10 +78,10 @@ The orchestrator correctly implements single-flight protection:
 ### Additive Hedging Only
 - Hedging buys OPPOSITE side (doesn't defer liquidation)
 - If hedge fails AND loss ≥ forceLiquidationPct, falls back to liquidation
-- Near-close window (last 3 minutes): hedging blocked entirely, liquidation only
+- Near-resolution window (last 3 minutes): hedging blocked entirely, liquidation only
 
 ### Near-Close Behavior
-- `nearCloseWindowMinutes` (default: 15): Stricter thresholds apply
+- `nearCloseWindowMinutes` (default: 30): Stricter thresholds apply
 - `noHedgeWindowMinutes` (default: 3): No hedging, liquidate if needed
 - `nearClosePriceDropCents` (default: 12): Minimum adverse move for near-close hedge
 - `nearCloseLossPct` (default: 30): Minimum loss % for near-close hedge
