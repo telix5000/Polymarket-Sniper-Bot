@@ -899,9 +899,10 @@ export class SmartHedgingStrategy {
       if (this.logDeduper.shouldLogSummary("Hedging", fingerprint)) {
         const summary = skipAggregator.getSummary();
         // Check for critical skip reasons that need visibility
+        // Use specific patterns to avoid false positives (e.g., matching 'reserve' in unrelated text)
         const hasCriticalSkips = 
-          summary.includes("reserve") || 
-          summary.includes("untrusted") ||
+          summary.includes("RESERVE_SHORTFALL") || 
+          summary.includes("untrusted_pnl") ||
           summary.includes("not_tradable") ||
           summary.includes("cooldown");
         

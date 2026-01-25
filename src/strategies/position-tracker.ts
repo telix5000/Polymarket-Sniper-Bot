@@ -10,6 +10,7 @@ import {
   LogDeduper,
   HEARTBEAT_INTERVAL_MS,
   TRACKER_HEARTBEAT_MS,
+  TOKEN_ID_DISPLAY_LENGTH,
 } from "../utils/log-deduper.util";
 import {
   formatCents,
@@ -3855,7 +3856,8 @@ export class PositionTracker {
               // This ensures visibility - previously only gains were logged, making losses "silent"
               if (pnlPct <= -20 && !finalRedeemable && pnlTrusted) {
                 // Rate-limit loss logging to once per minute per tokenId
-                const lossLogKey = `high_loss:${tokenId.slice(0, 16)}`;
+                // TOKEN_ID_DISPLAY_LENGTH (16 chars) provides sufficient uniqueness for deduplication
+                const lossLogKey = `high_loss:${tokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}`;
                 if (this.logDeduper.shouldLog(lossLogKey, 60_000)) {
                   const sourceDescription =
                     pnlSource === "DATA_API"

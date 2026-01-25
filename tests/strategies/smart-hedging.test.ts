@@ -2773,38 +2773,39 @@ describe("Fund-Freeing Logic for Hedge Failures", () => {
   describe("Skip Summary Critical Detection", () => {
     /**
      * Test helper to check if skip summary contains critical issues that need WARN logging.
+     * Uses specific patterns to avoid false positives.
      */
     function hasCriticalSkips(summary: string): boolean {
       return (
-        summary.includes("reserve") ||
-        summary.includes("untrusted") ||
+        summary.includes("RESERVE_SHORTFALL") ||
+        summary.includes("untrusted_pnl") ||
         summary.includes("not_tradable") ||
         summary.includes("cooldown")
       );
     }
 
-    test("should detect reserve shortfall as critical", () => {
-      const summary = "loss_below_trigger(5), reserve_shortfall(2)";
-      assert.strictEqual(hasCriticalSkips(summary), true, "reserve issues should be critical");
+    test("should detect RESERVE_SHORTFALL as critical", () => {
+      const summary = "loss_below_trigger=5, RESERVE_SHORTFALL=2";
+      assert.strictEqual(hasCriticalSkips(summary), true, "RESERVE_SHORTFALL issues should be critical");
     });
 
-    test("should detect untrusted P&L as critical", () => {
-      const summary = "loss_below_trigger(5), untrusted_pnl(3)";
-      assert.strictEqual(hasCriticalSkips(summary), true, "untrusted issues should be critical");
+    test("should detect untrusted_pnl as critical", () => {
+      const summary = "loss_below_trigger=5, untrusted_pnl=3";
+      assert.strictEqual(hasCriticalSkips(summary), true, "untrusted_pnl issues should be critical");
     });
 
     test("should detect not_tradable as critical", () => {
-      const summary = "loss_below_trigger(5), not_tradable(1)";
+      const summary = "loss_below_trigger=5, not_tradable=1";
       assert.strictEqual(hasCriticalSkips(summary), true, "not_tradable should be critical");
     });
 
     test("should detect cooldown as critical", () => {
-      const summary = "loss_below_trigger(5), cooldown(2)";
+      const summary = "loss_below_trigger=5, cooldown=2";
       assert.strictEqual(hasCriticalSkips(summary), true, "cooldown should be critical");
     });
 
     test("should NOT detect normal skips as critical", () => {
-      const summary = "loss_below_trigger(5), already_hedged(2), hold_time_short(1)";
+      const summary = "loss_below_trigger=5, already_hedged=2, hold_time_short=1";
       assert.strictEqual(hasCriticalSkips(summary), false, "normal skips should not be critical");
     });
   });
