@@ -14,6 +14,22 @@
 
 ---
 
+## 🆕 New Users Start Here!
+
+**First time setting up the bot?** Check out our comprehensive beginner guide:
+
+📖 **[Getting Started Guide](./docs/GETTING_STARTED.md)** - Complete step-by-step setup instructions
+
+This guide covers:
+- Installing and setting up MetaMask
+- How to get your private key (safely!)
+- Setting up your RPC endpoint (Infura, Alchemy, MetaMask Developer Tools)
+- Funding your wallet with USDC and POL
+- Making your first trade on Polymarket (required for API access)
+- Installing and running the bot
+
+---
+
 ## ✨ What's New
 
 - 💵 **Auto-Redeem Positions** - Automatically claim resolved market positions (wins and losses) for USDC
@@ -270,6 +286,7 @@ Feel free to reach out for implementation assistance or integration support.
 
 ## 📋 Table of Contents
 
+- [New Users Start Here](#-new-users-start-here)
 - [Overview](#-overview)
 - [What's New](#-whats-new)
 - [On-Chain Trading Mode](#️-on-chain-trading-mode-new)
@@ -1545,6 +1562,9 @@ This will show you the **exact mismatch** between what we sign vs what we send t
    - See **[Next Steps](./NEXT_STEPS_401_FIX.md)** for step-by-step guidance
 
 ## 📚 Documentation
+
+### Getting Started
+- **[🆕 Getting Started Guide](./docs/GETTING_STARTED.md)**: Complete beginner guide - MetaMask setup, private keys, RPC endpoints, funding, and first trade
 
 ### Configuration
 - **[📋 Environment Variables Reference](./docs/ENVIRONMENT_VARIABLES.md)**: Comprehensive guide to ALL environment variables with defaults, examples, and categories
