@@ -222,14 +222,14 @@ export class TelegramService {
     }
 
     message += `💵 Size: ${trade.size.toFixed(2)} shares\n`;
-    message += `💰 Price: ${(trade.price * 100).toFixed(1)}¢\n`;
+    message += `💰 Price: ${this.formatPrice(trade.price)}\n`;
     message += `📊 Value: $${trade.sizeUsd.toFixed(2)}\n`;
 
     // Show entry price and gain for sells
     if (trade.entryPrice !== undefined && trade.entryPrice > 0) {
       const gainCents = (trade.price - trade.entryPrice) * 100;
       const gainEmoji = gainCents >= 0 ? "📈" : "📉";
-      message += `${gainEmoji} Entry: ${(trade.entryPrice * 100).toFixed(1)}¢ → ${(trade.price * 100).toFixed(1)}¢ (${gainCents >= 0 ? "+" : ""}${gainCents.toFixed(1)}¢)\n`;
+      message += `${gainEmoji} Entry: ${this.formatPrice(trade.entryPrice)} → ${this.formatPrice(trade.price)} (${gainCents >= 0 ? "+" : ""}${gainCents.toFixed(1)}¢)\n`;
     }
 
     if (trade.pnl !== undefined) {
@@ -277,14 +277,14 @@ export class TelegramService {
     }
 
     message += `💵 Size: ${trade.size.toFixed(2)} shares\n`;
-    message += `💰 Price: ${(trade.price * 100).toFixed(1)}¢\n`;
+    message += `💰 Price: ${this.formatPrice(trade.price)}\n`;
     message += `📊 Value: $${trade.sizeUsd.toFixed(2)}\n`;
 
     // Show entry price and gain for sells
     if (trade.entryPrice !== undefined && trade.entryPrice > 0) {
       const gainCents = (trade.price - trade.entryPrice) * 100;
       const gainEmoji = gainCents >= 0 ? "📈" : "📉";
-      message += `${gainEmoji} Entry: ${(trade.entryPrice * 100).toFixed(1)}¢ → ${(trade.price * 100).toFixed(1)}¢ (${gainCents >= 0 ? "+" : ""}${gainCents.toFixed(1)}¢)\n`;
+      message += `${gainEmoji} Entry: ${this.formatPrice(trade.entryPrice)} → ${this.formatPrice(trade.price)} (${gainCents >= 0 ? "+" : ""}${gainCents.toFixed(1)}¢)\n`;
     }
 
     if (trade.pnl !== undefined) {
@@ -516,6 +516,28 @@ export class TelegramService {
   private escapeHtml(text: string): string {
     return escapeHtml(text);
   }
+
+  /**
+   * Format price for display - shows $X.XX for >= $0.995, otherwise XX.X¢
+   */
+  private formatPrice(price: number): string {
+    return formatPrice(price);
+  }
+}
+
+/**
+ * Format price for display - shows $X.XX for prices >= $0.995, otherwise XX.X¢
+ */
+export function formatPrice(price: number): string {
+  // Show as dollars if price is essentially $1 or more (handles rounding)
+  if (price >= 0.995) {
+    // Round to avoid floating-point issues (e.g., 0.995.toFixed(2) may yield "0.99")
+    const roundedDollars = Math.round(price * 100) / 100;
+    return `$${roundedDollars.toFixed(2)}`;
+  }
+  // Show as cents for prices below ~$1
+  const roundedCents = Math.round(price * 1000) / 10;
+  return `${roundedCents.toFixed(1)}¢`;
 }
 
 /**
