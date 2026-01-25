@@ -295,7 +295,7 @@ export function validatePriceProtection(params: {
       return {
         valid: false,
         error:
-          `Sale blocked: best offer is ${(bestBid * 100).toFixed(1)}¢ but minimum acceptable is ${(minAcceptablePrice * 100).toFixed(1)}¢. ` +
+          `Sale blocked: best bid is ${(bestBid * 100).toFixed(1)}¢ but minimum acceptable is ${(minAcceptablePrice * 100).toFixed(1)}¢. ` +
           `Waiting for a better price.`,
         diagnostics,
       };

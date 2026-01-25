@@ -2063,13 +2063,12 @@ export class ScalpTakeProfitStrategy {
       // the position exits or the plan is abandoned. Container restarts clear plans but
       // positions remain, causing new plans to be created on the next cycle.
       const exitPlan = this.exitPlans.get(position.tokenId);
-      // Recalculate limit/notional for error logging (same logic as try block)
-      const errLimitCents =
-        limitPriceCents ??
-        (position.currentBidPrice ?? position.currentPrice) * 100;
-      const errNotionalUsd = position.size * (errLimitCents / 100);
-      const entryCents = position.entryPrice * 100;
-      const currentBidCents = position.currentBidPrice !== undefined ? position.currentBidPrice * 100 : null;
+
+      // Use avgEntryPriceCents if available (true cost basis), otherwise fall back to entryPrice
+      const entryCents = position.avgEntryPriceCents ?? position.entryPrice * 100;
+      // Use bestBid if available, otherwise fall back to currentPrice for consistent "worth" calculation
+      const currentWorthCents = (position.currentBidPrice ?? position.currentPrice) * 100;
+      const notionalUsd = position.size * (currentWorthCents / 100);
 
       // Build a plain-English error message
       const errorReason = err instanceof Error ? err.message : String(err);
@@ -2079,8 +2078,8 @@ export class ScalpTakeProfitStrategy {
 
       this.logger.error(
         `[ProfitTaker] ❌ Could not sell "${position.side}" position. ` +
-          `Bought at ${entryCents.toFixed(1)}¢, now worth ${currentBidCents !== null ? currentBidCents.toFixed(1) + "¢" : "unknown"} ` +
-          `(${position.size.toFixed(2)} shares = $${errNotionalUsd.toFixed(2)}).${exitAttemptInfo} ` +
+          `Bought at ${entryCents.toFixed(1)}¢, now worth ${currentWorthCents.toFixed(1)}¢ ` +
+          `(${position.size.toFixed(2)} shares = $${notionalUsd.toFixed(2)}).${exitAttemptInfo} ` +
           `Reason: ${errorReason}`,
       );
       return false;
