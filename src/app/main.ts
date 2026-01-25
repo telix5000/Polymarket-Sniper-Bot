@@ -429,25 +429,26 @@ async function main(): Promise<void> {
       sellSignalMonitor = new SellSignalMonitorService({
         logger,
         positionTracker: orchestrator.getPositionTracker(),
-        // Callbacks for protective actions - currently logging only
-        // TODO: Wire up actual hedge/stop-loss execution via orchestrator strategies
+        // Callbacks for protective actions - notification only, actual execution in next orchestrator cycle
         onTriggerHedge: async (position, signal) => {
           logger.info(
             `[SellSignalMonitor] 🛡️ HEDGE triggered for ${position.tokenId.slice(0, 12)}... ` +
               `(loss: ${Math.abs(position.pnlPct).toFixed(1)}%) by trader ${signal.trader.slice(0, 10)}...`,
           );
-          // Note: The actual hedge execution would be handled by the HedgingStrategy
-          // in the next orchestrator cycle. This callback is for immediate notification.
-          return true;
+          // Return false: This is a notification callback only.
+          // The actual hedge execution is handled by HedgingStrategy in the next orchestrator cycle.
+          // The position will be picked up automatically since it meets the loss threshold.
+          return false;
         },
         onTriggerStopLoss: async (position, signal) => {
           logger.warn(
             `[SellSignalMonitor] 🚨 STOP-LOSS triggered for ${position.tokenId.slice(0, 12)}... ` +
               `(loss: ${Math.abs(position.pnlPct).toFixed(1)}%) by trader ${signal.trader.slice(0, 10)}...`,
           );
-          // Note: The actual stop-loss execution would be handled by the StopLossStrategy
-          // in the next orchestrator cycle. This callback is for immediate notification.
-          return true;
+          // Return false: This is a notification callback only.
+          // The actual stop-loss execution is handled by StopLossStrategy in the next orchestrator cycle.
+          // The position will be picked up automatically since it meets the loss threshold.
+          return false;
         },
       });
       logger.info("📊 Sell signal monitor initialized - watching for tracked trader SELL signals");

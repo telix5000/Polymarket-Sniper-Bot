@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test, describe, beforeEach, mock } from "node:test";
+import { test, describe, mock } from "node:test";
 import {
   SellSignalMonitorService,
   DEFAULT_SELL_SIGNAL_MONITOR_CONFIG,
