@@ -8,6 +8,7 @@ import {
   escapeHtml,
   getTradeEmoji,
   getTradeAction,
+  formatPrice,
   type TradeNotification,
 } from "../../src/services/telegram.service";
 
@@ -193,6 +194,38 @@ describe("Telegram Service Message Formatting - escapeHtml", () => {
     const result = escapeHtml(input);
 
     assert.strictEqual(result, expected);
+  });
+});
+
+describe("Telegram Service Message Formatting - formatPrice", () => {
+  test("should return 'Unknown' for negative prices (sentinel value)", () => {
+    assert.strictEqual(formatPrice(-1), "Unknown");
+    assert.strictEqual(formatPrice(-0.5), "Unknown");
+    assert.strictEqual(formatPrice(-100), "Unknown");
+  });
+
+  test("should return 'Unknown' for NaN and Infinity", () => {
+    assert.strictEqual(formatPrice(NaN), "Unknown");
+    assert.strictEqual(formatPrice(Infinity), "Unknown");
+    assert.strictEqual(formatPrice(-Infinity), "Unknown");
+  });
+
+  test("should format prices >= $0.995 as dollars", () => {
+    assert.strictEqual(formatPrice(1.0), "$1.00");
+    assert.strictEqual(formatPrice(0.995), "$1.00");
+    assert.strictEqual(formatPrice(0.999), "$1.00");
+    assert.strictEqual(formatPrice(1.5), "$1.50");
+  });
+
+  test("should format prices < $0.995 as cents", () => {
+    assert.strictEqual(formatPrice(0.5), "50.0¢");
+    assert.strictEqual(formatPrice(0.65), "65.0¢");
+    assert.strictEqual(formatPrice(0.994), "99.4¢");
+    assert.strictEqual(formatPrice(0.001), "0.1¢");
+  });
+
+  test("should format zero price", () => {
+    assert.strictEqual(formatPrice(0), "0.0¢");
   });
 });
 
