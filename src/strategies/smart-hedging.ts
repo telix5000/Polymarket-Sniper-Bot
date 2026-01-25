@@ -70,9 +70,9 @@ export interface SmartHedgingConfig {
 
   /**
    * Loss % threshold for emergency full protection (default: 30)
-   * When position drops beyond this %, hedge sizing targets absoluteMaxUsd directly
-   * (not the computed break-even size) to maximize protection for heavy reversals.
-   * Uses: hedgeUsd = min(absoluteMaxUsd, reserveBudget) or min(maxHedgeUsd, reserveBudget) if !allowExceedMax
+   * When position drops beyond this %, hedge sizing targets absoluteMaxUsd (or maxHedgeUsd
+   * if !allowExceedMax) directly instead of the computed break-even size, to maximize
+   * protection for heavy reversals. Reserve constraints are then applied separately.
    */
   emergencyLossPct: number;
 
@@ -1148,8 +1148,8 @@ export class SmartHedgingStrategy {
     // Determine actual hedge size based on limits
     let hedgeUsd: number;
     if (isEmergencyHedge) {
-      // EMERGENCY HEDGE: Target absoluteMaxUsd directly for maximum protection
-      // hedgeUsd = min(absoluteMaxUsd, reserveBudget) or min(maxHedgeUsd, reserveBudget) if !allowExceedMax
+      // EMERGENCY HEDGE: Target absoluteMaxUsd (or maxHedgeUsd) directly for maximum protection.
+      // Reserve constraints are applied separately via applyReserveAwareSizing below.
       if (this.config.allowExceedMax) {
         hedgeUsd = this.config.absoluteMaxUsd;
         this.logger.warn(
