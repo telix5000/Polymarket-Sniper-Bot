@@ -10,6 +10,7 @@ import {
   LogDeduper,
   HEARTBEAT_INTERVAL_MS,
   TRACKER_HEARTBEAT_MS,
+  TOKEN_ID_DISPLAY_LENGTH,
 } from "../utils/log-deduper.util";
 import {
   formatCents,
@@ -3849,6 +3850,25 @@ export class PositionTracker {
                 this.logger.info(
                   `[PositionTracker] 💰 High profit position: ${side} entry=${(entryPrice * 100).toFixed(1)}¢ → current=${(currentPrice * 100).toFixed(1)}¢ = +${pnlPct.toFixed(1)}% ($${pnlUsd.toFixed(2)}) [source: ${sourceDescription}]`,
                 );
+              }
+
+              // Log significant losses at WARN level for monitoring (rate-limited per tokenId)
+              // This ensures visibility - previously only gains were logged, making losses "silent"
+              if (pnlPct <= -20 && !finalRedeemable && pnlTrusted) {
+                // Rate-limit loss logging to once per minute per tokenId
+                // TOKEN_ID_DISPLAY_LENGTH (16 chars) provides sufficient uniqueness for deduplication
+                const lossLogKey = `high_loss:${tokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}`;
+                if (this.logDeduper.shouldLog(lossLogKey, 60_000)) {
+                  const sourceDescription =
+                    pnlSource === "DATA_API"
+                      ? "Polymarket Data API"
+                      : pnlSource === "EXECUTABLE_BOOK"
+                        ? "CLOB order book best bid"
+                        : "fallback price API";
+                  this.logger.warn(
+                    `[PositionTracker] 📉 High loss position: ${side} entry=${(entryPrice * 100).toFixed(1)}¢ → current=${(currentPrice * 100).toFixed(1)}¢ = ${pnlPct.toFixed(1)}% ($${pnlUsd.toFixed(2)}) [source: ${sourceDescription}]`,
+                  );
+                }
               }
 
               // Fetch market end time for active positions (needed for near-close hedging)
