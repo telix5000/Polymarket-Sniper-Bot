@@ -2,7 +2,12 @@ import type { ClobClient } from "@polymarket/clob-client";
 import type { Wallet } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker, Position } from "./position-tracker";
-import { LogDeduper, SKIP_LOG_TTL_MS } from "../utils/log-deduper.util";
+import {
+  LogDeduper,
+  SKIP_LOG_TTL_MS,
+  HIGH_VALUE_PRICE_THRESHOLD,
+  HIGH_VALUE_NO_BID_LOG_TTL_MS,
+} from "../utils/log-deduper.util";
 
 export interface AutoSellConfig {
   enabled: boolean;
@@ -85,19 +90,6 @@ export class AutoSellStrategy {
 
   // === LOG DEDUPLICATION ===
   private logDeduper = new LogDeduper();
-
-  // === CONSTANTS ===
-  /**
-   * Price threshold (95¢) for elevated logging of NO_BID skips.
-   * Positions at or above this price represent potentially stuck capital,
-   * so we log at INFO level instead of DEBUG.
-   */
-  private static readonly HIGH_VALUE_PRICE_THRESHOLD = 0.95;
-  /**
-   * Rate limit (30 seconds) for high-value NO_BID logs.
-   * Shorter than normal skip log TTL to ensure visibility.
-   */
-  private static readonly HIGH_VALUE_NO_BID_LOG_TTL_MS = 30_000;
 
   constructor(strategyConfig: AutoSellStrategyConfig) {
     this.client = strategyConfig.client;
@@ -301,8 +293,7 @@ export class AutoSellStrategy {
           // since this represents potentially stuck capital that users need to know about
           {
             const isHighValue =
-              position.currentPrice >=
-              AutoSellStrategy.HIGH_VALUE_PRICE_THRESHOLD;
+              position.currentPrice >= HIGH_VALUE_PRICE_THRESHOLD;
             const bookStatusInfo = position.bookStatus ?? "UNKNOWN";
             const noBidMessage =
               `[AutoSell] ⚠️ NO_BID: tokenId=${tokenIdShort}... ${diagInfo} bookStatus=${bookStatusInfo}` +
@@ -317,7 +308,7 @@ export class AutoSellStrategy {
               if (
                 this.logDeduper.shouldLog(
                   `AutoSell:NO_BID_HIGH_VALUE:${tokenIdShort}`,
-                  AutoSellStrategy.HIGH_VALUE_NO_BID_LOG_TTL_MS,
+                  HIGH_VALUE_NO_BID_LOG_TTL_MS,
                 )
               ) {
                 this.logger.info(noBidMessage);
