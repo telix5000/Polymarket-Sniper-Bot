@@ -8,6 +8,7 @@ import {
   escapeHtml,
   getTradeEmoji,
   getTradeAction,
+  formatPrice,
   type TradeNotification,
 } from "../../src/services/telegram.service";
 
@@ -197,9 +198,6 @@ describe("Telegram Service Message Formatting - escapeHtml", () => {
 });
 
 describe("Telegram Service Message Formatting - formatPrice", () => {
-  // Import formatPrice for testing
-  const { formatPrice } = require("../../src/services/telegram.service");
-
   test("should format zero price as 0.0¢", () => {
     assert.strictEqual(formatPrice(0), "0.0¢");
   });
