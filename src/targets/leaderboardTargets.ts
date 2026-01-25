@@ -45,7 +45,7 @@ const BACKOFF_DELAYS_MS = [1000, 2000, 4000]; // Exponential backoff for retries
  * Validates that a string is a valid EVM address (0x-prefixed, 40 hex chars)
  */
 export function isValidEvmAddress(address: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/i.test(address);
+  return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
 
 /**
