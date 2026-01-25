@@ -33,6 +33,7 @@ import {
   releaseHedgeLock,
 } from "../utils/funds-allowance.util";
 import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR } from "./constants";
+import { EMERGENCY_EXIT_MIN_PRICE } from "./stop-loss";
 
 /**
  * Smart Hedging Direction - determines when smart hedging is active
@@ -1764,11 +1765,6 @@ export class SmartHedgingStrategy {
       // Normalize the outcome for the order (tokenId is what matters for execution)
       const orderOutcome = this.normalizeOutcomeForOrder(position.side);
 
-      // For liquidation sells, we MUST exit the position. Accept any price above near-zero.
-      // The goal is to salvage whatever value remains, not to optimize exit price.
-      // Using 0.01 (1¢) as floor to avoid selling for literally nothing.
-      const minAcceptable = 0.01;
-
       const result = await postOrder({
         client: this.client,
         wallet,
@@ -1778,7 +1774,7 @@ export class SmartHedgingStrategy {
         side: "SELL",
         sizeUsd: currentValue,
         // Accept any price above 1¢ - just get out!
-        minAcceptablePrice: minAcceptable,
+        minAcceptablePrice: EMERGENCY_EXIT_MIN_PRICE,
         logger: this.logger,
         skipDuplicatePrevention: true,
         skipMinOrderSizeCheck: true, // Allow selling small positions during liquidation

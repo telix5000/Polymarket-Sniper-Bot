@@ -5,6 +5,13 @@ import type { PositionTracker, Position } from "./position-tracker";
 import { getDynamicStopLoss, PRICE_TIERS } from "./trade-quality";
 import { notifyStopLoss } from "../services/trade-notification.service";
 
+/**
+ * Minimum acceptable price for emergency exit orders (stop-loss, liquidation).
+ * Set to 1¢ to accept any price rather than optimizing exit.
+ * The goal is to EXIT the position and salvage whatever value remains.
+ */
+export const EMERGENCY_EXIT_MIN_PRICE = 0.01;
+
 export interface StopLossConfig {
   enabled: boolean;
   /**
@@ -372,11 +379,6 @@ export class StopLossStrategy {
           `at ~${(bestBid * 100).toFixed(1)}¢ ($${sizeUsd.toFixed(2)}, loss: ${currentLossPct.toFixed(2)}%)`,
       );
 
-      // For stop-loss, we MUST exit the position. Accept any price above near-zero.
-      // The goal is to salvage whatever value remains, not to optimize exit price.
-      // Using 0.01 (1¢) as floor to avoid selling for literally nothing.
-      const minAcceptable = 0.01;
-
       // Execute sell order with maximum slippage tolerance for stop-loss
       const result = await postOrder({
         client: this.client,
@@ -386,7 +388,7 @@ export class StopLossStrategy {
         outcome: "YES",
         side: "SELL",
         sizeUsd,
-        minAcceptablePrice: minAcceptable, // Accept any price above 1¢ - just get out!
+        minAcceptablePrice: EMERGENCY_EXIT_MIN_PRICE, // Accept any price above 1¢ - just get out!
         logger: this.logger,
         priority: true, // High priority for stop-loss
         skipDuplicatePrevention: true, // Stop-loss must bypass duplicate prevention
