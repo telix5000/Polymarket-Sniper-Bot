@@ -285,12 +285,12 @@ export async function notifyTrade(
     );
 
     if (success) {
-      logger?.debug(
-        `[TradeNotification] Sent ${input.type} notification for ${input.marketId.slice(0, 8)}...`,
+      logger?.info(
+        `[TradeNotification] ✅ Sent ${input.type} notification for ${input.marketId.slice(0, 8)}... (strategy: ${input.strategy ?? "unknown"})`,
       );
     } else {
       logger?.warn(
-        `[TradeNotification] Failed to send ${input.type} notification`,
+        `[TradeNotification] ❌ Failed to send ${input.type} notification for ${input.marketId.slice(0, 8)}... - Telegram API returned false`,
       );
     }
 

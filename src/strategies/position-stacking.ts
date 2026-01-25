@@ -312,7 +312,7 @@ export class PositionStackingStrategy {
 
     for (const position of positions) {
       const existingBaseline = this.positionBaselines.get(position.tokenId);
-      
+
       if (existingBaseline) {
         // Position already has a baseline - just update the lastUpdatedAtMs
         // to indicate this position is still active (prevents stale cleanup)
@@ -562,7 +562,7 @@ export class PositionStackingStrategy {
         const entryPrice = position.avgEntryPriceCents
           ? position.avgEntryPriceCents / 100
           : position.entryPrice;
-        void notifyStack(
+        notifyStack(
           position.marketId,
           position.tokenId,
           sizeUsd / position.currentPrice, // Estimate shares from USD
@@ -572,9 +572,23 @@ export class PositionStackingStrategy {
             entryPrice,
             outcome: outcome,
           },
-        ).catch(() => {
-          // Ignore notification errors - logging is handled by the service
-        });
+        )
+          .then((sent) => {
+            if (sent) {
+              this.logger.info(
+                `[PositionStacking] 📱 Telegram notification sent for STACK`,
+              );
+            } else {
+              this.logger.warn(
+                `[PositionStacking] 📱 Telegram notification failed to send (returned false) - check Telegram config`,
+              );
+            }
+          })
+          .catch((err) => {
+            this.logger.warn(
+              `[PositionStacking] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
 
         return true;
       }
@@ -634,8 +648,7 @@ export class PositionStackingStrategy {
    */
   private cleanupStaleBaselines(): void {
     const now = Date.now();
-    const staleThreshold =
-      now - PositionStackingStrategy.BASELINE_STALE_MS;
+    const staleThreshold = now - PositionStackingStrategy.BASELINE_STALE_MS;
 
     for (const [tokenId, baseline] of this.positionBaselines) {
       // If baseline hasn't been updated in 2 hours, it's for a position
@@ -686,6 +699,8 @@ export class PositionStackingStrategy {
     this.stackedPositions.clear();
     this.cooldowns.clear();
     this.positionBaselines.clear();
-    this.logger.info("[PositionStacking] Cleared all stacked positions and baselines");
+    this.logger.info(
+      "[PositionStacking] Cleared all stacked positions and baselines",
+    );
   }
 }

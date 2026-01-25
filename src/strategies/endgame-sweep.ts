@@ -306,7 +306,7 @@ export class EndgameSweepStrategy {
         this.logger.info(`[EndgameSweep] ✅ Bought successfully`);
 
         // Send telegram notification for endgame sweep buy
-        void notifyBuy(
+        notifyBuy(
           market.id,
           market.tokenId,
           sizeUsd / market.price, // Estimate shares from USD
@@ -316,9 +316,23 @@ export class EndgameSweepStrategy {
             strategy: "EndgameSweep",
             outcome: market.side,
           },
-        ).catch(() => {
-          // Ignore notification errors - logging is handled by the service
-        });
+        )
+          .then((sent) => {
+            if (sent) {
+              this.logger.info(
+                `[EndgameSweep] 📱 Telegram notification sent for BUY`,
+              );
+            } else {
+              this.logger.warn(
+                `[EndgameSweep] 📱 Telegram notification failed to send (returned false) - check Telegram config`,
+              );
+            }
+          })
+          .catch((err) => {
+            this.logger.warn(
+              `[EndgameSweep] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
 
         return true;
       }
