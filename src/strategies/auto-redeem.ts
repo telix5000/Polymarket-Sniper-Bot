@@ -175,9 +175,10 @@ export class AutoRedeemStrategy {
   private static readonly MAX_REDEMPTION_FAILURES = 3;
 
   // Cache for on-chain payoutDenominator checks to minimize RPC calls
+  // Stores the actual denominator value for reuse in payout calculations
   private payoutDenominatorCache = new Map<
     string,
-    { resolved: boolean; checkedAt: number }
+    { resolved: boolean; denominator: bigint; checkedAt: number }
   >();
   private static readonly PAYOUT_DENOM_CACHE_TTL_MS = 300_000; // 5 minutes
 
@@ -463,9 +464,10 @@ export class AutoRedeemStrategy {
 
       const isResolved = denominator > 0n;
 
-      // Cache the result
+      // Cache the result including the actual denominator value
       this.payoutDenominatorCache.set(conditionId, {
         resolved: isResolved,
+        denominator,
         checkedAt: now,
       });
 
@@ -540,10 +542,22 @@ export class AutoRedeemStrategy {
       const ctfContract = new Contract(ctfAddress, CTF_ABI, wallet.provider);
       const conditionId = position.marketId;
 
-      // Get payout denominator (same for all outcomes)
-      const payoutDenominator = (await ctfContract.payoutDenominator(
-        conditionId,
-      )) as bigint;
+      // Try to get payout denominator from cache first to reduce RPC calls
+      const cached = this.payoutDenominatorCache.get(conditionId);
+      let payoutDenominator: bigint;
+
+      if (
+        cached &&
+        Date.now() - cached.checkedAt <
+          AutoRedeemStrategy.PAYOUT_DENOM_CACHE_TTL_MS
+      ) {
+        payoutDenominator = cached.denominator;
+      } else {
+        // Fetch from chain if not cached
+        payoutDenominator = (await ctfContract.payoutDenominator(
+          conditionId,
+        )) as bigint;
+      }
 
       if (payoutDenominator === 0n) {
         // Market not resolved - should not happen here, but be safe
@@ -551,15 +565,15 @@ export class AutoRedeemStrategy {
       }
 
       // For binary markets, check both outcome slots to find which one matches our tokenId
-      // indexSet 1 = outcome 0 (typically YES), indexSet 2 = outcome 1 (typically NO)
+      // indexSet is a bitmask: 1 << 0 = 1 for outcome 0 (typically YES), 1 << 1 = 2 for outcome 1 (typically NO)
       for (const outcomeIndex of [0, 1]) {
-        const indexSet = outcomeIndex + 1; // indexSet is 1-indexed: 1 for YES, 2 for NO
+        const indexSet = 1n << BigInt(outcomeIndex);
 
         // Calculate the expected tokenId for this outcome
         // 1. Get collectionId from (parentCollectionId=0, conditionId, indexSet)
         // 2. Get positionId from (collateralToken, collectionId)
         const collectionId = (await ctfContract.getCollectionId(
-          "0x0000000000000000000000000000000000000000000000000000000000000000", // parentCollectionId (always 0 for Polymarket)
+          ZeroHash, // parentCollectionId (always 0 for Polymarket)
           conditionId,
           indexSet,
         )) as string;
