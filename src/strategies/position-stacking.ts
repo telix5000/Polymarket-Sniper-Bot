@@ -182,13 +182,23 @@ export class PositionStackingStrategy {
     );
   }
 
+  // === PER-CYCLE STACKING BUDGET ===
+  // Tracks remaining budget for stacking within a single execute() cycle.
+  // Uses full available cash to allow exhausting reserves for profitable opportunities.
+  // Reset at the start of each execute() call.
+  private cycleStackBudgetRemaining: number | null = null;
+
   /**
    * Execute the strategy
    *
    * SINGLE-FLIGHT: Skips if already running (returns 0)
    *
+   * RESERVE BEHAVIOR: Stacking uses full available cash (even reserves) for profitable
+   * opportunities. This implements "use reserves for stacking when profitable" - reserves
+   * exist to protect, but stacking profitable positions IS a form of capitalizing on wins.
+   *
    * @param snapshot Portfolio snapshot from orchestrator
-   * @param reservePlan Optional reserve plan for RISK_OFF gating
+   * @param reservePlan Optional reserve plan for budget-aware stacking
    */
   async execute(
     snapshot?: PortfolioSnapshot,
@@ -198,19 +208,29 @@ export class PositionStackingStrategy {
       return 0;
     }
 
-    // RISK_OFF gate: block all BUYs (stacking is a BUY) when reserves are insufficient
-    if (reservePlan?.mode === "RISK_OFF") {
-      if (
-        this.logDeduper.shouldLog(
-          "PositionStacking:risk_off",
-          PositionStackingStrategy.SKIP_LOG_TTL_MS,
-        )
-      ) {
-        this.logger.debug(
-          `[PositionStacking] RISK_OFF - skipping stacking (shortfall=$${reservePlan.shortfall.toFixed(2)})`,
-        );
+    // Initialize per-cycle stacking budget from available cash
+    // NOTE: We use FULL available cash, not (availableCash - reserveRequired), because
+    // stacking profitable positions is a high-value opportunity that justifies using reserves.
+    // Reserves will be replenished from profits, but missing the opportunity is worse.
+    if (reservePlan) {
+      this.cycleStackBudgetRemaining = reservePlan.availableCash;
+      
+      // Log when using reserves for stacking
+      if (reservePlan.mode === "RISK_OFF") {
+        if (
+          this.logDeduper.shouldLog(
+            "PositionStacking:using_reserves",
+            PositionStackingStrategy.SKIP_LOG_TTL_MS,
+          )
+        ) {
+          this.logger.info(
+            `[PositionStacking] 💰 Using reserves for stacking: available=$${reservePlan.availableCash.toFixed(2)}, ` +
+              `reserveRequired=$${reservePlan.reserveRequired.toFixed(2)}, shortfall=$${reservePlan.shortfall.toFixed(2)}`,
+          );
+        }
       }
-      return 0;
+    } else {
+      this.cycleStackBudgetRemaining = null; // No budget tracking if no reserve plan
     }
 
     // Single-flight guard
@@ -491,6 +511,59 @@ export class PositionStackingStrategy {
   }
 
   /**
+   * Minimum USD for a stack to be worthwhile (below this, skip)
+   */
+  private static readonly MIN_STACK_USD = 1;
+
+  /**
+   * Deduct an amount from the per-cycle stacking budget after a successful stack.
+   * @param amountUsd - The USD amount spent on stacking (must be non-negative)
+   */
+  private deductFromCycleStackBudget(amountUsd: number): void {
+    if (this.cycleStackBudgetRemaining !== null && amountUsd > 0) {
+      this.cycleStackBudgetRemaining = Math.max(0, this.cycleStackBudgetRemaining - amountUsd);
+    }
+  }
+
+  /**
+   * Apply budget-aware sizing to a stack amount.
+   * Uses full available cash (even reserves) for profitable opportunities.
+   *
+   * @param computedUsd - The originally computed stack amount
+   * @returns Object with either { skip: true, reason: string } or { skip: false, cappedUsd: number, isPartial: boolean }
+   */
+  private applyBudgetAwareSizing(
+    computedUsd: number,
+  ): { skip: true; reason: string } | { skip: false; cappedUsd: number; isPartial: boolean } {
+    // If no budget tracking, use full computed amount
+    if (this.cycleStackBudgetRemaining === null) {
+      return { skip: false, cappedUsd: computedUsd, isPartial: false };
+    }
+
+    const minStackUsd = PositionStackingStrategy.MIN_STACK_USD;
+
+    // Check if budget is below minimum threshold
+    if (this.cycleStackBudgetRemaining < minStackUsd) {
+      this.logger.info(
+        `[PositionStacking] 📋 Stack skipped (BUDGET_EXHAUSTED): budget=$${this.cycleStackBudgetRemaining.toFixed(2)} < min=$${minStackUsd}`,
+      );
+      return { skip: true, reason: "BUDGET_EXHAUSTED" };
+    }
+
+    // Check if budget is less than computed amount - submit partial
+    if (this.cycleStackBudgetRemaining < computedUsd) {
+      const cappedUsd = this.cycleStackBudgetRemaining;
+      this.logger.info(
+        `[PositionStacking] 📉 PARTIAL STACK: Capping from $${computedUsd.toFixed(2)} to $${cappedUsd.toFixed(2)} (budget constraint)`,
+      );
+      return { skip: false, cappedUsd, isPartial: true };
+    }
+
+    // Full amount available
+    return { skip: false, cappedUsd: computedUsd, isPartial: false };
+  }
+
+  /**
    * Stack (double down on) a position
    */
   private async stackPosition(
@@ -511,7 +584,13 @@ export class PositionStackingStrategy {
       return false;
     }
 
-    const sizeUsd = this.config.maxStackUsd;
+    // Apply budget-aware sizing to use reserves for profitable opportunities
+    const budgetResult = this.applyBudgetAwareSizing(this.config.maxStackUsd);
+    if (budgetResult.skip) {
+      return false;
+    }
+    
+    const sizeUsd = budgetResult.cappedUsd;
     const outcome = position.side.toUpperCase() === "YES" ? "YES" : "NO";
 
     this.logger.info(
@@ -536,6 +615,13 @@ export class PositionStackingStrategy {
       });
 
       if (result.status === "submitted") {
+        // Deduct from budget after successful stack, accounting for partial fills if available
+        const effectiveStackAmountUsd =
+          typeof (result as { filledAmountUsd?: number }).filledAmountUsd === "number"
+            ? (result as { filledAmountUsd?: number }).filledAmountUsd!
+            : sizeUsd;
+        this.deductFromCycleStackBudget(effectiveStackAmountUsd);
+        
         // Record the stack in memory
         this.stackedPositions.set(position.tokenId, {
           tokenId: position.tokenId,

@@ -344,6 +344,12 @@ export class SmartHedgingStrategy {
   /**
    * Initialize the per-cycle hedge budget from the current reserve plan.
    * Called at the start of executeInternal() to set the budget for this cycle.
+   * 
+   * RESERVE BEHAVIOR: Hedging uses full available cash (even reserves) because:
+   * - Hedging DOWN protects against losses (defensive)
+   * - Hedging UP capitalizes on high-probability wins (opportunistic)
+   * Both are valuable operations that justify using reserves. Reserves will be
+   * replenished from profits, but missing hedge opportunities can be costly.
    */
   private initCycleHedgeBudget(): void {
     if (!this.getReservePlan) {
@@ -357,8 +363,19 @@ export class SmartHedgingStrategy {
       return;
     }
 
-    // Initialize budget: availableCash - reserveRequired
-    this.cycleHedgeBudgetRemaining = Math.max(0, plan.availableCash - plan.reserveRequired);
+    // Initialize budget: use FULL available cash, not (availableCash - reserveRequired)
+    // This allows hedging to use reserves for both protective (down) and opportunistic (up) cases.
+    // The rationale: hedging is a high-value operation - missing a hedge opportunity can be
+    // more costly than temporarily depleting reserves.
+    this.cycleHedgeBudgetRemaining = plan.availableCash;
+    
+    // Log when we're using reserves for hedging
+    if (plan.mode === "RISK_OFF") {
+      this.logger.info(
+        `[SmartHedging] 💰 Using reserves for hedging: available=$${plan.availableCash.toFixed(2)}, ` +
+          `reserveRequired=$${plan.reserveRequired.toFixed(2)}, shortfall=$${plan.shortfall.toFixed(2)}`,
+      );
+    }
   }
 
   /**

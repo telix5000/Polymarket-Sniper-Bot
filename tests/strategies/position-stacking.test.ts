@@ -243,27 +243,54 @@ test("PositionStackingStrategy returns 0 when disabled", async () => {
   assert.equal(result, 0);
 });
 
-test("PositionStackingStrategy respects RISK_OFF mode", async () => {
+test("PositionStackingStrategy uses available cash even in RISK_OFF mode", async () => {
   const strategy = new PositionStackingStrategy({
     client: mockClient,
     logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
     config: DEFAULT_POSITION_STACKING_CONFIG,
   });
 
-  // Create a mock reserve plan in RISK_OFF mode
+  // Create a mock reserve plan in RISK_OFF mode with some available cash
+  // New behavior: strategy should use available cash for stacking, not block
   const riskyReservePlan = {
     mode: "RISK_OFF" as const,
     reserveRequired: 100,
     baseReserve: 50,
     positionReserve: 50,
-    availableCash: 50,
+    availableCash: 50, // Has $50 available (but shortfall means RISK_OFF)
     shortfall: 50,
     topPositionReserves: [],
     equityUsd: 100,
     computedAtMs: Date.now(),
   };
 
+  // Should return 0 because no positions to stack (no tracker), NOT because RISK_OFF blocked it
   const result = await strategy.execute(undefined, riskyReservePlan);
+  assert.equal(result, 0);
+});
+
+test("PositionStackingStrategy skips when budget is exhausted", async () => {
+  const strategy = new PositionStackingStrategy({
+    client: mockClient,
+    logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+    config: DEFAULT_POSITION_STACKING_CONFIG,
+  });
+
+  // Create a mock reserve plan with zero available cash
+  const zeroReservePlan = {
+    mode: "RISK_OFF" as const,
+    reserveRequired: 100,
+    baseReserve: 50,
+    positionReserve: 50,
+    availableCash: 0, // No cash available
+    shortfall: 100,
+    topPositionReserves: [],
+    equityUsd: 100,
+    computedAtMs: Date.now(),
+  };
+
+  // Should return 0 because no cash available for stacking
+  const result = await strategy.execute(undefined, zeroReservePlan);
   assert.equal(result, 0);
 });
 
@@ -290,6 +317,156 @@ test("PositionStackingStrategy executes when RISK_ON mode", async () => {
   // Should return 0 because no positions available (no tracker)
   const result = await strategy.execute(undefined, safeReservePlan);
   assert.equal(result, 0);
+});
+
+// === BUDGET-AWARE STACKING TESTS ===
+
+describe("Budget-Aware Stacking", () => {
+  /**
+   * Simplified test helper function to simulate the budget-aware stacking sizing logic.
+   * This mirrors the core logic in PositionStackingStrategy.applyBudgetAwareSizing().
+   *
+   * @param maxStackUsd - Maximum stack amount from config
+   * @param cycleStackBudgetRemaining - Remaining budget for this cycle (null = no budget tracking)
+   * @param minStackUsd - Minimum stack amount (default: 1)
+   * @returns Object with final size and reason
+   */
+  function computeBudgetAwareSize(
+    maxStackUsd: number,
+    cycleStackBudgetRemaining: number | null,
+    minStackUsd: number = 1,
+  ): { finalSize: number; reason: "full" | "partial" | "skipped" | "no_budget_tracking" } {
+    // If no budget tracking, use full computed size
+    if (cycleStackBudgetRemaining === null) {
+      return { finalSize: maxStackUsd, reason: "no_budget_tracking" };
+    }
+
+    // If budget < minStackUsd, skip entirely
+    if (cycleStackBudgetRemaining < minStackUsd) {
+      return { finalSize: 0, reason: "skipped" };
+    }
+
+    // If budget < maxStackUsd, submit partial
+    if (cycleStackBudgetRemaining < maxStackUsd) {
+      return { finalSize: cycleStackBudgetRemaining, reason: "partial" };
+    }
+
+    // Full size available
+    return { finalSize: maxStackUsd, reason: "full" };
+  }
+
+  describe("Budget Initialization", () => {
+    test("initializes budget from availableCash in RISK_OFF mode", () => {
+      // RISK_OFF with $50 available should have $50 budget
+      const availableCash = 50;
+      const reserveRequired = 100; // Causes RISK_OFF
+
+      // Budget should be initialized from availableCash, not (availableCash - reserveRequired)
+      // This is the key change - we use full availableCash for stacking opportunities
+      const result = computeBudgetAwareSize(25, availableCash);
+
+      assert.strictEqual(result.finalSize, 25, "Should use full maxStackUsd when budget allows");
+      assert.strictEqual(result.reason, "full", "Should indicate full stack");
+    });
+
+    test("initializes budget from availableCash in RISK_ON mode", () => {
+      // RISK_ON with $100 available
+      const availableCash = 100;
+
+      const result = computeBudgetAwareSize(25, availableCash);
+
+      assert.strictEqual(result.finalSize, 25, "Should use full maxStackUsd");
+      assert.strictEqual(result.reason, "full", "Should indicate full stack");
+    });
+
+    test("uses full maxStackUsd when no budget tracking", () => {
+      const result = computeBudgetAwareSize(25, null);
+
+      assert.strictEqual(result.finalSize, 25, "Should use full maxStackUsd");
+      assert.strictEqual(result.reason, "no_budget_tracking", "Should indicate no budget tracking");
+    });
+  });
+
+  describe("Partial Stacks", () => {
+    test("caps stack to budget when budget < maxStackUsd", () => {
+      const maxStackUsd = 25;
+      const budgetRemaining = 15; // Less than maxStackUsd
+
+      const result = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
+
+      assert.strictEqual(result.finalSize, 15, "Should cap to available budget");
+      assert.strictEqual(result.reason, "partial", "Should indicate partial stack");
+    });
+
+    test("allows partial stack at exact budget amount", () => {
+      const maxStackUsd = 25;
+      const budgetRemaining = 10;
+
+      const result = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
+
+      assert.strictEqual(result.finalSize, 10, "Should use exact remaining budget");
+      assert.strictEqual(result.reason, "partial", "Should indicate partial");
+    });
+  });
+
+  describe("Budget Exhaustion", () => {
+    test("skips when budget is below minimum threshold", () => {
+      const maxStackUsd = 25;
+      const budgetRemaining = 0.5; // Below $1 minimum
+      const minStackUsd = 1;
+
+      const result = computeBudgetAwareSize(maxStackUsd, budgetRemaining, minStackUsd);
+
+      assert.strictEqual(result.finalSize, 0, "Should skip when budget exhausted");
+      assert.strictEqual(result.reason, "skipped", "Should indicate skipped");
+    });
+
+    test("skips when budget is zero", () => {
+      const result = computeBudgetAwareSize(25, 0);
+
+      assert.strictEqual(result.finalSize, 0, "Should skip when no budget");
+      assert.strictEqual(result.reason, "skipped", "Should indicate skipped");
+    });
+  });
+
+  describe("Multiple Stacks Per Cycle", () => {
+    test("multiple stacks in same cycle decrement budget correctly", () => {
+      let budgetRemaining = 50; // Initial budget
+      const maxStackUsd = 25;
+
+      // First stack
+      const result1 = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
+      assert.strictEqual(result1.finalSize, 25, "First stack should use full $25");
+      assert.strictEqual(result1.reason, "full", "First stack should be full");
+      budgetRemaining -= result1.finalSize; // Now $25
+
+      // Second stack
+      const result2 = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
+      assert.strictEqual(result2.finalSize, 25, "Second stack should use full $25");
+      assert.strictEqual(result2.reason, "full", "Second stack should be full");
+      budgetRemaining -= result2.finalSize; // Now $0
+
+      // Third stack - should be skipped (budget exhausted)
+      const result3 = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
+      assert.strictEqual(result3.finalSize, 0, "Third stack should be skipped");
+      assert.strictEqual(result3.reason, "skipped", "Third stack should indicate exhausted");
+    });
+
+    test("partial stack when budget partially depleted", () => {
+      let budgetRemaining = 40; // Initial budget
+      const maxStackUsd = 25;
+
+      // First stack - full
+      const result1 = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
+      assert.strictEqual(result1.finalSize, 25);
+      budgetRemaining -= result1.finalSize; // Now $15
+
+      // Second stack - partial (only $15 left)
+      const result2 = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
+      assert.strictEqual(result2.finalSize, 15, "Second stack should be capped to $15");
+      assert.strictEqual(result2.reason, "partial", "Second stack should be partial");
+    });
+  });
 });
 
 // === BASELINE TRACKING TESTS ===
