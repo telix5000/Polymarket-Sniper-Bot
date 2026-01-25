@@ -1150,13 +1150,13 @@ export class SmartHedgingStrategy {
 
     // Check each paired hedge
     for (const [originalKey, pairedInfo] of this.pairedHedges.entries()) {
-      // Skip if already exited
-      if (this.hedgeExitedPositions.has(originalKey)) {
-        continue;
-      }
-
       const { marketId, hedgeTokenId, originalTokenId } = pairedInfo;
       const hedgeKey = `${marketId}-${hedgeTokenId}`;
+
+      // Skip if either position has already been exited
+      if (this.hedgeExitedPositions.has(originalKey) || this.hedgeExitedPositions.has(hedgeKey)) {
+        continue;
+      }
 
       // Get both positions
       const originalPosition = positionMap.get(originalKey);
@@ -1164,8 +1164,10 @@ export class SmartHedgingStrategy {
 
       // Skip if either position is no longer held
       if (!originalPosition && !hedgePosition) {
-        // Both positions gone - clean up tracking
+        // Both positions gone - clean up tracking (including hedgeExitedPositions)
         this.pairedHedges.delete(originalKey);
+        this.hedgeExitedPositions.delete(originalKey);
+        this.hedgeExitedPositions.delete(hedgeKey);
         continue;
       }
 
