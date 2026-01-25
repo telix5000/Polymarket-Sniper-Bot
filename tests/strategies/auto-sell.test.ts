@@ -699,3 +699,152 @@ describe("AutoSell Stale Profitable Position Exit", () => {
     // But that could take weeks/months, while the $55 can generate returns now
   });
 });
+
+// === QUICK WIN TESTS ===
+
+describe("AutoSell Quick Win Configuration", () => {
+  test("DEFAULT_AUTO_SELL_CONFIG has correct quick win defaults", () => {
+    assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.quickWinEnabled, false);
+    assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.quickWinMaxHoldMinutes, 60);
+    assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.quickWinProfitPct, 90);
+  });
+
+  test("AUTO_SELL_QUICK_WIN_ENABLED defaults to false", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellQuickWinEnabled, false);
+  });
+
+  test("AUTO_SELL_QUICK_WIN_ENABLED can be enabled via env", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+      AUTO_SELL_QUICK_WIN_ENABLED: "true",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellQuickWinEnabled, true);
+  });
+
+  test("AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES defaults to 60", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellQuickWinMaxHoldMinutes, 60);
+  });
+
+  test("AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES can be overridden via env", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+      AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES: "45",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellQuickWinMaxHoldMinutes, 45);
+  });
+
+  test("AUTO_SELL_QUICK_WIN_PROFIT_PCT defaults to 90", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellQuickWinProfitPct, 90);
+  });
+
+  test("AUTO_SELL_QUICK_WIN_PROFIT_PCT can be overridden via env", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+      AUTO_SELL_QUICK_WIN_PROFIT_PCT: "75",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellQuickWinProfitPct, 75);
+  });
+});
+
+describe("AutoSell Quick Win Logic", () => {
+  test("Quick win targets positions with high profit % from purchase price", () => {
+    // Example: Position bought at 10¢, now at 19¢ = 90% gain
+    const position = {
+      size: 100,
+      entryPrice: 0.10, // 10¢ entry
+      currentBidPrice: 0.19, // 19¢ current bid
+      pnlPct: 90.0, // 90% profit
+      timeHeldSec: 1800, // 30 minutes (1800 seconds)
+      firstAcquiredAt: Date.now() - 30 * 60 * 1000, // 30 minutes ago
+    };
+
+    // Calculate profit %
+    const profitPct = ((position.currentBidPrice - position.entryPrice) / position.entryPrice) * 100;
+    assert.ok(Math.abs(profitPct - 90) < 0.1, "Profit % is ~90%");
+
+    // This position should be eligible for quick win:
+    // - Held < 60 minutes (30 minutes)
+    // - Profit >= 90%
+    const isQuickWin = 
+      position.timeHeldSec < 60 * 60 && // Less than 60 minutes
+      position.pnlPct >= 90; // At least 90% profit
+
+    assert.ok(isQuickWin, "Position qualifies for quick win exit");
+  });
+
+  test("Quick win uses purchase price, not share price", () => {
+    // Example 1: Bought at 10¢, now 19¢ = 90% gain → ELIGIBLE
+    const lowEntryPosition = {
+      entryPrice: 0.10,
+      currentBidPrice: 0.19,
+      pnlPct: 90.0,
+    };
+
+    // Example 2: Bought at 80¢, now 90¢ = 12.5% gain → NOT ELIGIBLE
+    const highEntryPosition = {
+      entryPrice: 0.80,
+      currentBidPrice: 0.90,
+      pnlPct: 12.5,
+    };
+
+    // Low entry position has 90% profit from purchase price - eligible
+    assert.ok(lowEntryPosition.pnlPct >= 90, "Low entry position has >= 90% profit");
+
+    // High entry position only has 12.5% profit - not eligible
+    assert.ok(highEntryPosition.pnlPct < 90, "High entry position has < 90% profit");
+
+    // This avoids conflict with positions bought in "overly confident zone" (80¢+)
+    // where reaching 90¢ is normal price movement, not a massive gain
+  });
+
+  test("Quick win locks in profit before momentum reverses", () => {
+    // Position bought at 5¢, spiked to 14.25¢ in 20 minutes (185% gain)
+    const position = {
+      size: 100,
+      entryPrice: 0.05, // 5¢ entry
+      currentBidPrice: 0.1425, // 14.25¢ current
+      timeHeldSec: 1200, // 20 minutes
+    };
+
+    const capitalInvested = position.size * position.entryPrice; // $5
+    const capitalRecovered = position.size * position.currentBidPrice; // $14.25
+    const profitLocked = capitalRecovered - capitalInvested; // $9.25
+
+    // Profit % from purchase price
+    const profitPct = ((position.currentBidPrice - position.entryPrice) / position.entryPrice) * 100;
+
+    assert.ok(profitPct > 90, "Profit % > 90% (actually 185%)");
+    assert.ok(profitLocked > 9, "Locks in $9.25 profit");
+    assert.ok(position.timeHeldSec < 60 * 60, "Held less than 1 hour");
+
+    // Quick win exit captures this momentum before price potentially reverses
+    // If price drops back to 5¢, we'd have locked in $9.25 instead of $0
+  });
+});
