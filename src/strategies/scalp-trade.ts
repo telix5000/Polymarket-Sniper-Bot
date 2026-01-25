@@ -73,6 +73,7 @@ import {
   TOKEN_ID_DISPLAY_LENGTH,
 } from "../utils/log-deduper.util";
 import { notifyScalp } from "../services/trade-notification.service";
+import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
 
 /**
  * Scalp Take-Profit Configuration
@@ -2001,7 +2002,9 @@ export class ScalpTradeStrategy {
         outcome: (position.side?.toUpperCase() as "YES" | "NO") || "YES",
         side: "SELL",
         sizeUsd: notionalUsd,
-        minAcceptablePrice: effectiveLimitPrice, // For SELL: floor protection (don't dump too cheap)
+        // Apply 2% slippage tolerance to ensure profitable trades execute
+        // Without slippage, a 1 cent bid/ask difference can block a +42% profitable exit
+        minAcceptablePrice: calculateMinAcceptablePrice(effectiveLimitPrice, DEFAULT_SELL_SLIPPAGE_PCT),
         logger: this.logger,
         skipDuplicatePrevention: true,
         // Pass minOrderUsd so preflight and submission settings match

@@ -62,6 +62,60 @@ export const POLYMARKET_FEE_BPS = 1; // Default to taker fee for conservative ca
 export const POLYMARKET_ROUND_TRIP_FEE_PCT = 0.02; // 0.02% total for buy + sell as taker (0.01% each)
 
 /**
+ * Default sell slippage tolerance percentage.
+ *
+ * This is the percentage below the current best bid price that we're willing
+ * to accept when selling a position. This accounts for:
+ * - Bid/ask spread volatility
+ * - Order execution delays
+ * - Market microstructure noise
+ *
+ * CRITICAL: Without slippage tolerance, sell orders will fail if the best bid
+ * is even 1 cent below the target price, causing missed profitable exits.
+ *
+ * A 2% slippage on a highly profitable trade (e.g., +42% gain) is acceptable
+ * to ensure the trade executes rather than missing the opportunity entirely.
+ *
+ * Different strategies may use higher slippage:
+ * - Stop-loss/urgent exits: 10% (accept any reasonable price to exit)
+ * - Stale position cleanup: 3% (tighter to protect small profits)
+ * - Normal profit-taking: 2% (default - balance execution vs value)
+ *
+ * Can be overridden via environment variable SELL_SLIPPAGE_PCT
+ */
+export const DEFAULT_SELL_SLIPPAGE_PCT = 2; // 2% default slippage tolerance for sells
+
+/**
+ * Helper function to calculate minimum acceptable price with slippage tolerance.
+ *
+ * This function is used to determine the floor price when selling a position,
+ * allowing for small price movements between when the decision to sell is made
+ * and when the order is actually executed.
+ *
+ * @param referencePrice The reference price to apply slippage to (in dollars [0, 1]).
+ *   This can be the target price, current bid, or any price used as a baseline.
+ *   Different strategies use different reference prices:
+ *   - scalp-trade.ts: effectiveLimitPrice (target price)
+ *   - sell-early.ts: position.currentBidPrice (cached bid)
+ *   - smart-hedging.ts/quick-flip.ts: fresh bidPrice from orderbook
+ * @param slippagePct The slippage tolerance percentage (default: DEFAULT_SELL_SLIPPAGE_PCT).
+ *   Must be between 0 and 100.
+ * @returns The minimum acceptable price (referencePrice * (1 - slippagePct/100))
+ * @throws Error if slippagePct is outside the valid range [0, 100]
+ */
+export function calculateMinAcceptablePrice(
+  referencePrice: number,
+  slippagePct: number = DEFAULT_SELL_SLIPPAGE_PCT,
+): number {
+  if (slippagePct < 0 || slippagePct > 100) {
+    throw new Error(
+      `Invalid slippage percentage: ${slippagePct}. Must be between 0 and 100.`,
+    );
+  }
+  return referencePrice * (1 - slippagePct / 100);
+}
+
+/**
  * Divisor for converting basis points to decimal (10000 BPS = 100%)
  */
 export const BASIS_POINTS_DIVISOR = 10000;

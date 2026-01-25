@@ -36,6 +36,7 @@ import {
   HIGH_VALUE_NO_BID_LOG_TTL_MS,
 } from "../utils/log-deduper.util";
 import { notifySell } from "../services/trade-notification.service";
+import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
 
 /**
  * Sell Early Configuration
@@ -522,6 +523,9 @@ export class SellEarlyStrategy {
         outcome: outcome as "YES" | "NO", // Already validated above
         side: "SELL",
         sizeUsd,
+        // Apply 2% slippage tolerance for near-resolution sells (99.9¢ positions)
+        // At 99.9¢, 2% slippage = 97.9¢ minimum - still very profitable
+        minAcceptablePrice: calculateMinAcceptablePrice(position.currentBidPrice, DEFAULT_SELL_SLIPPAGE_PCT),
         logger: this.logger,
         skipDuplicatePrevention: true, // This is an intentional liquidation
         skipMinOrderSizeCheck: true, // Sell whatever we have

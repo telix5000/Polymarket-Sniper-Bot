@@ -21,6 +21,7 @@ import type { Wallet } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker } from "./position-tracker";
 import { postOrder } from "../utils/post-order.util";
+import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
 
 /**
  * Quick Flip Configuration
@@ -200,7 +201,7 @@ export class QuickFlipStrategy {
         `[QuickFlip] 📈 Selling at +${actualProfit.bidPnlPct.toFixed(1)}% (+$${actualProfit.bidPnlUsd.toFixed(2)}) [mid-price was +${position.pnlPct.toFixed(1)}%]`,
       );
 
-      const sold = await this.sellPosition(position);
+      const sold = await this.sellPosition(position, actualProfit.bidPrice);
       if (sold) {
         soldCount++;
       }
@@ -300,6 +301,8 @@ export class QuickFlipStrategy {
 
   /**
    * Sell a position
+   * @param position The position to sell
+   * @param freshBidPrice The fresh bid price from the orderbook (from verifyProfitAtBidPrice)
    */
   private async sellPosition(position: {
     marketId: string;
@@ -307,7 +310,7 @@ export class QuickFlipStrategy {
     size: number;
     currentPrice: number;
     side?: string;
-  }): Promise<boolean> {
+  }, freshBidPrice: number): Promise<boolean> {
     const wallet = (this.client as { wallet?: Wallet }).wallet;
     if (!wallet) {
       this.logger.error(`[QuickFlip] No wallet`);
@@ -315,7 +318,8 @@ export class QuickFlipStrategy {
     }
 
     try {
-      const sizeUsd = position.size * position.currentPrice;
+      // Use fresh bidPrice for accurate sizing and slippage calculation
+      const sizeUsd = position.size * freshBidPrice;
 
       const result = await postOrder({
         client: this.client,
@@ -325,6 +329,9 @@ export class QuickFlipStrategy {
         outcome: (position.side?.toUpperCase() as "YES" | "NO") || "YES",
         side: "SELL",
         sizeUsd,
+        // Apply 2% slippage tolerance based on fresh bid price from orderbook
+        // Quick-flip targets 5%+ profit, so 2% slippage still leaves ~3%+ profit
+        minAcceptablePrice: calculateMinAcceptablePrice(freshBidPrice, DEFAULT_SELL_SLIPPAGE_PCT),
         logger: this.logger,
         skipDuplicatePrevention: true,
       });
