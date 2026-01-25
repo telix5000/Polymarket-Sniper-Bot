@@ -730,8 +730,11 @@ export class Orchestrator {
         for (const pos of allPositions) {
           // Use current price (bid price for what we can sell at)
           holdingsValue += pos.size * pos.currentPrice;
-          // Sum unrealized P&L from positions with trusted P&L data
-          if (pos.pnlTrusted && typeof pos.pnlUsd === "number") {
+          // Sum unrealized P&L from ALL positions for accurate reporting
+          // The pnlTrusted flag is for strategy decision-making (whether to act),
+          // not for portfolio reporting. Users need to see their total P&L.
+          // pnlUsd is always calculated from (currentPrice - entryPrice) * size
+          if (typeof pos.pnlUsd === "number") {
             unrealizedPnl += pos.pnlUsd;
           }
         }
@@ -749,11 +752,18 @@ export class Orchestrator {
           const balances = await this.getWalletBalances();
           summary.usdcBalance = balances.usdcBalance;
           summary.totalValue = balances.usdcBalance + holdingsValue;
+
+          // Calculate overall return if INITIAL_INVESTMENT_USD is set
+          this.enrichWithInitialInvestment(summary, summary.totalValue);
         }
       } else if (this.getWalletBalances) {
-        // If no snapshot available, only set USDC balance (don't set holdingsValue/totalValue)
+        // If no snapshot available, set USDC balance and totalValue (but not holdingsValue)
         const balances = await this.getWalletBalances();
         summary.usdcBalance = balances.usdcBalance;
+
+        // Without holdings, total value is just USDC balance
+        summary.totalValue = balances.usdcBalance;
+        this.enrichWithInitialInvestment(summary, balances.usdcBalance);
       }
     } catch (err) {
       this.logger.debug(
@@ -763,6 +773,25 @@ export class Orchestrator {
     }
 
     return summary;
+  }
+
+  /**
+   * Enrich summary with initial investment tracking if INITIAL_INVESTMENT_USD is set.
+   * Calculates overall gain/loss and return percentage.
+   */
+  private enrichWithInitialInvestment(
+    summary: LedgerSummary,
+    totalValue: number,
+  ): void {
+    const initialInvestmentStr = process.env.INITIAL_INVESTMENT_USD;
+    if (!initialInvestmentStr) return;
+
+    const initialInvestment = parseFloat(initialInvestmentStr);
+    if (isNaN(initialInvestment) || initialInvestment <= 0) return;
+
+    summary.initialInvestment = initialInvestment;
+    summary.overallGainLoss = totalValue - initialInvestment;
+    summary.overallReturnPct = (summary.overallGainLoss / initialInvestment) * 100;
   }
 }
 
