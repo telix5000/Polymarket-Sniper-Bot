@@ -527,10 +527,13 @@ export class PositionStackingStrategy {
 
   /**
    * Apply budget-aware sizing to a stack amount.
-   * Uses full available cash (even reserves) for profitable opportunities.
+   * 
+   * CRITICAL: Stacking is NEVER blocked by RISK_OFF mode or reserve shortfall. Stacking has its own rules
+   * and capitalizes on winning momentum - a high-value opportunity that should proceed.
+   * It only skips when available cash is below the minimum stack amount.
    *
    * @param computedUsd - The originally computed stack amount
-   * @returns Object with either { skip: true, reason: string } or { skip: false, cappedUsd: number, isPartial: boolean }
+   * @returns Object with { skip: true; reason: string } or { skip: false, cappedUsd: number, isPartial: boolean }
    */
   private applyBudgetAwareSizing(
     computedUsd: number,
@@ -542,21 +545,22 @@ export class PositionStackingStrategy {
 
     const minStackUsd = PositionStackingStrategy.MIN_STACK_USD;
 
-    // Check if budget is below minimum threshold
-    if (this.cycleStackBudgetRemaining < minStackUsd) {
-      this.logger.info(
-        `[PositionStacking] 📋 Stack skipped (BUDGET_EXHAUSTED): budget=$${this.cycleStackBudgetRemaining.toFixed(2)} < min=$${minStackUsd}`,
-      );
-      return { skip: true, reason: "BUDGET_EXHAUSTED" };
-    }
-
-    // Check if budget is less than computed amount - submit partial
+    // STACKING IS NEVER BLOCKED BY RESERVES - it has its own rules
+    // If budget is below computed amount, cap to available budget (partial stack)
     if (this.cycleStackBudgetRemaining < computedUsd) {
       const cappedUsd = this.cycleStackBudgetRemaining;
+      // Only proceed if we have enough for minimum stack
+      if (cappedUsd >= minStackUsd) {
+        this.logger.info(
+          `[PositionStacking] 📉 PARTIAL STACK: Capping from $${computedUsd.toFixed(2)} to $${cappedUsd.toFixed(2)} (available cash)`,
+        );
+        return { skip: false, cappedUsd, isPartial: true };
+      }
+      // Skip only if below minimum stack amount (stacking-specific rule, not reserve rule)
       this.logger.info(
-        `[PositionStacking] 📉 PARTIAL STACK: Capping from $${computedUsd.toFixed(2)} to $${cappedUsd.toFixed(2)} (budget constraint)`,
+        `[PositionStacking] 📋 Stack skipped: available=$${cappedUsd.toFixed(2)} < minStack=$${minStackUsd} (insufficient funds)`,
       );
-      return { skip: false, cappedUsd, isPartial: true };
+      return { skip: true, reason: "INSUFFICIENT_FUNDS" };
     }
 
     // Full amount available
@@ -584,8 +588,24 @@ export class PositionStackingStrategy {
       return false;
     }
 
-    // Apply budget-aware sizing to use reserves for profitable opportunities
-    const budgetResult = this.applyBudgetAwareSizing(this.config.maxStackUsd);
+    // === UNLIMITED MODE FOR STACKING ===
+    // Use full available cash - no ENV cap.
+    let stackUsd: number;
+    if (this.cycleStackBudgetRemaining !== null) {
+      stackUsd = this.cycleStackBudgetRemaining;
+      this.logger.info(
+        `[PositionStacking] 📊 STACK SIZING: UNLIMITED MODE - using full available cash $${stackUsd.toFixed(2)}`,
+      );
+    } else {
+      // Fallback to config limit if no budget tracking
+      stackUsd = this.config.maxStackUsd;
+      this.logger.info(
+        `[PositionStacking] 📊 STACK SIZING: fallback to config limit $${stackUsd.toFixed(2)}`,
+      );
+    }
+
+    // Apply budget-aware sizing (caps to available cash if needed)
+    const budgetResult = this.applyBudgetAwareSizing(stackUsd);
     if (budgetResult.skip) {
       return false;
     }

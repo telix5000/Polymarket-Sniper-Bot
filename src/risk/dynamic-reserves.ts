@@ -21,15 +21,15 @@
  * or P&L. This reflects the reduced risk of positions likely to resolve in our favor.
  *
  * GATING BEHAVIOR:
- * - RISK_OFF mode: Gates generic new BUY orders via canOpenNewBuy()
+ * - RISK_OFF mode: Gates ONLY generic new BUY orders (copy/frontrun trades) via canOpenNewBuy()
  * - RISK_ON mode: Allow all order types
  *
- * RESERVE USAGE (Stacking & Hedging):
- * Stacking (profitable positions) and hedging (both ways) are allowed to use
- * full available cash, even when in RISK_OFF mode. These are high-value operations:
- * - Stacking capitalizes on winning momentum
- * - Hedging protects against losses (down) or maximizes gains (up)
- * Reserves will be replenished from profits, but missing these opportunities is costly.
+ * NEVER BLOCKED BY RESERVES:
+ * The following strategies have their own risk rules and are NEVER blocked by reserves:
+ * - Hedging: Protects against losses (down) or maximizes gains (up)
+ * - Stacking: Capitalizes on winning momentum
+ * - Endgame Sweeps: Buys high-confidence positions (85-99¢)
+ * These are high-value operations that should proceed regardless of reserve status.
  */
 
 import type { ConsoleLogger } from "../utils/logger.util";
