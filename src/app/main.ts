@@ -19,6 +19,7 @@ import { ensureTradingReady } from "../polymarket/preflight";
 import { getContextAwareWarnings } from "../utils/auth-diagnostic.util";
 import { Orchestrator, createOrchestrator } from "../strategies/orchestrator";
 import { isLiveTradingEnabled } from "../utils/live-trading.util";
+import { populateTargetAddressesFromLeaderboard } from "../targets";
 
 async function main(): Promise<void> {
   const logger = new ConsoleLogger();
@@ -28,6 +29,10 @@ async function main(): Promise<void> {
     await startWireguard(logger);
   }
   const cliOverrides = parseCliOverrides(process.argv.slice(2));
+
+  // Populate TARGET_ADDRESSES from leaderboard if not set via env
+  // This fetches top traders from Polymarket leaderboard dynamically
+  await populateTargetAddressesFromLeaderboard(logger);
 
   // Check if unified STRATEGY_PRESET is configured
   const strategyConfig = loadStrategyConfig(cliOverrides);

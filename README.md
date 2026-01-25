@@ -1281,7 +1281,10 @@ docker run --env-file .env polymarket-sniper-bot
 | `ORDER_SUBMIT_MAX_PER_HOUR`            | Max submits per hour                                                        | `20`                                                   |
 | `ORDER_SUBMIT_MARKET_COOLDOWN_SECONDS` | Per-market cooldown seconds                                                 | `300`                                                  |
 | `CLOUDFLARE_COOLDOWN_SECONDS`          | Pause submits after Cloudflare block                                        | `3600`                                                 |
-| `TARGET_ADDRESSES`                     | (Monitor only) Comma-separated addresses to monitor                         | `0xabc...,0xdef...`                                    |
+| `TARGET_ADDRESSES`                     | (Monitor only) Comma-separated addresses to monitor. If not set, fetches top traders from Polymarket leaderboard automatically. | `0xabc...,0xdef...`                                    |
+| `LEADERBOARD_LIMIT`                    | Number of top traders to fetch from leaderboard (max 50)                    | `20`                                                   |
+| `LEADERBOARD_TTL_SECONDS`              | Cache TTL for leaderboard data in seconds                                   | `3600`                                                 |
+| `LEADERBOARD_CACHE_FILE`               | Path to leaderboard cache file                                              | `.leaderboard-cache.json`                              |
 | `PUBLIC_KEY`                           | (Optional) Wallet address override; derived from `PRIVATE_KEY` when omitted | `your_wallet_address`                                  |
 | `ARB_DEBUG_TOP_N`                      | (Arb only) Log top N pre-filter candidates each scan                        | `0`                                                    |
 
