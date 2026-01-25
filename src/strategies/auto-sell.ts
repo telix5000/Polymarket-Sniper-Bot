@@ -9,6 +9,11 @@ import {
   HIGH_VALUE_NO_BID_LOG_TTL_MS,
 } from "../utils/log-deduper.util";
 import { notifySell } from "../services/trade-notification.service";
+import {
+  STALE_SELL_SLIPPAGE_PCT,
+  URGENT_SELL_SLIPPAGE_PCT,
+  calculateMinAcceptablePrice,
+} from "./constants";
 
 export interface AutoSellConfig {
   enabled: boolean;
@@ -624,10 +629,10 @@ export class AutoSellStrategy {
       const expectedProfit = (bestBid - entryPrice) * position.size;
       const profitPct = entryPrice > 0 ? ((bestBid - entryPrice) / entryPrice) * 100 : 0;
 
-      // Use tighter slippage (3%) for stale sells to protect small profits
+      // Use STALE_SELL_SLIPPAGE_PCT (3%) for stale sells to protect small profits
       // Unlike near-resolution sells that need urgent exit at any cost,
       // stale positions can wait for better fills
-      const minAcceptablePrice = bestBid * 0.97;
+      const minAcceptablePrice = calculateMinAcceptablePrice(bestBid, STALE_SELL_SLIPPAGE_PCT);
 
       // Warn if slippage could turn profit into loss
       const worstCaseProfit = (minAcceptablePrice - entryPrice) * position.size;
@@ -651,7 +656,7 @@ export class AutoSellStrategy {
         outcome: "YES",
         side: "SELL",
         sizeUsd,
-        minAcceptablePrice, // Tighter 3% slippage for stale exits
+        minAcceptablePrice, // STALE_SELL_SLIPPAGE_PCT (3%) slippage for stale exits
         logger: this.logger,
         priority: false,
         skipDuplicatePrevention: true,
@@ -840,7 +845,7 @@ export class AutoSellStrategy {
         outcome: "YES", // Direction doesn't matter for sells
         side: "SELL",
         sizeUsd,
-        minAcceptablePrice: bestBid * 0.9, // Accept up to 10% slippage below current bid for urgent exit
+        minAcceptablePrice: calculateMinAcceptablePrice(bestBid, URGENT_SELL_SLIPPAGE_PCT), // URGENT_SELL_SLIPPAGE_PCT (10%) for urgent exit
         logger: this.logger,
         priority: false,
         skipDuplicatePrevention: true, // Auto-sell must bypass duplicate prevention for exits

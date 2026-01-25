@@ -4,11 +4,16 @@ import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker, Position } from "./position-tracker";
 import { getDynamicStopLoss, PRICE_TIERS } from "./trade-quality";
 import { notifyStopLoss } from "../services/trade-notification.service";
+import { calculateMinAcceptablePrice, FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
 
 /**
  * Minimum acceptable price for emergency exit orders (stop-loss, liquidation).
  * Set to 1¢ to accept any price rather than optimizing exit.
  * The goal is to EXIT the position and salvage whatever value remains.
+ *
+ * NOTE: This is kept as a fallback for extreme scenarios. For most stop-loss
+ * and liquidation scenarios, use calculateMinAcceptablePrice with
+ * FALLING_KNIFE_SLIPPAGE_PCT (25%) which provides more graceful degradation.
  */
 export const EMERGENCY_EXIT_MIN_PRICE = 0.01;
 
@@ -379,7 +384,10 @@ export class StopLossStrategy {
           `at ~${(bestBid * 100).toFixed(1)}¢ ($${sizeUsd.toFixed(2)}, loss: ${currentLossPct.toFixed(2)}%)`,
       );
 
-      // Execute sell order with maximum slippage tolerance for stop-loss
+      // Execute sell order with liberal slippage tolerance for stop-loss
+      // Using FALLING_KNIFE_SLIPPAGE_PCT (25%) instead of hardcoded 1¢ floor
+      // This is more liberal than normal sells but still recovers meaningful value
+      // Example: At 50¢ bid, accepts down to 37.5¢ (still 75% of bid value)
       const result = await postOrder({
         client: this.client,
         wallet,
@@ -388,7 +396,7 @@ export class StopLossStrategy {
         outcome: "YES",
         side: "SELL",
         sizeUsd,
-        minAcceptablePrice: EMERGENCY_EXIT_MIN_PRICE, // Accept any price above 1¢ - just get out!
+        minAcceptablePrice: calculateMinAcceptablePrice(bestBid, FALLING_KNIFE_SLIPPAGE_PCT),
         logger: this.logger,
         priority: true, // High priority for stop-loss
         skipDuplicatePrevention: true, // Stop-loss must bypass duplicate prevention

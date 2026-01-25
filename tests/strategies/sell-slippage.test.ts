@@ -9,6 +9,10 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_SELL_SLIPPAGE_PCT,
+  STALE_SELL_SLIPPAGE_PCT,
+  URGENT_SELL_SLIPPAGE_PCT,
+  FALLING_KNIFE_SLIPPAGE_PCT,
+  EMERGENCY_SELL_SLIPPAGE_PCT,
   calculateMinAcceptablePrice,
 } from "../../src/strategies/constants";
 
@@ -22,6 +26,34 @@ describe("Sell Slippage Constants", () => {
     // Slippage must be positive and not too large
     assert.ok(DEFAULT_SELL_SLIPPAGE_PCT > 0, "Slippage must be positive");
     assert.ok(DEFAULT_SELL_SLIPPAGE_PCT <= 10, "Slippage should not exceed 10%");
+  });
+
+  test("STALE_SELL_SLIPPAGE_PCT is 3%", () => {
+    // 3% slippage for stale position cleanup
+    assert.equal(STALE_SELL_SLIPPAGE_PCT, 3);
+  });
+
+  test("URGENT_SELL_SLIPPAGE_PCT is 10%", () => {
+    // 10% slippage for time-sensitive exits
+    assert.equal(URGENT_SELL_SLIPPAGE_PCT, 10);
+  });
+
+  test("FALLING_KNIFE_SLIPPAGE_PCT is 25%", () => {
+    // 25% slippage for rapidly declining positions
+    assert.equal(FALLING_KNIFE_SLIPPAGE_PCT, 25);
+  });
+
+  test("EMERGENCY_SELL_SLIPPAGE_PCT is 50%", () => {
+    // 50% slippage for emergency exits
+    assert.equal(EMERGENCY_SELL_SLIPPAGE_PCT, 50);
+  });
+
+  test("slippage tiers are in ascending order", () => {
+    // Ensure slippage tiers are ordered from tightest to most liberal
+    assert.ok(DEFAULT_SELL_SLIPPAGE_PCT < STALE_SELL_SLIPPAGE_PCT, "Default < Stale");
+    assert.ok(STALE_SELL_SLIPPAGE_PCT < URGENT_SELL_SLIPPAGE_PCT, "Stale < Urgent");
+    assert.ok(URGENT_SELL_SLIPPAGE_PCT < FALLING_KNIFE_SLIPPAGE_PCT, "Urgent < Falling Knife");
+    assert.ok(FALLING_KNIFE_SLIPPAGE_PCT < EMERGENCY_SELL_SLIPPAGE_PCT, "Falling Knife < Emergency");
   });
 });
 
@@ -150,5 +182,108 @@ describe("Slippage Integration Scenarios", () => {
     // Convert dollars to cents (x100) with 2 decimal precision (round to 0.01)
     const minCents = Math.round(minAcceptable * 100 * 100) / 100;
     assert.equal(minCents, 85.26);
+  });
+});
+
+describe("Falling Knife Slippage Scenarios", () => {
+  test("falling knife slippage accepts much lower prices", () => {
+    // At 50¢ bid with 25% slippage, min acceptable = 50 * 0.75 = 37.5¢
+    const bid = 0.50;
+    const minAcceptable = calculateMinAcceptablePrice(bid, FALLING_KNIFE_SLIPPAGE_PCT);
+
+    assert.equal(minAcceptable, 0.375);
+    // Still recovering 75% of the current bid value
+    assert.ok(minAcceptable / bid >= 0.75, "Should recover at least 75% of bid value");
+  });
+
+  test("emergency slippage accepts very low prices", () => {
+    // At 50¢ bid with 50% slippage, min acceptable = 50 * 0.50 = 25¢
+    const bid = 0.50;
+    const minAcceptable = calculateMinAcceptablePrice(bid, EMERGENCY_SELL_SLIPPAGE_PCT);
+
+    assert.equal(minAcceptable, 0.25);
+    // Still recovering 50% of the current bid value - better than zero!
+    assert.ok(minAcceptable / bid >= 0.50, "Should recover at least 50% of bid value");
+  });
+
+  test("falling knife slippage vs old 1 cent floor comparison", () => {
+    // Old behavior: hardcoded 1¢ floor
+    // New behavior: 25% slippage from current bid
+
+    // At 50¢ bid:
+    // - Old: accepts any price above 1¢ (could lose 98% of position value)
+    // - New: accepts any price above 37.5¢ (loses max 25% of current value)
+    const bid = 0.50;
+    const oldMinPrice = 0.01; // Old hardcoded floor
+    const newMinPrice = calculateMinAcceptablePrice(bid, FALLING_KNIFE_SLIPPAGE_PCT);
+
+    assert.ok(newMinPrice > oldMinPrice, "New floor should be higher than old 1¢ floor");
+    assert.equal(newMinPrice, 0.375);
+
+    // Value recovery comparison
+    const oldRecoveryPct = (oldMinPrice / bid) * 100;
+    const newRecoveryPct = (newMinPrice / bid) * 100;
+
+    assert.ok(newRecoveryPct > 50, "New slippage should recover more than 50% of value");
+    assert.ok(oldRecoveryPct < 5, "Old 1¢ floor recovered less than 5% of value");
+  });
+
+  test("beggars cant be choosers - falling knife still fills in volatile markets", () => {
+    // In a rapidly falling market, price might drop 15-20% between decision and execution
+    // FALLING_KNIFE_SLIPPAGE_PCT (25%) is liberal enough to still fill
+
+    const decisionBid = 0.50; // Bid when we decided to sell
+    const executionBid = 0.40; // Bid dropped 20% by execution time
+
+    const minAcceptable = calculateMinAcceptablePrice(decisionBid, FALLING_KNIFE_SLIPPAGE_PCT);
+
+    // 50¢ * 0.75 = 37.5¢
+    // 40¢ > 37.5¢, so the order would still fill
+    assert.ok(executionBid >= minAcceptable, "Order should still fill after 20% drop");
+  });
+
+  test("slippage tier progression matches urgency", () => {
+    const bid = 0.80;
+
+    const defaultMin = calculateMinAcceptablePrice(bid, DEFAULT_SELL_SLIPPAGE_PCT);
+    const staleMin = calculateMinAcceptablePrice(bid, STALE_SELL_SLIPPAGE_PCT);
+    const urgentMin = calculateMinAcceptablePrice(bid, URGENT_SELL_SLIPPAGE_PCT);
+    const fallingKnifeMin = calculateMinAcceptablePrice(bid, FALLING_KNIFE_SLIPPAGE_PCT);
+    const emergencyMin = calculateMinAcceptablePrice(bid, EMERGENCY_SELL_SLIPPAGE_PCT);
+
+    // At 80¢ bid:
+    // - Default (2%): 78.4¢
+    // - Stale (3%): 77.6¢
+    // - Urgent (10%): 72¢
+    // - Falling Knife (25%): 60¢
+    // - Emergency (50%): 40¢
+    // Use toFixed to handle floating point precision
+    assert.equal(defaultMin.toFixed(3), "0.784");
+    assert.equal(staleMin.toFixed(3), "0.776");
+    assert.equal(urgentMin.toFixed(2), "0.72");
+    assert.equal(fallingKnifeMin.toFixed(1), "0.6");
+    assert.equal(emergencyMin.toFixed(1), "0.4");
+
+    // Verify progression
+    assert.ok(defaultMin > staleMin, "Default more restrictive than Stale");
+    assert.ok(staleMin > urgentMin, "Stale more restrictive than Urgent");
+    assert.ok(urgentMin > fallingKnifeMin, "Urgent more restrictive than Falling Knife");
+    assert.ok(fallingKnifeMin > emergencyMin, "Falling Knife more restrictive than Emergency");
+  });
+
+  test("low price falling knife scenario", () => {
+    // Even at low prices, falling knife slippage provides graceful degradation
+    const bid = 0.20; // Position already fallen to 20¢
+
+    const fallingKnifeMin = calculateMinAcceptablePrice(bid, FALLING_KNIFE_SLIPPAGE_PCT);
+    // 20¢ * 0.75 = 15¢
+    assert.equal(fallingKnifeMin.toFixed(2), "0.15");
+
+    // Compare to old 1¢ floor - new is much better
+    assert.ok(fallingKnifeMin > 0.01, "Still better than old 1¢ floor");
+
+    // But accepts a wide range to ensure fill
+    const wouldFill = 0.16; // Bid at execution
+    assert.ok(wouldFill >= fallingKnifeMin, "Should fill at 16¢");
   });
 });
