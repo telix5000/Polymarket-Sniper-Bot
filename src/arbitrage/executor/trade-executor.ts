@@ -25,6 +25,7 @@ import {
 } from "../../utils/funds-allowance.util";
 import { readApprovalsConfig } from "../../polymarket/preflight";
 import { isLiveTradingEnabled } from "../../utils/live-trading.util";
+import { notifyBuy } from "../../services/trade-notification.service";
 
 /**
  * Minimum price for ARB trades to prevent buying extreme loser positions.
@@ -228,6 +229,21 @@ export class ArbTradeExecutor implements TradeExecutor {
         first.ask,
       );
 
+      // Send telegram notification for first leg BUY
+      void notifyBuy(
+        plan.marketId,
+        first.tokenId,
+        plan.sizeUsd / first.ask, // Calculate shares from USD
+        first.ask,
+        plan.sizeUsd,
+        {
+          strategy: "Arbitrage",
+          outcome: first.outcome,
+        },
+      ).catch(() => {
+        // Ignore notification errors - logging is handled by the service
+      });
+
       const refreshedFirst = await this.provider.getOrderBookTop(first.tokenId);
       const refreshedSecond = await this.provider.getOrderBookTop(
         second.tokenId,
@@ -263,6 +279,21 @@ export class ArbTradeExecutor implements TradeExecutor {
         plan.sizeUsd,
         refreshedSecond.bestAsk,
       );
+
+      // Send telegram notification for second leg BUY
+      void notifyBuy(
+        plan.marketId,
+        second.tokenId,
+        plan.sizeUsd / refreshedSecond.bestAsk, // Calculate shares from USD
+        refreshedSecond.bestAsk,
+        plan.sizeUsd,
+        {
+          strategy: "Arbitrage",
+          outcome: second.outcome,
+        },
+      ).catch(() => {
+        // Ignore notification errors - logging is handled by the service
+      });
 
       return {
         status: "submitted",

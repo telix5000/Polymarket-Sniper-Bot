@@ -249,6 +249,11 @@ export class TradeExecutorService {
         },
       });
 
+      // Log the submission result for debugging
+      logger.info(
+        `[Frontrun] Order result: status=${submissionResult.status} reason=${submissionResult.reason ?? "none"} market=${signal.marketId.slice(0, 12)}...`,
+      );
+
       if (submissionResult.status === "submitted") {
         logger.info(
           `[Frontrun] ✅ Successfully executed ${signal.side} order for ${frontrunSize.toFixed(2)} USD`,
@@ -264,9 +269,44 @@ export class TradeExecutorService {
           {
             outcome: signal.outcome,
           },
-        ).catch(() => {
-          // Ignore notification errors - logging is handled by the service
+        ).catch((err) => {
+          // Log notification errors for debugging
+          logger.warn(
+            `[Frontrun] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`,
+          );
         });
+      } else if (submissionResult.status === "skipped") {
+        logger.warn(
+          `[Frontrun] ⏭️ Order skipped: ${submissionResult.reason ?? "unknown reason"}`,
+        );
+      } else if (submissionResult.status === "failed") {
+        // Check if there was a partial fill (money was spent but order not fully filled)
+        const partialFill = (submissionResult as { filledAmountUsd?: number })
+          .filledAmountUsd;
+        if (partialFill && partialFill > 0) {
+          logger.warn(
+            `[Frontrun] ⚠️ Partial fill: $${partialFill.toFixed(2)} of $${frontrunSize.toFixed(2)} USD filled`,
+          );
+          // Send notification for partial fills too - money was spent!
+          void notifyFrontrun(
+            signal.marketId,
+            signal.tokenId,
+            partialFill / signal.price,
+            signal.price,
+            partialFill,
+            {
+              outcome: signal.outcome,
+            },
+          ).catch((err) => {
+            logger.warn(
+              `[Frontrun] Failed to send Telegram notification for partial fill: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+        } else {
+          logger.warn(
+            `[Frontrun] ❌ Order failed: ${submissionResult.reason ?? "unknown reason"}`,
+          );
+        }
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
