@@ -3,6 +3,7 @@ import type { Wallet } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker, Position } from "./position-tracker";
 import { getDynamicStopLoss, PRICE_TIERS } from "./trade-quality";
+import { notifyStopLoss } from "../services/trade-notification.service";
 
 export interface UniversalStopLossConfig {
   enabled: boolean;
@@ -273,6 +274,8 @@ export class UniversalStopLossStrategy {
           position.tokenId,
           position.size,
           position.pnlPct,
+          position.entryPrice,
+          position.pnlUsd,
         );
 
         if (sold) {
@@ -336,6 +339,8 @@ export class UniversalStopLossStrategy {
     tokenId: string,
     size: number,
     currentLossPct: number,
+    entryPrice: number,
+    pnlUsd: number,
   ): Promise<boolean> {
     try {
       const { postOrder } = await import("../utils/post-order.util");
@@ -384,6 +389,21 @@ export class UniversalStopLossStrategy {
       });
 
       if (result.status === "submitted") {
+        // Send telegram notification for stop-loss trigger
+        void notifyStopLoss(
+          marketId,
+          tokenId,
+          size,
+          bestBid,
+          sizeUsd,
+          {
+            entryPrice,
+            pnl: pnlUsd,
+          },
+        ).catch(() => {
+          // Ignore notification errors - logging is handled by the service
+        });
+
         return true;
       } else if (result.status === "skipped") {
         this.logger.warn(
