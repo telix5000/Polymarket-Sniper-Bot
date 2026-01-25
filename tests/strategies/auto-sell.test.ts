@@ -505,10 +505,15 @@ describe("AutoSell Stale Profitable Position Exit", () => {
     // A position is considered "stale profitable" when:
     // 1. pnlPct > 0 (profitable/green)
     // 2. pnlTrusted === true (we can trust the P&L calculation)
-    // 3. timeHeldSec >= stalePositionHours * 3600 (held longer than threshold)
-    // 4. currentBidPrice is defined (can sell)
-    // 5. Not already sold
-    // 6. Is tradable (passes checkTradability)
+    // 3. entryMetaTrusted !== false (entry metadata timestamps are reliable)
+    // 4. firstAcquiredAt is defined and (Date.now() - firstAcquiredAt) >= stalePositionHours * 3600 * 1000
+    // 5. currentBidPrice is defined (can sell)
+    // 6. Not already sold
+    // 7. Is tradable (passes checkTradability)
+
+    const now = Date.now();
+    const staleHours = 24;
+    const staleThresholdMs = staleHours * 60 * 60 * 1000;
 
     const staleProfitablePosition = {
       marketId: "0x" + "a".repeat(64),
@@ -522,26 +527,29 @@ describe("AutoSell Stale Profitable Position Exit", () => {
       pnlUsd: 2.0, // $2 profit
       pnlTrusted: true,
       pnlClassification: "PROFITABLE" as const,
-      firstAcquiredAt: Date.now() - (25 * 60 * 60 * 1000), // 25 hours ago
-      lastAcquiredAt: Date.now() - (25 * 60 * 60 * 1000),
+      firstAcquiredAt: now - (25 * 60 * 60 * 1000), // 25 hours ago
+      lastAcquiredAt: now - (25 * 60 * 60 * 1000),
       timeHeldSec: 25 * 60 * 60, // 25 hours in seconds
+      entryMetaTrusted: true, // Entry metadata is trusted
       executionStatus: "TRADABLE" as const,
       redeemable: false,
       redeemableProofSource: "NONE" as const,
     };
 
     // Verify this position meets stale profitable criteria
-    const staleHours = 24;
-    const staleThresholdSec = staleHours * 60 * 60;
 
-    // Check profitable
+    // Check profitable and P&L trusted
     assert.strictEqual(staleProfitablePosition.pnlPct > 0, true, "Position should be profitable");
     assert.strictEqual(staleProfitablePosition.pnlTrusted, true, "P&L should be trusted");
 
-    // Check held time
+    // Check entry metadata is trusted (implementation skips when entryMetaTrusted === false)
+    assert.strictEqual(staleProfitablePosition.entryMetaTrusted !== false, true, "Entry metadata should be trusted");
+
+    // Check held time using same calculation as implementation: Date.now() - firstAcquiredAt
+    const heldMs = now - staleProfitablePosition.firstAcquiredAt;
     assert.ok(
-      staleProfitablePosition.timeHeldSec! >= staleThresholdSec,
-      `Position held ${staleProfitablePosition.timeHeldSec}s should exceed threshold ${staleThresholdSec}s`,
+      heldMs >= staleThresholdMs,
+      `Position held ${heldMs}ms should exceed threshold ${staleThresholdMs}ms`,
     );
 
     // Check can sell

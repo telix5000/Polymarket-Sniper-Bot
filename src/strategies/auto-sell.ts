@@ -483,21 +483,18 @@ export class AutoSellStrategy {
     );
 
     try {
-      const sold = await this.sellPosition(
-        position.marketId,
-        position.tokenId,
-        position.size,
-      );
+      // Use dedicated stale position sell with tighter slippage
+      const sold = await this.sellStalePosition(position);
 
       if (sold) {
         this.soldPositions.add(positionKey);
 
-        // Calculate and log profit captured
+        // Calculate and log profit captured based on actual realized P&L
         const profitUsd = position.pnlUsd;
         const freedCapital = position.size * (position.currentBidPrice ?? position.currentPrice);
 
         this.logger.info(
-          `[AutoSell] ✅ STALE_PROFITABLE: Sold position held ${timeHeldStr}, profit $${profitUsd.toFixed(2)} (+${position.pnlPct.toFixed(1)}%), freed $${freedCapital.toFixed(2)} capital for new trades`,
+          `[AutoSell] ✅ STALE_PROFITABLE: Sold position held ${timeHeldStr}, realized profit $${profitUsd.toFixed(2)} (+${position.pnlPct.toFixed(1)}%), freed $${freedCapital.toFixed(2)} capital for new trades`,
         );
         return true;
       }
@@ -509,6 +506,104 @@ export class AutoSellStrategy {
     }
 
     return false;
+  }
+
+  /**
+   * Sell a stale profitable position with tighter slippage controls
+   * Unlike near-resolution sells which accept 10% slippage for urgent exit,
+   * stale position sells use tighter 3% slippage to avoid turning small
+   * green positions into realized losses.
+   *
+   * @param position - The position to sell (must have entry price info for P&L logging)
+   * @returns true if order was submitted successfully
+   */
+  private async sellStalePosition(position: Position): Promise<boolean> {
+    try {
+      const { postOrder } = await import("../utils/post-order.util");
+
+      const orderbook = await this.client.getOrderBook(position.tokenId);
+
+      if (!orderbook.bids || orderbook.bids.length === 0) {
+        if (!this.noLiquidityTokens.has(position.tokenId)) {
+          this.logger.warn(
+            `[AutoSell] ⚠️ No bids available for stale position ${position.tokenId.slice(0, 12)}... - cannot sell`,
+          );
+          this.noLiquidityTokens.add(position.tokenId);
+        }
+        return false;
+      }
+
+      this.noLiquidityTokens.delete(position.tokenId);
+
+      const bestBid = parseFloat(orderbook.bids[0].price);
+      const sizeUsd = position.size * bestBid;
+
+      // For stale positions, calculate actual P&L based on entry price
+      const entryPrice = position.entryPrice;
+      const expectedProfit = (bestBid - entryPrice) * position.size;
+      const profitPct = entryPrice > 0 ? ((bestBid - entryPrice) / entryPrice) * 100 : 0;
+
+      // Use tighter slippage (3%) for stale sells to protect small profits
+      // Unlike near-resolution sells that need urgent exit at any cost,
+      // stale positions can wait for better fills
+      const minAcceptablePrice = bestBid * 0.97;
+
+      // Warn if slippage could turn profit into loss
+      const worstCaseProfit = (minAcceptablePrice - entryPrice) * position.size;
+      if (worstCaseProfit < 0 && expectedProfit > 0) {
+        this.logger.warn(
+          `[AutoSell] ⚠️ Stale sell may turn profit into loss: expected $${expectedProfit.toFixed(2)} but worst case $${worstCaseProfit.toFixed(2)}`,
+        );
+      }
+
+      this.logger.info(
+        `[AutoSell] Executing stale sell: ${position.size.toFixed(2)} shares at ~${(bestBid * 100).toFixed(1)}¢ (entry: ${(entryPrice * 100).toFixed(1)}¢, expected P&L: $${expectedProfit.toFixed(2)} / ${profitPct.toFixed(1)}%)`,
+      );
+
+      const wallet = (this.client as { wallet?: Wallet }).wallet;
+
+      const result = await postOrder({
+        client: this.client,
+        wallet,
+        marketId: position.marketId,
+        tokenId: position.tokenId,
+        outcome: "YES",
+        side: "SELL",
+        sizeUsd,
+        minAcceptablePrice, // Tighter 3% slippage for stale exits
+        logger: this.logger,
+        priority: false,
+        skipDuplicatePrevention: true,
+        orderConfig: { minOrderUsd: 0 },
+      });
+
+      if (result.status === "submitted") {
+        this.logger.info(
+          `[AutoSell] ✓ Stale sell submitted: ${position.size.toFixed(2)} shares, expected $${expectedProfit.toFixed(2)} profit`,
+        );
+        return true;
+      } else if (result.status === "skipped") {
+        this.logger.warn(
+          `[AutoSell] Stale sell skipped: ${result.reason ?? "unknown reason"}`,
+        );
+        return false;
+      } else if (result.reason === "FOK_ORDER_KILLED") {
+        this.logger.warn(
+          `[AutoSell] ⚠️ Stale sell not filled (FOK killed) - market has insufficient liquidity`,
+        );
+        return false;
+      } else {
+        this.logger.error(
+          `[AutoSell] Stale sell failed: ${result.reason ?? "unknown reason"}`,
+        );
+        throw new Error(`Stale sell failed: ${result.reason ?? "unknown"}`);
+      }
+    } catch (err) {
+      this.logger.error(
+        `[AutoSell] Failed to sell stale position: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw err;
+    }
   }
 
   /**
