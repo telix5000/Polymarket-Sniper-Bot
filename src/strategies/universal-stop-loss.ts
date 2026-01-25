@@ -274,6 +274,8 @@ export class UniversalStopLossStrategy {
           position.tokenId,
           position.size,
           position.pnlPct,
+          position.entryPrice,
+          position.pnlUsd,
         );
 
         if (sold) {
@@ -337,6 +339,8 @@ export class UniversalStopLossStrategy {
     tokenId: string,
     size: number,
     currentLossPct: number,
+    entryPrice: number,
+    pnlUsd: number,
   ): Promise<boolean> {
     try {
       const { postOrder } = await import("../utils/post-order.util");
@@ -392,6 +396,10 @@ export class UniversalStopLossStrategy {
           size,
           bestBid,
           sizeUsd,
+          {
+            entryPrice,
+            pnl: pnlUsd,
+          },
         ).catch(() => {
           // Ignore notification errors - logging is handled by the service
         });

@@ -61,8 +61,8 @@ describe("Trade Notification Service", () => {
   });
 
   describe("Service Initialization", () => {
-    test("isTradeNotificationEnabled returns false before initialization", () => {
-      // Re-initialize with disabled service
+    test("isTradeNotificationEnabled returns false when Telegram service is disabled", () => {
+      // Initialize with a disabled service (no botToken or chatId)
       const disabledService = new TelegramService({}, mockLogger);
       initTradeNotificationService(disabledService, mockLogger);
       

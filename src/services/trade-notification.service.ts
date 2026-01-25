@@ -6,9 +6,9 @@
  * and the Telegram notification service.
  *
  * Usage:
- * 1. Initialize once at startup with setTelegramService()
- * 2. Optionally set P&L callback with setPnLCallback()
- * 3. Call notify() from any strategy when a trade executes
+ * 1. Initialize once at startup with initTradeNotificationService()
+ * 2. Optionally set P&L callback with setTradeNotificationPnLCallback()
+ * 3. Call notifyTrade() from any strategy when a trade executes
  *
  * The service handles:
  * - Notification formatting based on trade type
@@ -27,7 +27,7 @@ import type { Logger } from "../utils/logger.util";
 export interface TradeNotificationInput {
   /** Type of trade (BUY, SELL, HEDGE, etc.) */
   type: TradeNotification["type"];
-  /** Market condition ID */
+  /** Polymarket market identifier (market ID) */
   marketId: string;
   /** Token ID */
   tokenId: string;
