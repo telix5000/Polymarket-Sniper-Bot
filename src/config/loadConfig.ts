@@ -1898,7 +1898,7 @@ export function loadStrategyConfig(
      * SMART_HEDGING_HEDGE_UP_ANYTIME: Allow hedging up at any time
      * When true, positions at high win probability can be hedged up immediately.
      * When false, hedging up only occurs within hedgeUpWindowMinutes of market close.
-     * Default: true
+     * Default: false (safer - only hedge up near close when outcome is more certain)
      */
     smartHedgingHedgeUpAnytime: (() => {
       const envValue = readEnv("SMART_HEDGING_HEDGE_UP_ANYTIME", overrides)?.toLowerCase();
@@ -1907,7 +1907,7 @@ export function loadStrategyConfig(
       if ("SMART_HEDGING_HEDGE_UP_ANYTIME" in preset) {
         return !!(preset as { SMART_HEDGING_HEDGE_UP_ANYTIME: boolean }).SMART_HEDGING_HEDGE_UP_ANYTIME;
       }
-      return true; // Default: hedge up at any time
+      return false; // Default: only hedge up near close (safer)
     })(),
     /**
      * STOP_LOSS_MIN_HOLD_SECONDS: Minimum time before stop-loss can trigger

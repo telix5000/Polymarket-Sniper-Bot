@@ -163,10 +163,10 @@ export const DEFAULT_HEDGING_CONFIG: SmartHedgingConfig = {
   noHedgeWindowMinutes: 3, // Don't hedge at all in last 3 minutes (too late)
   // Hedging up (high win probability) settings
   hedgeUpPriceThreshold: 0.85, // Buy more shares when price >= 85¢
-  hedgeUpWindowMinutes: 30, // Enable hedging up in last 30 minutes before close (ignored if hedgeUpAnytime=true)
+  hedgeUpWindowMinutes: 30, // Enable hedging up in last 30 minutes before close
   hedgeUpMaxUsd: 25, // Max USD to spend per position on hedging up (matches absoluteMaxUsd)
   hedgeUpMaxPrice: 0.95, // Don't buy at 95¢+ (too close to resolved, minimal profit margin)
-  hedgeUpAnytime: true, // Allow hedging up at any time, not just near close
+  hedgeUpAnytime: false, // Default: only hedge up near close (safer - more certainty of outcome)
 };
 
 /**
@@ -468,9 +468,18 @@ export class SmartHedgingStrategy {
       // NEVER hedge or liquidate positions with untrusted P&L.
       // Acting on invalid data can cause selling winners and keeping losers.
       if (!position.pnlTrusted) {
-        this.logger.debug(
-          `[SmartHedging] 📋 Skip hedge (UNTRUSTED_PNL): ${position.side} position has untrusted P&L (${position.pnlUntrustedReason ?? "unknown reason"})`,
-        );
+        // Log at warn level for significant losses so users know why hedging is blocked
+        const lossPct = Math.abs(position.pnlPct);
+        if (lossPct >= this.config.triggerLossPct) {
+          this.logger.warn(
+            `[SmartHedging] ⚠️ Skip hedge (UNTRUSTED_PNL): ${position.side} ${tokenIdShort}... at ${lossPct.toFixed(1)}% loss has untrusted P&L (${position.pnlUntrustedReason ?? "unknown reason"}) - CANNOT HEDGE until P&L is trusted`,
+          );
+        } else {
+          this.logger.debug(
+            `[SmartHedging] 📋 Skip hedge (UNTRUSTED_PNL): ${position.side} position has untrusted P&L (${position.pnlUntrustedReason ?? "unknown reason"})`,
+          );
+        }
+        skipAggregator.add(tokenIdShort, "untrusted_pnl");
         continue;
       }
 
@@ -481,6 +490,13 @@ export class SmartHedgingStrategy {
         position.executionStatus === "NOT_TRADABLE_ON_CLOB" ||
         position.executionStatus === "EXECUTION_BLOCKED"
       ) {
+        // Log at warn level for significant losses
+        const lossPct = Math.abs(position.pnlPct);
+        if (lossPct >= this.config.triggerLossPct) {
+          this.logger.warn(
+            `[SmartHedging] ⚠️ Skip hedge (NOT_TRADABLE): ${position.side} ${tokenIdShort}... at ${lossPct.toFixed(1)}% loss - position not tradable on CLOB (status=${position.executionStatus})`,
+          );
+        }
         skipAggregator.add(tokenIdShort, "not_tradable");
         continue;
       }
