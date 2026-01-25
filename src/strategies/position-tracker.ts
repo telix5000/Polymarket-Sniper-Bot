@@ -3446,8 +3446,26 @@ export class PositionTracker {
                   this.logger.debug(
                     `[PositionTracker] Failed to fetch price data for ${tokenId.slice(0, 16)}...: ${errMsg} - keeping as ACTIVE with unknown P&L`,
                   );
-                  // Use entry price as current price (will show 0% P&L but position is preserved)
-                  currentPrice = entryPrice;
+                  
+                  // CRITICAL FIX (Jan 2025): If Data API provided curPrice, use it as currentPrice.
+                  // This prevents P&L discrepancy issues when orderbook/fallback fetch fails but
+                  // Data API already provided valid P&L data. Without this fix:
+                  // - currentPrice would be set to entryPrice (0% implied P&L)
+                  // - Data API says -99.9% P&L
+                  // - The >10% discrepancy would mark pnlTrusted=false
+                  // - Neither StopLoss nor Hedging would act on the position
+                  //
+                  // With this fix, we preserve the Data API price, keeping P&L consistent and trusted.
+                  if (dataApiCurPrice !== undefined && dataApiCurPrice > 0) {
+                    currentPrice = dataApiCurPrice;
+                    this.logger.debug(
+                      `[PositionTracker] Using Data API curPrice=${(dataApiCurPrice * 100).toFixed(2)}¢ for ${tokenId.slice(0, 16)}... (orderbook fetch failed)`,
+                    );
+                  } else {
+                    // Fallback to entry price only if Data API didn't provide curPrice
+                    // This will show 0% P&L but position is preserved
+                    currentPrice = entryPrice;
+                  }
                   positionStatus = "NO_BOOK";
                   pricingFetchFailed = true;
                   // === BookStatus: NO_BOOK_404 (pricing fetch failed) ===

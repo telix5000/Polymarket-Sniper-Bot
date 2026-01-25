@@ -641,16 +641,60 @@ export class HedgingStrategy {
       }
 
       // === EXECUTION STATUS CHECK (Jan 2025 - Handle NOT_TRADABLE_ON_CLOB) ===
-      // If position has executionStatus set to NOT_TRADABLE_ON_CLOB, skip hedging/liquidation.
+      // If position has executionStatus set to NOT_TRADABLE_ON_CLOB, skip hedging.
       // This handles orderbook 404, empty book, and other CLOB unavailability scenarios.
+      // 
+      // CRITICAL FIX (Jan 2025): For CATASTROPHIC losses, allow liquidation attempt even
+      // when NOT_TRADABLE. The sellPosition method will use Data API price as fallback.
+      // It's better to attempt a sell than do nothing on a 50%+ loss.
       if (
         position.executionStatus === "NOT_TRADABLE_ON_CLOB" ||
         position.executionStatus === "EXECUTION_BLOCKED"
       ) {
-        // Log at warn level for significant actual losses (pnlPct must be negative)
         const pnlPct = position.pnlPct;
         const lossPctMagnitude = Math.abs(pnlPct);
-        if (pnlPct < 0 && lossPctMagnitude >= this.config.triggerLossPct) {
+        const isActualLoss = pnlPct < 0;
+        const isCatastrophicLoss = isActualLoss && lossPctMagnitude >= this.config.forceLiquidationPct;
+        
+        if (isCatastrophicLoss && position.pnlTrusted) {
+          // CATASTROPHIC LOSS with trusted P&L on NOT_TRADABLE position
+          // Attempt liquidation using Data API price as fallback
+          this.logger.warn(
+            `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}%) on NOT_TRADABLE position ${position.side} ${tokenIdShort}... ` +
+              `- ATTEMPTING LIQUIDATION using Data API price ${(position.currentPrice * 100).toFixed(1)}¢`,
+          );
+          
+          // Skip hedging (can't buy opposite side without orderbook), but try to sell
+          const key = `${position.marketId}-${position.tokenId}`;
+          
+          // Check cooldown
+          const cooldownExpiry = this.failedLiquidationCooldowns.get(key);
+          if (cooldownExpiry && now < cooldownExpiry) {
+            this.logger.debug(
+              `[Hedging] ⏳ Liquidation cooldown active for ${key} (expires in ${Math.ceil((cooldownExpiry - now) / 1000)}s)`,
+            );
+            skipAggregator.add(tokenIdShort, "cooldown");
+            continue;
+          }
+          
+          const sold = await this.sellPosition(position);
+          if (sold) {
+            actionsCount++;
+            this.hedgedPositions.add(key);
+            this.logger.info(
+              `[Hedging] ✅ Emergency liquidation succeeded for NOT_TRADABLE position ${position.side} ${tokenIdShort}...`,
+            );
+          } else {
+            this.failedLiquidationCooldowns.set(key, now + FAILED_LIQUIDATION_COOLDOWN_MS);
+            this.logger.warn(
+              `[Hedging] ⏳ Emergency liquidation failed - position on cooldown for 5 minutes: ${key}`,
+            );
+          }
+          continue;
+        }
+        
+        // Log at warn level for significant actual losses (pnlPct must be negative)
+        if (isActualLoss && lossPctMagnitude >= this.config.triggerLossPct) {
           this.logger.warn(
             `[Hedging] ⚠️ Skip hedge (NOT_TRADABLE): ${position.side} ${tokenIdShort}... at ${lossPctMagnitude.toFixed(1)}% loss - position not tradable on CLOB (status=${position.executionStatus})`,
           );
@@ -716,23 +760,40 @@ export class HedgingStrategy {
 
       // CRITICAL: Check minimum hold time before ANY action (hedge or sell)
       // This prevents immediate sell/hedge after buying due to bid-ask spread
+      //
+      // EXCEPTION: For CATASTROPHIC losses (>= forceLiquidationPct), skip these checks.
+      // If Data API says we're down 50%+, we should act immediately - the price IS the truth.
+      const lossPct = Math.abs(position.pnlPct);
+      const isCatastrophicLoss = position.pnlPct < 0 && lossPct >= this.config.forceLiquidationPct;
+      
       const entryTime = this.positionTracker.getPositionEntryTime(
         position.marketId,
         position.tokenId,
       );
+      
       if (!entryTime) {
-        // If we don't have an entry time, be conservative and skip this position
-        skipAggregator.add(tokenIdShort, "no_entry_time");
-        continue;
+        if (isCatastrophicLoss) {
+          // CATASTROPHIC LOSS with no entry time - ACT ANYWAY
+          // The Data API price is telling us we're losing badly - don't wait for entry time verification
+          this.logger.warn(
+            `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPct.toFixed(1)}%) with no entry time - PROCEEDING ANYWAY (Data API is source of truth)`,
+          );
+          // Fall through to continue processing
+        } else {
+          // Normal loss without entry time - be conservative and skip
+          skipAggregator.add(tokenIdShort, "no_entry_time");
+          continue;
+        }
       }
 
-      const holdSeconds = (now - entryTime) / 1000;
-      if (holdSeconds < this.config.minHoldSeconds) {
-        skipAggregator.add(tokenIdShort, "hold_time_short");
-        continue;
+      // Check hold time (but skip for catastrophic losses)
+      if (entryTime && !isCatastrophicLoss) {
+        const holdSeconds = (now - entryTime) / 1000;
+        if (holdSeconds < this.config.minHoldSeconds) {
+          skipAggregator.add(tokenIdShort, "hold_time_short");
+          continue;
+        }
       }
-
-      const lossPct = Math.abs(position.pnlPct);
 
       // === NEAR-CLOSE HEDGING BEHAVIOR ===
       // Near market close, hedging (buying the inverse) is actually MORE valuable, not less.
@@ -798,7 +859,7 @@ export class HedgingStrategy {
 
       // ALWAYS try to hedge FIRST, even for catastrophic losses
       // Only liquidate as a last resort if hedge fails
-      const isCatastrophicLoss = lossPct >= this.config.forceLiquidationPct;
+      // NOTE: isCatastrophicLoss is already computed above at the entry time check
 
       // === HEDGE OPERATION LOCK ===
       // Acquire a lock on this market to prevent incoming BUY orders during the hedge operation.
