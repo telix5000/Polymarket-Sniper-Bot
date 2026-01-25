@@ -2079,7 +2079,8 @@ export class ScalpTakeProfitStrategy {
 
       this.logger.error(
         `[ProfitTaker] ❌ Could not sell "${position.side}" position. ` +
-          `Bought at ${entryCents.toFixed(1)}¢, now worth ${currentBidCents !== null ? currentBidCents.toFixed(1) + "¢" : "unknown"} (${position.size.toFixed(2)} shares = $${errNotionalUsd.toFixed(2)}).${exitAttemptInfo} ` +
+          `Bought at ${entryCents.toFixed(1)}¢, now worth ${currentBidCents !== null ? currentBidCents.toFixed(1) + "¢" : "unknown"} ` +
+          `(${position.size.toFixed(2)} shares = $${errNotionalUsd.toFixed(2)}).${exitAttemptInfo} ` +
           `Reason: ${errorReason}`,
       );
       return false;
