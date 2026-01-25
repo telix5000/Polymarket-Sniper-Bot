@@ -182,7 +182,7 @@ export const STRATEGY_PRESETS = {
     SMART_HEDGING_TRIGGER_LOSS_PCT: 20,
     SMART_HEDGING_MAX_HEDGE_USD: 10,
     SMART_HEDGING_RESERVE_PCT: 20,
-    // Universal Stop-Loss - minimum hold time before stop-loss can trigger
+    // Stop-Loss - minimum hold time before stop-loss can trigger
     // This prevents premature sells due to bid-ask spread right after buying
     STOP_LOSS_MIN_HOLD_SECONDS: 60, // Wait 60s before stop-loss can trigger
     /**

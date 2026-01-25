@@ -5,7 +5,7 @@ import type { PositionTracker, Position } from "./position-tracker";
 import { getDynamicStopLoss, PRICE_TIERS } from "./trade-quality";
 import { notifyStopLoss } from "../services/trade-notification.service";
 
-export interface UniversalStopLossConfig {
+export interface StopLossConfig {
   enabled: boolean;
   /**
    * Maximum stop-loss percentage allowed for ANY position.
@@ -20,7 +20,7 @@ export interface UniversalStopLossConfig {
   useDynamicTiers: boolean;
   /**
    * Skip positions that Smart Hedging will handle (entry < hedgingMaxEntryPrice).
-   * When enabled, Universal Stop-Loss defers to Smart Hedging for low-entry positions.
+   * When enabled, Stop-Loss defers to Smart Hedging for low-entry positions.
    *
    * Default: true when smart hedging is enabled
    */
@@ -31,7 +31,7 @@ export interface UniversalStopLossConfig {
    *
    * When skipForSmartHedging is true:
    * - Positions with entry < this threshold: Handled by Smart Hedging (skipped by Stop-Loss)
-   * - Positions with entry >= this threshold: Handled by Universal Stop-Loss
+   * - Positions with entry >= this threshold: Handled by Stop-Loss
    *
    * This matches Smart Hedging's logic which skips positions where entry >= maxEntryPrice.
    *
@@ -52,15 +52,15 @@ export interface UniversalStopLossConfig {
   minHoldSeconds?: number;
 }
 
-export interface UniversalStopLossStrategyConfig {
+export interface StopLossStrategyConfig {
   client: ClobClient;
   logger: ConsoleLogger;
   positionTracker: PositionTracker;
-  config: UniversalStopLossConfig;
+  config: StopLossConfig;
 }
 
 /**
- * Universal Stop-Loss Strategy
+ * Stop-Loss Strategy
  *
  * A SAFETY NET that runs on ALL positions regardless of which strategy created them.
  * This ensures no position can "fall through the cracks" and exceed its stop-loss threshold.
@@ -85,11 +85,11 @@ export interface UniversalStopLossStrategyConfig {
  * - Endgame Sweep trades (which have no built-in stop-loss)
  * - Any other source of positions
  */
-export class UniversalStopLossStrategy {
+export class StopLossStrategy {
   private client: ClobClient;
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
-  private config: UniversalStopLossConfig;
+  private config: StopLossConfig;
 
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
@@ -118,7 +118,7 @@ export class UniversalStopLossStrategy {
    */
   private stopLossTriggered: Map<string, number> = new Map();
 
-  constructor(strategyConfig: UniversalStopLossStrategyConfig) {
+  constructor(strategyConfig: StopLossStrategyConfig) {
     this.client = strategyConfig.client;
     this.logger = strategyConfig.logger;
     this.positionTracker = strategyConfig.positionTracker;
@@ -138,7 +138,7 @@ export class UniversalStopLossStrategy {
 
     // Single-flight guard: prevent concurrent execution
     if (this.inFlight) {
-      this.logger.debug("[UniversalStopLoss] Skipped - already in flight");
+      this.logger.debug("[StopLoss] Skipped - already in flight");
       return 0;
     }
 
@@ -169,7 +169,7 @@ export class UniversalStopLossStrategy {
     activePositions = activePositions.filter((pos) => {
       if (!pos.pnlTrusted) {
         this.logger.debug(
-          `[UniversalStopLoss] 📋 Skip (UNTRUSTED_PNL): ${pos.tokenId.slice(0, 16)}... has untrusted P&L (${pos.pnlUntrustedReason ?? "unknown reason"})`,
+          `[StopLoss] 📋 Skip (UNTRUSTED_PNL): ${pos.tokenId.slice(0, 16)}... has untrusted P&L (${pos.pnlUntrustedReason ?? "unknown reason"})`,
         );
         return false;
       }
@@ -221,7 +221,7 @@ export class UniversalStopLossStrategy {
         // The entry time will be set on the next position tracker refresh cycle.
         if (!entryTime) {
           this.logger.debug(
-            `[UniversalStopLoss] ⏳ Position at ${position.pnlPct.toFixed(2)}% loss but no entry time - skipping stop-loss (will check after next refresh)`,
+            `[StopLoss] ⏳ Position at ${position.pnlPct.toFixed(2)}% loss but no entry time - skipping stop-loss (will check after next refresh)`,
           );
           continue;
         }
@@ -232,7 +232,7 @@ export class UniversalStopLossStrategy {
           // Position hasn't been held long enough - skip stop-loss for now
           // This prevents selling positions immediately after buying due to bid-ask spread
           this.logger.debug(
-            `[UniversalStopLoss] ⏳ Position at ${position.pnlPct.toFixed(2)}% loss (threshold: -${stopLossPct}%) held for ${holdTimeSeconds.toFixed(0)}s, need ${minHoldSeconds}s before stop-loss can trigger`,
+            `[StopLoss] ⏳ Position at ${position.pnlPct.toFixed(2)}% loss (threshold: -${stopLossPct}%) held for ${holdTimeSeconds.toFixed(0)}s, need ${minHoldSeconds}s before stop-loss can trigger`,
           );
           continue;
         }
@@ -244,7 +244,7 @@ export class UniversalStopLossStrategy {
     // Log summary of positions being monitored
     if (positionsToStop.length > 0) {
       this.logger.warn(
-        `[UniversalStopLoss] 🚨 ${positionsToStop.length} position(s) exceeding stop-loss threshold!`,
+        `[StopLoss] 🚨 ${positionsToStop.length} position(s) exceeding stop-loss threshold!`,
       );
     }
 
@@ -260,7 +260,7 @@ export class UniversalStopLossStrategy {
       // Log the stop-loss trigger
       const tierName = this.getTierName(position.entryPrice);
       this.logger.warn(
-        `[UniversalStopLoss] 🔻 STOP-LOSS TRIGGERED: ${position.pnlPct.toFixed(2)}% loss ` +
+        `[StopLoss] 🔻 STOP-LOSS TRIGGERED: ${position.pnlPct.toFixed(2)}% loss ` +
           `(threshold: -${stopLossPct}%, tier: ${tierName}, entry: ${(position.entryPrice * 100).toFixed(1)}¢) ` +
           `Market: ${position.marketId.slice(0, 16)}...`,
       );
@@ -281,13 +281,13 @@ export class UniversalStopLossStrategy {
         if (sold) {
           soldCount++;
           this.logger.info(
-            `[UniversalStopLoss] ✅ Stop-loss executed: sold ${position.size.toFixed(2)} shares ` +
+            `[StopLoss] ✅ Stop-loss executed: sold ${position.size.toFixed(2)} shares ` +
               `at ${position.pnlPct.toFixed(2)}% loss`,
           );
         }
       } catch (err) {
         this.logger.error(
-          `[UniversalStopLoss] ❌ Failed to execute stop-loss for ${position.marketId}`,
+          `[StopLoss] ❌ Failed to execute stop-loss for ${position.marketId}`,
           err as Error,
         );
       } finally {
@@ -298,7 +298,7 @@ export class UniversalStopLossStrategy {
 
     if (soldCount > 0) {
       this.logger.info(
-        `[UniversalStopLoss] 💰 Executed ${soldCount} stop-loss sell(s)`,
+        `[StopLoss] 💰 Executed ${soldCount} stop-loss sell(s)`,
       );
     }
 
@@ -351,7 +351,7 @@ export class UniversalStopLossStrategy {
       if (!orderbook.bids || orderbook.bids.length === 0) {
         if (!this.noLiquidityTokens.has(tokenId)) {
           this.logger.warn(
-            `[UniversalStopLoss] ⚠️ No bids for token ${tokenId} - cannot execute stop-loss (illiquid)`,
+            `[StopLoss] ⚠️ No bids for token ${tokenId} - cannot execute stop-loss (illiquid)`,
           );
           this.noLiquidityTokens.add(tokenId);
         }
@@ -368,7 +368,7 @@ export class UniversalStopLossStrategy {
       const wallet = (this.client as { wallet?: Wallet }).wallet;
 
       this.logger.info(
-        `[UniversalStopLoss] 🔄 Executing stop-loss sell: ${size.toFixed(2)} shares ` +
+        `[StopLoss] 🔄 Executing stop-loss sell: ${size.toFixed(2)} shares ` +
           `at ~${(bestBid * 100).toFixed(1)}¢ ($${sizeUsd.toFixed(2)}, loss: ${currentLossPct.toFixed(2)}%)`,
       );
 
@@ -407,24 +407,24 @@ export class UniversalStopLossStrategy {
         return true;
       } else if (result.status === "skipped") {
         this.logger.warn(
-          `[UniversalStopLoss] ⏭️ Stop-loss sell skipped: ${result.reason ?? "unknown"}`,
+          `[StopLoss] ⏭️ Stop-loss sell skipped: ${result.reason ?? "unknown"}`,
         );
         return false;
       } else if (result.reason === "FOK_ORDER_KILLED") {
         // FOK order was submitted but killed (no fill) - market has insufficient liquidity
         this.logger.warn(
-          `[UniversalStopLoss] ⚠️ Stop-loss sell not filled (FOK killed) - market has insufficient liquidity`,
+          `[StopLoss] ⚠️ Stop-loss sell not filled (FOK killed) - market has insufficient liquidity`,
         );
         return false;
       } else {
         this.logger.error(
-          `[UniversalStopLoss] ❌ Stop-loss sell failed: ${result.reason ?? "unknown"}`,
+          `[StopLoss] ❌ Stop-loss sell failed: ${result.reason ?? "unknown"}`,
         );
         return false;
       }
     } catch (err) {
       this.logger.error(
-        `[UniversalStopLoss] ❌ Error selling position: ${err instanceof Error ? err.message : String(err)}`,
+        `[StopLoss] ❌ Error selling position: ${err instanceof Error ? err.message : String(err)}`,
       );
       throw err;
     }

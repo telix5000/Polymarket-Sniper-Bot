@@ -1396,7 +1396,7 @@ export type StrategyConfig = {
    */
   smartHedgingHedgeUpAnytime: boolean;
   /**
-   * Universal Stop-Loss: Minimum time (seconds) to hold before stop-loss can trigger.
+   * Stop-Loss: Minimum time (seconds) to hold before stop-loss can trigger.
    * Prevents selling positions immediately after buying due to bid-ask spread.
    * Default: 60 seconds
    */

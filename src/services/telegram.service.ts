@@ -462,7 +462,7 @@ export class TelegramService {
       message += `✅ Smart Hedging (loss protection)\n`;
     }
     if (enabledStrategies.stopLoss) {
-      message += `✅ Universal Stop-Loss\n`;
+      message += `✅ Stop-Loss\n`;
     }
 
     // Redemption

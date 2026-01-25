@@ -1047,7 +1047,7 @@ describe("PositionTracker Historical Entry Times", () => {
 
 describe("Stop-Loss Entry Time Validation", () => {
   test("Stop-loss should skip positions without entry time", () => {
-    // Simulates the conservative behavior in UniversalStopLossStrategy
+    // Simulates the conservative behavior in StopLossStrategy
     const positionEntryTimes = new Map<string, number>();
     const position = {
       marketId: "market1",

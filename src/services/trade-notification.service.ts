@@ -143,7 +143,7 @@ function mapTypeToStrategyId(
       AutoRedeem: "MANUAL", // Redemption - closest match
       SmartHedging: "SMART_HEDGE", // Smart hedging strategy
       ScalpTrade: "QUICK_FLIP", // Scalp is profit-taking
-      UniversalStopLoss: "STOP_LOSS", // Direct match
+      StopLoss: "STOP_LOSS", // Direct match
       PositionStacking: "ENDGAME", // Stacking builds positions like endgame
       EndgameSweep: "ENDGAME", // Direct match
       Frontrun: "FF", // FF = Frontrun/Flashfill
@@ -457,7 +457,7 @@ export async function notifyStopLoss(
     size,
     price,
     sizeUsd,
-    strategy: "UniversalStopLoss",
+    strategy: "StopLoss",
     ...options,
   });
 }
