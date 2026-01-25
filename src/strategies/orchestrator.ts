@@ -697,13 +697,19 @@ export class Orchestrator {
     try {
       const snapshot = this.positionTracker.getSnapshot();
 
-      // Calculate unrealized P&L and holdings value from active positions
+      // Calculate unrealized P&L and holdings value from all positions (active + redeemable)
       // The position tracker's pnlUsd is authoritative for unrealized P&L since
       // it's calculated from actual entry prices and current bid prices.
+      // Include redeemablePositions because they represent unrealized P&L until actually redeemed.
       if (snapshot) {
         let holdingsValue = 0;
         let unrealizedPnl = 0;
-        for (const pos of snapshot.activePositions) {
+        // Combine active and redeemable positions for complete P&L picture
+        const allPositions = [
+          ...snapshot.activePositions,
+          ...snapshot.redeemablePositions,
+        ];
+        for (const pos of allPositions) {
           // Use current price (bid price for what we can sell at)
           holdingsValue += pos.size * pos.currentPrice;
           // Sum unrealized P&L from positions with trusted P&L data
