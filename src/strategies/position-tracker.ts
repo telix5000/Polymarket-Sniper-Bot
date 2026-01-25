@@ -778,6 +778,15 @@ export class PositionTracker {
   };
   private static readonly PNL_SUMMARY_LOG_INTERVAL_MS = 60_000; // Log at most once per minute
 
+  // === P&L CONSISTENCY THRESHOLDS ===
+  // Used to detect and handle discrepancies between Data-API P&L and price-derived P&L.
+  // ROUNDING_TOLERANCE_PCT: Tiny differences (<0.5%) are ignored as floating-point noise.
+  // WARNING_THRESHOLD_PCT: Differences >2% logged as warnings but P&L still trusted.
+  // UNTRUSTED_THRESHOLD_PCT: Differences >10% mark P&L as untrusted (material discrepancy).
+  private static readonly PNL_ROUNDING_TOLERANCE_PCT = 0.5; // Ignore differences < 0.5%
+  private static readonly PNL_WARNING_THRESHOLD_PCT = 2.0; // Log warning if > 2%
+  private static readonly PNL_UNTRUSTED_THRESHOLD_PCT = 10.0; // Mark untrusted if > 10%
+
   // EntryMetaResolver for stateless entry metadata from trade history
   // WHY THIS EXISTS: Container restarts used to reset the "time held" clock.
   // Now we derive entry timestamps from the trade history API, which survives restarts.
@@ -3680,12 +3689,74 @@ export class PositionTracker {
                 pnlClassification = "NEUTRAL";
               }
 
-              // Debug log for positions that should be profitable but show 0% or less
-              // This helps diagnose when pricing is wrong
-              if (currentPrice > entryPrice && pnlPct <= 0) {
-                this.logger.warn(
-                  `[PositionTracker] ⚠️ P&L calculation anomaly: tokenId=${tokenId.slice(0, 16)}..., entry=${entryPrice}, current=${currentPrice}, pnlPct=${pnlPct.toFixed(2)}%`,
-                );
+              // === P&L CONSISTENCY CHECK ===
+              // Compare price-derived (implied) P&L against reported pnlPct.
+              // This catches cases where Data-API P&L and price sources diverge.
+              //
+              // WHY THIS MATTERS:
+              // 1. Tiny rounding differences (e.g., 0.8599 vs 0.86) should NOT trigger warnings
+              // 2. Material discrepancies (>10%) may indicate stale data or API bugs
+              // 3. Scalper must not act on spurious P&L values
+              //
+              // THRESHOLDS:
+              // - < 0.5%: Rounding noise, ignore silently
+              // - 0.5-2%: Acceptable variance, no action
+              // - 2-10%: Log warning but trust Data-API (UI-truth)
+              // - > 10%: Mark as untrusted, explain why
+              if (entryPrice > 0 && !finalRedeemable) {
+                const impliedPnlPct =
+                  ((currentPrice - entryPrice) / entryPrice) * 100;
+                const pnlDiscrepancy = Math.abs(pnlPct - impliedPnlPct);
+
+                // Only check discrepancy when pnlSource is DATA_API (price vs API comparison)
+                // For EXECUTABLE_BOOK and FALLBACK, pnlPct is derived from currentPrice so no discrepancy.
+                if (pnlSource === "DATA_API" && pnlDiscrepancy > 0) {
+                  if (
+                    pnlDiscrepancy >
+                    PositionTracker.PNL_UNTRUSTED_THRESHOLD_PCT
+                  ) {
+                    // SEVERE DISCREPANCY: Data-API P&L materially disagrees with price-derived P&L
+                    // Mark as untrusted to prevent scalper from acting on spurious values
+                    pnlTrusted = false;
+                    pnlUntrustedReason = `DATA_API_PRICE_DISCREPANCY: pnlPct=${pnlPct.toFixed(2)}% vs implied=${impliedPnlPct.toFixed(2)}% (diff=${pnlDiscrepancy.toFixed(2)}%)`;
+                    pnlClassification = "UNKNOWN";
+                    this.logger.warn(
+                      `[PositionTracker] ⚠️ P&L UNTRUSTED - Material discrepancy: tokenId=${tokenId.slice(0, 16)}..., ` +
+                        `entry=${(entryPrice * 100).toFixed(2)}¢, current=${(currentPrice * 100).toFixed(2)}¢, ` +
+                        `pnlPct=${pnlPct.toFixed(2)}%, implied=${impliedPnlPct.toFixed(2)}%, ` +
+                        `diff=${pnlDiscrepancy.toFixed(2)}%, source=${pnlSource}`,
+                    );
+                  } else if (
+                    pnlDiscrepancy > PositionTracker.PNL_WARNING_THRESHOLD_PCT
+                  ) {
+                    // MODERATE DISCREPANCY: Log warning but still trust Data-API (UI-truth)
+                    this.logger.debug(
+                      `[PositionTracker] P&L variance detected: tokenId=${tokenId.slice(0, 16)}..., ` +
+                        `entry=${(entryPrice * 100).toFixed(2)}¢, current=${(currentPrice * 100).toFixed(2)}¢, ` +
+                        `pnlPct=${pnlPct.toFixed(2)}%, implied=${impliedPnlPct.toFixed(2)}%, ` +
+                        `diff=${pnlDiscrepancy.toFixed(2)}%, source=${pnlSource}`,
+                    );
+                  }
+                  // Discrepancy <= PNL_WARNING_THRESHOLD_PCT: Silent (acceptable variance)
+                  // Discrepancy <= PNL_ROUNDING_TOLERANCE_PCT: Rounding noise, fully ignored
+                }
+
+                // LEGACY CHECK (improved): currentPrice > entryPrice but pnlPct shows loss/neutral
+                // Only warn if the discrepancy is material (above rounding tolerance)
+                const priceGainPct =
+                  ((currentPrice - entryPrice) / entryPrice) * 100;
+                if (
+                  priceGainPct > PositionTracker.PNL_ROUNDING_TOLERANCE_PCT &&
+                  pnlPct <= 0 &&
+                  pnlSource === "DATA_API"
+                ) {
+                  // This is a genuine anomaly: prices show profit but P&L shows loss/neutral
+                  this.logger.warn(
+                    `[PositionTracker] ⚠️ P&L calculation anomaly: tokenId=${tokenId.slice(0, 16)}..., ` +
+                      `entry=${(entryPrice * 100).toFixed(2)}¢, current=${(currentPrice * 100).toFixed(2)}¢, ` +
+                      `pnlPct=${pnlPct.toFixed(2)}%, implied=${impliedPnlPct.toFixed(2)}%, source=${pnlSource}`,
+                  );
+                }
               }
 
               // Log significant profits at DEBUG level for monitoring
