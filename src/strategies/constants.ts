@@ -86,16 +86,33 @@ export const POLYMARKET_ROUND_TRIP_FEE_PCT = 0.02; // 0.02% total for buy + sell
 export const DEFAULT_SELL_SLIPPAGE_PCT = 2; // 2% default slippage tolerance for sells
 
 /**
- * Helper function to calculate minimum acceptable price with slippage
- * @param currentBid The current best bid price in dollars [0, 1]
- * @param slippagePct The slippage tolerance percentage (default: DEFAULT_SELL_SLIPPAGE_PCT)
- * @returns The minimum acceptable price (currentBid * (1 - slippagePct/100))
+ * Helper function to calculate minimum acceptable price with slippage tolerance.
+ *
+ * This function is used to determine the floor price when selling a position,
+ * allowing for small price movements between when the decision to sell is made
+ * and when the order is actually executed.
+ *
+ * @param referencePrice The reference price to apply slippage to (in dollars [0, 1]).
+ *   This can be the target price, current bid, or any price used as a baseline.
+ *   Different strategies use different reference prices:
+ *   - scalp-trade.ts: effectiveLimitPrice (target price)
+ *   - sell-early.ts: position.currentBidPrice (cached bid)
+ *   - smart-hedging.ts/quick-flip.ts: fresh bidPrice from orderbook
+ * @param slippagePct The slippage tolerance percentage (default: DEFAULT_SELL_SLIPPAGE_PCT).
+ *   Must be between 0 and 100.
+ * @returns The minimum acceptable price (referencePrice * (1 - slippagePct/100))
+ * @throws Error if slippagePct is outside the valid range [0, 100]
  */
 export function calculateMinAcceptablePrice(
-  currentBid: number,
+  referencePrice: number,
   slippagePct: number = DEFAULT_SELL_SLIPPAGE_PCT,
 ): number {
-  return currentBid * (1 - slippagePct / 100);
+  if (slippagePct < 0 || slippagePct > 100) {
+    throw new Error(
+      `Invalid slippage percentage: ${slippagePct}. Must be between 0 and 100.`,
+    );
+  }
+  return referencePrice * (1 - slippagePct / 100);
 }
 
 /**

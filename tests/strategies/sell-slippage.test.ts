@@ -86,6 +86,30 @@ describe("calculateMinAcceptablePrice", () => {
     assert.ok(slip5 < slip2, "5% slippage should produce lower min than 2%");
     assert.ok(slip2 < bid, "2% slippage should produce lower min than bid");
   });
+
+  test("throws error for negative slippage", () => {
+    assert.throws(
+      () => calculateMinAcceptablePrice(0.88, -1),
+      /Invalid slippage percentage: -1\. Must be between 0 and 100\./,
+    );
+  });
+
+  test("throws error for slippage > 100%", () => {
+    assert.throws(
+      () => calculateMinAcceptablePrice(0.88, 101),
+      /Invalid slippage percentage: 101\. Must be between 0 and 100\./,
+    );
+  });
+
+  test("accepts boundary values 0% and 100%", () => {
+    // 0% is valid (exact price match)
+    const result0 = calculateMinAcceptablePrice(0.88, 0);
+    assert.equal(result0, 0.88);
+
+    // 100% is valid (accept any price including 0)
+    const result100 = calculateMinAcceptablePrice(0.88, 100);
+    assert.equal(result100, 0);
+  });
 });
 
 describe("Slippage Integration Scenarios", () => {
