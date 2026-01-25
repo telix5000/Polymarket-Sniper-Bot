@@ -18,6 +18,7 @@ import {
   markBuyCompleted,
   isMarketInCooldown,
   markMarketBuyCompleted,
+  isMarketHedgeLocked,
 } from "./funds-allowance.util";
 import { isLiveTradingEnabled } from "./live-trading.util";
 import {
@@ -585,6 +586,33 @@ async function postOrderClob(
       return {
         status: "skipped",
         reason: marketCooldownStatus.reason ?? "MARKET_BUY_COOLDOWN",
+      };
+    }
+  }
+
+  // === HEDGE OPERATION LOCK CHECK ===
+  // Prevents BUY orders during hedge/liquidation operations on the same market.
+  // When Smart Hedging is selling a position to buy the inverse, we need to block
+  // incoming BUY orders to prevent:
+  // 1. Consuming freed funds intended for the hedge
+  // 2. Creating conflicting positions
+  // 3. Causing hedge operation failures
+  //
+  // NOTE: skipDuplicatePrevention=true for hedge operations themselves (they set this flag),
+  // so hedge BUYs are NOT blocked by this check. Only external BUYs (copy trading) are blocked.
+  if (!input.skipDuplicatePrevention && side === "BUY" && marketId) {
+    const hedgeLockStatus = isMarketHedgeLocked(marketId);
+    if (hedgeLockStatus.locked) {
+      const remainingSec = Math.ceil(
+        (hedgeLockStatus.remainingMs ?? 0) / 1000,
+      );
+      logger.warn(
+        `[CLOB] Order skipped (${hedgeLockStatus.reason}): BUY on market ${marketId.slice(0, 8)}... blocked for ${remainingSec}s ` +
+          `(hedge operation "${hedgeLockStatus.operationType}" in progress)`,
+      );
+      return {
+        status: "skipped",
+        reason: hedgeLockStatus.reason ?? "HEDGE_OPERATION_IN_PROGRESS",
       };
     }
   }
