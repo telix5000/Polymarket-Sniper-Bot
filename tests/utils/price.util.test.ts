@@ -205,7 +205,7 @@ describe("Price Utility - Integration Scenarios", () => {
     // Should be INVALID_BOOK
     assert.strictEqual(quality.quality, "INVALID_BOOK");
 
-    // SmartHedging should NOT use bestBid for P&L calculation
+    // Hedging should NOT use bestBid for P&L calculation
     // Instead, it should use dataApiPrice
     const correctMarkPrice = dataApiPrice;
     assert.strictEqual(
@@ -224,7 +224,7 @@ describe("Price Utility - Integration Scenarios", () => {
     const nearRes = isNearResolution(currentPrice);
     assert.strictEqual(nearRes, true, "99.95¢ is near resolution");
 
-    // SmartHedging should skip this position
+    // Hedging should skip this position
     const shouldSkipHedging = nearRes && !redeemable;
     assert.strictEqual(
       shouldSkipHedging,

@@ -1294,107 +1294,107 @@ export type StrategyConfig = {
   autoRedeemEnabled: boolean;
   autoRedeemMinPositionUsd: number;
   autoRedeemCheckIntervalMs: number;
-  // Smart Hedging settings (replaces stop-loss for risky tier positions)
-  smartHedgingEnabled: boolean;
-  smartHedgingTriggerLossPct: number;
-  smartHedgingMaxHedgeUsd: number;
+  // Hedging settings (replaces stop-loss for risky tier positions)
+  hedgingEnabled: boolean;
+  hedgingTriggerLossPct: number;
+  hedgingMaxHedgeUsd: number;
   /**
    * Minimum USD for a hedge position - skip hedges below this threshold
    * Prevents creating micro-hedges that don't provide meaningful protection
    * Default: $1
    */
-  smartHedgingMinHedgeUsd: number;
-  smartHedgingReservePct: number;
+  hedgingMinHedgeUsd: number;
+  hedgingReservePct: number;
   /**
    * Allow hedging to exceed MAX_POSITION_USD / maxHedgeUsd when needed to stop bleeding
    * Default: true - proper protection > arbitrary limits
    */
-  smartHedgingAllowExceedMax: boolean;
+  hedgingAllowExceedMax: boolean;
   /**
    * Absolute maximum USD for hedge even when exceeding normal limits
    * Safety cap to prevent runaway hedging
    * Default: $100
    */
-  smartHedgingAbsoluteMaxUsd: number;
+  hedgingAbsoluteMaxUsd: number;
   /**
    * Loss percentage threshold for emergency/full protection mode
    * When position drops beyond this %, use absoluteMaxUsd limit instead of maxHedgeUsd
    * Default: 30%
    */
-  smartHedgingEmergencyLossPct: number;
+  hedgingEmergencyLossPct: number;
   /**
    * Price threshold to exit the losing side of a hedged position (default: 0.25 = 25¢)
    * When either side of a hedged position drops below this price, sell to recover value.
    * Set to 0 to disable hedge exit monitoring.
    */
-  smartHedgingHedgeExitThreshold: number;
+  hedgingHedgeExitThreshold: number;
   /**
    * Enable fallback liquidation when hedging fails
    * When true, if a hedge cannot execute, the position will be sold to stop further losses
    * Default: true - don't let losers sit and go to zero
    */
-  smartHedgingEnableFallbackLiquidation: boolean;
+  hedgingEnableFallbackLiquidation: boolean;
   /**
    * Loss percentage threshold for forced liquidation
    * When position drops beyond this %, force liquidate even if hedging isn't optimal
    * Default: 50%
    */
-  smartHedgingForceLiquidationLossPct: number;
+  hedgingForceLiquidationLossPct: number;
   /**
    * Near-close window: minutes before market close to apply stricter hedge rules
    * Default: 15 minutes
    */
-  smartHedgingNearCloseWindowMinutes: number;
+  hedgingNearCloseWindowMinutes: number;
   /**
    * Near-close: minimum adverse price drop in cents to trigger hedge
    * Default: 12 cents
    */
-  smartHedgingNearClosePriceDropCents: number;
+  hedgingNearClosePriceDropCents: number;
   /**
    * Near-close: minimum loss % to trigger hedge (OR condition with price drop)
    * Default: 30%
    */
-  smartHedgingNearCloseLossPct: number;
+  hedgingNearCloseLossPct: number;
   /**
    * No-hedge window: minutes before market close to disable hedging entirely
    * Default: 3 minutes
    */
-  smartHedgingNoHedgeWindowMinutes: number;
+  hedgingNoHedgeWindowMinutes: number;
   /**
-   * Smart Hedging Direction: controls when hedging is active
+   * Hedging Direction: controls when hedging is active
    * - "down": Only hedge losing positions (traditional behavior)
    * - "up": Only buy more shares when winning at high probability (85¢+)
    * - "both": Both behaviors enabled (default - maximize wins AND minimize losses)
    */
-  smartHedgingDirection: "down" | "up" | "both";
+  hedgingDirection: "down" | "up" | "both";
   /**
    * Hedge Up: Minimum price threshold to trigger buying more shares (default: 0.85 = 85¢)
    * When position price is at or above this threshold near market close,
    * buy additional shares to maximize gains since resolution to $1 is nearly guaranteed.
    */
-  smartHedgingHedgeUpPriceThreshold: number;
+  hedgingHedgeUpPriceThreshold: number;
   /**
    * Hedge Up: Maximum price threshold - don't buy at prices >= this (default: 0.95 = 95¢)
    * Prevents buying at prices that are essentially "closed" where profit margin is minimal.
    */
-  smartHedgingHedgeUpMaxPrice: number;
+  hedgingHedgeUpMaxPrice: number;
   /**
    * Hedge Up: Minutes before market close to enable buying more shares (default: 30)
    * Only buy more shares when within this window AND price is in the valid range.
    */
-  smartHedgingHedgeUpWindowMinutes: number;
+  hedgingHedgeUpWindowMinutes: number;
   /**
    * Hedge Up: Maximum USD to spend on buying more shares per position (default: 25)
    * This is the maximum additional investment in a winning position.
    */
-  smartHedgingHedgeUpMaxUsd: number;
+  hedgingHedgeUpMaxUsd: number;
   /**
    * Hedge Up: Allow hedging up at any time, not just near market close.
    * When true, positions at high win probability can be hedged up immediately.
    * When false, hedging up only occurs within hedgeUpWindowMinutes of market close.
    * Default: false
    */
-  smartHedgingHedgeUpAnytime: boolean;
+  hedgingHedgeUpAnytime: boolean;
   /**
    * Stop-Loss: Minimum time (seconds) to hold before stop-loss can trigger.
    * Prevents selling positions immediately after buying due to bid-ask spread.
@@ -1741,195 +1741,195 @@ export function loadStrategyConfig(
      * Instead of selling risky positions (<60¢ entry) at a loss,
      * hedge by buying the opposing side to cap maximum loss at the spread
      */
-    // SMART_HEDGING_ENABLED: enabled by default to minimize losses
-    smartHedgingEnabled:
-      parseBool(readEnv("SMART_HEDGING_ENABLED", overrides) ?? "") ??
-      ("SMART_HEDGING_ENABLED" in preset
-        ? (preset as { SMART_HEDGING_ENABLED: boolean }).SMART_HEDGING_ENABLED
+    // HEDGING_ENABLED: enabled by default to minimize losses
+    hedgingEnabled:
+      parseBool(readEnv("HEDGING_ENABLED", overrides) ?? "") ??
+      ("HEDGING_ENABLED" in preset
+        ? (preset as { HEDGING_ENABLED: boolean }).HEDGING_ENABLED
         : undefined) ??
       true, // Enabled by default - make money, not lose it!
-    // SMART_HEDGING_TRIGGER_LOSS_PCT: loss percentage to trigger hedging
-    smartHedgingTriggerLossPct:
-      parseNumber(readEnv("SMART_HEDGING_TRIGGER_LOSS_PCT", overrides) ?? "") ??
-      ("SMART_HEDGING_TRIGGER_LOSS_PCT" in preset
-        ? (preset as { SMART_HEDGING_TRIGGER_LOSS_PCT: number })
-            .SMART_HEDGING_TRIGGER_LOSS_PCT
+    // HEDGING_TRIGGER_LOSS_PCT: loss percentage to trigger hedging
+    hedgingTriggerLossPct:
+      parseNumber(readEnv("HEDGING_TRIGGER_LOSS_PCT", overrides) ?? "") ??
+      ("HEDGING_TRIGGER_LOSS_PCT" in preset
+        ? (preset as { HEDGING_TRIGGER_LOSS_PCT: number })
+            .HEDGING_TRIGGER_LOSS_PCT
         : undefined) ??
       20, // Default: hedge at 20% loss
-    // SMART_HEDGING_MAX_HEDGE_USD: maximum USD per hedge position
-    smartHedgingMaxHedgeUsd:
-      parseNumber(readEnv("SMART_HEDGING_MAX_HEDGE_USD", overrides) ?? "") ??
-      ("SMART_HEDGING_MAX_HEDGE_USD" in preset
-        ? (preset as { SMART_HEDGING_MAX_HEDGE_USD: number })
-            .SMART_HEDGING_MAX_HEDGE_USD
+    // HEDGING_MAX_HEDGE_USD: maximum USD per hedge position
+    hedgingMaxHedgeUsd:
+      parseNumber(readEnv("HEDGING_MAX_HEDGE_USD", overrides) ?? "") ??
+      ("HEDGING_MAX_HEDGE_USD" in preset
+        ? (preset as { HEDGING_MAX_HEDGE_USD: number })
+            .HEDGING_MAX_HEDGE_USD
         : undefined) ??
       10, // Default: max $10 per hedge
-    // SMART_HEDGING_MIN_HEDGE_USD: minimum USD per hedge position (skip smaller hedges)
+    // HEDGING_MIN_HEDGE_USD: minimum USD per hedge position (skip smaller hedges)
     // Prevents creating micro-hedges that don't provide meaningful protection
-    smartHedgingMinHedgeUsd:
-      parseNumber(readEnv("SMART_HEDGING_MIN_HEDGE_USD", overrides) ?? "") ??
-      ("SMART_HEDGING_MIN_HEDGE_USD" in preset
-        ? (preset as { SMART_HEDGING_MIN_HEDGE_USD: number })
-            .SMART_HEDGING_MIN_HEDGE_USD
+    hedgingMinHedgeUsd:
+      parseNumber(readEnv("HEDGING_MIN_HEDGE_USD", overrides) ?? "") ??
+      ("HEDGING_MIN_HEDGE_USD" in preset
+        ? (preset as { HEDGING_MIN_HEDGE_USD: number })
+            .HEDGING_MIN_HEDGE_USD
         : undefined) ??
       1, // Default: min $1 per hedge (skip micro-hedges below $1)
-    // SMART_HEDGING_RESERVE_PCT: percentage of wallet to reserve for hedging
-    smartHedgingReservePct:
-      parseNumber(readEnv("SMART_HEDGING_RESERVE_PCT", overrides) ?? "") ??
-      ("SMART_HEDGING_RESERVE_PCT" in preset
-        ? (preset as { SMART_HEDGING_RESERVE_PCT: number })
-            .SMART_HEDGING_RESERVE_PCT
+    // HEDGING_RESERVE_PCT: percentage of wallet to reserve for hedging
+    hedgingReservePct:
+      parseNumber(readEnv("HEDGING_RESERVE_PCT", overrides) ?? "") ??
+      ("HEDGING_RESERVE_PCT" in preset
+        ? (preset as { HEDGING_RESERVE_PCT: number })
+            .HEDGING_RESERVE_PCT
         : undefined) ??
       20, // Default: keep 20% in reserve
     /**
-     * SMART_HEDGING_ALLOW_EXCEED_MAX: Allow hedge to exceed maxHedgeUsd when stopping heavy losses
+     * HEDGING_ALLOW_EXCEED_MAX: Allow hedge to exceed maxHedgeUsd when stopping heavy losses
      * Set to "true" to allow hedging beyond normal limits when position is bleeding
      * Default: true (proper protection is more important than arbitrary limits)
      */
-    smartHedgingAllowExceedMax:
-      parseBool(readEnv("SMART_HEDGING_ALLOW_EXCEED_MAX", overrides) ?? "") ??
-      ("SMART_HEDGING_ALLOW_EXCEED_MAX" in preset
-        ? (preset as { SMART_HEDGING_ALLOW_EXCEED_MAX: boolean })
-            .SMART_HEDGING_ALLOW_EXCEED_MAX
+    hedgingAllowExceedMax:
+      parseBool(readEnv("HEDGING_ALLOW_EXCEED_MAX", overrides) ?? "") ??
+      ("HEDGING_ALLOW_EXCEED_MAX" in preset
+        ? (preset as { HEDGING_ALLOW_EXCEED_MAX: boolean })
+            .HEDGING_ALLOW_EXCEED_MAX
         : undefined) ??
       true, // Default: allow exceeding limits for protection
     /**
-     * SMART_HEDGING_ABSOLUTE_MAX_USD: Safety cap for hedge size even when exceeding limits
+     * HEDGING_ABSOLUTE_MAX_USD: Safety cap for hedge size even when exceeding limits
      * This is the maximum a single hedge can ever be, regardless of position size
      * Default: $100
      */
-    smartHedgingAbsoluteMaxUsd:
-      parseNumber(readEnv("SMART_HEDGING_ABSOLUTE_MAX_USD", overrides) ?? "") ??
-      ("SMART_HEDGING_ABSOLUTE_MAX_USD" in preset
-        ? (preset as { SMART_HEDGING_ABSOLUTE_MAX_USD: number })
-            .SMART_HEDGING_ABSOLUTE_MAX_USD
+    hedgingAbsoluteMaxUsd:
+      parseNumber(readEnv("HEDGING_ABSOLUTE_MAX_USD", overrides) ?? "") ??
+      ("HEDGING_ABSOLUTE_MAX_USD" in preset
+        ? (preset as { HEDGING_ABSOLUTE_MAX_USD: number })
+            .HEDGING_ABSOLUTE_MAX_USD
         : undefined) ??
       100, // Default: max $100 per hedge (safety cap)
     /**
-     * SMART_HEDGING_EMERGENCY_LOSS_PCT: Loss % threshold for emergency full protection
+     * HEDGING_EMERGENCY_LOSS_PCT: Loss % threshold for emergency full protection
      * When position drops beyond this %, switch to absoluteMaxUsd limit
      * Default: 30%
      */
-    smartHedgingEmergencyLossPct:
+    hedgingEmergencyLossPct:
       parseNumber(
-        readEnv("SMART_HEDGING_EMERGENCY_LOSS_PCT", overrides) ?? "",
+        readEnv("HEDGING_EMERGENCY_LOSS_PCT", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_EMERGENCY_LOSS_PCT" in preset
-        ? (preset as { SMART_HEDGING_EMERGENCY_LOSS_PCT: number })
-            .SMART_HEDGING_EMERGENCY_LOSS_PCT
+      ("HEDGING_EMERGENCY_LOSS_PCT" in preset
+        ? (preset as { HEDGING_EMERGENCY_LOSS_PCT: number })
+            .HEDGING_EMERGENCY_LOSS_PCT
         : undefined) ??
       30, // Default: emergency mode at 30% loss
     /**
-     * SMART_HEDGING_HEDGE_EXIT_THRESHOLD: Price threshold to exit losing side of hedged position
+     * HEDGING_HEDGE_EXIT_THRESHOLD: Price threshold to exit losing side of hedged position
      * When either side of a hedged position drops below this price, sell to recover value.
      * Default: 0.25 (25¢)
      */
-    smartHedgingHedgeExitThreshold:
+    hedgingHedgeExitThreshold:
       parseNumber(
-        readEnv("SMART_HEDGING_HEDGE_EXIT_THRESHOLD", overrides) ?? "",
+        readEnv("HEDGING_HEDGE_EXIT_THRESHOLD", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_HEDGE_EXIT_THRESHOLD" in preset
-        ? (preset as { SMART_HEDGING_HEDGE_EXIT_THRESHOLD: number })
-            .SMART_HEDGING_HEDGE_EXIT_THRESHOLD
+      ("HEDGING_HEDGE_EXIT_THRESHOLD" in preset
+        ? (preset as { HEDGING_HEDGE_EXIT_THRESHOLD: number })
+            .HEDGING_HEDGE_EXIT_THRESHOLD
         : undefined) ??
       0.25, // Default: exit losing side when it drops below 25¢
     /**
-     * SMART_HEDGING_ENABLE_FALLBACK_LIQUIDATION: Enable fallback liquidation when hedging fails
+     * HEDGING_ENABLE_FALLBACK_LIQUIDATION: Enable fallback liquidation when hedging fails
      * When true, if a hedge cannot execute, the position will be sold to stop further losses
      * Default: true
      */
-    smartHedgingEnableFallbackLiquidation:
+    hedgingEnableFallbackLiquidation:
       parseBool(
-        readEnv("SMART_HEDGING_ENABLE_FALLBACK_LIQUIDATION", overrides) ?? "",
+        readEnv("HEDGING_ENABLE_FALLBACK_LIQUIDATION", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_ENABLE_FALLBACK_LIQUIDATION" in preset
-        ? (preset as { SMART_HEDGING_ENABLE_FALLBACK_LIQUIDATION: boolean })
-            .SMART_HEDGING_ENABLE_FALLBACK_LIQUIDATION
+      ("HEDGING_ENABLE_FALLBACK_LIQUIDATION" in preset
+        ? (preset as { HEDGING_ENABLE_FALLBACK_LIQUIDATION: boolean })
+            .HEDGING_ENABLE_FALLBACK_LIQUIDATION
         : undefined) ??
       true, // Default: enable fallback liquidation
     /**
-     * SMART_HEDGING_FORCE_LIQUIDATION_LOSS_PCT: Loss % threshold for forced liquidation
+     * HEDGING_FORCE_LIQUIDATION_LOSS_PCT: Loss % threshold for forced liquidation
      * When position drops beyond this %, force liquidate even if hedging isn't optimal
      * Default: 50%
      */
-    smartHedgingForceLiquidationLossPct:
+    hedgingForceLiquidationLossPct:
       parseNumber(
-        readEnv("SMART_HEDGING_FORCE_LIQUIDATION_LOSS_PCT", overrides) ?? "",
+        readEnv("HEDGING_FORCE_LIQUIDATION_LOSS_PCT", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_FORCE_LIQUIDATION_LOSS_PCT" in preset
-        ? (preset as { SMART_HEDGING_FORCE_LIQUIDATION_LOSS_PCT: number })
-            .SMART_HEDGING_FORCE_LIQUIDATION_LOSS_PCT
+      ("HEDGING_FORCE_LIQUIDATION_LOSS_PCT" in preset
+        ? (preset as { HEDGING_FORCE_LIQUIDATION_LOSS_PCT: number })
+            .HEDGING_FORCE_LIQUIDATION_LOSS_PCT
         : undefined) ??
       50, // Default: force liquidate at 50% loss
     /**
-     * SMART_HEDGING_NEAR_CLOSE_WINDOW_MINUTES: Minutes before market close to apply stricter hedge rules
+     * HEDGING_NEAR_CLOSE_WINDOW_MINUTES: Minutes before market close to apply stricter hedge rules
      * Inside this window, only hedge on big adverse moves or big losses
      * Default: 30 minutes
      */
-    smartHedgingNearCloseWindowMinutes:
+    hedgingNearCloseWindowMinutes:
       parseNumber(
-        readEnv("SMART_HEDGING_NEAR_CLOSE_WINDOW_MINUTES", overrides) ?? "",
+        readEnv("HEDGING_NEAR_CLOSE_WINDOW_MINUTES", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_NEAR_CLOSE_WINDOW_MINUTES" in preset
-        ? (preset as { SMART_HEDGING_NEAR_CLOSE_WINDOW_MINUTES: number })
-            .SMART_HEDGING_NEAR_CLOSE_WINDOW_MINUTES
+      ("HEDGING_NEAR_CLOSE_WINDOW_MINUTES" in preset
+        ? (preset as { HEDGING_NEAR_CLOSE_WINDOW_MINUTES: number })
+            .HEDGING_NEAR_CLOSE_WINDOW_MINUTES
         : undefined) ??
       30, // Default: apply near-close rules in last 30 minutes
     /**
-     * SMART_HEDGING_NEAR_CLOSE_PRICE_DROP_CENTS: Minimum price drop (cents) to trigger near-close hedge
+     * HEDGING_NEAR_CLOSE_PRICE_DROP_CENTS: Minimum price drop (cents) to trigger near-close hedge
      * Near close, only hedge if price dropped by at least this amount (OR condition with loss %)
      * Default: 12 cents
      */
-    smartHedgingNearClosePriceDropCents:
+    hedgingNearClosePriceDropCents:
       parseNumber(
-        readEnv("SMART_HEDGING_NEAR_CLOSE_PRICE_DROP_CENTS", overrides) ?? "",
+        readEnv("HEDGING_NEAR_CLOSE_PRICE_DROP_CENTS", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_NEAR_CLOSE_PRICE_DROP_CENTS" in preset
-        ? (preset as { SMART_HEDGING_NEAR_CLOSE_PRICE_DROP_CENTS: number })
-            .SMART_HEDGING_NEAR_CLOSE_PRICE_DROP_CENTS
+      ("HEDGING_NEAR_CLOSE_PRICE_DROP_CENTS" in preset
+        ? (preset as { HEDGING_NEAR_CLOSE_PRICE_DROP_CENTS: number })
+            .HEDGING_NEAR_CLOSE_PRICE_DROP_CENTS
         : undefined) ??
       12, // Default: near-close hedge on >= 12¢ adverse move
     /**
-     * SMART_HEDGING_NEAR_CLOSE_LOSS_PCT: Minimum loss % to trigger near-close hedge
+     * HEDGING_NEAR_CLOSE_LOSS_PCT: Minimum loss % to trigger near-close hedge
      * Near close, only hedge if loss % exceeds this (OR condition with price drop)
      * Default: 30%
      */
-    smartHedgingNearCloseLossPct:
+    hedgingNearCloseLossPct:
       parseNumber(
-        readEnv("SMART_HEDGING_NEAR_CLOSE_LOSS_PCT", overrides) ?? "",
+        readEnv("HEDGING_NEAR_CLOSE_LOSS_PCT", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_NEAR_CLOSE_LOSS_PCT" in preset
-        ? (preset as { SMART_HEDGING_NEAR_CLOSE_LOSS_PCT: number })
-            .SMART_HEDGING_NEAR_CLOSE_LOSS_PCT
+      ("HEDGING_NEAR_CLOSE_LOSS_PCT" in preset
+        ? (preset as { HEDGING_NEAR_CLOSE_LOSS_PCT: number })
+            .HEDGING_NEAR_CLOSE_LOSS_PCT
         : undefined) ??
       30, // Default: near-close hedge on >= 30% loss
     /**
-     * SMART_HEDGING_NO_HEDGE_WINDOW_MINUTES: Minutes before close to disable hedging entirely
+     * HEDGING_NO_HEDGE_WINDOW_MINUTES: Minutes before close to disable hedging entirely
      * Inside this window, hedging is blocked (too late - just liquidate if needed)
      * Default: 3 minutes
      */
-    smartHedgingNoHedgeWindowMinutes:
+    hedgingNoHedgeWindowMinutes:
       parseNumber(
-        readEnv("SMART_HEDGING_NO_HEDGE_WINDOW_MINUTES", overrides) ?? "",
+        readEnv("HEDGING_NO_HEDGE_WINDOW_MINUTES", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_NO_HEDGE_WINDOW_MINUTES" in preset
-        ? (preset as { SMART_HEDGING_NO_HEDGE_WINDOW_MINUTES: number })
-            .SMART_HEDGING_NO_HEDGE_WINDOW_MINUTES
+      ("HEDGING_NO_HEDGE_WINDOW_MINUTES" in preset
+        ? (preset as { HEDGING_NO_HEDGE_WINDOW_MINUTES: number })
+            .HEDGING_NO_HEDGE_WINDOW_MINUTES
         : undefined) ??
       3, // Default: don't hedge in last 3 minutes
     /**
-     * SMART_HEDGING_DIRECTION: controls when hedging is active
+     * HEDGING_DIRECTION: controls when hedging is active
      * - "down": Only hedge losing positions (traditional behavior)
      * - "up": Only buy more shares when winning at high probability
      * - "both": Both behaviors enabled (default - maximize wins AND minimize losses)
      */
-    smartHedgingDirection: (() => {
-      const envValue = readEnv("SMART_HEDGING_DIRECTION", overrides)?.toLowerCase();
+    hedgingDirection: (() => {
+      const envValue = readEnv("HEDGING_DIRECTION", overrides)?.toLowerCase();
       if (envValue === "down" || envValue === "up" || envValue === "both") {
         return envValue;
       }
-      if ("SMART_HEDGING_DIRECTION" in preset) {
-        const presetValue = (preset as { SMART_HEDGING_DIRECTION: string }).SMART_HEDGING_DIRECTION;
+      if ("HEDGING_DIRECTION" in preset) {
+        const presetValue = (preset as { HEDGING_DIRECTION: string }).HEDGING_DIRECTION;
         if (presetValue === "down" || presetValue === "up" || presetValue === "both") {
           return presetValue;
         }
@@ -1937,72 +1937,72 @@ export function loadStrategyConfig(
       return "both"; // Default: both directions enabled
     })(),
     /**
-     * SMART_HEDGING_HEDGE_UP_PRICE_THRESHOLD: minimum price to trigger buying more shares
+     * HEDGING_HEDGE_UP_PRICE_THRESHOLD: minimum price to trigger buying more shares
      * When position price is at or above this threshold, buy additional shares
      * Default: 0.85 = 85¢
      */
-    smartHedgingHedgeUpPriceThreshold:
+    hedgingHedgeUpPriceThreshold:
       parseNumber(
-        readEnv("SMART_HEDGING_HEDGE_UP_PRICE_THRESHOLD", overrides) ?? "",
+        readEnv("HEDGING_HEDGE_UP_PRICE_THRESHOLD", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_HEDGE_UP_PRICE_THRESHOLD" in preset
-        ? (preset as { SMART_HEDGING_HEDGE_UP_PRICE_THRESHOLD: number })
-            .SMART_HEDGING_HEDGE_UP_PRICE_THRESHOLD
+      ("HEDGING_HEDGE_UP_PRICE_THRESHOLD" in preset
+        ? (preset as { HEDGING_HEDGE_UP_PRICE_THRESHOLD: number })
+            .HEDGING_HEDGE_UP_PRICE_THRESHOLD
         : undefined) ??
       0.85, // Default: buy more at 85¢+
     /**
-     * SMART_HEDGING_HEDGE_UP_MAX_PRICE: maximum price - don't buy at prices >= this
+     * HEDGING_HEDGE_UP_MAX_PRICE: maximum price - don't buy at prices >= this
      * Prevents buying at essentially closed prices where profit margin is minimal
      * Default: 0.95 = 95¢
      */
-    smartHedgingHedgeUpMaxPrice:
+    hedgingHedgeUpMaxPrice:
       parseNumber(
-        readEnv("SMART_HEDGING_HEDGE_UP_MAX_PRICE", overrides) ?? "",
+        readEnv("HEDGING_HEDGE_UP_MAX_PRICE", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_HEDGE_UP_MAX_PRICE" in preset
-        ? (preset as { SMART_HEDGING_HEDGE_UP_MAX_PRICE: number })
-            .SMART_HEDGING_HEDGE_UP_MAX_PRICE
+      ("HEDGING_HEDGE_UP_MAX_PRICE" in preset
+        ? (preset as { HEDGING_HEDGE_UP_MAX_PRICE: number })
+            .HEDGING_HEDGE_UP_MAX_PRICE
         : undefined) ??
       0.95, // Default: don't buy at 95¢+ (too close to resolved)
     /**
-     * SMART_HEDGING_HEDGE_UP_WINDOW_MINUTES: minutes before close to enable buying more
+     * HEDGING_HEDGE_UP_WINDOW_MINUTES: minutes before close to enable buying more
      * Only buy more shares when within this window AND price is in valid range
      * Default: 30 minutes
      */
-    smartHedgingHedgeUpWindowMinutes:
+    hedgingHedgeUpWindowMinutes:
       parseNumber(
-        readEnv("SMART_HEDGING_HEDGE_UP_WINDOW_MINUTES", overrides) ?? "",
+        readEnv("HEDGING_HEDGE_UP_WINDOW_MINUTES", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_HEDGE_UP_WINDOW_MINUTES" in preset
-        ? (preset as { SMART_HEDGING_HEDGE_UP_WINDOW_MINUTES: number })
-            .SMART_HEDGING_HEDGE_UP_WINDOW_MINUTES
+      ("HEDGING_HEDGE_UP_WINDOW_MINUTES" in preset
+        ? (preset as { HEDGING_HEDGE_UP_WINDOW_MINUTES: number })
+            .HEDGING_HEDGE_UP_WINDOW_MINUTES
         : undefined) ??
       30, // Default: enable hedge up in last 30 minutes
     /**
-     * SMART_HEDGING_HEDGE_UP_MAX_USD: maximum USD to spend on buying more per position
+     * HEDGING_HEDGE_UP_MAX_USD: maximum USD to spend on buying more per position
      * Default: 25 (matches absoluteMaxUsd)
      */
-    smartHedgingHedgeUpMaxUsd:
+    hedgingHedgeUpMaxUsd:
       parseNumber(
-        readEnv("SMART_HEDGING_HEDGE_UP_MAX_USD", overrides) ?? "",
+        readEnv("HEDGING_HEDGE_UP_MAX_USD", overrides) ?? "",
       ) ??
-      ("SMART_HEDGING_HEDGE_UP_MAX_USD" in preset
-        ? (preset as { SMART_HEDGING_HEDGE_UP_MAX_USD: number })
-            .SMART_HEDGING_HEDGE_UP_MAX_USD
+      ("HEDGING_HEDGE_UP_MAX_USD" in preset
+        ? (preset as { HEDGING_HEDGE_UP_MAX_USD: number })
+            .HEDGING_HEDGE_UP_MAX_USD
         : undefined) ??
       25, // Default: max $25 per position on hedge up
     /**
-     * SMART_HEDGING_HEDGE_UP_ANYTIME: Allow hedging up at any time
+     * HEDGING_HEDGE_UP_ANYTIME: Allow hedging up at any time
      * When true, positions at high win probability can be hedged up immediately.
      * When false, hedging up only occurs within hedgeUpWindowMinutes of market close.
      * Default: false (safer - only hedge up near close when outcome is more certain)
      */
-    smartHedgingHedgeUpAnytime: (() => {
-      const envValue = readEnv("SMART_HEDGING_HEDGE_UP_ANYTIME", overrides)?.toLowerCase();
+    hedgingHedgeUpAnytime: (() => {
+      const envValue = readEnv("HEDGING_HEDGE_UP_ANYTIME", overrides)?.toLowerCase();
       if (envValue === "true" || envValue === "1") return true;
       if (envValue === "false" || envValue === "0") return false;
-      if ("SMART_HEDGING_HEDGE_UP_ANYTIME" in preset) {
-        return !!(preset as { SMART_HEDGING_HEDGE_UP_ANYTIME: boolean }).SMART_HEDGING_HEDGE_UP_ANYTIME;
+      if ("HEDGING_HEDGE_UP_ANYTIME" in preset) {
+        return !!(preset as { HEDGING_HEDGE_UP_ANYTIME: boolean }).HEDGING_HEDGE_UP_ANYTIME;
       }
       return false; // Default: only hedge up near close (safer)
     })(),

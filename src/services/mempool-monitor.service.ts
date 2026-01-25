@@ -26,6 +26,11 @@ export type MempoolMonitorDeps = {
   env: RuntimeEnv;
   logger: Logger;
   onDetectedTrade: (signal: TradeSignal) => Promise<void>;
+  /**
+   * Optional callback for SELL signals that are detected but skipped for copy trading.
+   * Use this to route SELL signals to the SellSignalMonitorService for protective actions.
+   */
+  onDetectedSell?: (signal: TradeSignal) => Promise<void>;
 };
 
 interface ActivityResponse {
@@ -497,12 +502,44 @@ export class MempoolMonitorService {
         // === BLOCK COPY TRADING SELL ORDERS (early filter) ===
         // Copy trading SELL orders is dangerous - you don't know the target's entry price.
         // Only copy BUY orders; use your own exit strategies for sells.
+        // However, route SELL signals to onDetectedSell callback for protective monitoring.
         const isBuy = activity.side.toUpperCase() === "BUY";
         if (!isBuy) {
           stats.skippedOtherTrades += 1;
           logger.debug(
             `[Monitor] Skipping SELL copy trade on market ${activity.conditionId} - only BUY orders are copied`,
           );
+
+          // Route SELL signal to onDetectedSell callback if provided
+          // This allows SellSignalMonitorService to take protective action on our positions
+          if (this.deps.onDetectedSell) {
+            const sellSignal: TradeSignal = {
+              trader: targetAddress,
+              marketId: activity.conditionId,
+              tokenId: activity.asset,
+              outcome: activity.outcomeIndex === 0 ? "YES" : "NO",
+              side: "SELL",
+              sizeUsd,
+              price: activity.price,
+              timestamp: activityTime * 1000,
+              pendingTxHash: activity.transactionHash,
+            };
+
+            // Mark as processed to avoid duplicate routing
+            this.processedHashes.add(activity.transactionHash);
+            this.lastFetchTime.set(
+              targetAddress,
+              Math.max(this.lastFetchTime.get(targetAddress) || 0, activityTime),
+            );
+
+            // Fire and forget - don't block the monitoring loop
+            void this.deps.onDetectedSell(sellSignal).catch((err) => {
+              logger.debug(
+                `[Monitor] Error routing SELL signal to handler: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
+          }
+
           continue;
         }
 
