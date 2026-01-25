@@ -302,18 +302,23 @@ ON_CHAIN_EXIT_ENABLED=true
 
 ## 🛡️ Hedging
 
-Smart hedging protects against losses by buying the opposing side instead of selling at a loss.
+Hedging protects against losses by buying the opposing side instead of selling at a loss.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HEDGING_ENABLED` | Enable hedging | `true` |
 | `HEDGING_DIRECTION` | Hedging direction | `both` |
 | `HEDGING_TRIGGER_LOSS_PCT` | Loss percentage to trigger hedge | `20` |
-| `HEDGING_MAX_HEDGE_USD` | Maximum USD per hedge (normal mode) | Varies (10-50) |
+| `HEDGING_MAX_HEDGE_USD` | Maximum USD per hedge (when allowExceedMax=false) | Varies (10-50) |
 | `HEDGING_RESERVE_PCT` | Percentage reserved for hedging | `20` |
-| `HEDGING_ALLOW_EXCEED_MAX` | Allow exceeding maxHedgeUsd for heavy losses | `true` |
-| `HEDGING_ABSOLUTE_MAX_USD` | Absolute max USD per hedge (safety cap) | `100` |
-| `HEDGING_EMERGENCY_LOSS_PCT` | Loss % threshold to use absoluteMaxUsd | `30` |
+| `HEDGING_ALLOW_EXCEED_MAX` | When true, always hedge using absoluteMaxUsd. When false, use break-even calculation capped at maxHedgeUsd | `true` |
+| `HEDGING_ABSOLUTE_MAX_USD` | Max USD per hedge when allowExceedMax=true | `100` |
+| `HEDGING_EMERGENCY_LOSS_PCT` | Loss % threshold for emergency mode logging | `30` |
+
+### How Hedge Sizing Works
+
+- **`HEDGING_ALLOW_EXCEED_MAX=true` (default)**: All hedges use the full `HEDGING_ABSOLUTE_MAX_USD` amount. Simple and aggressive.
+- **`HEDGING_ALLOW_EXCEED_MAX=false`**: Hedges use a break-even calculation, capped at `HEDGING_MAX_HEDGE_USD`. More conservative.
 
 ### Hedge Up Settings (Buy More When Winning)
 
@@ -330,15 +335,22 @@ Smart hedging protects against losses by buying the opposing side instead of sel
 - `up`: Only buy more when winning at high probability
 - `both`: Both behaviors enabled (default)
 
-### Example
+### Example (Aggressive - always hedge $10)
 ```bash
 HEDGING_ENABLED=true
 HEDGING_DIRECTION=both
 HEDGING_TRIGGER_LOSS_PCT=20
-HEDGING_MAX_HEDGE_USD=25
-HEDGING_RESERVE_PCT=20
 HEDGING_ALLOW_EXCEED_MAX=true
 HEDGING_ABSOLUTE_MAX_USD=10
+```
+
+### Example (Conservative - break-even hedging)
+```bash
+HEDGING_ENABLED=true
+HEDGING_DIRECTION=both
+HEDGING_TRIGGER_LOSS_PCT=20
+HEDGING_ALLOW_EXCEED_MAX=false
+HEDGING_MAX_HEDGE_USD=10
 ```
 
 ---

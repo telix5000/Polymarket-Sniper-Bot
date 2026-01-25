@@ -122,7 +122,7 @@ test("AUTO_REDEEM_ENABLED can be disabled via env override", () => {
   assert.equal(config.autoRedeemEnabled, false);
 });
 
-test("SMART_HEDGING settings from aggressive preset are loaded correctly", () => {
+test("HEDGING settings from aggressive preset are loaded correctly", () => {
   resetEnv();
   Object.assign(process.env, baseEnv, {
     STRATEGY_PRESET: "aggressive",
@@ -136,7 +136,7 @@ test("SMART_HEDGING settings from aggressive preset are loaded correctly", () =>
   assert.equal(config.hedgingReservePct, 15);
 });
 
-test("SMART_HEDGING env variables override preset values", () => {
+test("HEDGING env variables override preset values", () => {
   resetEnv();
   Object.assign(process.env, baseEnv, {
     STRATEGY_PRESET: "aggressive",
@@ -279,7 +279,7 @@ test("STOP_LOSS_MIN_HOLD_SECONDS env variable overrides preset value", () => {
   assert.equal(config.stopLossMinHoldSeconds, 90);
 });
 
-// === SMART_HEDGING Near-Close Behavior Tests ===
+// === HEDGING Near-Close Behavior Tests ===
 
 test("HEDGING_NEAR_CLOSE_WINDOW_MINUTES defaults to 15", () => {
   resetEnv();

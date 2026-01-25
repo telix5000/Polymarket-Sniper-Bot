@@ -22,8 +22,8 @@ All files and symbols with "-simple" suffix have been renamed:
 | `SimpleOrchestrator` | `Orchestrator` |
 | `SimpleOrchestratorConfig` | `OrchestratorConfig` |
 | `createSimpleOrchestrator` | `createOrchestrator` |
-| `SimpleSmartHedgingStrategy` | `SmartHedgingStrategy` |
-| `SimpleSmartHedgingConfig` | `SmartHedgingConfig` |
+| `SimpleSmartHedgingStrategy` | `HedgingStrategy` |
+| `SimpleSmartHedgingConfig` | `HedgingConfig` |
 | `DEFAULT_SIMPLE_HEDGING_CONFIG` | `DEFAULT_HEDGING_CONFIG` |
 | `SimpleEndgameSweepStrategy` | `EndgameSweepStrategy` |
 | `SimpleEndgameSweepConfig` | `EndgameSweepConfig` |
@@ -44,7 +44,7 @@ The orchestrator correctly implements single-flight protection:
 ### Strategy Execution Order (Deterministic)
 1. **Phase 1**: PositionTracker refresh (single-flight, awaited)
 2. **Phase 2**: AutoRedeem - Claim resolved positions (HIGHEST PRIORITY)
-3. **Phase 3**: SmartHedging - Hedge losing positions
+3. **Phase 3**: Hedging - Hedge losing positions
 4. **Phase 4**: StopLoss - Protect against big losses
 5. **Phase 5**: ScalpTakeProfit - Time-based profit taking
 6. **Phase 6**: EndgameSweep - Buy high-confidence positions

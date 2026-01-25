@@ -328,7 +328,8 @@ export class HedgingStrategy {
     this.logger.info(
       `[Hedging] Initialized: direction=${this.config.direction}, trigger=-${this.config.triggerLossPct}%, ` +
         `maxHedge=$${this.config.maxHedgeUsd}, absoluteMax=$${this.config.absoluteMaxUsd}, ` +
-        `hedgeUp=${hedgeUpStatus}, hedgeExit=${hedgeExitStatus}`,
+        `allowExceedMax=${this.config.allowExceedMax}, emergencyLossPct=${this.config.emergencyLossPct}%, ` +
+        `minHoldSec=${this.config.minHoldSeconds}, hedgeUp=${hedgeUpStatus}, hedgeExit=${hedgeExitStatus}`,
     );
   }
 
@@ -1607,11 +1608,23 @@ export class HedgingStrategy {
         );
       }
     } else {
-      // NORMAL HEDGE: Use break-even calculation with limits
+      // NORMAL HEDGE: When allowExceedMax is true, use absoluteMaxUsd directly for maximum protection.
+      // When allowExceedMax is false, use break-even calculation capped at maxHedgeUsd.
       if (this.config.allowExceedMax) {
-        hedgeUsd = Math.min(profitableHedgeUsd, this.config.absoluteMaxUsd);
+        // With allowExceedMax=true, always hedge up to absoluteMaxUsd for maximum protection
+        hedgeUsd = this.config.absoluteMaxUsd;
+        this.logger.info(
+          `[Hedging] 📊 HEDGE SIZING: loss=${lossPct?.toFixed(1) ?? "?"}%, allowExceedMax=true, ` +
+            `targeting absoluteMaxUsd=$${this.config.absoluteMaxUsd} for maximum protection`,
+        );
       } else {
+        // With allowExceedMax=false, use break-even calculation capped at maxHedgeUsd
         hedgeUsd = Math.min(profitableHedgeUsd, this.config.maxHedgeUsd);
+        this.logger.info(
+          `[Hedging] 📊 HEDGE SIZING: loss=${lossPct?.toFixed(1) ?? "?"}%, allowExceedMax=false, ` +
+            `breakEvenUsd=$${profitableHedgeUsd.toFixed(2)}, maxHedgeUsd=$${this.config.maxHedgeUsd}, ` +
+            `hedgeUsd=$${hedgeUsd.toFixed(2)}`,
+        );
       }
     }
 

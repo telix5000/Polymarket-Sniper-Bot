@@ -1629,14 +1629,14 @@ describe("Hedging Multi-Position Fund-Freeing", () => {
  * Tests for Partial Fill Protection
  *
  * When a hedge order is partially filled, the position should be marked as hedged
- * to prevent multiple hedge attempts that exceed SMART_HEDGING_ABSOLUTE_MAX_USD.
+ * to prevent multiple hedge attempts that exceed HEDGING_ABSOLUTE_MAX_USD.
  */
 describe("Hedging Partial Fill Protection", () => {
   /**
    * Test: Partial fills should mark position as hedged
    *
    * Scenario:
-   * 1. User sets SMART_HEDGING_ABSOLUTE_MAX_USD=25
+   * 1. User sets HEDGING_ABSOLUTE_MAX_USD=25
    * 2. Position triggers hedge for $25
    * 3. Only $17 fills due to orderbook liquidity
    * 4. Order returns "order_incomplete" with filledAmountUsd=17
