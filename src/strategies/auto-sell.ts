@@ -422,6 +422,14 @@ export class AutoSellStrategy {
         return false;
       }
 
+      // Entry metadata must be trusted to use timestamps for stale detection
+      // When entryMetaTrusted === false, trade history doesn't match live shares,
+      // so firstAcquiredAt/timeHeldSec may be inaccurate and a recent position
+      // could be incorrectly identified as 24+ hours old.
+      if (pos.entryMetaTrusted === false) {
+        return false;
+      }
+
       // Check if held longer than staleHours
       const heldMs = now - pos.firstAcquiredAt;
       if (heldMs < staleThresholdMs) {

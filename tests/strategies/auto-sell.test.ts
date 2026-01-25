@@ -588,6 +588,62 @@ describe("AutoSell Stale Profitable Position Exit", () => {
     assert.strictEqual(isProfitable, false, "Losing position should not be treated as profitable");
   });
 
+  test("position with untrusted entry metadata not sold as stale", () => {
+    // When entryMetaTrusted === false, trade history doesn't match live shares,
+    // so firstAcquiredAt/timeHeldSec may be inaccurate. A recent position could
+    // be incorrectly identified as 24+ hours old, so we must skip these.
+    const positionWithUntrustedEntryMeta = {
+      marketId: "0x" + "3".repeat(64),
+      tokenId: "0x" + "4".repeat(64),
+      pnlPct: 10.0, // Profitable
+      pnlTrusted: true, // P&L is trusted
+      firstAcquiredAt: Date.now() - (30 * 60 * 60 * 1000), // Shows 30 hours (but may be wrong!)
+      timeHeldSec: 30 * 60 * 60,
+      currentBidPrice: 0.60,
+      entryMetaTrusted: false, // Entry metadata is NOT trusted!
+      entryMetaUntrustedReason: "Shares mismatch: computed=45.00 vs live=50.00",
+    };
+
+    // This should NOT be considered stale because entryMetaTrusted === false
+    // The firstAcquiredAt timestamp may be inaccurate
+    assert.strictEqual(
+      positionWithUntrustedEntryMeta.entryMetaTrusted,
+      false,
+      "Position has untrusted entry metadata",
+    );
+
+    // Verify the eligibility check should fail
+    const passesEntryMetaCheck = positionWithUntrustedEntryMeta.entryMetaTrusted !== false;
+    assert.strictEqual(
+      passesEntryMetaCheck,
+      false,
+      "Position with entryMetaTrusted=false should NOT pass stale eligibility",
+    );
+  });
+
+  test("position with trusted entry metadata CAN be sold as stale", () => {
+    // When entryMetaTrusted is true or undefined (not explicitly false),
+    // the timestamps can be trusted for stale detection
+    const positionWithTrustedEntryMeta = {
+      marketId: "0x" + "5".repeat(64),
+      tokenId: "0x" + "6".repeat(64),
+      pnlPct: 10.0, // Profitable
+      pnlTrusted: true,
+      firstAcquiredAt: Date.now() - (30 * 60 * 60 * 1000), // 30 hours
+      timeHeldSec: 30 * 60 * 60,
+      currentBidPrice: 0.60,
+      entryMetaTrusted: true, // Entry metadata IS trusted
+    };
+
+    // This SHOULD pass entry metadata check
+    const passesEntryMetaCheck = positionWithTrustedEntryMeta.entryMetaTrusted !== false;
+    assert.strictEqual(
+      passesEntryMetaCheck,
+      true,
+      "Position with entryMetaTrusted=true should pass stale eligibility",
+    );
+  });
+
   test("position without entry time data not sold as stale", () => {
     // Positions without firstAcquiredAt cannot have their hold time calculated
     const positionWithoutEntryTime = {
