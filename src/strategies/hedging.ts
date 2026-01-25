@@ -70,7 +70,7 @@ export interface HedgingConfig {
   /** Allow exceeding maxHedgeUsd for large losses (default: true) */
   allowExceedMax: boolean;
 
-  /** Absolute max even when exceeding (default: from SMART_HEDGING_ABSOLUTE_MAX_USD) */
+  /** Absolute max even when exceeding (default: from HEDGING_ABSOLUTE_MAX_USD) */
   absoluteMaxUsd: number;
 
   /** Max entry price for hedging - only hedge risky positions (default: 0.75 = 75¢) */
@@ -130,7 +130,7 @@ export interface HedgingConfig {
    */
   noHedgeWindowMinutes: number;
 
-  // === SMART HEDGING UP (HIGH WIN PROBABILITY) ===
+  // === HEDGING UP (HIGH WIN PROBABILITY) ===
   // When near close and price is high (85¢+), buy MORE shares to maximize almost guaranteed gains
 
   /**
@@ -864,7 +864,7 @@ export class HedgingStrategy {
 
         // === PARTIAL FILL PROTECTION ===
         // If money was spent on a partial fill, mark position as hedged to prevent
-        // re-hedging and exceeding SMART_HEDGING_ABSOLUTE_MAX_USD.
+        // re-hedging and exceeding HEDGING_ABSOLUTE_MAX_USD.
         // This is critical: without this check, partial fills could trigger repeated
         // hedge attempts, each spending money until the total far exceeds the limit.
         if (hedgeResult.filledAmountUsd) {

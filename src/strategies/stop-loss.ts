@@ -31,12 +31,12 @@ export interface StopLossConfig {
    *
    * Default: true when hedging is enabled
    */
-  skipForSmartHedging?: boolean;
+  skipForHedging?: boolean;
   /**
    * Entry price threshold for determining which strategy handles a position.
    * Should match Hedging's maxEntryPrice (default: 1.0 = 100¢).
    *
-   * When skipForSmartHedging is true:
+   * When skipForHedging is true:
    * - Positions with entry < this threshold: Handled by Hedging (skipped by Stop-Loss)
    * - Positions with entry >= this threshold: Handled by Stop-Loss
    *
@@ -81,7 +81,7 @@ export interface StopLossStrategyConfig {
  *
  * The maxStopLossPct acts as an absolute ceiling (default 25%).
  *
- * NOTE: When Hedging is enabled (skipForSmartHedging=true), positions with
+ * NOTE: When Hedging is enabled (skipForHedging=true), positions with
  * entry price below hedgingMaxEntryPrice (default 75¢) are SKIPPED by this strategy.
  * Hedging handles them by buying the opposing side instead of selling at a loss,
  * which can turn losers into winners.
@@ -184,8 +184,8 @@ export class StopLossStrategy {
     });
 
     // Skip positions that Hedging will handle
-    // When skipForSmartHedging is true, defer to Hedging for ALL positions
-    if (this.config.skipForSmartHedging) {
+    // When skipForHedging is true, defer to Hedging for ALL positions
+    if (this.config.skipForHedging) {
       // Use configured threshold or default to 100¢ (matches Hedging default - handles ALL positions)
       const hedgingThreshold = this.config.hedgingMaxEntryPrice ?? 1.0;
       activePositions = activePositions.filter(

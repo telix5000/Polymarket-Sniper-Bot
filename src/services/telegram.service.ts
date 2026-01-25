@@ -127,7 +127,7 @@ export interface StartupStrategyStatus {
   sellEarly?: boolean;
   autoSell?: boolean;
   scalpTakeProfit?: boolean;
-  smartHedging?: boolean;
+  hedging?: boolean;
   stopLoss?: boolean;
   autoRedeem?: boolean;
   frontrun?: boolean;
@@ -458,7 +458,7 @@ export class TelegramService {
     }
 
     // Risk management
-    if (enabledStrategies.smartHedging) {
+    if (enabledStrategies.hedging) {
       message += `✅ Hedging (loss protection)\n`;
     }
     if (enabledStrategies.stopLoss) {

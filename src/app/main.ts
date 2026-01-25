@@ -100,8 +100,8 @@ async function main(): Promise<void> {
     );
     logger.info(
       `📊 Config: MAX_POSITION_USD=$${strategyConfig.endgameMaxPositionUsd}, ` +
-        `SMART_HEDGING=${strategyConfig.smartHedgingEnabled ? "ON" : "OFF"}, ` +
-        `ABSOLUTE_MAX=$${strategyConfig.smartHedgingAbsoluteMaxUsd}`,
+        `HEDGING=${strategyConfig.hedgingEnabled ? "ON" : "OFF"}, ` +
+        `ABSOLUTE_MAX=$${strategyConfig.hedgingAbsoluteMaxUsd}`,
     );
 
     // Load env config for balance fetching (needed for dynamic reserves)
@@ -127,30 +127,30 @@ async function main(): Promise<void> {
       }),
       // Pass hedging config from env
       hedgingConfig: {
-        enabled: strategyConfig.smartHedgingEnabled,
-        triggerLossPct: strategyConfig.smartHedgingTriggerLossPct,
-        maxHedgeUsd: strategyConfig.smartHedgingMaxHedgeUsd,
-        minHedgeUsd: strategyConfig.smartHedgingMinHedgeUsd,
-        absoluteMaxUsd: strategyConfig.smartHedgingAbsoluteMaxUsd,
-        allowExceedMax: strategyConfig.smartHedgingAllowExceedMax,
-        forceLiquidationPct: strategyConfig.smartHedgingForceLiquidationLossPct,
-        emergencyLossPct: strategyConfig.smartHedgingEmergencyLossPct,
+        enabled: strategyConfig.hedgingEnabled,
+        triggerLossPct: strategyConfig.hedgingTriggerLossPct,
+        maxHedgeUsd: strategyConfig.hedgingMaxHedgeUsd,
+        minHedgeUsd: strategyConfig.hedgingMinHedgeUsd,
+        absoluteMaxUsd: strategyConfig.hedgingAbsoluteMaxUsd,
+        allowExceedMax: strategyConfig.hedgingAllowExceedMax,
+        forceLiquidationPct: strategyConfig.hedgingForceLiquidationLossPct,
+        emergencyLossPct: strategyConfig.hedgingEmergencyLossPct,
         // Near-close hedging behavior
         nearCloseWindowMinutes:
-          strategyConfig.smartHedgingNearCloseWindowMinutes,
+          strategyConfig.hedgingNearCloseWindowMinutes,
         nearClosePriceDropCents:
-          strategyConfig.smartHedgingNearClosePriceDropCents,
-        nearCloseLossPct: strategyConfig.smartHedgingNearCloseLossPct,
-        noHedgeWindowMinutes: strategyConfig.smartHedgingNoHedgeWindowMinutes,
-        // Smart hedging direction and "hedge up" settings
-        direction: strategyConfig.smartHedgingDirection,
-        hedgeUpPriceThreshold: strategyConfig.smartHedgingHedgeUpPriceThreshold,
-        hedgeUpMaxPrice: strategyConfig.smartHedgingHedgeUpMaxPrice,
-        hedgeUpWindowMinutes: strategyConfig.smartHedgingHedgeUpWindowMinutes,
-        hedgeUpMaxUsd: strategyConfig.smartHedgingHedgeUpMaxUsd,
-        hedgeUpAnytime: strategyConfig.smartHedgingHedgeUpAnytime,
+          strategyConfig.hedgingNearClosePriceDropCents,
+        nearCloseLossPct: strategyConfig.hedgingNearCloseLossPct,
+        noHedgeWindowMinutes: strategyConfig.hedgingNoHedgeWindowMinutes,
+        // Hedging direction and "hedge up" settings
+        direction: strategyConfig.hedgingDirection,
+        hedgeUpPriceThreshold: strategyConfig.hedgingHedgeUpPriceThreshold,
+        hedgeUpMaxPrice: strategyConfig.hedgingHedgeUpMaxPrice,
+        hedgeUpWindowMinutes: strategyConfig.hedgingHedgeUpWindowMinutes,
+        hedgeUpMaxUsd: strategyConfig.hedgingHedgeUpMaxUsd,
+        hedgeUpAnytime: strategyConfig.hedgingHedgeUpAnytime,
         // Hedge exit monitoring
-        hedgeExitThreshold: strategyConfig.smartHedgingHedgeExitThreshold,
+        hedgeExitThreshold: strategyConfig.hedgingHedgeExitThreshold,
       },
       // Quick flip module removed - functionality covered by ScalpTrade
       // Pass endgame config
@@ -243,7 +243,7 @@ async function main(): Promise<void> {
           sellEarly: strategyConfig.sellEarlyEnabled,
           autoSell: strategyConfig.autoSellEnabled,
           scalpTakeProfit: strategyConfig.scalpTakeProfitEnabled,
-          smartHedging: strategyConfig.smartHedgingEnabled,
+          hedging: strategyConfig.hedgingEnabled,
           stopLoss: true, // Always enabled when orchestrator runs
           autoRedeem: strategyConfig.autoRedeemEnabled,
           frontrun: mempoolWillRun, // Frontrun/copy trading enabled when mempool mode runs
@@ -394,7 +394,7 @@ async function main(): Promise<void> {
             sellEarly: false,
             autoSell: false,
             scalpTakeProfit: false,
-            smartHedging: false,
+            hedging: false,
             stopLoss: false,
             autoRedeem: false,
           })

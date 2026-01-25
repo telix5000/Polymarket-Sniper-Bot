@@ -178,10 +178,10 @@ export const STRATEGY_PRESETS = {
     AUTO_REDEEM_ENABLED: false,
     AUTO_REDEEM_MIN_POSITION_USD: 0, // No minimum, redeem everything
     // Hedging - disabled in "off" preset (STRATEGY_ENABLED=false disables all strategies)
-    SMART_HEDGING_ENABLED: false,
-    SMART_HEDGING_TRIGGER_LOSS_PCT: 20,
-    SMART_HEDGING_MAX_HEDGE_USD: 10,
-    SMART_HEDGING_RESERVE_PCT: 20,
+    HEDGING_ENABLED: false,
+    HEDGING_TRIGGER_LOSS_PCT: 20,
+    HEDGING_MAX_HEDGE_USD: 10,
+    HEDGING_RESERVE_PCT: 20,
     // Stop-Loss - minimum hold time before stop-loss can trigger
     // This prevents premature sells due to bid-ask spread right after buying
     STOP_LOSS_MIN_HOLD_SECONDS: 60, // Wait 60s before stop-loss can trigger
@@ -280,14 +280,14 @@ export const STRATEGY_PRESETS = {
     AUTO_REDEEM_ENABLED: true,
     AUTO_REDEEM_MIN_POSITION_USD: 0, // No minimum, redeem everything
     /**
-     * SMART HEDGING - Conservative settings
+     * HEDGING - Conservative settings
      * Instead of selling risky positions at a loss, hedge by buying the opposing side
      * This limits max loss to the spread paid, not the full position value
      */
-    SMART_HEDGING_ENABLED: true, // ENABLED BY DEFAULT
-    SMART_HEDGING_TRIGGER_LOSS_PCT: 20, // Hedge when position drops 20%
-    SMART_HEDGING_MAX_HEDGE_USD: 10, // Max $10 per hedge
-    SMART_HEDGING_RESERVE_PCT: 25, // Keep 25% reserve for hedging (conservative)
+    HEDGING_ENABLED: true, // ENABLED BY DEFAULT
+    HEDGING_TRIGGER_LOSS_PCT: 20, // Hedge when position drops 20%
+    HEDGING_MAX_HEDGE_USD: 10, // Max $10 per hedge
+    HEDGING_RESERVE_PCT: 25, // Keep 25% reserve for hedging (conservative)
     /**
      * UNIVERSAL STOP-LOSS - Minimum hold time
      * Prevents premature stop-loss sells right after buying due to bid-ask spread.
@@ -415,13 +415,13 @@ export const STRATEGY_PRESETS = {
     AUTO_REDEEM_ENABLED: true,
     AUTO_REDEEM_MIN_POSITION_USD: 0, // No minimum, redeem everything
     /**
-     * SMART HEDGING - Balanced settings
+     * HEDGING - Balanced settings
      * Instead of selling risky positions at a loss, hedge by buying the opposing side
      */
-    SMART_HEDGING_ENABLED: true, // ENABLED BY DEFAULT
-    SMART_HEDGING_TRIGGER_LOSS_PCT: 20, // Hedge when position drops 20%
-    SMART_HEDGING_MAX_HEDGE_USD: 15, // Max $15 per hedge (balanced)
-    SMART_HEDGING_RESERVE_PCT: 20, // Keep 20% reserve for hedging
+    HEDGING_ENABLED: true, // ENABLED BY DEFAULT
+    HEDGING_TRIGGER_LOSS_PCT: 20, // Hedge when position drops 20%
+    HEDGING_MAX_HEDGE_USD: 15, // Max $15 per hedge (balanced)
+    HEDGING_RESERVE_PCT: 20, // Keep 20% reserve for hedging
     /**
      * UNIVERSAL STOP-LOSS - Minimum hold time
      * Prevents premature stop-loss sells right after buying due to bid-ask spread.
@@ -566,7 +566,7 @@ export const STRATEGY_PRESETS = {
     // NOTE: Quick-flip ONLY sells for PROFIT - never for a loss (verified at bid price)
     QUICK_FLIP_ENABLED: true,
     QUICK_FLIP_TARGET_PCT: 10, // Base 10% target - adjusted dynamically based on entry
-    QUICK_FLIP_STOP_LOSS_PCT: 50, // IGNORED - quick-flip NEVER sells for loss (smart-hedging handles losses)
+    QUICK_FLIP_STOP_LOSS_PCT: 50, // IGNORED - quick-flip NEVER sells for loss (hedging handles losses)
     QUICK_FLIP_MIN_HOLD_SECONDS: 60, // Hold at least 60 seconds - let the position breathe!
     QUICK_FLIP_MIN_PROFIT_USD: 1.0, // Minimum $1.00 profit per trade
     /** Enable dynamic profit targets based on entry price (uses trade-quality module) */
@@ -591,7 +591,7 @@ export const STRATEGY_PRESETS = {
     AUTO_REDEEM_MIN_POSITION_USD: 0, // No minimum, redeem everything
 
     /**
-     * SMART HEDGING - Aggressive settings
+     * HEDGING - Aggressive settings
      *
      * REPLACES stop-loss for risky tier positions (<60¢ entry)
      * Instead of selling at a 20% loss, hedge by buying the opposing side
@@ -602,10 +602,10 @@ export const STRATEGY_PRESETS = {
      * - New way: Buy NO at 70¢, ONE side ALWAYS pays $1
      * - Max loss is capped at the spread (~10-20%) vs full loss
      */
-    SMART_HEDGING_ENABLED: true, // ENABLED BY DEFAULT - make money, not lose it!
-    SMART_HEDGING_TRIGGER_LOSS_PCT: 20, // Hedge when position drops 20%
-    SMART_HEDGING_MAX_HEDGE_USD: 50, // Max $50 per hedge (aggressive)
-    SMART_HEDGING_RESERVE_PCT: 15, // Keep 15% reserve for hedging (less conservative)
+    HEDGING_ENABLED: true, // ENABLED BY DEFAULT - make money, not lose it!
+    HEDGING_TRIGGER_LOSS_PCT: 20, // Hedge when position drops 20%
+    HEDGING_MAX_HEDGE_USD: 50, // Max $50 per hedge (aggressive)
+    HEDGING_RESERVE_PCT: 15, // Keep 15% reserve for hedging (less conservative)
 
     /**
      * UNIVERSAL STOP-LOSS - Minimum hold time

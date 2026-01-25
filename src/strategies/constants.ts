@@ -97,7 +97,7 @@ export const DEFAULT_SELL_SLIPPAGE_PCT = 2; // 2% default slippage tolerance for
  *   Different strategies use different reference prices:
  *   - scalp-trade.ts: effectiveLimitPrice (target price)
  *   - sell-early.ts: position.currentBidPrice (cached bid)
- *   - smart-hedging.ts/quick-flip.ts: fresh bidPrice from orderbook
+ *   - hedging.ts/quick-flip.ts: fresh bidPrice from orderbook
  * @param slippagePct The slippage tolerance percentage (default: DEFAULT_SELL_SLIPPAGE_PCT).
  *   Must be between 0 and 100.
  * @returns The minimum acceptable price (referencePrice * (1 - slippagePct/100))

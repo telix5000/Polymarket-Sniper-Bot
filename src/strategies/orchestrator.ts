@@ -182,7 +182,7 @@ export class Orchestrator {
     });
 
     // Initialize Dynamic Reserves Controller
-    // Aligns hedgeCapUsd with SMART_HEDGING_ABSOLUTE_MAX_USD (or DEFAULT_RESERVES_CONFIG default)
+    // Aligns hedgeCapUsd with HEDGING_ABSOLUTE_MAX_USD (or DEFAULT_RESERVES_CONFIG default)
     this.dynamicReserves = createDynamicReservesController(this.logger, {
       hedgeCapUsd: config.hedgingConfig?.absoluteMaxUsd,
       ...config.dynamicReservesConfig,
@@ -288,7 +288,7 @@ export class Orchestrator {
 
     // 5. Stop-Loss - Protect against big losses
     // When Hedging is enabled, skip positions it handles (entry < maxEntryPrice)
-    const smartHedgingEnabled = hedgingConfig.enabled;
+    const hedgingEnabled = hedgingConfig.enabled;
     this.stopLossStrategy = new StopLossStrategy({
       client: config.client,
       logger: config.logger,
@@ -299,7 +299,7 @@ export class Orchestrator {
         useDynamicTiers: true,
         minHoldSeconds: 60, // Wait 60s before stop-loss
         // Skip positions that Hedging handles (below its maxEntryPrice)
-        skipForSmartHedging: smartHedgingEnabled,
+        skipForHedging: hedgingEnabled,
         hedgingMaxEntryPrice: hedgingConfig.maxEntryPrice,
         ...config.stopLossConfig,
       },

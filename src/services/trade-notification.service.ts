@@ -141,7 +141,7 @@ function mapTypeToStrategyId(
       "AutoSell (Dispute)": "QUICK_FLIP",
       SellEarly: "QUICK_FLIP", // SellEarly is capital efficiency
       AutoRedeem: "MANUAL", // Redemption - closest match
-      SmartHedging: "SMART_HEDGE", // Smart hedging strategy
+      Hedging: "SMART_HEDGE", // Hedging strategy
       ScalpTrade: "QUICK_FLIP", // Scalp is profit-taking
       StopLoss: "STOP_LOSS", // Direct match
       PositionStacking: "ENDGAME", // Stacking builds positions like endgame
@@ -365,7 +365,7 @@ export async function notifyHedge(
     size,
     price,
     sizeUsd,
-    strategy: "SmartHedging",
+    strategy: "Hedging",
     ...options,
   });
 }
@@ -388,7 +388,7 @@ export async function notifyHedgeExit(
     size,
     price,
     sizeUsd,
-    strategy: "SmartHedging",
+    strategy: "Hedging",
     ...options,
   });
 }
