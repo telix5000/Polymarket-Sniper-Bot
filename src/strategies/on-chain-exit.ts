@@ -119,9 +119,10 @@ export class OnChainExitStrategy {
   private processedThisCycle: Set<string> = new Set();
 
   // Cache for on-chain payoutDenominator checks (5 min TTL)
+  // Stores the actual denominator value for accurate logging
   private payoutDenominatorCache = new Map<
     string,
-    { resolved: boolean; checkedAt: number }
+    { denominator: bigint; checkedAt: number }
   >();
   private static readonly PAYOUT_DENOM_CACHE_TTL_MS = 300_000; // 5 minutes
   private static readonly BYTES32_HEX_LENGTH = 66;
@@ -189,12 +190,13 @@ export class OnChainExitStrategy {
     const positions = this.positionTracker.getPositions();
 
     for (const position of positions) {
-      scannedCount++;
-
       // Skip if already redeemable (AutoRedeem handles these)
       if (position.redeemable === true) {
         continue;
       }
+
+      // Count positions that are actually evaluated by OnChainExit
+      scannedCount++;
 
       // Check if this position is a candidate for on-chain exit
       const checkResult = await this.checkOnChainExitCandidate(
@@ -342,8 +344,8 @@ export class OnChainExitStrategy {
       cached &&
       now - cached.checkedAt < OnChainExitStrategy.PAYOUT_DENOM_CACHE_TTL_MS
     ) {
-      if (cached.resolved) {
-        return { canExit: true, payoutDenominator: 1n }; // Cached as resolved
+      if (cached.denominator > 0n) {
+        return { canExit: true, payoutDenominator: cached.denominator };
       }
       return { canExit: false, skipReason: "NOT_REDEEMABLE_ONCHAIN" };
     }
@@ -370,9 +372,9 @@ export class OnChainExitStrategy {
 
       const isResolved = denominator > 0n;
 
-      // Cache the result
+      // Cache the actual denominator value for accurate logging
       this.payoutDenominatorCache.set(conditionId, {
-        resolved: isResolved,
+        denominator,
         checkedAt: now,
       });
 
