@@ -17,8 +17,8 @@ export const POLYMARKET_CONTRACTS = [
  * RPC is only used for: balance checks, gas estimates, approvals, on-chain trades.
  * With CLOB mode (default), RPC usage is minimal (~1-5 calls per trade cycle).
  *
- * RPC rate limit is configurable via RPC_REQUESTS_PER_DAY environment variable.
- * Default: 14M requests/day (~7% safety cushion from 15M) = ~583k/hour = ~162/second
+ * RPC rate limit default: 14M requests/day (~7% safety cushion from 15M) = ~583k/hour = ~162/second
+ * Override via RPC_REQUESTS_PER_DAY environment variable if your provider has different limits.
  * Free tier providers (Infura/Alchemy): Set to 2800000 (2.8M/day with cushion)
  * This is MORE than enough for HFT since orders go through CLOB API.
  */
@@ -27,9 +27,9 @@ export const DEFAULT_CONFIG = {
   MIN_TRADE_SIZE_USD: 100,
   MIN_ORDER_USD: 10,
   /**
-   * RPC API requests per day limit (with safety cushion built-in)
+   * RPC API requests per day limit (default value with safety cushion built-in)
    * Default: 14,000,000 (14M) - includes ~7% buffer below 15M limit
-   * Set via RPC_REQUESTS_PER_DAY environment variable
+   * Override via RPC_REQUESTS_PER_DAY environment variable
    * Free tier example: 2,800,000 (2.8M with cushion) for Infura/Alchemy free tier
    * The cushion prevents exceeding limits due to timing drift at bot startup
    */
