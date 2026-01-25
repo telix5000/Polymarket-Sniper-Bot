@@ -83,7 +83,7 @@ function createMockSnapshot(
 
   const summary: PortfolioSummary = overrides.summary ?? {
     activeTotal: activePositions.length,
-    prof: activePositions.filter((p) => p.pnlClassification === "PROFITABLE")
+    win: activePositions.filter((p) => p.pnlClassification === "PROFITABLE")
       .length,
     lose: activePositions.filter((p) => p.pnlClassification === "LOSING")
       .length,
@@ -179,7 +179,7 @@ describe("PortfolioSnapshot Structure", () => {
       redeemablePositions,
       summary: {
         activeTotal: 5,
-        prof: 2,
+        win: 2,
         lose: 1,
         neutral: 1,
         unknown: 1,
@@ -198,7 +198,7 @@ describe("PortfolioSnapshot Structure", () => {
       "summary.redeemableTotal should match redeemablePositions.length",
     );
     assert.strictEqual(
-      snapshot.summary.prof +
+      snapshot.summary.win +
         snapshot.summary.lose +
         snapshot.summary.neutral +
         snapshot.summary.unknown,
@@ -318,7 +318,7 @@ describe("Bug Detection: Zero active positions when snapshot says otherwise", ()
           `addressUsed=${buggySnapshot.addressUsed} ` +
           `snapshot.summary.activeTotal=${buggySnapshot.summary.activeTotal} ` +
           `but activePositions.length=0. ` +
-          `First 3 summary: prof=${buggySnapshot.summary.prof} ` +
+          `First 3 summary: win=${buggySnapshot.summary.win} ` +
           `lose=${buggySnapshot.summary.lose} ` +
           `unknown=${buggySnapshot.summary.unknown}`,
       );

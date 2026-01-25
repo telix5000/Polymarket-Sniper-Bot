@@ -225,7 +225,7 @@ export interface PortfolioSummary {
   /** Total active (non-redeemable) positions */
   activeTotal: number;
   /** Active positions with pnlClassification === PROFITABLE */
-  prof: number;
+  win: number;
   /** Active positions with pnlClassification === LOSING */
   lose: number;
   /** Active positions with pnlClassification === NEUTRAL */
@@ -1563,7 +1563,7 @@ export class PositionTracker {
     const redeemablePositions = allPositions.filter((p) => p.redeemable);
 
     // Calculate summary using pnlClassification for proper categorization
-    const prof = activePositions.filter(
+    const win = activePositions.filter(
       (p) => p.pnlClassification === "PROFITABLE",
     ).length;
     const lose = activePositions.filter(
@@ -1588,7 +1588,7 @@ export class PositionTracker {
       redeemablePositions: Object.freeze([...redeemablePositions]),
       summary: {
         activeTotal: activePositions.length,
-        prof,
+        win,
         lose,
         neutral,
         unknown,
@@ -1622,7 +1622,7 @@ export class PositionTracker {
     const redeemablePositions = allPositions.filter((p) => p.redeemable);
 
     // Calculate summary using pnlClassification for proper categorization
-    const prof = activePositions.filter(
+    const win = activePositions.filter(
       (p) => p.pnlClassification === "PROFITABLE",
     ).length;
     const lose = activePositions.filter(
@@ -1721,7 +1721,7 @@ export class PositionTracker {
       redeemablePositions: Object.freeze([...redeemablePositions]),
       summary: {
         activeTotal: activePositions.length,
-        prof,
+        win,
         lose,
         neutral,
         unknown,
@@ -2518,9 +2518,9 @@ export class PositionTracker {
    * Provides consistent breakdown across all strategies
    *
    * FORMAT (required by enterprise spec):
-   * ACTIVE: total=N (prof=X lose=Y neutral=Z unknown=W) | REDEEMABLE: M
+   * ACTIVE: total=N (win=X lose=Y neutral=Z unknown=W) | REDEEMABLE: M
    *
-   * CRITICAL: If ACTIVE > 0, we MUST have prof + lose + neutral + unknown = total
+   * CRITICAL: If ACTIVE > 0, we MUST have win + lose + neutral + unknown = total
    * Otherwise there's a BUG in P&L classification.
    */
   getPositionSummary(): {
@@ -2562,11 +2562,11 @@ export class PositionTracker {
   /**
    * Format position summary for logging
    * Uses the new enterprise-required format:
-   * ACTIVE: total=N (prof=X lose=Y neutral=Z unknown=W) | REDEEMABLE: M
+   * ACTIVE: total=N (win=X lose=Y neutral=Z unknown=W) | REDEEMABLE: M
    */
   formatPositionSummary(): string {
     const summary = this.getPositionSummary();
-    return `ACTIVE: total=${summary.active} (prof=${summary.activeProfitable} lose=${summary.activeLosing} neutral=${summary.activeBreakeven} unknown=${summary.activeUnknown}) | REDEEMABLE: ${summary.redeemable}`;
+    return `ACTIVE: total=${summary.active} (win=${summary.activeProfitable} lose=${summary.activeLosing} neutral=${summary.activeBreakeven} unknown=${summary.activeUnknown}) | REDEEMABLE: ${summary.redeemable}`;
   }
 
   /**

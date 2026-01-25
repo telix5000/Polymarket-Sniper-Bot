@@ -3024,7 +3024,7 @@ describe("Position Summary Classification Invariant", () => {
     );
 
     // This is what the enterprise spec requires - the unknown count MUST be visible
-    const formattedSummary = `ACTIVE: total=${active.length} (prof=${activeProfitable.length} lose=${activeLosing.length} neutral=0 unknown=${activeUnknown.length})`;
+    const formattedSummary = `ACTIVE: total=${active.length} (win=${activeProfitable.length} lose=${activeLosing.length} neutral=0 unknown=${activeUnknown.length})`;
     assert.ok(
       formattedSummary.includes("unknown=2"),
       "Summary must show unknown count when positions have untrusted P&L",
