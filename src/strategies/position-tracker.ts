@@ -4656,7 +4656,19 @@ export class PositionTracker {
     };
 
     try {
+      // OPTIMIZATION: Check cached outcome FIRST to skip unnecessary orderbook fetches
+      // If we already know the market outcome, we can trust the redeemable flag
+      // and skip the orderbook check entirely.
+      const cachedOutcome = this.marketOutcomeCache.get(marketId);
+      if (cachedOutcome !== undefined) {
+        result.winningOutcome = cachedOutcome;
+        result.isResolved = true;
+        // Skip orderbook fetch - already know market is resolved
+        return result;
+      }
+
       // Check if orderbook exists (indicates active market)
+      // Skip if already known to be missing (avoid repeated 404s)
       if (!this.missingOrderbooks.has(tokenId)) {
         try {
           const orderbook = await this.client.getOrderBook(tokenId);
@@ -4668,26 +4680,27 @@ export class PositionTracker {
             orderbookErr instanceof Error
               ? orderbookErr.message
               : String(orderbookErr);
-          // 404 or not found means no orderbook
-          if (
-            !errMsg.includes("404") &&
-            !errMsg.includes("not found") &&
-            !errMsg.includes("No orderbook exists")
-          ) {
+          // 404, 422, or not found means no orderbook - cache this to avoid repeated fetches
+          const isExpectedError =
+            errMsg.includes("404") ||
+            errMsg.includes("422") ||
+            errMsg.includes("not found") ||
+            errMsg.includes("No orderbook exists");
+
+          if (isExpectedError) {
+            // Add to missingOrderbooks to prevent repeated API calls
+            this.missingOrderbooks.add(tokenId);
+            // Log at DEBUG level - expected for resolved/redeemable markets
+            this.logger.debug(
+              `[PositionTracker] verifyMarketResolutionStatus: No orderbook for tokenId=${tokenId.slice(0, 16)}... (expected for resolved market)`,
+            );
+          } else {
             // Log unexpected errors at debug level
             this.logger.debug(
-              `[PositionTracker] verifyMarketResolutionStatus: Unexpected orderbook error for tokenId=${tokenId}: ${errMsg}`,
+              `[PositionTracker] verifyMarketResolutionStatus: Unexpected orderbook error for tokenId=${tokenId.slice(0, 16)}...: ${errMsg}`,
             );
           }
         }
-      }
-
-      // Check if market outcome is cached
-      const cachedOutcome = this.marketOutcomeCache.get(marketId);
-      if (cachedOutcome !== undefined) {
-        result.winningOutcome = cachedOutcome;
-        result.isResolved = true;
-        return result;
       }
 
       // Fetch market details from Gamma API to check resolved/closed flags
