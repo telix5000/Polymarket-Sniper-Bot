@@ -22,6 +22,7 @@ import {
   TOKEN_ID_DISPLAY_LENGTH,
 } from "../utils/log-deduper.util";
 import { formatCents, assessOrderbookQuality } from "../utils/price.util";
+import type { ReservePlan } from "../risk";
 
 /**
  * Smart Hedging Direction - determines when smart hedging is active
@@ -204,6 +205,8 @@ export class SmartHedgingStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: SmartHedgingConfig;
+  /** Optional getter for the current reserve plan (injected by orchestrator) */
+  private getReservePlan?: () => ReservePlan | null;
 
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
@@ -229,11 +232,14 @@ export class SmartHedgingStrategy {
     logger: ConsoleLogger;
     positionTracker: PositionTracker;
     config: SmartHedgingConfig;
+    /** Optional getter for the current reserve plan (for reserve-aware hedging) */
+    getReservePlan?: () => ReservePlan | null;
   }) {
     this.client = config.client;
     this.logger = config.logger;
     this.positionTracker = config.positionTracker;
     this.config = config.config;
+    this.getReservePlan = config.getReservePlan;
 
     const hedgeUpStatus =
       this.config.direction !== "down"
@@ -249,6 +255,27 @@ export class SmartHedgingStrategy {
 
   // Track positions that have been "hedged up" (bought more shares) this cycle
   private hedgedUpPositions: Set<string> = new Set();
+
+  /**
+   * Compute available cash for hedging operations after respecting reserve requirements.
+   *
+   * @returns availableCashAfterReserve: Cash available for hedging (availableCash - reserveRequired), or null if no plan available
+   */
+  private getAvailableCashAfterReserve(): number | null {
+    if (!this.getReservePlan) {
+      return null; // No reserve plan getter provided - no reserve gating
+    }
+
+    const plan = this.getReservePlan();
+    if (!plan) {
+      return null; // No plan computed yet - no reserve gating
+    }
+
+    // availableCashAfterReserve = availableCash - reserveRequired
+    // This is the amount we can safely use for hedging without depleting reserves
+    const availableCashAfterReserve = Math.max(0, plan.availableCash - plan.reserveRequired);
+    return availableCashAfterReserve;
+  }
 
   /**
    * Execute the strategy - find losing positions and hedge them
@@ -854,6 +881,28 @@ export class SmartHedgingStrategy {
       buyUsd = Math.min(this.config.hedgeUpMaxUsd, this.config.maxHedgeUsd);
     }
 
+    // === DYNAMIC RESERVES INTEGRATION ===
+    // Cap buy size to available cash after respecting reserve requirements
+    const availableCashAfterReserve = this.getAvailableCashAfterReserve();
+    if (availableCashAfterReserve !== null) {
+      if (availableCashAfterReserve < this.config.minHedgeUsd) {
+        // Insufficient funds for even a minimum buy - skip with clear log
+        this.logger.info(
+          `[SmartHedging] 📋 HEDGE UP skipped (RESERVE_SHORTFALL): available=$${availableCashAfterReserve.toFixed(2)} < minHedge=$${this.config.minHedgeUsd}`,
+        );
+        return { success: false, reason: "RESERVE_SHORTFALL" };
+      }
+
+      if (availableCashAfterReserve < buyUsd) {
+        // Available cash is less than computed buy size but >= minHedgeUsd - submit partial buy
+        const originalBuyUsd = buyUsd;
+        buyUsd = availableCashAfterReserve;
+        this.logger.info(
+          `[SmartHedging] 📉 PARTIAL HEDGE UP: Capping buy from $${originalBuyUsd.toFixed(2)} to $${buyUsd.toFixed(2)} (reserve constraint)`,
+        );
+      }
+    }
+
     // Check minimum
     if (buyUsd < this.config.minHedgeUsd) {
       this.logger.debug(
@@ -980,6 +1029,28 @@ export class SmartHedgingStrategy {
       hedgeUsd = Math.min(profitableHedgeUsd, this.config.absoluteMaxUsd);
     } else {
       hedgeUsd = Math.min(profitableHedgeUsd, this.config.maxHedgeUsd);
+    }
+
+    // === DYNAMIC RESERVES INTEGRATION ===
+    // Cap hedge size to available cash after respecting reserve requirements
+    const availableCashAfterReserve = this.getAvailableCashAfterReserve();
+    if (availableCashAfterReserve !== null) {
+      if (availableCashAfterReserve < this.config.minHedgeUsd) {
+        // Insufficient funds for even a minimum hedge - skip with clear log
+        this.logger.info(
+          `[SmartHedging] 📋 HEDGE skipped (RESERVE_SHORTFALL): available=$${availableCashAfterReserve.toFixed(2)} < minHedge=$${this.config.minHedgeUsd}`,
+        );
+        return { success: false, reason: "RESERVE_SHORTFALL" };
+      }
+
+      if (availableCashAfterReserve < hedgeUsd) {
+        // Available cash is less than computed hedge size but >= minHedgeUsd - submit partial hedge
+        const originalHedgeUsd = hedgeUsd;
+        hedgeUsd = availableCashAfterReserve;
+        this.logger.info(
+          `[SmartHedging] 📉 PARTIAL HEDGE: Capping hedge from $${originalHedgeUsd.toFixed(2)} to $${hedgeUsd.toFixed(2)} (reserve constraint)`,
+        );
+      }
     }
 
     // Check minimum

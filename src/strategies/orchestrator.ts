@@ -257,6 +257,8 @@ export class Orchestrator {
       logger: config.logger,
       positionTracker: this.positionTracker,
       config: hedgingConfig,
+      // Inject reserve plan getter for reserve-aware hedging
+      getReservePlan: () => this.currentReservePlan,
     });
 
     // 5. Universal Stop-Loss - Protect against big losses

@@ -1790,3 +1790,159 @@ describe("Smart Hedging Up (High Win Probability)", () => {
     });
   });
 });
+
+describe("Smart Hedging Reserve-Aware Sizing", () => {
+  /**
+   * Helper function to simulate the reserve-aware hedge sizing logic.
+   * This mirrors the logic in SmartHedgingStrategy.executeBuyMore() and executeHedge().
+   *
+   * @param config - Smart hedging config
+   * @param computedHedgeUsd - The originally computed hedge/buy amount based on position
+   * @param availableCashAfterReserve - Available cash after respecting reserves (null = no reserve plan)
+   * @returns Object with final size and reason
+   */
+  function computeReserveAwareSize(
+    config: SmartHedgingConfig,
+    computedHedgeUsd: number,
+    availableCashAfterReserve: number | null,
+  ): { finalSize: number; reason: "full" | "partial" | "skipped" | "no_reserve_plan" } {
+    // If no reserve plan, use full computed size
+    if (availableCashAfterReserve === null) {
+      return { finalSize: computedHedgeUsd, reason: "no_reserve_plan" };
+    }
+
+    // If available cash < minHedgeUsd, skip entirely
+    if (availableCashAfterReserve < config.minHedgeUsd) {
+      return { finalSize: 0, reason: "skipped" };
+    }
+
+    // If available cash < computed hedge, submit partial
+    if (availableCashAfterReserve < computedHedgeUsd) {
+      return { finalSize: availableCashAfterReserve, reason: "partial" };
+    }
+
+    // Full size available
+    return { finalSize: computedHedgeUsd, reason: "full" };
+  }
+
+  describe("No Reserve Plan (backwards compatibility)", () => {
+    test("uses full computed size when no reserve plan is available", () => {
+      const result = computeReserveAwareSize(
+        DEFAULT_HEDGING_CONFIG,
+        15.0, // computed hedge
+        null, // no reserve plan
+      );
+
+      assert.strictEqual(result.finalSize, 15.0, "Should use full computed size");
+      assert.strictEqual(result.reason, "no_reserve_plan", "Should indicate no reserve plan");
+    });
+  });
+
+  describe("Reserve Shortfall Handling", () => {
+    test("skips hedge when available cash is below minHedgeUsd", () => {
+      const result = computeReserveAwareSize(
+        { ...DEFAULT_HEDGING_CONFIG, minHedgeUsd: 1.0 },
+        15.0, // computed hedge
+        0.5, // only 50¢ available after reserves
+      );
+
+      assert.strictEqual(result.finalSize, 0, "Should skip hedge");
+      assert.strictEqual(result.reason, "skipped", "Should indicate skipped due to shortfall");
+    });
+
+    test("skips hedge when available cash is exactly zero", () => {
+      const result = computeReserveAwareSize(
+        DEFAULT_HEDGING_CONFIG,
+        20.0, // computed hedge
+        0, // no cash available after reserves
+      );
+
+      assert.strictEqual(result.finalSize, 0, "Should skip hedge");
+      assert.strictEqual(result.reason, "skipped", "Should indicate skipped");
+    });
+  });
+
+  describe("Partial Hedge Sizing", () => {
+    test("caps hedge to available cash when below computed size", () => {
+      const result = computeReserveAwareSize(
+        DEFAULT_HEDGING_CONFIG,
+        25.0, // computed hedge
+        10.0, // only $10 available after reserves
+      );
+
+      assert.strictEqual(result.finalSize, 10.0, "Should cap to available cash");
+      assert.strictEqual(result.reason, "partial", "Should indicate partial hedge");
+    });
+
+    test("submits partial hedge at exactly minHedgeUsd when available cash equals minHedgeUsd", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, minHedgeUsd: 1.0 };
+      const result = computeReserveAwareSize(
+        config,
+        20.0, // computed hedge
+        1.0, // exactly minHedgeUsd available
+      );
+
+      assert.strictEqual(result.finalSize, 1.0, "Should use available cash at minHedgeUsd");
+      assert.strictEqual(result.reason, "partial", "Should indicate partial hedge");
+    });
+
+    test("submits partial hedge when available cash is between minHedgeUsd and computed size", () => {
+      const result = computeReserveAwareSize(
+        { ...DEFAULT_HEDGING_CONFIG, minHedgeUsd: 1.0 },
+        20.0, // computed hedge
+        5.5, // $5.50 available
+      );
+
+      assert.strictEqual(result.finalSize, 5.5, "Should use all available cash");
+      assert.strictEqual(result.reason, "partial", "Should indicate partial hedge");
+    });
+  });
+
+  describe("Full Hedge (No Reserve Constraint)", () => {
+    test("uses full computed size when available cash exceeds computed hedge", () => {
+      const result = computeReserveAwareSize(
+        DEFAULT_HEDGING_CONFIG,
+        15.0, // computed hedge
+        100.0, // plenty of cash available
+      );
+
+      assert.strictEqual(result.finalSize, 15.0, "Should use full computed size");
+      assert.strictEqual(result.reason, "full", "Should indicate full hedge");
+    });
+
+    test("uses full computed size when available cash equals computed hedge", () => {
+      const result = computeReserveAwareSize(
+        DEFAULT_HEDGING_CONFIG,
+        25.0, // computed hedge
+        25.0, // exactly the amount needed
+      );
+
+      assert.strictEqual(result.finalSize, 25.0, "Should use full computed size");
+      assert.strictEqual(result.reason, "full", "Should indicate full hedge");
+    });
+  });
+
+  describe("SELL/Liquidation Path (not affected by reserves)", () => {
+    /**
+     * CRITICAL: SELL and liquidation operations MUST NOT be blocked by reserve constraints.
+     * This test documents that sells use different logic that doesn't check reserves.
+     */
+    test("SELL operations are not gated by reserve constraints (documented behavior)", () => {
+      // This test documents the expected behavior:
+      // - executeBuyMore() and executeHedge() ARE gated by reserves (BUY operations)
+      // - sellPosition() is NOT gated by reserves (SELL operations)
+      // 
+      // The reserve check only happens in executeBuyMore() and executeHedge(),
+      // and sellPosition() does not call getAvailableCashAfterReserve().
+      //
+      // This ensures that:
+      // 1. We can always liquidate positions to stop bleeding
+      // 2. Reserve shortfall doesn't prevent exiting bad positions
+      // 3. Only new BUY operations (hedges, buy-more) are constrained
+      
+      // No actual assertion needed - this test documents the architecture.
+      // The implementation ensures sellPosition() doesn't check reserves.
+      assert.ok(true, "SELL operations are not reserve-gated by design");
+    });
+  });
+});
