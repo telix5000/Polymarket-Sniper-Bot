@@ -119,6 +119,21 @@ export interface PnLSnapshot {
 }
 
 /**
+ * Strategy status for startup notification
+ */
+export interface StartupStrategyStatus {
+  endgameSweep?: boolean;
+  positionStacking?: boolean;
+  sellEarly?: boolean;
+  autoSell?: boolean;
+  scalpTakeProfit?: boolean;
+  smartHedging?: boolean;
+  stopLoss?: boolean;
+  autoRedeem?: boolean;
+  frontrun?: boolean;
+}
+
+/**
  * Telegram Notification Service
  */
 export class TelegramService {
@@ -412,6 +427,61 @@ export class TelegramService {
   }
 
   /**
+   * Send a startup notification showing which strategies are enabled.
+   * This helps users verify Telegram is working and understand what to expect.
+   */
+  async sendStartupNotification(
+    enabledStrategies: StartupStrategyStatus,
+  ): Promise<boolean> {
+    if (!this.config.enabled) return false;
+
+    let message = `🚀 <b>${this.escapeHtml(this.config.notificationName)} - Bot Started</b>\n\n`;
+    message += `📊 <b>Enabled Strategies:</b>\n`;
+
+    // Core trading strategies
+    if (enabledStrategies.endgameSweep) {
+      message += `✅ Endgame Sweep (BUY high-confidence)\n`;
+    }
+    if (enabledStrategies.positionStacking) {
+      message += `✅ Position Stacking (double down on winners)\n`;
+    }
+
+    // Exit strategies
+    if (enabledStrategies.sellEarly) {
+      message += `✅ Sell Early (99.9¢+ exits)\n`;
+    }
+    if (enabledStrategies.autoSell) {
+      message += `✅ Auto-Sell (99¢+ exits)\n`;
+    }
+    if (enabledStrategies.scalpTakeProfit) {
+      message += `✅ Scalp Take-Profit (time-based exits)\n`;
+    }
+
+    // Risk management
+    if (enabledStrategies.smartHedging) {
+      message += `✅ Smart Hedging (loss protection)\n`;
+    }
+    if (enabledStrategies.stopLoss) {
+      message += `✅ Universal Stop-Loss\n`;
+    }
+
+    // Redemption
+    if (enabledStrategies.autoRedeem) {
+      message += `✅ Auto-Redeem (claim resolved positions)\n`;
+    }
+
+    // Frontrun/Copy trading (if applicable)
+    if (enabledStrategies.frontrun) {
+      message += `✅ Copy Trading (frontrun whale trades)\n`;
+    }
+
+    message += `\n💡 You'll receive alerts for: BUY, SELL, HEDGE, REDEEM, and P&L updates.`;
+    message += `\n⏰ P&L updates every ${this.config.pnlIntervalMinutes} minutes.`;
+
+    return this.sendMessage(message);
+  }
+
+  /**
    * Send a message to Telegram
    */
   private async sendMessage(text: string): Promise<boolean> {
@@ -614,7 +684,8 @@ export function loadTelegramConfig(): TelegramConfig {
   const chatId = process.env.TELEGRAM_CHAT_ID ?? "";
   const topicId = process.env.TELEGRAM_TOPIC_ID || undefined;
   const notificationName =
-    process.env.TELEGRAM_NOTIFICATION_NAME || DEFAULT_TELEGRAM_CONFIG.notificationName;
+    process.env.TELEGRAM_NOTIFICATION_NAME ||
+    DEFAULT_TELEGRAM_CONFIG.notificationName;
   const pnlIntervalMinutes = parseInt(
     process.env.TELEGRAM_PNL_INTERVAL_MINUTES ?? "60",
     10,
@@ -626,7 +697,9 @@ export function loadTelegramConfig(): TelegramConfig {
     chatId,
     topicId,
     notificationName,
-    pnlIntervalMinutes: Number.isFinite(pnlIntervalMinutes) ? pnlIntervalMinutes : 60,
+    pnlIntervalMinutes: Number.isFinite(pnlIntervalMinutes)
+      ? pnlIntervalMinutes
+      : 60,
     silent,
     enabled: Boolean(botToken && chatId),
   };
