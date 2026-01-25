@@ -52,6 +52,14 @@ export interface LedgerSummary {
   avgLoss: number;
   largestWin: number;
   largestLoss: number;
+
+  // === BALANCE INFORMATION (optional - set by orchestrator) ===
+  /** USDC cash balance (reserves) */
+  usdcBalance?: number;
+  /** Total value of all holdings at current prices */
+  holdingsValue?: number;
+  /** Grand total (USDC + holdings value) */
+  totalValue?: number;
 }
 
 export class PnLLedger {

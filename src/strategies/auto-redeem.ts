@@ -162,6 +162,10 @@ export class AutoRedeemStrategy {
   // Bytes32 hex string length (0x + 64 hex chars)
   private static readonly BYTES32_HEX_LENGTH = 66;
 
+  // Precision multiplier for payout calculations (6 decimal places)
+  // Using integer arithmetic to avoid floating-point precision errors
+  private static readonly PAYOUT_PRECISION = 1000000n;
+
   // Track redemption attempts to avoid spamming failed markets
   private redemptionAttempts = new Map<
     string,
@@ -171,9 +175,10 @@ export class AutoRedeemStrategy {
   private static readonly MAX_REDEMPTION_FAILURES = 3;
 
   // Cache for on-chain payoutDenominator checks to minimize RPC calls
+  // Stores the actual denominator value for reuse in payout calculations
   private payoutDenominatorCache = new Map<
     string,
-    { resolved: boolean; checkedAt: number }
+    { resolved: boolean; denominator: bigint; checkedAt: number }
   >();
   private static readonly PAYOUT_DENOM_CACHE_TTL_MS = 300_000; // 5 minutes
 
@@ -459,9 +464,10 @@ export class AutoRedeemStrategy {
 
       const isResolved = denominator > 0n;
 
-      // Cache the result
+      // Cache the result including the actual denominator value
       this.payoutDenominatorCache.set(conditionId, {
         resolved: isResolved,
+        denominator,
         checkedAt: now,
       });
 
@@ -499,6 +505,121 @@ export class AutoRedeemStrategy {
       );
       // On error, don't cache - return false to be safe (don't send tx)
       return false;
+    }
+  }
+
+  /**
+   * Calculate the actual payout value for a position based on on-chain payout data.
+   *
+   * For binary markets, determines which outcome (YES/NO) the position corresponds to
+   * by checking both possible indexSets. The payout is calculated as:
+   * payoutValue = (payoutNumerator / payoutDenominator) * positionSize
+   *
+   * If the outcome cannot be determined (e.g., RPC errors), returns a zero value
+   * to avoid overstating redemption amounts in notifications.
+   *
+   * @param position - The position being redeemed
+   * @param wallet - The wallet instance with provider
+   * @param ctfAddress - CTF contract address
+   * @param usdcAddress - USDC collateral token address
+   * @returns Object with price (0-1 scale) and value (USD)
+   */
+  private async calculatePayoutValue(
+    position: RedeemablePosition,
+    wallet: Wallet,
+    ctfAddress: string,
+    usdcAddress: string,
+  ): Promise<{ price: number; value: number }> {
+    // Default to zero if we can't determine the payout
+    // This is safer than overstating the value for losing positions
+    const zeroPayout = { price: 0, value: 0 };
+
+    try {
+      if (!wallet.provider) {
+        return zeroPayout;
+      }
+
+      const ctfContract = new Contract(ctfAddress, CTF_ABI, wallet.provider);
+      const conditionId = position.marketId;
+
+      // Try to get payout denominator from cache first to reduce RPC calls
+      const cached = this.payoutDenominatorCache.get(conditionId);
+      let payoutDenominator: bigint;
+
+      if (
+        cached &&
+        Date.now() - cached.checkedAt <
+          AutoRedeemStrategy.PAYOUT_DENOM_CACHE_TTL_MS
+      ) {
+        payoutDenominator = cached.denominator;
+      } else {
+        // Fetch from chain if not cached
+        payoutDenominator = (await ctfContract.payoutDenominator(
+          conditionId,
+        )) as bigint;
+      }
+
+      if (payoutDenominator === 0n) {
+        // Market not resolved - should not happen here, but be safe
+        return zeroPayout;
+      }
+
+      // For binary markets, check both outcome slots to find which one matches our tokenId
+      // indexSet is a bitmask: 1 << 0 = 1 for outcome 0 (typically YES), 1 << 1 = 2 for outcome 1 (typically NO)
+      for (const outcomeIndex of [0, 1]) {
+        const indexSet = 1n << BigInt(outcomeIndex);
+
+        // Calculate the expected tokenId for this outcome
+        // 1. Get collectionId from (parentCollectionId=0, conditionId, indexSet)
+        // 2. Get positionId from (collateralToken, collectionId)
+        const collectionId = (await ctfContract.getCollectionId(
+          ZeroHash, // parentCollectionId (always 0 for Polymarket)
+          conditionId,
+          indexSet,
+        )) as string;
+
+        const positionId = (await ctfContract.getPositionId(
+          usdcAddress,
+          collectionId,
+        )) as bigint;
+
+        // Check if this positionId matches our tokenId
+        if (positionId.toString() === position.tokenId) {
+          // Found the matching outcome - get its payout numerator
+          const payoutNumerator = (await ctfContract.payoutNumerators(
+            conditionId,
+            outcomeIndex,
+          )) as bigint;
+
+          // Calculate payout price (0-1 scale) using integer arithmetic
+          // payoutPrice = payoutNumerator / payoutDenominator
+          // Multiply by precision first to preserve decimal places
+          const scaledPayout =
+            (payoutNumerator * AutoRedeemStrategy.PAYOUT_PRECISION) /
+            payoutDenominator;
+          const price =
+            Number(scaledPayout) / Number(AutoRedeemStrategy.PAYOUT_PRECISION);
+          const value = price * position.size;
+
+          this.logger.debug(
+            `[AutoRedeem] Payout calculated: outcome=${outcomeIndex} numerator=${payoutNumerator} denominator=${payoutDenominator} price=${price.toFixed(4)} value=$${value.toFixed(2)}`,
+          );
+
+          return { price, value };
+        }
+      }
+
+      // Could not match tokenId to any outcome - return zero to be safe
+      this.logger.debug(
+        `[AutoRedeem] Could not match tokenId ${position.tokenId.slice(0, 16)}... to any outcome`,
+      );
+      return zeroPayout;
+    } catch (err) {
+      // On any error, return zero to avoid overstating value
+      this.logger.debug(
+        `[AutoRedeem] calculatePayoutValue error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return zeroPayout;
     }
   }
 
@@ -895,14 +1016,19 @@ export class AutoRedeemStrategy {
       );
 
       // Send telegram notification for successful redemption
-      // Estimate value as size * 1.0 since resolved positions pay $1
-      const estimatedValue = position.size;
+      // Calculate actual payout value from on-chain payout ratio
+      const payoutInfo = await this.calculatePayoutValue(
+        position,
+        wallet,
+        ctfAddress,
+        usdcAddress,
+      );
       void notifyRedeem(
         position.marketId,
         position.tokenId,
         position.size,
-        1.0, // Redemption price is always $1
-        estimatedValue,
+        payoutInfo.price,
+        payoutInfo.value,
         {
           txHash: tx.hash,
         },

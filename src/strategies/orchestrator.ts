@@ -74,7 +74,7 @@ import {
   DEFAULT_POSITION_STACKING_CONFIG,
 } from "./position-stacking";
 import { RiskManager, createRiskManager } from "./risk-manager";
-import { PnLLedger } from "./pnl-ledger";
+import { PnLLedger, type LedgerSummary } from "./pnl-ledger";
 import type { RelayerContext } from "../polymarket/relayer";
 import {
   DynamicReservesController,
@@ -672,6 +672,49 @@ export class Orchestrator {
    */
   getCurrentReservePlan(): ReservePlan | null {
     return this.currentReservePlan;
+  }
+
+  /**
+   * Get P&L summary enriched with balance information.
+   *
+   * This method provides a full picture of portfolio status:
+   * - P&L metrics from the ledger
+   * - USDC balance (reserves)
+   * - Holdings value (sum of position values)
+   * - Total portfolio value
+   *
+   * If balance fetch fails, returns the base summary without balance info.
+   */
+  async getSummaryWithBalances(): Promise<LedgerSummary> {
+    const summary = this.pnlLedger.getSummary();
+
+    // Try to add balance information
+    try {
+      if (this.getWalletBalances) {
+        const balances = await this.getWalletBalances();
+        const snapshot = this.positionTracker.getSnapshot();
+
+        // Calculate holdings value from active positions
+        let holdingsValue = 0;
+        if (snapshot) {
+          for (const pos of snapshot.activePositions) {
+            // Use current price (bid price for what we can sell at)
+            holdingsValue += pos.size * pos.currentPrice;
+          }
+        }
+
+        summary.usdcBalance = balances.usdcBalance;
+        summary.holdingsValue = holdingsValue;
+        summary.totalValue = balances.usdcBalance + holdingsValue;
+      }
+    } catch (err) {
+      this.logger.debug(
+        `[Orchestrator] Failed to enrich summary with balances: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      // Return summary without balance info if fetch fails
+    }
+
+    return summary;
   }
 }
 
