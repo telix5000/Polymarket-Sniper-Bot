@@ -123,6 +123,7 @@ describe("Slippage Integration Scenarios", () => {
     const minAcceptable = calculateMinAcceptablePrice(bid, 2);
 
     // 87¢ * 0.98 = 85.26¢
+    // Convert dollars to cents (x100) with 2 decimal precision (round to 0.01)
     const minCents = Math.round(minAcceptable * 100 * 100) / 100;
     assert.equal(minCents, 85.26);
   });
