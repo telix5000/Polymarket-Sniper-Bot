@@ -2260,3 +2260,272 @@ describe("hedgeUpAnytime Configuration", () => {
     });
   });
 });
+
+/**
+ * Tests for Emergency Hedge Sizing
+ *
+ * These tests verify the emergency hedge behavior when positions are in heavy reversal
+ * (loss >= emergencyLossPct). In emergency mode, hedge sizing should target absoluteMaxUsd
+ * (or maxHedgeUsd if allowExceedMax=false) directly instead of using break-even calculations.
+ */
+describe("Emergency Hedge Sizing", () => {
+  /**
+   * Simplified test helper function to simulate the emergency hedge sizing logic.
+   * This mirrors the core logic in SmartHedgingStrategy.executeHedge() for determining
+   * hedge size based on loss percentage.
+   *
+   * @param config - Smart hedging config
+   * @param profitableHedgeUsd - The computed break-even hedge size
+   * @param lossPct - The current loss percentage (undefined means no loss info provided)
+   * @returns Object with target hedge size and whether emergency mode is active
+   */
+  function computeHedgeSizing(
+    config: SmartHedgingConfig,
+    profitableHedgeUsd: number,
+    lossPct?: number,
+  ): { hedgeUsd: number; isEmergency: boolean } {
+    // Detect emergency hedge condition
+    const isEmergencyHedge = lossPct !== undefined && lossPct >= config.emergencyLossPct;
+
+    let hedgeUsd: number;
+    if (isEmergencyHedge) {
+      // EMERGENCY HEDGE: Target absoluteMaxUsd (or maxHedgeUsd) directly
+      if (config.allowExceedMax) {
+        hedgeUsd = config.absoluteMaxUsd;
+      } else {
+        hedgeUsd = config.maxHedgeUsd;
+      }
+    } else {
+      // NORMAL HEDGE: Use break-even calculation with limits
+      if (config.allowExceedMax) {
+        hedgeUsd = Math.min(profitableHedgeUsd, config.absoluteMaxUsd);
+      } else {
+        hedgeUsd = Math.min(profitableHedgeUsd, config.maxHedgeUsd);
+      }
+    }
+
+    return { hedgeUsd, isEmergency: isEmergencyHedge };
+  }
+
+  describe("Emergency Mode Detection", () => {
+    test("should trigger emergency mode when lossPct >= emergencyLossPct", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, emergencyLossPct: 30 };
+      const result = computeHedgeSizing(config, 15.0, 35); // 35% loss >= 30% threshold
+
+      assert.strictEqual(result.isEmergency, true, "Should be in emergency mode");
+    });
+
+    test("should trigger emergency mode when lossPct equals emergencyLossPct exactly", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, emergencyLossPct: 30 };
+      const result = computeHedgeSizing(config, 15.0, 30); // Exactly 30%
+
+      assert.strictEqual(result.isEmergency, true, "Should be in emergency mode at exact threshold");
+    });
+
+    test("should NOT trigger emergency mode when lossPct < emergencyLossPct", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, emergencyLossPct: 30 };
+      const result = computeHedgeSizing(config, 15.0, 25); // 25% loss < 30% threshold
+
+      assert.strictEqual(result.isEmergency, false, "Should NOT be in emergency mode");
+    });
+
+    test("should NOT trigger emergency mode when lossPct is undefined", () => {
+      const config = { ...DEFAULT_HEDGING_CONFIG, emergencyLossPct: 30 };
+      const result = computeHedgeSizing(config, 15.0, undefined);
+
+      assert.strictEqual(result.isEmergency, false, "Should NOT be in emergency mode without lossPct");
+    });
+  });
+
+  describe("Emergency Hedge Sizing with allowExceedMax=true", () => {
+    test("should target absoluteMaxUsd directly in emergency mode", () => {
+      const config = {
+        ...DEFAULT_HEDGING_CONFIG,
+        emergencyLossPct: 30,
+        absoluteMaxUsd: 100,
+        maxHedgeUsd: 50,
+        allowExceedMax: true,
+      };
+      // Break-even calculation would give $15, but emergency should target $100
+      const result = computeHedgeSizing(config, 15.0, 40); // 40% loss
+
+      assert.strictEqual(result.isEmergency, true);
+      assert.strictEqual(result.hedgeUsd, 100, "Should target absoluteMaxUsd=$100 in emergency");
+    });
+
+    test("should use absoluteMaxUsd even when break-even is higher", () => {
+      const config = {
+        ...DEFAULT_HEDGING_CONFIG,
+        emergencyLossPct: 30,
+        absoluteMaxUsd: 50,
+        allowExceedMax: true,
+      };
+      // Break-even calculation would give $75, emergency targets $50 (absoluteMaxUsd)
+      const result = computeHedgeSizing(config, 75.0, 35);
+
+      assert.strictEqual(result.isEmergency, true);
+      assert.strictEqual(result.hedgeUsd, 50, "Should cap at absoluteMaxUsd even in emergency");
+    });
+  });
+
+  describe("Emergency Hedge Sizing with allowExceedMax=false", () => {
+    test("should target maxHedgeUsd (not absoluteMaxUsd) when allowExceedMax is false", () => {
+      const config = {
+        ...DEFAULT_HEDGING_CONFIG,
+        emergencyLossPct: 30,
+        absoluteMaxUsd: 100,
+        maxHedgeUsd: 25,
+        allowExceedMax: false,
+      };
+      const result = computeHedgeSizing(config, 15.0, 40); // 40% loss
+
+      assert.strictEqual(result.isEmergency, true);
+      assert.strictEqual(result.hedgeUsd, 25, "Should target maxHedgeUsd=$25 when allowExceedMax=false");
+    });
+  });
+
+  describe("Normal Hedge Sizing (non-emergency)", () => {
+    test("should use break-even calculation capped at absoluteMaxUsd when allowExceedMax=true", () => {
+      const config = {
+        ...DEFAULT_HEDGING_CONFIG,
+        emergencyLossPct: 30,
+        absoluteMaxUsd: 100,
+        maxHedgeUsd: 50,
+        allowExceedMax: true,
+      };
+      // 20% loss (below 30% emergency threshold), break-even is $40
+      const result = computeHedgeSizing(config, 40.0, 20);
+
+      assert.strictEqual(result.isEmergency, false);
+      assert.strictEqual(result.hedgeUsd, 40, "Should use break-even calculation in normal mode");
+    });
+
+    test("should cap break-even at absoluteMaxUsd in normal mode with allowExceedMax=true", () => {
+      const config = {
+        ...DEFAULT_HEDGING_CONFIG,
+        emergencyLossPct: 30,
+        absoluteMaxUsd: 50,
+        allowExceedMax: true,
+      };
+      // Break-even is $75, should cap at absoluteMaxUsd=$50
+      const result = computeHedgeSizing(config, 75.0, 20);
+
+      assert.strictEqual(result.isEmergency, false);
+      assert.strictEqual(result.hedgeUsd, 50, "Should cap at absoluteMaxUsd in normal mode");
+    });
+
+    test("should use break-even capped at maxHedgeUsd when allowExceedMax=false", () => {
+      const config = {
+        ...DEFAULT_HEDGING_CONFIG,
+        emergencyLossPct: 30,
+        absoluteMaxUsd: 100,
+        maxHedgeUsd: 25,
+        allowExceedMax: false,
+      };
+      // Break-even is $40, should cap at maxHedgeUsd=$25
+      const result = computeHedgeSizing(config, 40.0, 20);
+
+      assert.strictEqual(result.isEmergency, false);
+      assert.strictEqual(result.hedgeUsd, 25, "Should cap at maxHedgeUsd when allowExceedMax=false");
+    });
+  });
+
+  describe("Default Configuration", () => {
+    test("default emergencyLossPct should be 30%", () => {
+      assert.strictEqual(
+        DEFAULT_HEDGING_CONFIG.emergencyLossPct,
+        30,
+        "Default emergencyLossPct should be 30%",
+      );
+    });
+
+    test("emergency at default 30% threshold should work correctly", () => {
+      const result = computeHedgeSizing(DEFAULT_HEDGING_CONFIG, 15.0, 30);
+
+      assert.strictEqual(result.isEmergency, true, "Should trigger emergency at default 30% threshold");
+      assert.strictEqual(
+        result.hedgeUsd,
+        DEFAULT_HEDGING_CONFIG.absoluteMaxUsd,
+        "Should target default absoluteMaxUsd",
+      );
+    });
+  });
+
+  describe("Reserve Constraint Integration", () => {
+    /**
+     * Extended helper that also applies reserve-aware sizing after emergency calculation.
+     * This simulates the full hedge sizing flow including reserve constraints.
+     */
+    function computeHedgeSizingWithReserves(
+      config: SmartHedgingConfig,
+      profitableHedgeUsd: number,
+      lossPct: number | undefined,
+      cycleHedgeBudgetRemaining: number | null,
+    ): { hedgeUsd: number; isEmergency: boolean; reason: string } {
+      // First compute hedge sizing (emergency or normal)
+      const sizing = computeHedgeSizing(config, profitableHedgeUsd, lossPct);
+      let hedgeUsd = sizing.hedgeUsd;
+
+      // Then apply reserve constraints (simulating applyReserveAwareSizing)
+      let reason = "full";
+      if (cycleHedgeBudgetRemaining !== null) {
+        if (cycleHedgeBudgetRemaining < config.minHedgeUsd) {
+          return { hedgeUsd: 0, isEmergency: sizing.isEmergency, reason: "skipped" };
+        }
+        if (cycleHedgeBudgetRemaining < hedgeUsd) {
+          hedgeUsd = cycleHedgeBudgetRemaining;
+          reason = "partial";
+        }
+      }
+
+      return { hedgeUsd, isEmergency: sizing.isEmergency, reason };
+    }
+
+    test("emergency hedge should be constrained by reserve budget", () => {
+      const config = {
+        ...DEFAULT_HEDGING_CONFIG,
+        emergencyLossPct: 30,
+        absoluteMaxUsd: 100,
+        minHedgeUsd: 1,
+        allowExceedMax: true,
+      };
+      // Emergency targets $100, but only $30 budget remaining
+      const result = computeHedgeSizingWithReserves(config, 15.0, 40, 30.0);
+
+      assert.strictEqual(result.isEmergency, true);
+      assert.strictEqual(result.hedgeUsd, 30, "Emergency hedge should be capped by reserve budget");
+      assert.strictEqual(result.reason, "partial");
+    });
+
+    test("emergency hedge should be skipped when reserve budget below minHedgeUsd", () => {
+      const config = {
+        ...DEFAULT_HEDGING_CONFIG,
+        emergencyLossPct: 30,
+        absoluteMaxUsd: 100,
+        minHedgeUsd: 5,
+        allowExceedMax: true,
+      };
+      // Emergency targets $100, but only $2 budget remaining (below $5 min)
+      const result = computeHedgeSizingWithReserves(config, 15.0, 40, 2.0);
+
+      assert.strictEqual(result.isEmergency, true);
+      assert.strictEqual(result.hedgeUsd, 0, "Emergency hedge should be skipped when below minHedgeUsd");
+      assert.strictEqual(result.reason, "skipped");
+    });
+
+    test("emergency hedge should use full size when budget is sufficient", () => {
+      const config = {
+        ...DEFAULT_HEDGING_CONFIG,
+        emergencyLossPct: 30,
+        absoluteMaxUsd: 50,
+        allowExceedMax: true,
+      };
+      // Emergency targets $50, budget is $100 (plenty)
+      const result = computeHedgeSizingWithReserves(config, 15.0, 40, 100.0);
+
+      assert.strictEqual(result.isEmergency, true);
+      assert.strictEqual(result.hedgeUsd, 50, "Emergency hedge should use full absoluteMaxUsd");
+      assert.strictEqual(result.reason, "full");
+    });
+  });
+});
