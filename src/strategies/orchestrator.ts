@@ -17,7 +17,7 @@
  * 4. OnChainExit - Route NOT_TRADABLE positions to on-chain redemption (≥99¢)
  * 5. Auto-Redeem - Claim REDEEMABLE positions (get money back!)
  * 6. Smart Hedging - Hedge losing positions
- * 7. Universal Stop-Loss - Sell positions at max loss
+ * 7. Stop-Loss - Sell positions at max loss
  * 8. Scalp Take-Profit - Time-based profit taking with momentum checks
  * 9. Endgame Sweep - Buy high-confidence positions
  */
@@ -65,9 +65,9 @@ import {
   DEFAULT_ON_CHAIN_EXIT_CONFIG,
 } from "./on-chain-exit";
 import {
-  UniversalStopLossStrategy,
-  type UniversalStopLossConfig,
-} from "./universal-stop-loss";
+  StopLossStrategy,
+  type StopLossConfig,
+} from "./stop-loss";
 import {
   PositionStackingStrategy,
   type PositionStackingConfig,
@@ -101,7 +101,7 @@ export interface OrchestratorConfig {
   sellEarlyConfig?: Partial<SellEarlyConfig>;
   autoSellConfig?: Partial<AutoSellConfig>;
   onChainExitConfig?: Partial<OnChainExitConfig>;
-  stopLossConfig?: Partial<UniversalStopLossConfig>;
+  stopLossConfig?: Partial<StopLossConfig>;
   dynamicReservesConfig?: Partial<DynamicReservesConfig>;
   positionStackingConfig?: Partial<PositionStackingConfig>;
   /** Wallet balance fetcher for dynamic reserves (optional - if not provided, reserves are disabled) */
@@ -123,7 +123,7 @@ export class Orchestrator {
   private onChainExitStrategy: OnChainExitStrategy;
   private autoRedeemStrategy: AutoRedeemStrategy;
   private hedgingStrategy: SmartHedgingStrategy;
-  private stopLossStrategy: UniversalStopLossStrategy;
+  private stopLossStrategy: StopLossStrategy;
   private scalpStrategy: ScalpTradeStrategy;
   private endgameStrategy: EndgameSweepStrategy;
   private positionStackingStrategy: PositionStackingStrategy;
@@ -286,10 +286,10 @@ export class Orchestrator {
       getReservePlan: () => this.currentReservePlan,
     });
 
-    // 5. Universal Stop-Loss - Protect against big losses
+    // 5. Stop-Loss - Protect against big losses
     // When Smart Hedging is enabled, skip positions it handles (entry < maxEntryPrice)
     const smartHedgingEnabled = hedgingConfig.enabled;
-    this.stopLossStrategy = new UniversalStopLossStrategy({
+    this.stopLossStrategy = new StopLossStrategy({
       client: config.client,
       logger: config.logger,
       positionTracker: this.positionTracker,
@@ -524,7 +524,7 @@ export class Orchestrator {
         strategyTimings,
       );
 
-      // 5. Universal Stop-Loss - sell positions exceeding max loss threshold
+      // 5. Stop-Loss - sell positions exceeding max loss threshold
       await this.runStrategyTimed(
         "StopLoss",
         () => this.stopLossStrategy.execute(),

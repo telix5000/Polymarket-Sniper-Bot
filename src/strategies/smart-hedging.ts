@@ -32,7 +32,8 @@ import {
   acquireHedgeLock,
   releaseHedgeLock,
 } from "../utils/funds-allowance.util";
-import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR, calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
+import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR } from "./constants";
+import { EMERGENCY_EXIT_MIN_PRICE } from "./stop-loss";
 
 /**
  * Smart Hedging Direction - determines when smart hedging is active
@@ -1789,9 +1790,8 @@ export class SmartHedgingStrategy {
         outcome: orderOutcome,
         side: "SELL",
         sizeUsd: currentValue,
-        // Apply 2% slippage tolerance to ensure sell executes
-        // Hedging sells are typically for capital salvage, so accepting slight slippage is acceptable
-        minAcceptablePrice: calculateMinAcceptablePrice(position.currentPrice, DEFAULT_SELL_SLIPPAGE_PCT),
+        // Accept any price above 1¢ - just get out!
+        minAcceptablePrice: EMERGENCY_EXIT_MIN_PRICE,
         logger: this.logger,
         skipDuplicatePrevention: true,
         skipMinOrderSizeCheck: true, // Allow selling small positions during liquidation

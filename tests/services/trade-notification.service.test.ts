@@ -283,7 +283,7 @@ describe("Trade Notification Service", () => {
       const [, options] = mockFetch.mock.calls[0].arguments;
       const body = JSON.parse(options.body);
       assert.ok(body.text.includes("Stop-Loss Triggered"));
-      assert.ok(body.text.includes("UniversalStopLoss"));
+      assert.ok(body.text.includes("StopLoss"));
     });
 
     test("notifyScalp sends SCALP notification", async () => {

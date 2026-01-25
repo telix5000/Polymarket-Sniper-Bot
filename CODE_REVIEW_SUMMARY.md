@@ -45,7 +45,7 @@ The orchestrator correctly implements single-flight protection:
 1. **Phase 1**: PositionTracker refresh (single-flight, awaited)
 2. **Phase 2**: AutoRedeem - Claim resolved positions (HIGHEST PRIORITY)
 3. **Phase 3**: SmartHedging - Hedge losing positions
-4. **Phase 4**: UniversalStopLoss - Protect against big losses
+4. **Phase 4**: StopLoss - Protect against big losses
 5. **Phase 5**: ScalpTakeProfit - Time-based profit taking
 6. **Phase 6**: EndgameSweep - Buy high-confidence positions
 
