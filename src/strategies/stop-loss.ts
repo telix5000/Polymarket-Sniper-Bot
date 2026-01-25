@@ -3,7 +3,7 @@ import type { Wallet } from "ethers";
 import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker, Position } from "./position-tracker";
 import { getDynamicStopLoss, PRICE_TIERS } from "./trade-quality";
-import { notifyStopLoss } from "../services/trade-notification.service";
+import type { TelegramService } from "../services/telegram.service";
 import { calculateMinAcceptablePrice, FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
 
 /**
@@ -69,6 +69,7 @@ export interface StopLossStrategyConfig {
   logger: ConsoleLogger;
   positionTracker: PositionTracker;
   config: StopLossConfig;
+  telegram?: TelegramService;
 }
 
 /**
@@ -102,6 +103,7 @@ export class StopLossStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: StopLossConfig;
+  private telegram?: TelegramService;
 
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
@@ -135,6 +137,7 @@ export class StopLossStrategy {
     this.logger = strategyConfig.logger;
     this.positionTracker = strategyConfig.positionTracker;
     this.config = strategyConfig.config;
+    this.telegram = strategyConfig.telegram;
   }
 
   /**
@@ -405,19 +408,23 @@ export class StopLossStrategy {
 
       if (result.status === "submitted") {
         // Send telegram notification for stop-loss trigger
-        void notifyStopLoss(
-          marketId,
-          tokenId,
-          size,
-          bestBid,
-          sizeUsd,
-          {
+        if (this.telegram?.isEnabled()) {
+          void this.telegram.sendTradeNotificationWithPnL({
+            type: "STOP_LOSS",
+            marketId,
+            tokenId,
+            size,
+            price: bestBid,
+            sizeUsd,
+            strategy: "StopLoss",
             entryPrice,
             pnl: pnlUsd,
-          },
-        ).catch(() => {
-          // Ignore notification errors - logging is handled by the service
-        });
+          }).catch((err) => {
+            this.logger.warn(
+              `[StopLoss] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+        }
 
         return true;
       } else if (result.status === "skipped") {

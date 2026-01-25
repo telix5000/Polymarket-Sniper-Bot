@@ -35,7 +35,7 @@ import {
   HIGH_VALUE_PRICE_THRESHOLD,
   HIGH_VALUE_NO_BID_LOG_TTL_MS,
 } from "../utils/log-deduper.util";
-import { notifySell } from "../services/trade-notification.service";
+import type { TelegramService } from "../services/telegram.service";
 import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
 
 /**
@@ -109,6 +109,7 @@ export interface SellEarlyStrategyOptions {
   logger: ConsoleLogger;
   positionTracker: PositionTracker;
   config: SellEarlyConfig;
+  telegram?: TelegramService;
 }
 
 /**
@@ -122,6 +123,7 @@ export class SellEarlyStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: SellEarlyConfig;
+  private telegram?: TelegramService;
 
   // === SINGLE-FLIGHT GUARD ===
   private inFlight = false;
@@ -150,6 +152,7 @@ export class SellEarlyStrategy {
     this.logger = options.logger;
     this.positionTracker = options.positionTracker;
     this.config = options.config;
+    this.telegram = options.telegram;
 
     if (this.config.enabled) {
       // Log initialization with simplified config
@@ -538,21 +541,24 @@ export class SellEarlyStrategy {
         // Calculate P&L and send telegram notification for sell-early
         const sellPrice = position.currentBidPrice ?? position.currentPrice;
         const tradePnl = (sellPrice - position.entryPrice) * position.size;
-        void notifySell(
-          position.marketId,
-          position.tokenId,
-          position.size,
-          sellPrice,
-          sizeUsd,
-          {
+        if (this.telegram?.isEnabled()) {
+          void this.telegram.sendTradeNotificationWithPnL({
+            type: "SELL",
+            marketId: position.marketId,
+            tokenId: position.tokenId,
+            size: position.size,
+            price: sellPrice,
+            sizeUsd,
             strategy: "SellEarly",
+            outcome: position.side,
             entryPrice: position.entryPrice,
             pnl: tradePnl,
-            outcome: position.side,
-          },
-        ).catch(() => {
-          // Ignore notification errors
-        });
+          }).catch((err) => {
+            this.logger.warn(
+              `[SellEarly] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+        }
 
         return true;
       }

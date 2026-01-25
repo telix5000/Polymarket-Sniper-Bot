@@ -23,11 +23,7 @@ import {
 } from "../utils/log-deduper.util";
 import { formatCents, assessOrderbookQuality } from "../utils/price.util";
 import type { ReservePlan } from "../risk";
-import {
-  notifyHedge,
-  notifyHedgeExit,
-  notifySell,
-} from "../services/trade-notification.service";
+import type { TelegramService } from "../services/telegram.service";
 import {
   acquireHedgeLock,
   releaseHedgeLock,
@@ -270,6 +266,7 @@ export class SmartHedgingStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: SmartHedgingConfig;
+  private telegram?: TelegramService;
   /** Optional getter for the current reserve plan (injected by orchestrator) */
   private getReservePlan?: () => ReservePlan | null;
 
@@ -308,12 +305,14 @@ export class SmartHedgingStrategy {
     config: SmartHedgingConfig;
     /** Optional getter for the current reserve plan (for reserve-aware hedging) */
     getReservePlan?: () => ReservePlan | null;
+    telegram?: TelegramService;
   }) {
     this.client = config.client;
     this.logger = config.logger;
     this.positionTracker = config.positionTracker;
     this.config = config.config;
     this.getReservePlan = config.getReservePlan;
+    this.telegram = config.telegram;
 
     const hedgeUpStatus =
       this.config.direction !== "down"
@@ -1683,18 +1682,22 @@ export class SmartHedgingStrategy {
         this.logger.info(`[SmartHedging] ✅ Hedge executed successfully`);
 
         // Send telegram notification for hedge placement
-        void notifyHedge(
-          position.marketId,
-          oppositeTokenId,
-          hedgeUsd / oppositePrice, // Estimate shares from USD
-          oppositePrice,
-          hedgeUsd,
-          {
+        if (this.telegram?.isEnabled()) {
+          void this.telegram.sendTradeNotificationWithPnL({
+            type: "HEDGE",
+            marketId: position.marketId,
+            tokenId: oppositeTokenId,
+            size: hedgeUsd / oppositePrice, // Estimate shares from USD
+            price: oppositePrice,
+            sizeUsd: hedgeUsd,
+            strategy: "SmartHedging",
             outcome: oppositeSide,
-          },
-        ).catch(() => {
-          // Ignore notification errors - logging is handled by the service
-        });
+          }).catch((err) => {
+            this.logger.warn(
+              `[SmartHedging] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+        }
 
         return { success: true, hedgeTokenId: oppositeTokenId };
       }
@@ -1812,39 +1815,44 @@ export class SmartHedgingStrategy {
         // Check if the position's tokenId was tracked as a hedge
         const isHedgeExit = this.hedgedPositions.has(position.tokenId);
 
-        if (isHedgeExit) {
-          // This is a hedge position being exited
-          void notifyHedgeExit(
-            position.marketId,
-            position.tokenId,
-            position.size,
-            position.currentPrice,
-            currentValue,
-            {
-              entryPrice: position.entryPrice,
-              pnl: tradePnl,
-              outcome: position.side,
-            },
-          ).catch(() => {
-            // Ignore notification errors - logging is handled by the service
-          });
-        } else {
-          // Regular position being sold (force liquidation or stop loss)
-          void notifySell(
-            position.marketId,
-            position.tokenId,
-            position.size,
-            position.currentPrice,
-            currentValue,
-            {
+        if (this.telegram?.isEnabled()) {
+          if (isHedgeExit) {
+            // This is a hedge position being exited
+            void this.telegram.sendTradeNotificationWithPnL({
+              type: "HEDGE_EXIT",
+              marketId: position.marketId,
+              tokenId: position.tokenId,
+              size: position.size,
+              price: position.currentPrice,
+              sizeUsd: currentValue,
               strategy: "SmartHedging",
+              outcome: position.side,
               entryPrice: position.entryPrice,
               pnl: tradePnl,
+            }).catch((err) => {
+              this.logger.warn(
+                `[SmartHedging] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+              );
+            });
+          } else {
+            // Regular position being sold (force liquidation or stop loss)
+            void this.telegram.sendTradeNotificationWithPnL({
+              type: "SELL",
+              marketId: position.marketId,
+              tokenId: position.tokenId,
+              size: position.size,
+              price: position.currentPrice,
+              sizeUsd: currentValue,
+              strategy: "SmartHedging",
               outcome: position.side,
-            },
-          ).catch(() => {
-            // Ignore notification errors - logging is handled by the service
-          });
+              entryPrice: position.entryPrice,
+              pnl: tradePnl,
+            }).catch((err) => {
+              this.logger.warn(
+                `[SmartHedging] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+              );
+            });
+          }
         }
 
         return true;

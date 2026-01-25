@@ -8,7 +8,7 @@ import {
   HIGH_VALUE_PRICE_THRESHOLD,
   HIGH_VALUE_NO_BID_LOG_TTL_MS,
 } from "../utils/log-deduper.util";
-import { notifySell } from "../services/trade-notification.service";
+import type { TelegramService } from "../services/telegram.service";
 import {
   STALE_SELL_SLIPPAGE_PCT,
   URGENT_SELL_SLIPPAGE_PCT,
@@ -96,6 +96,7 @@ export interface AutoSellStrategyConfig {
   logger: ConsoleLogger;
   positionTracker: PositionTracker;
   config: AutoSellConfig;
+  telegram?: TelegramService;
 }
 
 /**
@@ -128,6 +129,7 @@ export class AutoSellStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: AutoSellConfig;
+  private telegram?: TelegramService;
   private soldPositions: Set<string> = new Set();
   private positionFirstSeen: Map<string, number> = new Map();
   // Track tokens with no liquidity to suppress repeated warnings
@@ -144,6 +146,7 @@ export class AutoSellStrategy {
     this.logger = strategyConfig.logger;
     this.positionTracker = strategyConfig.positionTracker;
     this.config = strategyConfig.config;
+    this.telegram = strategyConfig.telegram;
 
     if (this.config.enabled) {
       const disputeInfo = this.config.disputeWindowExitEnabled
@@ -670,21 +673,24 @@ export class AutoSellStrategy {
 
         // Send telegram notification for stale position sell
         const tradePnl = (bestBid - position.entryPrice) * position.size;
-        void notifySell(
-          position.marketId,
-          position.tokenId,
-          position.size,
-          bestBid,
-          sizeUsd,
-          {
+        if (this.telegram?.isEnabled()) {
+          void this.telegram.sendTradeNotificationWithPnL({
+            type: "SELL",
+            marketId: position.marketId,
+            tokenId: position.tokenId,
+            size: position.size,
+            price: bestBid,
+            sizeUsd,
             strategy: "AutoSell (Stale)",
+            outcome: position.side,
             entryPrice: position.entryPrice,
             pnl: tradePnl,
-            outcome: position.side,
-          },
-        ).catch(() => {
-          // Ignore notification errors
-        });
+          }).catch((err) => {
+            this.logger.warn(
+              `[AutoSell] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+        }
 
         return true;
       } else if (result.status === "skipped") {
@@ -860,18 +866,21 @@ export class AutoSellStrategy {
 
         // Send telegram notification for auto-sell
         // Note: entry price not available in this context, so no P&L calculation
-        void notifySell(
-          marketId,
-          tokenId,
-          size,
-          bestBid,
-          sizeUsd,
-          {
+        if (this.telegram?.isEnabled()) {
+          void this.telegram.sendTradeNotificationWithPnL({
+            type: "SELL",
+            marketId,
+            tokenId,
+            size,
+            price: bestBid,
+            sizeUsd,
             strategy: "AutoSell",
-          },
-        ).catch(() => {
-          // Ignore notification errors
-        });
+          }).catch((err) => {
+            this.logger.warn(
+              `[AutoSell] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+        }
 
         return true;
       } else if (result.status === "skipped") {
@@ -1032,21 +1041,24 @@ export class AutoSellStrategy {
 
         // Send distinct notification for quick win exits (not stale position exits)
         const tradePnl = (bestBid - position.entryPrice) * position.size;
-        void notifySell(
-          position.marketId,
-          position.tokenId,
-          position.size,
-          bestBid,
-          sizeUsd,
-          {
+        if (this.telegram?.isEnabled()) {
+          void this.telegram.sendTradeNotificationWithPnL({
+            type: "SELL",
+            marketId: position.marketId,
+            tokenId: position.tokenId,
+            size: position.size,
+            price: bestBid,
+            sizeUsd,
             strategy: "AutoSell (Quick Win)",
+            outcome: position.side,
             entryPrice: position.entryPrice,
             pnl: tradePnl,
-            outcome: position.side,
-          },
-        ).catch(() => {
-          // Ignore notification errors
-        });
+          }).catch((err) => {
+            this.logger.warn(
+              `[AutoSell] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+        }
 
         this.logger.info(
           `[AutoSell] ✅ QUICK_WIN: Sold position held ${timeHeldMinutes.toFixed(1)}m, estimated profit $${estimatedProfitUsd.toFixed(2)} (+${position.pnlPct.toFixed(1)}%), freed ~$${estimatedCapital.toFixed(2)} capital (actual fill may vary by slippage)`,

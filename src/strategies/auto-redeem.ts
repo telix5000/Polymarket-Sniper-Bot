@@ -24,7 +24,7 @@ import { POLYMARKET_API } from "../constants/polymarket.constants";
 import { resolvePolymarketContracts } from "../polymarket/contracts";
 import { CTF_ABI, PROXY_WALLET_ABI } from "../trading/exchange-abi";
 import { resolveSignerAddress } from "../utils/funds-allowance.util";
-import { notifyRedeem } from "../services/trade-notification.service";
+import type { TelegramService } from "../services/telegram.service";
 
 /**
  * Minimal position data needed for redemption.
@@ -130,6 +130,7 @@ export interface AutoRedeemStrategyOptions {
    * If not provided, P&L will not be included in redemption notifications.
    */
   getPositionPnL?: (tokenId: string) => PositionPnLData | undefined;
+  telegram?: TelegramService;
 }
 
 /**
@@ -155,6 +156,7 @@ export class AutoRedeemStrategy {
   private logger: ConsoleLogger;
   private config: AutoRedeemConfig;
   private getPositionPnL?: (tokenId: string) => PositionPnLData | undefined;
+  private telegram?: TelegramService;
 
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
@@ -204,6 +206,7 @@ export class AutoRedeemStrategy {
     this.logger = options.logger;
     this.config = options.config;
     this.getPositionPnL = options.getPositionPnL;
+    this.telegram = options.telegram;
   }
 
   /**
@@ -1067,19 +1070,23 @@ export class AutoRedeemStrategy {
       const notificationPrice = payoutInfo?.price ?? -1;
       const notificationValue = payoutInfo?.value ?? -1;
 
-      void notifyRedeem(
-        position.marketId,
-        position.tokenId,
-        position.size,
-        notificationPrice,
-        notificationValue,
-        {
+      if (this.telegram?.isEnabled()) {
+        void this.telegram.sendTradeNotificationWithPnL({
+          type: "REDEEM",
+          marketId: position.marketId,
+          tokenId: position.tokenId,
+          size: position.size,
+          price: notificationPrice,
+          sizeUsd: notificationValue,
+          strategy: "AutoRedeem",
           txHash: tx.hash,
           pnl: realizedPnl,
-        },
-      ).catch(() => {
-        // Ignore notification errors - logging is handled by the service
-      });
+        }).catch((err) => {
+          this.logger.warn(
+            `[AutoRedeem] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
 
       return {
         tokenId: position.tokenId,

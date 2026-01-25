@@ -208,6 +208,7 @@ export class Orchestrator {
       client: config.client,
       logger: config.logger,
       positionTracker: this.positionTracker,
+      telegram: this.telegram,
       config: {
         ...DEFAULT_SELL_EARLY_CONFIG,
         ...config.sellEarlyConfig,
@@ -222,6 +223,7 @@ export class Orchestrator {
       client: config.client,
       logger: config.logger,
       positionTracker: this.positionTracker,
+      telegram: this.telegram,
       config: {
         ...DEFAULT_AUTO_SELL_CONFIG,
         minOrderUsd: config.maxPositionUsd * 0.01, // 1% of max position as min order
@@ -250,6 +252,7 @@ export class Orchestrator {
       client: config.client,
       logger: config.logger,
       relayer: relayerContext,
+      telegram: this.telegram,
       config: {
         enabled: true,
         minPositionUsd: 0, // Default: redeem anything (no minimum threshold)
@@ -286,6 +289,7 @@ export class Orchestrator {
       client: config.client,
       logger: config.logger,
       positionTracker: this.positionTracker,
+      telegram: this.telegram,
       config: hedgingConfig,
       // Inject reserve plan getter for reserve-aware hedging
       getReservePlan: () => this.currentReservePlan,
@@ -298,6 +302,7 @@ export class Orchestrator {
       client: config.client,
       logger: config.logger,
       positionTracker: this.positionTracker,
+      telegram: this.telegram,
       config: {
         enabled: true,
         maxStopLossPct: 25, // Max 25% loss
@@ -331,6 +336,7 @@ export class Orchestrator {
       client: config.client,
       logger: config.logger,
       positionTracker: this.positionTracker,
+      telegram: this.telegram,
       config: {
         ...DEFAULT_SCALP_TRADE_CONFIG,
         ...config.scalpConfig,
@@ -344,6 +350,7 @@ export class Orchestrator {
       client: config.client,
       logger: config.logger,
       positionTracker: this.positionTracker,
+      telegram: this.telegram,
       config: {
         ...DEFAULT_POSITION_STACKING_CONFIG,
         maxStackUsd: config.maxPositionUsd,

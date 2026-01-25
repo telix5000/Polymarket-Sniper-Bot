@@ -72,7 +72,7 @@ import {
   SKIP_LOG_TTL_MS,
   TOKEN_ID_DISPLAY_LENGTH,
 } from "../utils/log-deduper.util";
-import { notifyScalp } from "../services/trade-notification.service";
+import type { TelegramService } from "../services/telegram.service";
 import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
 
 /**
@@ -756,6 +756,7 @@ export class ScalpTradeStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: ScalpTradeConfig;
+  private telegram?: TelegramService;
 
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
@@ -835,11 +836,13 @@ export class ScalpTradeStrategy {
     logger: ConsoleLogger;
     positionTracker: PositionTracker;
     config: ScalpTradeConfig;
+    telegram?: TelegramService;
   }) {
     this.client = config.client;
     this.logger = config.logger;
     this.positionTracker = config.positionTracker;
     this.config = config.config;
+    this.telegram = config.telegram;
 
     this.logger.info(
       `[ProfitTaker] Initialized: ` +
@@ -2022,20 +2025,24 @@ export class ScalpTradeStrategy {
           (effectiveLimitPrice - position.entryPrice) * position.size;
 
         // Send telegram notification for scalp profit taking
-        void notifyScalp(
-          position.marketId,
-          position.tokenId,
-          position.size,
-          effectiveLimitPrice,
-          notionalUsd,
-          {
+        if (this.telegram?.isEnabled()) {
+          void this.telegram.sendTradeNotificationWithPnL({
+            type: "SCALP",
+            marketId: position.marketId,
+            tokenId: position.tokenId,
+            size: position.size,
+            price: effectiveLimitPrice,
+            sizeUsd: notionalUsd,
+            strategy: "ScalpTrade",
+            outcome: position.side,
             entryPrice: position.entryPrice,
             pnl: tradePnl,
-            outcome: position.side,
-          },
-        ).catch(() => {
-          // Ignore notification errors - logging is handled by the service
-        });
+          }).catch((err) => {
+            this.logger.warn(
+              `[ProfitTaker] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+        }
 
         return true;
       }

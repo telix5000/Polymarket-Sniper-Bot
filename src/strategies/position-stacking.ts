@@ -42,7 +42,7 @@ import { postOrder } from "../utils/post-order.util";
 import { isLiveTradingEnabled } from "../utils/live-trading.util";
 import type { ReservePlan } from "../risk";
 import { LogDeduper } from "../utils/log-deduper.util";
-import { notifyStack } from "../services/trade-notification.service";
+import type { TelegramService } from "../services/telegram.service";
 
 /**
  * Position Stacking Configuration
@@ -139,6 +139,7 @@ export class PositionStackingStrategy {
   private logger: ConsoleLogger;
   private config: PositionStackingConfig;
   private positionTracker?: PositionTracker;
+  private telegram?: TelegramService;
 
   // === SINGLE-FLIGHT GUARD ===
   private inFlight = false;
@@ -169,11 +170,13 @@ export class PositionStackingStrategy {
     logger: ConsoleLogger;
     config: PositionStackingConfig;
     positionTracker?: PositionTracker;
+    telegram?: TelegramService;
   }) {
     this.client = config.client;
     this.logger = config.logger;
     this.config = config.config;
     this.positionTracker = config.positionTracker;
+    this.telegram = config.telegram;
 
     this.logger.info(
       `[PositionStacking] Initialized: enabled=${this.config.enabled}, ` +
@@ -645,23 +648,26 @@ export class PositionStackingStrategy {
         );
 
         // Send telegram notification for position stacking
-        // notifyStack handles its own logging; we just catch any unexpected errors
         const entryPrice = position.avgEntryPriceCents
           ? position.avgEntryPriceCents / 100
           : position.entryPrice;
-        notifyStack(
-          position.marketId,
-          position.tokenId,
-          sizeUsd / position.currentPrice, // Estimate shares from USD
-          position.currentPrice,
-          sizeUsd,
-          {
-            entryPrice,
+        if (this.telegram?.isEnabled()) {
+          void this.telegram.sendTradeNotificationWithPnL({
+            type: "STACK",
+            marketId: position.marketId,
+            tokenId: position.tokenId,
+            size: sizeUsd / position.currentPrice, // Estimate shares from USD
+            price: position.currentPrice,
+            sizeUsd,
+            strategy: "PositionStacking",
             outcome: outcome,
-          },
-        ).catch(() => {
-          // Swallow errors here; notifyStack is responsible for logging its own failures.
-        });
+            entryPrice,
+          }).catch((err) => {
+            this.logger.warn(
+              `[PositionStacking] Failed to send Telegram notification: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+        }
 
         return true;
       }
