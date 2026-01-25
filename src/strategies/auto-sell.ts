@@ -21,6 +21,21 @@ export interface AutoSellConfig {
    */
   disputeWindowExitEnabled?: boolean; // Enable early exit for positions in dispute window
   disputeWindowExitPrice?: number; // Price to sell at for dispute exit (default: 0.999 = 99.9¢)
+  /**
+   * STALE PROFITABLE POSITION EXIT SETTINGS
+   * Positions that are profitable (green) but held for too long tie up capital
+   * that could be used for more active trades. Rather than let capital sit idle
+   * in positions that "aren't moving much", sell them to free up funds.
+   *
+   * When enabled (stalePositionHours > 0), the strategy will:
+   * 1. Find profitable positions (pnlPct > 0) held longer than stalePositionHours
+   * 2. Sell them at current market price to lock in the profit
+   * 3. Free up capital for new trading opportunities
+   *
+   * Set to 0 to disable stale position selling.
+   * Default: 24 hours - positions in the green for 24+ hours are sold.
+   */
+  stalePositionHours?: number; // Hours before a profitable position is considered "stale" (0 = disabled)
 }
 
 /**
@@ -28,6 +43,7 @@ export interface AutoSellConfig {
  * - Enabled by default for capital efficiency
  * - Normal threshold at 99.9¢ (0.999)
  * - Dispute exit at 99.9¢ (0.999) for faster capital recovery
+ * - Stale position exit at 24 hours for profitable positions
  */
 export const DEFAULT_AUTO_SELL_CONFIG: AutoSellConfig = {
   enabled: true,
@@ -36,6 +52,7 @@ export const DEFAULT_AUTO_SELL_CONFIG: AutoSellConfig = {
   minOrderUsd: 1, // Minimum $1 order size
   disputeWindowExitEnabled: true, // Enable dispute window exit
   disputeWindowExitPrice: 0.999, // Sell at 99.9¢ for dispute exit
+  stalePositionHours: 24, // Sell profitable positions held for 24+ hours to free capital
 };
 
 export interface AutoSellStrategyConfig {
@@ -96,8 +113,11 @@ export class AutoSellStrategy {
       const disputeInfo = this.config.disputeWindowExitEnabled
         ? ` disputeExit=${(this.config.disputeWindowExitPrice ?? 0.999) * 100}¢`
         : "";
+      const staleInfo = this.config.stalePositionHours && this.config.stalePositionHours > 0
+        ? ` stalePositionHours=${this.config.stalePositionHours}`
+        : "";
       this.logger.info(
-        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}`,
+        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}${staleInfo}`,
       );
     }
   }
@@ -185,9 +205,29 @@ export class AutoSellStrategy {
       }
     }
 
+    // === STALE PROFITABLE POSITION EXIT ===
+    // Sell profitable positions held longer than stalePositionHours to free up capital
+    // These are positions that are "in the green" but not moving much, tying up capital
+    // that could be used for more active trades.
+    let staleSoldCount = 0;
+    const staleHours = this.config.stalePositionHours ?? 0;
+    if (staleHours > 0) {
+      const staleProfitablePositions = this.getStaleProfitablePositions(staleHours);
+      
+      for (const position of staleProfitablePositions) {
+        scannedCount++;
+        const sold = await this.processStalePosition(position);
+        if (sold) {
+          soldCount++;
+          staleSoldCount++;
+        }
+      }
+    }
+
     // Log once-per-cycle summary
+    const staleInfo = staleHours > 0 ? ` stale_sold=${staleSoldCount}` : "";
     this.logger.info(
-      `[AutoSell] scanned=${scannedCount} sold=${soldCount} skipped_redeemable=${skipReasons.redeemable} skipped_not_tradable=${skipReasons.notTradable} skipped_no_bid=${skipReasons.noBid}`,
+      `[AutoSell] scanned=${scannedCount} sold=${soldCount}${staleInfo} skipped_redeemable=${skipReasons.redeemable} skipped_not_tradable=${skipReasons.notTradable} skipped_no_bid=${skipReasons.noBid}`,
     );
 
     // Log aggregated skip summary (rate-limited DEBUG)
@@ -351,6 +391,111 @@ export class AutoSellStrategy {
     } catch (err) {
       this.logger.error(
         `[AutoSell] Failed to sell position ${position.marketId.slice(0, 16)}...`,
+        err as Error,
+      );
+    }
+
+    return false;
+  }
+
+  /**
+   * Get profitable positions that have been held longer than staleHours
+   * These are positions "in the green" (pnlPct > 0) that aren't moving much
+   * and are tying up capital that could be used elsewhere.
+   *
+   * @param staleHours - Number of hours after which a profitable position is considered stale
+   * @returns Array of stale profitable positions
+   */
+  private getStaleProfitablePositions(staleHours: number): Position[] {
+    const positions = this.positionTracker.getPositions();
+    const staleThresholdMs = staleHours * 60 * 60 * 1000; // Convert hours to milliseconds
+    const now = Date.now();
+
+    return positions.filter((pos) => {
+      // Must be profitable (green)
+      if (!pos.pnlTrusted || pos.pnlPct <= 0) {
+        return false;
+      }
+
+      // Must have entry time info from trade history
+      if (pos.firstAcquiredAt === undefined || pos.timeHeldSec === undefined) {
+        return false;
+      }
+
+      // Check if held longer than staleHours
+      const heldMs = now - pos.firstAcquiredAt;
+      if (heldMs < staleThresholdMs) {
+        return false;
+      }
+
+      // Must have a valid bid price to sell
+      if (pos.currentBidPrice === undefined) {
+        return false;
+      }
+
+      // Skip already sold positions
+      const positionKey = `${pos.marketId}-${pos.tokenId}`;
+      if (this.soldPositions.has(positionKey)) {
+        return false;
+      }
+
+      // Skip if not tradable
+      const tradabilityIssue = this.checkTradability(pos);
+      if (tradabilityIssue) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  /**
+   * Process a stale profitable position for selling
+   * These are positions that are profitable but have been held too long,
+   * tying up capital that could be used for more active trades.
+   *
+   * @param position - The stale profitable position to sell
+   * @returns true if position was sold
+   */
+  private async processStalePosition(position: Position): Promise<boolean> {
+    const positionKey = `${position.marketId}-${position.tokenId}`;
+    const tokenIdShort = position.tokenId.slice(0, 12);
+
+    // Calculate time held in hours
+    const timeHeldHours = (position.timeHeldSec ?? 0) / 3600;
+    const timeHeldDays = timeHeldHours / 24;
+
+    // Log the stale position detection
+    const timeHeldStr = timeHeldDays >= 1 
+      ? `${timeHeldDays.toFixed(1)}d`
+      : `${timeHeldHours.toFixed(1)}h`;
+    
+    this.logger.info(
+      `[AutoSell] STALE_PROFITABLE: Position held ${timeHeldStr} at +${position.pnlPct.toFixed(1)}% profit: tokenId=${tokenIdShort}... marketId=${position.marketId.slice(0, 16)}...`,
+    );
+
+    try {
+      const sold = await this.sellPosition(
+        position.marketId,
+        position.tokenId,
+        position.size,
+      );
+
+      if (sold) {
+        this.soldPositions.add(positionKey);
+
+        // Calculate and log profit captured
+        const profitUsd = position.pnlUsd;
+        const freedCapital = position.size * (position.currentBidPrice ?? position.currentPrice);
+
+        this.logger.info(
+          `[AutoSell] ✅ STALE_PROFITABLE: Sold position held ${timeHeldStr}, profit $${profitUsd.toFixed(2)} (+${position.pnlPct.toFixed(1)}%), freed $${freedCapital.toFixed(2)} capital for new trades`,
+        );
+        return true;
+      }
+    } catch (err) {
+      this.logger.error(
+        `[AutoSell] Failed to sell stale position ${position.marketId.slice(0, 16)}...`,
         err as Error,
       );
     }

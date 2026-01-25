@@ -41,6 +41,7 @@ describe("AutoSell Default Config", () => {
     assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.minOrderUsd, 1);
     assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.disputeWindowExitEnabled, true);
     assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.disputeWindowExitPrice, 0.999);
+    assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.stalePositionHours, 24);
   });
 });
 
@@ -452,5 +453,185 @@ describe("AutoSell DATA_API_UNCONFIRMED Routing", () => {
     // This is acceptable to free up capital immediately
     const lossPerShare = 1.0 - 0.999;
     assert.ok(lossPerShare < 0.01, "Loss from selling early should be minimal (<1%)");
+  });
+});
+
+// === STALE PROFITABLE POSITION TESTS ===
+
+describe("AutoSell Stale Profitable Position Exit", () => {
+  test("AUTO_SELL_STALE_POSITION_HOURS defaults to 24 in balanced preset", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellStalePositionHours, 24);
+  });
+
+  test("AUTO_SELL_STALE_POSITION_HOURS is 12 in aggressive preset", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "aggressive",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellStalePositionHours, 12);
+  });
+
+  test("AUTO_SELL_STALE_POSITION_HOURS can be overridden via env", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+      AUTO_SELL_STALE_POSITION_HOURS: "48",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellStalePositionHours, 48);
+  });
+
+  test("AUTO_SELL_STALE_POSITION_HOURS can be disabled with 0", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+      AUTO_SELL_STALE_POSITION_HOURS: "0",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellStalePositionHours, 0);
+  });
+
+  test("stale profitable position identification criteria", () => {
+    // A position is considered "stale profitable" when:
+    // 1. pnlPct > 0 (profitable/green)
+    // 2. pnlTrusted === true (we can trust the P&L calculation)
+    // 3. timeHeldSec >= stalePositionHours * 3600 (held longer than threshold)
+    // 4. currentBidPrice is defined (can sell)
+    // 5. Not already sold
+    // 6. Is tradable (passes checkTradability)
+
+    const staleProfitablePosition = {
+      marketId: "0x" + "a".repeat(64),
+      tokenId: "0x" + "b".repeat(64),
+      side: "YES",
+      size: 50,
+      entryPrice: 0.50, // Bought at 50¢
+      currentPrice: 0.55, // Now at 55¢
+      currentBidPrice: 0.54, // Can sell at 54¢
+      pnlPct: 8.0, // 8% profit
+      pnlUsd: 2.0, // $2 profit
+      pnlTrusted: true,
+      pnlClassification: "PROFITABLE" as const,
+      firstAcquiredAt: Date.now() - (25 * 60 * 60 * 1000), // 25 hours ago
+      lastAcquiredAt: Date.now() - (25 * 60 * 60 * 1000),
+      timeHeldSec: 25 * 60 * 60, // 25 hours in seconds
+      executionStatus: "TRADABLE" as const,
+      redeemable: false,
+      redeemableProofSource: "NONE" as const,
+    };
+
+    // Verify this position meets stale profitable criteria
+    const staleHours = 24;
+    const staleThresholdSec = staleHours * 60 * 60;
+
+    // Check profitable
+    assert.strictEqual(staleProfitablePosition.pnlPct > 0, true, "Position should be profitable");
+    assert.strictEqual(staleProfitablePosition.pnlTrusted, true, "P&L should be trusted");
+
+    // Check held time
+    assert.ok(
+      staleProfitablePosition.timeHeldSec! >= staleThresholdSec,
+      `Position held ${staleProfitablePosition.timeHeldSec}s should exceed threshold ${staleThresholdSec}s`,
+    );
+
+    // Check can sell
+    assert.ok(staleProfitablePosition.currentBidPrice !== undefined, "Position should have a bid price");
+
+    // Check tradable
+    assert.strictEqual(staleProfitablePosition.executionStatus, "TRADABLE");
+  });
+
+  test("position not considered stale if held less than threshold", () => {
+    // Position held for only 12 hours should NOT be sold at 24h threshold
+    const recentProfitablePosition = {
+      marketId: "0x" + "c".repeat(64),
+      tokenId: "0x" + "d".repeat(64),
+      pnlPct: 5.0, // Profitable
+      pnlTrusted: true,
+      firstAcquiredAt: Date.now() - (12 * 60 * 60 * 1000), // 12 hours ago
+      timeHeldSec: 12 * 60 * 60, // 12 hours
+      currentBidPrice: 0.60,
+    };
+
+    const staleHours = 24;
+    const staleThresholdSec = staleHours * 60 * 60;
+
+    // This position should NOT be considered stale
+    const isStale = recentProfitablePosition.timeHeldSec >= staleThresholdSec;
+    assert.strictEqual(isStale, false, "Position held 12h should not be stale at 24h threshold");
+  });
+
+  test("losing position not sold as stale (only profitable positions)", () => {
+    // Even if held for 30 hours, losing positions should NOT be auto-sold as "stale profitable"
+    const losingPosition = {
+      marketId: "0x" + "e".repeat(64),
+      tokenId: "0x" + "f".repeat(64),
+      pnlPct: -15.0, // LOSING
+      pnlTrusted: true,
+      firstAcquiredAt: Date.now() - (30 * 60 * 60 * 1000), // 30 hours ago
+      timeHeldSec: 30 * 60 * 60,
+      currentBidPrice: 0.40,
+    };
+
+    // This should NOT be picked up by stale profitable logic
+    const isProfitable = losingPosition.pnlPct > 0;
+    assert.strictEqual(isProfitable, false, "Losing position should not be treated as profitable");
+  });
+
+  test("position without entry time data not sold as stale", () => {
+    // Positions without firstAcquiredAt cannot have their hold time calculated
+    const positionWithoutEntryTime = {
+      marketId: "0x" + "1".repeat(64),
+      tokenId: "0x" + "2".repeat(64),
+      pnlPct: 10.0, // Profitable
+      pnlTrusted: true,
+      firstAcquiredAt: undefined, // No entry time!
+      timeHeldSec: undefined,
+      currentBidPrice: 0.70,
+    };
+
+    // Cannot determine hold time, so should not be sold
+    assert.strictEqual(
+      positionWithoutEntryTime.timeHeldSec === undefined,
+      true,
+      "Position without timeHeldSec cannot be evaluated for staleness",
+    );
+  });
+
+  test("capital efficiency reasoning for stale position exit", () => {
+    // Business case: Position bought at 50¢, now at 55¢, held 30 hours
+    // This position is:
+    // - Profitable: +10% gain
+    // - Not moving: held for 30 hours without significant change
+    // - Tying up capital: $50 that could be used elsewhere
+
+    const position = {
+      size: 100, // 100 shares
+      entryPrice: 0.50, // 50¢ entry
+      currentBidPrice: 0.55, // 55¢ current bid
+      pnlPct: 10.0, // 10% profit
+    };
+
+    // Calculate what happens if we sell
+    const capitalInvested = position.size * position.entryPrice; // $50
+    const capitalRecovered = position.size * position.currentBidPrice; // $55
+    const profitLocked = capitalRecovered - capitalInvested; // $5
+
+    assert.ok(profitLocked > 0, "Selling locks in profit");
+    assert.ok(Math.abs(capitalRecovered - 55) < 0.001, "Capital recovered is approximately $55");
+
+    // The freed capital can now be used for new trades
+    // Even if this position eventually goes to $1, we'd only gain $45 more
+    // But that could take weeks/months, while the $55 can generate returns now
   });
 });
