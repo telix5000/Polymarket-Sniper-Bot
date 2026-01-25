@@ -8,6 +8,7 @@ import {
 import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 import { MempoolMonitorService } from "../services/mempool-monitor.service";
 import { TradeExecutorService } from "../services/trade-executor.service";
+import { createTelegramService, TelegramService } from "../services/telegram.service";
 import { ConsoleLogger } from "../utils/logger.util";
 import { getUsdBalanceApprox, getPolBalance } from "../utils/get-balance.util";
 import { startArbitrageEngine } from "../arbitrage/runtime";
@@ -20,6 +21,10 @@ import { getContextAwareWarnings } from "../utils/auth-diagnostic.util";
 import { Orchestrator, createOrchestrator } from "../strategies/orchestrator";
 import { isLiveTradingEnabled } from "../utils/live-trading.util";
 import { populateTargetAddressesFromLeaderboard } from "../targets";
+
+// Global service references for graceful shutdown
+let telegramService: TelegramService | undefined;
+let orchestrator: Orchestrator | undefined;
 
 async function main(): Promise<void> {
   const logger = new ConsoleLogger();
@@ -81,7 +86,6 @@ async function main(): Promise<void> {
 
   // Start unified strategy orchestrator if STRATEGY_PRESET is configured
   // Uses reliable strategies for reliable, easy-to-debug trading
-  let orchestrator: Orchestrator | undefined;
   if (strategyConfig && strategyConfig.enabled && !tradingReady.detectOnly) {
     logger.info(
       `🎯 Starting strategy orchestrator (preset: ${strategyConfig.presetName})`,
@@ -197,6 +201,14 @@ async function main(): Promise<void> {
       logger.warn(
         `[Orchestrator] Could not set session balance: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+
+    // Start Telegram P&L updates if configured (use global reference for cleanup)
+    telegramService = createTelegramService(logger);
+    if (telegramService.isEnabled()) {
+      const pnlLedger = orchestrator.getPnLLedger();
+      telegramService.startPnlUpdates(() => pnlLedger.getSummary());
+      logger.info("📱 Telegram P&L notifications started");
     }
   } else if (strategyConfig && !strategyConfig.enabled) {
     logger.info(
@@ -347,6 +359,32 @@ function isTransientRpcError(errorMsg: string): boolean {
     errorMsg.includes("socket hang up")
   );
 }
+
+/**
+ * Graceful shutdown handler - clean up resources before exit
+ */
+function gracefulShutdown(signal: string): void {
+  console.log(`\n[Shutdown] Received ${signal}, cleaning up...`);
+
+  // Stop Telegram P&L updates
+  if (telegramService) {
+    telegramService.stopPnlUpdates();
+    console.log("[Shutdown] Telegram notifications stopped");
+  }
+
+  // Stop orchestrator
+  if (orchestrator) {
+    orchestrator.stop();
+    console.log("[Shutdown] Orchestrator stopped");
+  }
+
+  console.log("[Shutdown] Cleanup complete, exiting...");
+  process.exit(0);
+}
+
+// Handle graceful shutdown signals
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 // Handle unhandled promise rejections (async errors)
 process.on("unhandledRejection", (reason) => {
