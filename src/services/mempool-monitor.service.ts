@@ -26,6 +26,13 @@ export type MempoolMonitorDeps = {
   env: RuntimeEnv;
   logger: Logger;
   onDetectedTrade: (signal: TradeSignal) => Promise<void>;
+  /**
+   * Optional callback for sell signal monitoring.
+   * When provided, SELL signals will be routed here for protective action evaluation.
+   * This enables the bot to detect when tracked traders are exiting positions
+   * we also hold, potentially triggering early hedging or stop-loss.
+   */
+  onDetectedSell?: (signal: TradeSignal) => Promise<void>;
 };
 
 interface ActivityResponse {
@@ -497,12 +504,35 @@ export class MempoolMonitorService {
         // === BLOCK COPY TRADING SELL ORDERS (early filter) ===
         // Copy trading SELL orders is dangerous - you don't know the target's entry price.
         // Only copy BUY orders; use your own exit strategies for sells.
+        // However, route SELL signals to the sell monitor for protective action evaluation.
         const isBuy = activity.side.toUpperCase() === "BUY";
         if (!isBuy) {
           stats.skippedOtherTrades += 1;
           logger.debug(
             `[Monitor] Skipping SELL copy trade on market ${activity.conditionId} - only BUY orders are copied`,
           );
+          
+          // Route SELL signals to the sell monitor for protective action evaluation
+          // This enables early detection of tracked traders exiting positions we hold
+          if (this.deps.onDetectedSell) {
+            const sellSignal: TradeSignal = {
+              trader: targetAddress,
+              marketId: activity.conditionId,
+              tokenId: activity.asset,
+              outcome: activity.outcomeIndex === 0 ? "YES" : "NO",
+              side: "SELL",
+              sizeUsd,
+              price: activity.price,
+              timestamp: activityTime * 1000,
+              pendingTxHash: activity.transactionHash,
+            };
+            // Fire and forget - don't block monitoring for sell signal processing
+            void this.deps.onDetectedSell(sellSignal).catch((err) => {
+              logger.debug(
+                `[Monitor] Sell signal processing error: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
+          }
           continue;
         }
 

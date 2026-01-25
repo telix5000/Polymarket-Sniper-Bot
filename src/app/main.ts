@@ -8,6 +8,7 @@ import {
 import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 import { MempoolMonitorService } from "../services/mempool-monitor.service";
 import { TradeExecutorService } from "../services/trade-executor.service";
+import { SellSignalMonitorService } from "../services/sell-signal-monitor.service";
 import {
   createTelegramService,
   TelegramService,
@@ -421,6 +422,34 @@ async function main(): Promise<void> {
       dynamicReserves: orchestrator?.getDynamicReserves(),
     });
 
+    // Create sell signal monitor for protective action evaluation
+    // This monitors SELL signals from tracked traders and triggers hedging/stop-loss
+    // when we hold the same position at a loss (does NOT copy sells on profitable positions)
+    const sellSignalMonitor = orchestrator
+      ? new SellSignalMonitorService({
+          logger,
+          positionTracker: orchestrator.getPositionTracker(),
+          // Wire up hedge/stop-loss trigger callbacks
+          // These will be called when a tracked trader sells a position we hold at a loss
+          onTriggerHedge: async (position, signal) => {
+            logger.info(
+              `[SellSignalMonitor] 🛡️ Hedge triggered for ${position.tokenId.slice(0, 12)}... ` +
+                `(tracked trader sold, we're at ${position.pnlPct.toFixed(1)}% loss)`,
+            );
+            // The orchestrator's hedging strategy will handle this position on the next cycle
+            // The sell signal monitor just flags it for priority attention
+          },
+          onTriggerStopLoss: async (position, signal) => {
+            logger.info(
+              `[SellSignalMonitor] 🚨 Stop-loss triggered for ${position.tokenId.slice(0, 12)}... ` +
+                `(tracked trader sold, we're at ${position.pnlPct.toFixed(1)}% severe loss)`,
+            );
+            // The orchestrator's stop-loss strategy will handle this position on the next cycle
+            // The sell signal monitor just flags it for priority attention
+          },
+        })
+      : undefined;
+
     const monitor = new MempoolMonitorService({
       client,
       logger,
@@ -428,6 +457,12 @@ async function main(): Promise<void> {
       onDetectedTrade: async (signal) => {
         await executor.frontrunTrade(signal);
       },
+      // Route SELL signals to the sell monitor for protective action evaluation
+      onDetectedSell: sellSignalMonitor
+        ? async (signal) => {
+            await sellSignalMonitor.processSellSignal(signal);
+          }
+        : undefined,
     });
 
     await monitor.start();

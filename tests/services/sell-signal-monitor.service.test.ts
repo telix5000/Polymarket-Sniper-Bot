@@ -2,7 +2,6 @@ import assert from "node:assert";
 import { test, describe } from "node:test";
 import {
   SellSignalMonitorService,
-  DEFAULT_SELL_SIGNAL_MONITOR_CONFIG,
   type SellSignalMonitorConfig,
 } from "../../src/services/sell-signal-monitor.service";
 import type { TradeSignal } from "../../src/domain/trade.types";

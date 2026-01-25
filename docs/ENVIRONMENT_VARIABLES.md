@@ -302,7 +302,7 @@ ON_CHAIN_EXIT_ENABLED=true
 
 ## 🛡️ Hedging
 
-Smart hedging protects against losses by buying the opposing side instead of selling at a loss.
+Hedging protects against losses by buying the opposing side instead of selling at a loss.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
