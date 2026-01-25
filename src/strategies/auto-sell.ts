@@ -914,61 +914,87 @@ export class AutoSellStrategy {
     const positions = this.positionTracker.getPositions();
     const maxHoldMs = maxHoldMinutes * 60 * 1000; // Convert minutes to milliseconds
     const now = Date.now();
+    const filtered: Position[] = [];
 
-    return positions.filter((pos) => {
+    for (const pos of positions) {
+      const posKey = `${pos.marketId}-${pos.tokenId}`;
+
       // Must be profitable (green)
       if (!pos.pnlTrusted || pos.pnlPct <= 0) {
-        return false;
+        this.logger.debug(
+          `[AutoSell] Quick Win: Skipping ${posKey.slice(0, 20)}... - not profitable or P&L untrusted`,
+        );
+        continue;
       }
 
       // Must exceed minimum profit threshold
       if (pos.pnlPct < minProfitPct) {
-        return false;
+        continue; // Silent skip - most positions won't meet this threshold
       }
 
       // Must have entry time info from trade history
       if (pos.firstAcquiredAt === undefined || pos.timeHeldSec === undefined) {
-        return false;
+        this.logger.debug(
+          `[AutoSell] Quick Win: Skipping ${posKey.slice(0, 20)}... - no entry time info`,
+        );
+        continue;
       }
 
       // Entry metadata must be trusted to use timestamps for hold time
       // When entryMetaTrusted === false, trade history doesn't match live shares,
       // so firstAcquiredAt/timeHeldSec may be inaccurate
       if (pos.entryMetaTrusted === false) {
-        return false;
+        this.logger.debug(
+          `[AutoSell] Quick Win: Skipping ${posKey.slice(0, 20)}... - entry metadata not trusted`,
+        );
+        continue;
       }
 
       // Check if held LESS than maxHoldMinutes
       const heldMs = now - pos.firstAcquiredAt;
       if (heldMs >= maxHoldMs) {
-        return false;
+        continue; // Silent skip - most profitable positions will be held longer
       }
 
       // Must have a valid bid price to sell
       if (pos.currentBidPrice === undefined) {
-        return false;
+        this.logger.debug(
+          `[AutoSell] Quick Win: Skipping ${posKey.slice(0, 20)}... - no bid price`,
+        );
+        continue;
       }
 
       // Skip already sold positions
       const positionKey = `${pos.marketId}-${pos.tokenId}`;
       if (this.soldPositions.has(positionKey)) {
-        return false;
+        continue;
       }
 
       // Skip if not tradable
       const tradabilityIssue = this.checkTradability(pos);
       if (tradabilityIssue) {
-        return false;
+        this.logger.debug(
+          `[AutoSell] Quick Win: Skipping ${posKey.slice(0, 20)}... - tradability issue: ${tradabilityIssue}`,
+        );
+        continue;
       }
 
-      return true;
-    });
+      filtered.push(pos);
+    }
+
+    return filtered;
   }
 
   /**
    * Process a quick win position for selling
    * These are positions with massive gains in a short time window
    * that should be sold to lock in the profit before momentum reverses.
+   *
+   * SLIPPAGE NOTE: Uses sellStalePosition() which applies 3% slippage tolerance.
+   * This is appropriate because:
+   * 1. Quick wins have 90%+ gains, so 3% slippage still leaves >85% profit
+   * 2. Tighter slippage (1-2%) risks order rejection in volatile markets
+   * 3. The goal is to lock in profit quickly, not optimize for the last few cents
    *
    * @param position - The quick win position to sell
    * @returns true if position was sold
@@ -986,19 +1012,20 @@ export class AutoSellStrategy {
     );
 
     try {
-      // Use sellStalePosition method which has appropriate slippage controls
-      // Quick wins should use tighter slippage to protect the large gains
+      // Use sellStalePosition method which has appropriate slippage controls (3%)
+      // For quick wins with 90%+ gains, 3% slippage is acceptable to ensure order fills
       const sold = await this.sellStalePosition(position);
 
       if (sold) {
         this.soldPositions.add(positionKey);
 
-        // Calculate and log profit captured based on actual realized P&L
-        const profitUsd = position.pnlUsd;
-        const freedCapital = position.size * (position.currentBidPrice ?? position.currentPrice);
+        // NOTE: These values reflect pre-trade state and may differ from actual realized P&L
+        // due to slippage. Actual fill price may vary by up to 3% from currentBidPrice.
+        const estimatedProfitUsd = position.pnlUsd;
+        const estimatedCapital = position.size * (position.currentBidPrice ?? position.currentPrice);
 
         this.logger.info(
-          `[AutoSell] ✅ QUICK_WIN: Sold position held ${timeHeldMinutes.toFixed(1)}m, realized profit $${profitUsd.toFixed(2)} (+${position.pnlPct.toFixed(1)}%), freed $${freedCapital.toFixed(2)} capital`,
+          `[AutoSell] ✅ QUICK_WIN: Sold position held ${timeHeldMinutes.toFixed(1)}m, estimated profit $${estimatedProfitUsd.toFixed(2)} (+${position.pnlPct.toFixed(1)}%), freed ~$${estimatedCapital.toFixed(2)} capital (actual fill may vary by slippage)`,
         );
         return true;
       }
