@@ -566,7 +566,8 @@ export interface ExitPlan {
     | "DUST"
     | "INVALID_BOOK"
     | "EXEC_PRICE_UNTRUSTED"
-    | "DUST_COOLDOWN";
+    | "DUST_COOLDOWN"
+    | "ILLIQUID_DEFERRED";
   /** When blocked, timestamp of last block occurrence */
   blockedAtMs?: number;
   /** Whether START log has been emitted for this plan (prevents re-logging) */
