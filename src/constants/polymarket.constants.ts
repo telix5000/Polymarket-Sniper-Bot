@@ -17,13 +17,21 @@ export const POLYMARKET_CONTRACTS = [
  * RPC is only used for: balance checks, gas estimates, approvals, on-chain trades.
  * With CLOB mode (default), RPC usage is minimal (~1-5 calls per trade cycle).
  *
- * Infura free tier: 3M requests/day = ~125k/hour = ~35/second
+ * RPC rate limit reference: 14M requests/day (~7% safety cushion from 15M) = ~583k/hour = ~162/second
+ * Free tier providers (Infura/Alchemy): ~3M/day = ~35/second
  * This is MORE than enough for HFT since orders go through CLOB API.
  */
 export const DEFAULT_CONFIG = {
   FETCH_INTERVAL_SECONDS: 1,
   MIN_TRADE_SIZE_USD: 100,
   MIN_ORDER_USD: 10,
+  /**
+   * RPC API requests per day limit (reference value for documentation)
+   * Premium tier: 14,000,000 (14M) - includes ~7% buffer below 15M limit
+   * Free tier: ~3,000,000 (3M) for Infura/Alchemy free tier
+   * Note: This is a reference constant - actual rate limiting depends on your RPC provider
+   */
+  RPC_REQUESTS_PER_DAY: 14_000_000,
   /**
    * Minimum price threshold for BUY orders in copy trading (0-1 scale where 1 = $1)
    * Prevents copying trades into low-probability "loser" positions.
