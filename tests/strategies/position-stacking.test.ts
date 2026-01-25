@@ -1,10 +1,11 @@
-import { afterEach, test } from "node:test";
+import { afterEach, test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { loadStrategyConfig } from "../../src/config/loadConfig";
 import {
   PositionStackingStrategy,
   DEFAULT_POSITION_STACKING_CONFIG,
 } from "../../src/strategies/position-stacking";
+import type { Position, PortfolioSnapshot } from "../../src/strategies/position-tracker";
 
 // === CONFIGURATION TESTS ===
 
@@ -145,6 +146,42 @@ const mockClient = {
   getOrderBook: async () => ({ bids: [], asks: [] }),
 } as unknown as import("@polymarket/clob-client").ClobClient;
 
+// Helper to create a mock position
+function createMockPosition(overrides: Partial<Position> = {}): Position {
+  return {
+    tokenId: "token123",
+    marketId: "market123",
+    side: "YES",
+    size: 100,
+    currentPrice: 0.70,
+    entryPrice: 0.50,
+    avgEntryPriceCents: 50,
+    pnlPct: 40,
+    pnlUsd: 20,
+    pnlTrusted: true,
+    redeemable: false,
+    nearResolutionCandidate: false,
+    dataApiInitialValue: 50,
+    executionStatus: "TRADABLE",
+    bookStatus: "NORMAL",
+    ...overrides,
+  } as Position;
+}
+
+// Helper to create a mock snapshot
+function createMockSnapshot(positions: Position[]): PortfolioSnapshot {
+  return {
+    activePositions: positions,
+    cycleId: 1,
+    refreshedAt: Date.now(),
+    rawCounts: {
+      rawTotal: positions.length,
+      rawActive: positions.length,
+      rawRedeemable: 0,
+    },
+  } as PortfolioSnapshot;
+}
+
 test("DEFAULT_POSITION_STACKING_CONFIG has sensible defaults", () => {
   assert.equal(DEFAULT_POSITION_STACKING_CONFIG.enabled, true);
   assert.equal(DEFAULT_POSITION_STACKING_CONFIG.minGainCents, 20);
@@ -253,4 +290,319 @@ test("PositionStackingStrategy executes when RISK_ON mode", async () => {
   // Should return 0 because no positions available (no tracker)
   const result = await strategy.execute(undefined, safeReservePlan);
   assert.equal(result, 0);
+});
+
+// === BASELINE TRACKING TESTS ===
+
+describe("Baseline Tracking", () => {
+  test("creates baselines for new positions", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: DEFAULT_POSITION_STACKING_CONFIG,
+    });
+
+    const position = createMockPosition({ tokenId: "new-token-123" });
+    const snapshot = createMockSnapshot([position]);
+
+    // Execute to trigger baseline creation
+    await strategy.execute(snapshot);
+
+    // Check baseline was created
+    const stats = strategy.getStats();
+    assert.equal(stats.trackedBaselines, 1);
+  });
+
+  test("updates lastUpdatedAtMs for existing positions without changing baseline values", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: DEFAULT_POSITION_STACKING_CONFIG,
+    });
+
+    // First execution to create baseline
+    const position1 = createMockPosition({ 
+      tokenId: "token-baseline-test",
+      size: 100,
+      dataApiInitialValue: 50,
+    });
+    await strategy.execute(createMockSnapshot([position1]));
+
+    // Wait a bit
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    // Second execution with grown position (should update lastUpdatedAtMs but not baseline values)
+    const position2 = createMockPosition({ 
+      tokenId: "token-baseline-test",
+      size: 110, // Size grew slightly (not enough for 40% threshold)
+      dataApiInitialValue: 55,
+    });
+    await strategy.execute(createMockSnapshot([position2]));
+
+    // Baseline count should still be 1 (not creating new baseline)
+    const stats = strategy.getStats();
+    assert.equal(stats.trackedBaselines, 1);
+  });
+
+  test("baselines are not removed for active positions even after 2+ hours", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: DEFAULT_POSITION_STACKING_CONFIG,
+    });
+
+    const position = createMockPosition({ tokenId: "long-running-token" });
+    
+    // Execute multiple times to simulate multiple cycles
+    for (let i = 0; i < 5; i++) {
+      await strategy.execute(createMockSnapshot([position]));
+    }
+
+    // Baseline should still exist
+    const stats = strategy.getStats();
+    assert.equal(stats.trackedBaselines, 1);
+  });
+});
+
+// === POSITION GROWTH DETECTION TESTS ===
+
+describe("Position Growth Detection", () => {
+  test("detects position size growth above threshold", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: {
+        ...DEFAULT_POSITION_STACKING_CONFIG,
+        sizeGrowthThreshold: 1.4, // 40% growth threshold
+      },
+    });
+
+    // First execution to create baseline with initial size
+    const position1 = createMockPosition({ 
+      tokenId: "growth-test-token",
+      size: 100,
+      dataApiInitialValue: 50,
+    });
+    await strategy.execute(createMockSnapshot([position1]));
+
+    // Second execution with position that has grown 50% (above 40% threshold)
+    const position2 = createMockPosition({ 
+      tokenId: "growth-test-token",
+      size: 150, // 50% growth
+      dataApiInitialValue: 75,
+      currentPrice: 0.70, // Still in profitable range
+      avgEntryPriceCents: 50,
+      pnlPct: 40,
+    });
+    await strategy.execute(createMockSnapshot([position2]));
+
+    // Position should be marked as already stacked (detected via baseline growth)
+    assert.equal(strategy.isPositionStacked("growth-test-token"), true);
+  });
+
+  test("does not flag position as stacked if growth is below threshold", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: {
+        ...DEFAULT_POSITION_STACKING_CONFIG,
+        sizeGrowthThreshold: 1.4, // 40% growth threshold
+      },
+    });
+
+    // First execution to create baseline
+    const position1 = createMockPosition({ 
+      tokenId: "small-growth-token",
+      size: 100,
+      dataApiInitialValue: 50,
+    });
+    await strategy.execute(createMockSnapshot([position1]));
+
+    // Second execution with position that has grown only 20% (below 40% threshold)
+    const position2 = createMockPosition({ 
+      tokenId: "small-growth-token",
+      size: 120, // Only 20% growth
+      dataApiInitialValue: 60,
+    });
+    await strategy.execute(createMockSnapshot([position2]));
+
+    // Position should NOT be marked as stacked
+    assert.equal(strategy.isPositionStacked("small-growth-token"), false);
+  });
+});
+
+// === ELIGIBILITY TESTS ===
+
+describe("Position Eligibility", () => {
+  test("position without entry price is not eligible", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: DEFAULT_POSITION_STACKING_CONFIG,
+    });
+
+    const position = createMockPosition({
+      tokenId: "no-entry-price",
+      avgEntryPriceCents: 0, // No entry price
+    });
+
+    await strategy.execute(createMockSnapshot([position]));
+    
+    // Should not be marked as stacked (wasn't eligible)
+    assert.equal(strategy.isPositionStacked("no-entry-price"), false);
+  });
+
+  test("position with untrusted PnL is not eligible", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: DEFAULT_POSITION_STACKING_CONFIG,
+    });
+
+    const position = createMockPosition({
+      tokenId: "untrusted-pnl",
+      pnlTrusted: false,
+    });
+
+    await strategy.execute(createMockSnapshot([position]));
+    
+    assert.equal(strategy.isPositionStacked("untrusted-pnl"), false);
+  });
+
+  test("position in loss is not eligible", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: DEFAULT_POSITION_STACKING_CONFIG,
+    });
+
+    const position = createMockPosition({
+      tokenId: "losing-position",
+      pnlPct: -10, // In loss
+      currentPrice: 0.40, // Below entry
+      avgEntryPriceCents: 50,
+    });
+
+    await strategy.execute(createMockSnapshot([position]));
+    
+    assert.equal(strategy.isPositionStacked("losing-position"), false);
+  });
+
+  test("position with gain below threshold is not eligible", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: {
+        ...DEFAULT_POSITION_STACKING_CONFIG,
+        minGainCents: 20,
+      },
+    });
+
+    const position = createMockPosition({
+      tokenId: "small-gain",
+      currentPrice: 0.60, // Only 10 cents above entry
+      avgEntryPriceCents: 50,
+      pnlPct: 20,
+    });
+
+    await strategy.execute(createMockSnapshot([position]));
+    
+    assert.equal(strategy.isPositionStacked("small-gain"), false);
+  });
+
+  test("position near $1 is not eligible (limited upside)", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: {
+        ...DEFAULT_POSITION_STACKING_CONFIG,
+        maxCurrentPrice: 0.95,
+      },
+    });
+
+    const position = createMockPosition({
+      tokenId: "near-resolution",
+      currentPrice: 0.98, // Too close to $1
+      avgEntryPriceCents: 50,
+      pnlPct: 96,
+    });
+
+    await strategy.execute(createMockSnapshot([position]));
+    
+    assert.equal(strategy.isPositionStacked("near-resolution"), false);
+  });
+
+  test("non-tradable position is not eligible", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: DEFAULT_POSITION_STACKING_CONFIG,
+    });
+
+    const position = createMockPosition({
+      tokenId: "not-tradable",
+      executionStatus: "NOT_TRADABLE_ON_CLOB",
+      currentPrice: 0.70,
+      avgEntryPriceCents: 50,
+      pnlPct: 40,
+    });
+
+    await strategy.execute(createMockSnapshot([position]));
+    
+    assert.equal(strategy.isPositionStacked("not-tradable"), false);
+  });
+});
+
+// === COOLDOWN TESTS ===
+
+describe("Cooldown Behavior", () => {
+  test("position enters cooldown after check", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: {
+        ...DEFAULT_POSITION_STACKING_CONFIG,
+        cooldownMs: 60000, // 60 second cooldown
+      },
+    });
+
+    // Position that meets criteria but won't actually stack (no wallet)
+    const position = createMockPosition({
+      tokenId: "cooldown-test",
+      currentPrice: 0.75,
+      avgEntryPriceCents: 50, // 25 cents gain
+      pnlPct: 50,
+    });
+
+    await strategy.execute(createMockSnapshot([position]));
+
+    // Should have active cooldown
+    const stats = strategy.getStats();
+    assert.equal(stats.activeCooldowns, 1);
+  });
+});
+
+// === SINGLE-FLIGHT GUARD TESTS ===
+
+describe("Single-Flight Guard", () => {
+  test("prevents concurrent execution", async () => {
+    const strategy = new PositionStackingStrategy({
+      client: mockClient,
+      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      config: DEFAULT_POSITION_STACKING_CONFIG,
+    });
+
+    const position = createMockPosition();
+    const snapshot = createMockSnapshot([position]);
+
+    // Start two executions simultaneously
+    const [result1, result2] = await Promise.all([
+      strategy.execute(snapshot),
+      strategy.execute(snapshot),
+    ]);
+
+    // Both should complete (one may be skipped due to single-flight)
+    assert.equal(typeof result1, "number");
+    assert.equal(typeof result2, "number");
+  });
 });

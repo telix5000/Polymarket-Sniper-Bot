@@ -302,15 +302,22 @@ export class PositionStackingStrategy {
 
   /**
    * Update baselines for all active positions.
-   * Only creates baselines for NEW positions (not seen before).
-   * Existing baselines are NOT updated - this is key to detecting growth.
+   * - Creates baselines for NEW positions (not seen before)
+   * - Updates lastUpdatedAtMs for EXISTING positions (to prevent stale cleanup)
+   * - Does NOT update baselineSize/baselineInitialValue (key to detecting growth)
    */
   private updateBaselines(positions: readonly Position[]): void {
     const now = Date.now();
 
     for (const position of positions) {
-      // Skip if we already have a baseline for this position
-      if (this.positionBaselines.has(position.tokenId)) {
+      const existingBaseline = this.positionBaselines.get(position.tokenId);
+      
+      if (existingBaseline) {
+        // Position already has a baseline - just update the lastUpdatedAtMs
+        // to indicate this position is still active (prevents stale cleanup)
+        // We do NOT update baselineSize/baselineInitialValue as that would
+        // break the growth detection mechanism
+        existingBaseline.lastUpdatedAtMs = now;
         continue;
       }
 
@@ -539,18 +546,11 @@ export class PositionStackingStrategy {
           gainCentsAtStack: gainCents,
         });
 
-        // Update the baseline to reflect the new (larger) position
-        // This is CRITICAL - without this, the baseline growth check would
-        // trigger on the next cycle thinking the position was already stacked
-        const baseline = this.positionBaselines.get(position.tokenId);
-        if (baseline) {
-          // Estimate new size (actual will be confirmed on next refresh)
-          const additionalShares = sizeUsd / position.currentPrice;
-          baseline.baselineSize = position.size + additionalShares;
-          baseline.baselineInitialValue =
-            (position.dataApiInitialValue ?? 0) + sizeUsd;
-          baseline.lastUpdatedAtMs = Date.now();
-        }
+        // Do NOT update the baseline here using an estimated size.
+        // The actual executed size may differ due to slippage/partial fills.
+        // We rely on `stackedPositions` Map to prevent duplicate stacking
+        // until the next refresh cycle, where baselines will be updated from
+        // real position data returned by the API.
 
         this.logger.info(
           `[PositionStacking] ✅ Stacked ${position.tokenId.slice(0, 8)}... ` +
