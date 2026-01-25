@@ -235,6 +235,121 @@ export const resetInFlightBuys = (): void => {
   inFlightBuys.clear();
 };
 
+// ============================================================================
+// HEDGE OPERATION LOCK
+// ============================================================================
+// When Smart Hedging is performing a liquidation/hedge operation on a market,
+// we need to block incoming BUY orders on that market to prevent conflicts.
+//
+// PROBLEM: During smart hedging, we may need to:
+// 1. SELL a losing position to free funds
+// 2. BUY the opposite side (hedge/inverse)
+//
+// If a copy-trade BUY comes in between steps 1 and 2, it could:
+// - Consume the freed funds intended for the hedge
+// - Create conflicting positions
+// - Cause the hedge operation to fail
+//
+// SOLUTION: Market-level hedge lock that blocks BUYs during hedge operations.
+// The lock automatically expires after a timeout to prevent permanent blocks.
+// ============================================================================
+
+/**
+ * Timeout for hedge operation locks (30 seconds).
+ * If a hedge operation takes longer than this, something went wrong and we
+ * should allow new operations to proceed to avoid permanent deadlocks.
+ */
+const HEDGE_OPERATION_LOCK_TIMEOUT_MS = 30_000;
+
+/**
+ * Hedge operation lock tracking.
+ * Key: marketId
+ * Value: { startedAt: timestamp, operationType: string }
+ */
+const hedgeOperationLocks = new Map<
+  string,
+  { startedAt: number; operationType: string }
+>();
+
+/**
+ * Check if a market has an active hedge operation lock.
+ * Used by trade executors to block BUY orders during hedge/liquidation operations.
+ *
+ * @param marketId - The market ID to check
+ * @param nowOverride - Optional timestamp for testing
+ * @returns Object indicating if blocked and why
+ */
+export const isMarketHedgeLocked = (
+  marketId: string | undefined,
+  nowOverride?: number,
+): { locked: boolean; reason?: string; operationType?: string; remainingMs?: number } => {
+  if (!marketId) {
+    return { locked: false };
+  }
+
+  const lock = hedgeOperationLocks.get(marketId);
+  if (!lock) {
+    return { locked: false };
+  }
+
+  const now = nowOverride ?? Date.now();
+  const elapsed = now - lock.startedAt;
+
+  // Check if lock has expired (stale protection)
+  if (elapsed > HEDGE_OPERATION_LOCK_TIMEOUT_MS) {
+    hedgeOperationLocks.delete(marketId);
+    return { locked: false };
+  }
+
+  return {
+    locked: true,
+    reason: "HEDGE_OPERATION_IN_PROGRESS",
+    operationType: lock.operationType,
+    remainingMs: HEDGE_OPERATION_LOCK_TIMEOUT_MS - elapsed,
+  };
+};
+
+/**
+ * Acquire a hedge operation lock on a market.
+ * Used by Smart Hedging before starting a hedge/liquidation operation.
+ *
+ * @param marketId - The market ID to lock
+ * @param operationType - Type of operation (e.g., "HEDGE", "LIQUIDATE", "HEDGE_EXIT")
+ * @returns true if lock acquired, false if already locked
+ */
+export const acquireHedgeLock = (
+  marketId: string,
+  operationType: string,
+): boolean => {
+  const existing = isMarketHedgeLocked(marketId);
+  if (existing.locked) {
+    return false; // Another operation is in progress
+  }
+
+  hedgeOperationLocks.set(marketId, {
+    startedAt: Date.now(),
+    operationType,
+  });
+  return true;
+};
+
+/**
+ * Release a hedge operation lock on a market.
+ * Must be called after the hedge/liquidation operation completes (success or failure).
+ *
+ * @param marketId - The market ID to unlock
+ */
+export const releaseHedgeLock = (marketId: string): void => {
+  hedgeOperationLocks.delete(marketId);
+};
+
+/**
+ * Reset hedge operation lock state (for testing).
+ */
+export const resetHedgeLocks = (): void => {
+  hedgeOperationLocks.clear();
+};
+
 /**
  * Reset log deduplication state (for testing).
  */

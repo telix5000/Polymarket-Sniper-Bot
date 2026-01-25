@@ -16,6 +16,9 @@ import {
 describe("Smart Hedging Near-Close Logic", () => {
   // Helper function to simulate the near-close decision logic
   // This mirrors the logic in SmartHedgingStrategy.execute()
+  // 
+  // UPDATED (Jan 2025): Near resolution, hedging is PRIORITIZED for significant losses
+  // because buying the inverse locks in recovery value before market resolves.
   function shouldHedgePosition(
     config: SmartHedgingConfig,
     position: {
@@ -25,7 +28,7 @@ describe("Smart Hedging Near-Close Logic", () => {
       marketEndTime?: number;
     },
     now: number,
-  ): { shouldHedge: boolean; reason: string } {
+  ): { shouldHedge: boolean; reason: string; sellOriginalAfter?: boolean } {
     const lossPct = Math.abs(position.pnlPct);
 
     // Check if position meets basic loss threshold
@@ -40,15 +43,18 @@ describe("Smart Hedging Near-Close Logic", () => {
 
     const minutesToClose = (position.marketEndTime - now) / (60 * 1000);
 
-    // No-hedge window: inside last N minutes, don't hedge at all
+    // No-hedge window (last 2-3 minutes): 
+    // NEW LOGIC: For significant losses, hedge is PRIORITIZED (buy inverse + sell original)
+    // This is the BEST time to hedge - outcome is nearly certain
     if (minutesToClose <= config.noHedgeWindowMinutes) {
-      if (lossPct >= config.forceLiquidationPct) {
+      if (lossPct >= config.triggerLossPct) {
         return {
-          shouldHedge: false,
-          reason: "No-hedge window - liquidate instead",
+          shouldHedge: true,
+          reason: "Near-resolution hedge - buy inverse + sell original",
+          sellOriginalAfter: true,
         };
       }
-      return { shouldHedge: false, reason: "No-hedge window - skip" };
+      return { shouldHedge: false, reason: "No-hedge window - small loss skip" };
     }
 
     // Near-close window: apply stricter thresholds
@@ -72,8 +78,8 @@ describe("Smart Hedging Near-Close Logic", () => {
     return { shouldHedge: true, reason: "Normal hedging" };
   }
 
-  describe("No-Hedge Window (last 3 minutes)", () => {
-    test("should not hedge position when 2 minutes from close", () => {
+  describe("Near-Resolution Hedging (last 3 minutes) - NEW BEHAVIOR", () => {
+    test("should HEDGE position with significant loss when 2 minutes from close", () => {
       const now = Date.now();
       const marketEndTime = now + 2 * 60 * 1000; // 2 minutes from now
 
@@ -82,7 +88,7 @@ describe("Smart Hedging Near-Close Logic", () => {
         {
           entryPrice: 0.6,
           currentPrice: 0.45,
-          pnlPct: -25, // 25% loss (triggers normal hedging at 20%)
+          pnlPct: -25, // 25% loss (above triggerLossPct of 20%)
           marketEndTime,
         },
         now,
@@ -90,16 +96,21 @@ describe("Smart Hedging Near-Close Logic", () => {
 
       assert.strictEqual(
         result.shouldHedge,
-        false,
-        "Should not hedge in no-hedge window",
+        true,
+        "Should hedge near resolution to buy inverse",
+      );
+      assert.strictEqual(
+        result.sellOriginalAfter,
+        true,
+        "Should sell original after buying inverse",
       );
       assert.ok(
-        result.reason.includes("No-hedge window"),
-        `Expected reason to include 'No-hedge window', got: ${result.reason}`,
+        result.reason.includes("Near-resolution"),
+        `Expected reason to include 'Near-resolution', got: ${result.reason}`,
       );
     });
 
-    test("should not hedge position when 1 minute from close", () => {
+    test("should HEDGE position with catastrophic loss when 1 minute from close", () => {
       const now = Date.now();
       const marketEndTime = now + 1 * 60 * 1000; // 1 minute from now
 
@@ -107,8 +118,8 @@ describe("Smart Hedging Near-Close Logic", () => {
         DEFAULT_HEDGING_CONFIG,
         {
           entryPrice: 0.7,
-          currentPrice: 0.4,
-          pnlPct: -42, // 42% loss
+          currentPrice: 0.35,
+          pnlPct: -50, // 50% loss (catastrophic)
           marketEndTime,
         },
         now,
@@ -116,12 +127,17 @@ describe("Smart Hedging Near-Close Logic", () => {
 
       assert.strictEqual(
         result.shouldHedge,
-        false,
-        "Should not hedge when 1 minute from close",
+        true,
+        "Should hedge catastrophic loss near resolution",
+      );
+      assert.strictEqual(
+        result.sellOriginalAfter,
+        true,
+        "Should sell original after buying inverse",
       );
     });
 
-    test("should not hedge position when 30 seconds from close", () => {
+    test("should skip position below loss trigger even when 30 seconds from close", () => {
       const now = Date.now();
       const marketEndTime = now + 0.5 * 60 * 1000; // 30 seconds from now
 
@@ -129,8 +145,8 @@ describe("Smart Hedging Near-Close Logic", () => {
         DEFAULT_HEDGING_CONFIG,
         {
           entryPrice: 0.8,
-          currentPrice: 0.5,
-          pnlPct: -37.5,
+          currentPrice: 0.72,
+          pnlPct: -10, // 10% loss (below 20% trigger)
           marketEndTime,
         },
         now,
@@ -139,20 +155,27 @@ describe("Smart Hedging Near-Close Logic", () => {
       assert.strictEqual(
         result.shouldHedge,
         false,
-        "Should not hedge when 30 seconds from close",
+        "Should not hedge when loss is below trigger threshold",
+      );
+      assert.ok(
+        result.reason.includes("trigger threshold"),
+        `Expected reason to mention trigger threshold, got: ${result.reason}`,
       );
     });
 
-    test("should trigger liquidation logic for catastrophic loss in no-hedge window", () => {
+    test("near-resolution hedge scenario: 67% loss at 2 minutes to close", () => {
       const now = Date.now();
       const marketEndTime = now + 2 * 60 * 1000; // 2 minutes from now
 
+      // Scenario: Hold "Team A" at 20¢ (was 60¢, down 67%)
+      // Market closes in 2 minutes
+      // Should BUY "Team B" (inverse) at ~80¢ then SELL "Team A" at 20¢
       const result = shouldHedgePosition(
         DEFAULT_HEDGING_CONFIG,
         {
-          entryPrice: 0.8,
-          currentPrice: 0.35,
-          pnlPct: -56.25, // 56.25% loss (above 50% liquidation threshold)
+          entryPrice: 0.6,
+          currentPrice: 0.2,
+          pnlPct: -67, // 67% loss
           marketEndTime,
         },
         now,
@@ -160,12 +183,13 @@ describe("Smart Hedging Near-Close Logic", () => {
 
       assert.strictEqual(
         result.shouldHedge,
-        false,
-        "Should not hedge even with catastrophic loss (liquidate instead)",
+        true,
+        "Should hedge 67% loss near resolution",
       );
-      assert.ok(
-        result.reason.includes("liquidate"),
-        `Expected reason to mention liquidation, got: ${result.reason}`,
+      assert.strictEqual(
+        result.sellOriginalAfter,
+        true,
+        "Should sell original 20¢ position after buying inverse",
       );
     });
   });
@@ -426,17 +450,23 @@ describe("Smart Hedging Near-Close Logic", () => {
         {
           entryPrice: 0.5,
           currentPrice: 0.35,
-          pnlPct: -30,
+          pnlPct: -30, // Significant loss (above triggerLossPct)
           marketEndTime,
         },
         now,
       );
 
-      // At exactly 3 minutes, it's still in no-hedge window (<=)
+      // NEW BEHAVIOR: At exactly 3 minutes with significant loss, SHOULD hedge
+      // (near-resolution hedge to buy inverse + sell original)
       assert.strictEqual(
         result.shouldHedge,
-        false,
-        "At exactly 3 minutes, should be in no-hedge window",
+        true,
+        "At exactly 3 minutes with significant loss, should hedge (near-resolution)",
+      );
+      assert.strictEqual(
+        result.sellOriginalAfter,
+        true,
+        "Near-resolution hedge should sell original after",
       );
     });
 
@@ -507,16 +537,22 @@ describe("Smart Hedging Near-Close Logic", () => {
         {
           entryPrice: 0.5,
           currentPrice: 0.35,
-          pnlPct: -30,
+          pnlPct: -30, // Significant loss (above triggerLossPct)
           marketEndTime,
         },
         now,
       );
 
+      // NEW BEHAVIOR: Inside no-hedge window with significant loss, SHOULD hedge
       assert.strictEqual(
         result.shouldHedge,
-        false,
-        "4 min should be inside custom 5 min no-hedge window",
+        true,
+        "4 min inside custom 5 min no-hedge window with significant loss should still hedge",
+      );
+      assert.strictEqual(
+        result.sellOriginalAfter,
+        true,
+        "Near-resolution hedge should sell original after",
       );
     });
 
@@ -2122,6 +2158,153 @@ describe("Untrusted P&L Exception Logic", () => {
       result.shouldProceed,
       true,
       "Should proceed when loss exceeds custom forceLiquidationPct",
+    );
+  });
+});
+
+/**
+ * Tests for Invalid Orderbook Exception Logic
+ *
+ * These tests verify that catastrophic losses with invalid orderbooks but
+ * TRUSTED P&L are still processed. This prevents missing hedge opportunities
+ * when the orderbook is stale/broken but the Data-API price is reliable.
+ */
+describe("Invalid Orderbook Exception Logic", () => {
+  /**
+   * Helper function to simulate the invalid orderbook decision logic
+   * This mirrors the logic in SmartHedgingStrategy.execute()
+   */
+  function shouldProceedWithInvalidOrderbook(
+    config: SmartHedgingConfig,
+    pnlPct: number,
+    pnlTrusted: boolean,
+    orderbookQuality: "VALID" | "INVALID_BOOK" | "NO_BOOK",
+  ): { shouldProceed: boolean; reason: string } {
+    // If orderbook is valid, proceed normally
+    if (orderbookQuality === "VALID") {
+      return { shouldProceed: true, reason: "Orderbook is valid" };
+    }
+
+    // For INVALID_BOOK, check for catastrophic loss exception
+    if (orderbookQuality === "INVALID_BOOK") {
+      const isActualLoss = pnlPct < 0;
+      const lossPctMagnitude = Math.abs(pnlPct);
+      const isCatastrophicLossWithTrustedPnl =
+        isActualLoss &&
+        lossPctMagnitude >= config.forceLiquidationPct &&
+        pnlTrusted;
+
+      if (isCatastrophicLossWithTrustedPnl) {
+        return {
+          shouldProceed: true,
+          reason: "Catastrophic loss with trusted P&L - proceed despite invalid orderbook",
+        };
+      }
+      return {
+        shouldProceed: false,
+        reason: "Invalid orderbook - skip to avoid false catastrophic loss",
+      };
+    }
+
+    // NO_BOOK is handled separately (by pnlTrusted flag)
+    return { shouldProceed: false, reason: "No orderbook data" };
+  }
+
+  test("should proceed when orderbook is valid", () => {
+    const result = shouldProceedWithInvalidOrderbook(
+      DEFAULT_HEDGING_CONFIG,
+      -30, // 30% loss
+      true, // pnlTrusted
+      "VALID",
+    );
+
+    assert.strictEqual(result.shouldProceed, true, "Should proceed with valid orderbook");
+  });
+
+  test("should proceed with invalid orderbook when catastrophic loss AND trusted P&L", () => {
+    const result = shouldProceedWithInvalidOrderbook(
+      DEFAULT_HEDGING_CONFIG,
+      -70, // 70% loss (catastrophic - above 50%)
+      true, // pnlTrusted = TRUE
+      "INVALID_BOOK",
+    );
+
+    assert.strictEqual(
+      result.shouldProceed,
+      true,
+      "Should proceed with catastrophic loss + trusted P&L despite invalid orderbook",
+    );
+    assert.ok(
+      result.reason.includes("Catastrophic"),
+      `Expected reason to mention catastrophic, got: ${result.reason}`,
+    );
+  });
+
+  test("should skip with invalid orderbook when catastrophic loss but UNTRUSTED P&L", () => {
+    const result = shouldProceedWithInvalidOrderbook(
+      DEFAULT_HEDGING_CONFIG,
+      -70, // 70% loss (catastrophic)
+      false, // pnlTrusted = FALSE
+      "INVALID_BOOK",
+    );
+
+    assert.strictEqual(
+      result.shouldProceed,
+      false,
+      "Should skip catastrophic loss with untrusted P&L and invalid orderbook",
+    );
+  });
+
+  test("should skip with invalid orderbook when non-catastrophic loss even with trusted P&L", () => {
+    const result = shouldProceedWithInvalidOrderbook(
+      DEFAULT_HEDGING_CONFIG,
+      -30, // 30% loss (NOT catastrophic)
+      true, // pnlTrusted = true
+      "INVALID_BOOK",
+    );
+
+    assert.strictEqual(
+      result.shouldProceed,
+      false,
+      "Should skip non-catastrophic loss with invalid orderbook",
+    );
+  });
+
+  test("should skip with invalid orderbook when loss below trigger threshold", () => {
+    const result = shouldProceedWithInvalidOrderbook(
+      DEFAULT_HEDGING_CONFIG,
+      -10, // 10% loss (below trigger)
+      true, // pnlTrusted
+      "INVALID_BOOK",
+    );
+
+    assert.strictEqual(
+      result.shouldProceed,
+      false,
+      "Should skip low loss with invalid orderbook",
+    );
+  });
+
+  test("should respect custom forceLiquidationPct threshold", () => {
+    const customConfig = {
+      ...DEFAULT_HEDGING_CONFIG,
+      forceLiquidationPct: 60, // Custom 60% threshold
+    };
+
+    // 55% loss is below custom 60% threshold
+    const result1 = shouldProceedWithInvalidOrderbook(customConfig, -55, true, "INVALID_BOOK");
+    assert.strictEqual(
+      result1.shouldProceed,
+      false,
+      "55% loss should be skipped with 60% threshold",
+    );
+
+    // 65% loss is above custom 60% threshold
+    const result2 = shouldProceedWithInvalidOrderbook(customConfig, -65, true, "INVALID_BOOK");
+    assert.strictEqual(
+      result2.shouldProceed,
+      true,
+      "65% loss should proceed with 60% threshold",
     );
   });
 });
