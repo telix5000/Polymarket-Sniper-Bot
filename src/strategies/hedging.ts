@@ -32,8 +32,7 @@ import {
   acquireHedgeLock,
   releaseHedgeLock,
 } from "../utils/funds-allowance.util";
-import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR } from "./constants";
-import { EMERGENCY_EXIT_MIN_PRICE } from "./stop-loss";
+import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR, calculateMinAcceptablePrice, FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
 
 /**
  * Hedging Direction - determines when hedging is active
@@ -1782,6 +1781,12 @@ export class HedgingStrategy {
       // Normalize the outcome for the order (tokenId is what matters for execution)
       const orderOutcome = this.normalizeOutcomeForOrder(position.side);
 
+      // Use liberal slippage for liquidation - this is a "falling knife" scenario
+      // where we need to exit and salvage whatever capital remains.
+      // FALLING_KNIFE_SLIPPAGE_PCT (25%) is more liberal than normal sells but
+      // still recovers meaningful value rather than accepting near-zero prices.
+      const minPrice = calculateMinAcceptablePrice(position.currentPrice, FALLING_KNIFE_SLIPPAGE_PCT);
+
       const result = await postOrder({
         client: this.client,
         wallet,
@@ -1790,8 +1795,8 @@ export class HedgingStrategy {
         outcome: orderOutcome,
         side: "SELL",
         sizeUsd: currentValue,
-        // Accept any price above 1¢ - just get out!
-        minAcceptablePrice: EMERGENCY_EXIT_MIN_PRICE,
+        // Use falling knife slippage (25%) for graceful exit
+        minAcceptablePrice: minPrice,
         logger: this.logger,
         skipDuplicatePrevention: true,
         skipMinOrderSizeCheck: true, // Allow selling small positions during liquidation
