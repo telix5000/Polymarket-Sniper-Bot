@@ -1,9 +1,8 @@
 /**
  * Dynamic Reserves / Capital Allocation Controller
  *
- * Prevents the bot from taking new positions when we lack sufficient reserves
- * to hedge or survive large adverse moves. Computed from live portfolio state
- * (positions + current prices) and gates new BUY orders until reserves are restored.
+ * Manages capital allocation by computing required reserves based on portfolio state.
+ * Reserves protect against losses but should not block profitable opportunities.
  *
  * RESERVE MODEL:
  * A) Base reserve: max(20, 0.05 * equityUsd)
@@ -22,8 +21,15 @@
  * or P&L. This reflects the reduced risk of positions likely to resolve in our favor.
  *
  * GATING BEHAVIOR:
- * - RISK_OFF mode: block new BUY orders, allow SELL/hedge/redeem
- * - RISK_ON mode: allow all order types
+ * - RISK_OFF mode: Gates generic new BUY orders via canOpenNewBuy()
+ * - RISK_ON mode: Allow all order types
+ *
+ * RESERVE USAGE (Stacking & Hedging):
+ * Stacking (profitable positions) and hedging (both ways) are allowed to use
+ * full available cash, even when in RISK_OFF mode. These are high-value operations:
+ * - Stacking capitalizes on winning momentum
+ * - Hedging protects against losses (down) or maximizes gains (up)
+ * Reserves will be replenished from profits, but missing these opportunities is costly.
  */
 
 import type { ConsoleLogger } from "../utils/logger.util";

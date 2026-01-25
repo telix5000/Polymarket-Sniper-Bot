@@ -243,27 +243,54 @@ test("PositionStackingStrategy returns 0 when disabled", async () => {
   assert.equal(result, 0);
 });
 
-test("PositionStackingStrategy respects RISK_OFF mode", async () => {
+test("PositionStackingStrategy uses available cash even in RISK_OFF mode", async () => {
   const strategy = new PositionStackingStrategy({
     client: mockClient,
     logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
     config: DEFAULT_POSITION_STACKING_CONFIG,
   });
 
-  // Create a mock reserve plan in RISK_OFF mode
+  // Create a mock reserve plan in RISK_OFF mode with some available cash
+  // New behavior: strategy should use available cash for stacking, not block
   const riskyReservePlan = {
     mode: "RISK_OFF" as const,
     reserveRequired: 100,
     baseReserve: 50,
     positionReserve: 50,
-    availableCash: 50,
+    availableCash: 50, // Has $50 available (but shortfall means RISK_OFF)
     shortfall: 50,
     topPositionReserves: [],
     equityUsd: 100,
     computedAtMs: Date.now(),
   };
 
+  // Should return 0 because no positions to stack (no tracker), NOT because RISK_OFF blocked it
   const result = await strategy.execute(undefined, riskyReservePlan);
+  assert.equal(result, 0);
+});
+
+test("PositionStackingStrategy skips when budget is exhausted", async () => {
+  const strategy = new PositionStackingStrategy({
+    client: mockClient,
+    logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+    config: DEFAULT_POSITION_STACKING_CONFIG,
+  });
+
+  // Create a mock reserve plan with zero available cash
+  const zeroReservePlan = {
+    mode: "RISK_OFF" as const,
+    reserveRequired: 100,
+    baseReserve: 50,
+    positionReserve: 50,
+    availableCash: 0, // No cash available
+    shortfall: 100,
+    topPositionReserves: [],
+    equityUsd: 100,
+    computedAtMs: Date.now(),
+  };
+
+  // Should return 0 because no cash available for stacking
+  const result = await strategy.execute(undefined, zeroReservePlan);
   assert.equal(result, 0);
 });
 

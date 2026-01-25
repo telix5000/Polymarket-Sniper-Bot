@@ -2148,9 +2148,10 @@ describe("Smart Hedging Reserve-Aware Sizing", () => {
    * implementation.
    *
    * The actual implementation uses a per-cycle budget that is:
-   * 1. Initialized at the start of each execute() cycle from (availableCash - reserveRequired)
+   * 1. Initialized at the start of each execute() cycle from availableCash (full amount,
+   *    allowing reserves to be used for hedging both ways - protective and opportunistic)
    * 2. Decremented after each successful BUY order
-   * 3. Checked before each hedge to prevent multiple hedges from exceeding reserves
+   * 3. Checked before each hedge to ensure sufficient funds remain
    *
    * @param config - Smart hedging config
    * @param computedHedgeUsd - The originally computed hedge/buy amount based on position
@@ -2282,7 +2283,7 @@ describe("Smart Hedging Reserve-Aware Sizing", () => {
     /**
      * Test that simulates multiple hedges in a single cycle.
      * The per-cycle budget should be decremented after each successful hedge,
-     * preventing multiple hedges from exceeding (availableCash - reserveRequired).
+     * ensuring funds are tracked correctly within a single execution cycle.
      */
     test("multiple hedges in same cycle decrement the budget correctly", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, minHedgeUsd: 1.0 };
