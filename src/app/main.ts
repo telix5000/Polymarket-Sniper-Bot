@@ -8,7 +8,10 @@ import {
 import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 import { MempoolMonitorService } from "../services/mempool-monitor.service";
 import { TradeExecutorService } from "../services/trade-executor.service";
-import { createTelegramService, TelegramService } from "../services/telegram.service";
+import {
+  createTelegramService,
+  TelegramService,
+} from "../services/telegram.service";
 import {
   initTradeNotificationService,
   setTradeNotificationPnLCallback,
@@ -205,8 +208,12 @@ async function main(): Promise<void> {
     // Set trade recording callback so realized P&L is tracked in the ledger
     // This is wired REGARDLESS of Telegram config so P&L tracking works in all deployments
     // BUY trades establish cost basis, SELL trades realize P&L
-    setTradeRecordCallback((trade) => orchestrator!.getPnLLedger().recordTrade(trade));
-    logger.info("📊 P&L tracking enabled - all trades will be recorded to ledger");
+    setTradeRecordCallback((trade) =>
+      orchestrator!.getPnLLedger().recordTrade(trade),
+    );
+    logger.info(
+      "📊 P&L tracking enabled - all trades will be recorded to ledger",
+    );
 
     // Initialize Telegram notifications BEFORE starting orchestrator
     // This ensures notifications are ready when the first trade happens
@@ -214,15 +221,45 @@ async function main(): Promise<void> {
     if (telegramService.isEnabled()) {
       // Initialize centralized trade notification service for all strategies
       initTradeNotificationService(telegramService, logger);
-      
+
       // Set P&L callback for including balance snapshots with notifications
-      setTradeNotificationPnLCallback(() => orchestrator!.getSummaryWithBalances());
-      
+      setTradeNotificationPnLCallback(() =>
+        orchestrator!.getSummaryWithBalances(),
+      );
+
       // Start periodic P&L updates
-      telegramService.startPnlUpdates(() => orchestrator!.getSummaryWithBalances());
-      
-      logger.info("📱 Telegram notifications initialized BEFORE trading starts");
-      logger.info("📱 Trade notifications enabled - will notify on buys/sells/hedges/redemptions");
+      telegramService.startPnlUpdates(() =>
+        orchestrator!.getSummaryWithBalances(),
+      );
+
+      // Send startup notification showing enabled strategies
+      // This helps users verify Telegram is working and understand what to expect
+      // Check if mempool mode will also run (MODE=both or MODE=mempool)
+      const mempoolWillRun = mode === "mempool" || mode === "both";
+      void telegramService
+        .sendStartupNotification({
+          endgameSweep: strategyConfig.endgameSweepEnabled,
+          positionStacking: strategyConfig.positionStackingEnabled,
+          sellEarly: strategyConfig.sellEarlyEnabled,
+          autoSell: strategyConfig.autoSellEnabled,
+          scalpTakeProfit: strategyConfig.scalpTakeProfitEnabled,
+          smartHedging: strategyConfig.smartHedgingEnabled,
+          stopLoss: true, // Always enabled when orchestrator runs
+          autoRedeem: strategyConfig.autoRedeemEnabled,
+          frontrun: mempoolWillRun, // Frontrun/copy trading enabled when mempool mode runs
+        })
+        .catch((err) => {
+          logger.warn(
+            `[Telegram] Failed to send startup notification: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+
+      logger.info(
+        "📱 Telegram notifications initialized BEFORE trading starts",
+      );
+      logger.info(
+        "📱 Trade notifications enabled - will notify on buys/sells/hedges/redemptions",
+      );
     }
 
     // NOW start the orchestrator (after notifications are ready)
@@ -338,6 +375,37 @@ async function main(): Promise<void> {
       logger.info(
         "=====================================================================",
       );
+    }
+
+    // Initialize Telegram for mempool mode if not already initialized by orchestrator
+    // This ensures copy trade (frontrun) notifications work even when running mempool-only
+    if (!telegramService) {
+      telegramService = createTelegramService(logger);
+      if (telegramService.isEnabled()) {
+        initTradeNotificationService(telegramService, logger);
+
+        // Send startup notification for mempool/copy trading mode
+        void telegramService
+          .sendStartupNotification({
+            frontrun: !mempoolEnv.detectOnly, // Copy trading enabled if not in detect-only mode
+            // Other strategies are only available when orchestrator is also running
+            endgameSweep: false,
+            positionStacking: false,
+            sellEarly: false,
+            autoSell: false,
+            scalpTakeProfit: false,
+            smartHedging: false,
+            stopLoss: false,
+            autoRedeem: false,
+          })
+          .catch((err) => {
+            logger.warn(
+              `[Telegram] Failed to send startup notification: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+
+        logger.info("📱 Telegram notifications initialized for mempool mode");
+      }
     }
 
     const executor = new TradeExecutorService({

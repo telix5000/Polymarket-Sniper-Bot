@@ -17,7 +17,11 @@
  * - Graceful degradation when notifications are disabled
  */
 
-import type { TelegramService, TradeNotification, PnLSnapshot } from "./telegram.service";
+import type {
+  TelegramService,
+  TradeNotification,
+  PnLSnapshot,
+} from "./telegram.service";
 import type { LedgerSummary, Trade } from "../strategies/pnl-ledger";
 import type { Logger } from "../utils/logger.util";
 import type { StrategyId } from "../strategies/risk-types";
@@ -91,9 +95,7 @@ export function setTradeNotificationPnLCallback(
  * When set, all trades (BUY and SELL) will be automatically recorded to the ledger.
  * BUY trades establish cost basis, SELL trades realize P&L.
  */
-export function setTradeRecordCallback(
-  callback: (trade: Trade) => void,
-): void {
+export function setTradeRecordCallback(callback: (trade: Trade) => void): void {
   recordTradeCallback = callback;
   logger?.debug("[TradeNotification] Trade recording callback set");
 }
@@ -127,36 +129,39 @@ function toPnLSnapshot(summary: LedgerSummary): PnLSnapshot {
  * Map notification type to strategy ID for trade recording
  * Uses valid StrategyId values from risk-types.ts
  */
-function mapTypeToStrategyId(type: TradeNotification["type"], strategy?: string): StrategyId {
+function mapTypeToStrategyId(
+  type: TradeNotification["type"],
+  strategy?: string,
+): StrategyId {
   // Use explicit strategy if provided
   if (strategy) {
     const strategyMap: Record<string, StrategyId> = {
-      "AutoSell": "QUICK_FLIP",         // AutoSell is similar to quick flip
+      AutoSell: "QUICK_FLIP", // AutoSell is similar to quick flip
       "AutoSell (Stale)": "QUICK_FLIP",
       "AutoSell (Dispute)": "QUICK_FLIP",
-      "SellEarly": "QUICK_FLIP",        // SellEarly is capital efficiency
-      "AutoRedeem": "MANUAL",           // Redemption - closest match
-      "SmartHedging": "SMART_HEDGE",    // Smart hedging strategy
-      "ScalpTrade": "QUICK_FLIP",  // Scalp is profit-taking
-      "UniversalStopLoss": "STOP_LOSS", // Direct match
-      "PositionStacking": "ENDGAME",    // Stacking builds positions like endgame
-      "EndgameSweep": "ENDGAME",        // Direct match
-      "Frontrun": "FF",                 // FF = Frontrun/Flashfill
+      SellEarly: "QUICK_FLIP", // SellEarly is capital efficiency
+      AutoRedeem: "MANUAL", // Redemption - closest match
+      SmartHedging: "SMART_HEDGE", // Smart hedging strategy
+      ScalpTrade: "QUICK_FLIP", // Scalp is profit-taking
+      UniversalStopLoss: "STOP_LOSS", // Direct match
+      PositionStacking: "ENDGAME", // Stacking builds positions like endgame
+      EndgameSweep: "ENDGAME", // Direct match
+      Frontrun: "FF", // FF = Frontrun/Flashfill
     };
     return strategyMap[strategy] ?? "MANUAL";
   }
-  
+
   // Fall back to type-based mapping
   const typeMap: Record<TradeNotification["type"], StrategyId> = {
-    "BUY": "ENDGAME",
-    "SELL": "QUICK_FLIP",
-    "REDEEM": "MANUAL",
-    "HEDGE": "HEDGE",
-    "HEDGE_EXIT": "SMART_HEDGE",
-    "STACK": "ENDGAME",
-    "STOP_LOSS": "STOP_LOSS",
-    "SCALP": "QUICK_FLIP",
-    "FRONTRUN": "FF",
+    BUY: "ENDGAME",
+    SELL: "QUICK_FLIP",
+    REDEEM: "MANUAL",
+    HEDGE: "HEDGE",
+    HEDGE_EXIT: "SMART_HEDGE",
+    STACK: "ENDGAME",
+    STOP_LOSS: "STOP_LOSS",
+    SCALP: "QUICK_FLIP",
+    FRONTRUN: "FF",
   };
   return typeMap[type] ?? "MANUAL";
 }
@@ -173,7 +178,7 @@ function recordTradeToLedger(input: TradeNotificationInput): void {
   try {
     const strategyId = mapTypeToStrategyId(input.type, input.strategy);
     const side = isSellType(input.type) ? "SELL" : "BUY";
-    
+
     const trade: Trade = {
       timestamp: Date.now(),
       strategyId,
@@ -225,9 +230,24 @@ export async function notifyTrade(
   // This ensures realized P&L is updated before we fetch the snapshot
   recordTradeToLedger(input);
 
-  if (!telegramService || !telegramService.isEnabled()) {
+  if (!telegramService) {
+    logger?.warn(
+      `[TradeNotification] Cannot send ${input.type} notification - telegramService not initialized`,
+    );
     return false;
   }
+
+  if (!telegramService.isEnabled()) {
+    logger?.debug(
+      `[TradeNotification] Cannot send ${input.type} notification - Telegram not enabled`,
+    );
+    return false;
+  }
+
+  // Log that we're attempting to send a notification
+  logger?.info(
+    `[TradeNotification] Sending ${input.type} notification for market ${input.marketId.slice(0, 12)}...`,
+  );
 
   const trade: TradeNotification = {
     type: input.type,
