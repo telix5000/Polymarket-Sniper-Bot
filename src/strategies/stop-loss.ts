@@ -126,7 +126,7 @@ export class StopLossStrategy {
   }
 
   /**
-   * Execute the universal stop-loss strategy
+   * Execute the stop-loss strategy
    * Returns number of positions sold
    *
    * SINGLE-FLIGHT: Skips if already running (returns 0)
