@@ -12,6 +12,7 @@ import { createTelegramService, TelegramService } from "../services/telegram.ser
 import {
   initTradeNotificationService,
   setTradeNotificationPnLCallback,
+  setTradeRecordCallback,
 } from "../services/trade-notification.service";
 import { ConsoleLogger } from "../utils/logger.util";
 import { getUsdBalanceApprox, getPolBalance } from "../utils/get-balance.util";
@@ -192,6 +193,29 @@ async function main(): Promise<void> {
       },
     });
 
+    // Initialize Telegram notifications BEFORE starting orchestrator
+    // This ensures notifications are ready when the first trade happens
+    telegramService = createTelegramService(logger);
+    if (telegramService.isEnabled()) {
+      // Initialize centralized trade notification service for all strategies
+      initTradeNotificationService(telegramService, logger);
+      
+      // Set P&L callback for including balance snapshots with notifications
+      setTradeNotificationPnLCallback(() => orchestrator!.getSummaryWithBalances());
+      
+      // Set trade recording callback so realized P&L is tracked in the ledger
+      // This ensures SELL trades update the realized P&L shown in notifications
+      setTradeRecordCallback((trade) => orchestrator!.getPnLLedger().recordTrade(trade));
+      
+      // Start periodic P&L updates
+      telegramService.startPnlUpdates(() => orchestrator!.getSummaryWithBalances());
+      
+      logger.info("📱 Telegram notifications initialized BEFORE trading starts");
+      logger.info("📱 Trade notifications enabled - will notify on buys/sells/hedges/redemptions");
+      logger.info("📱 Realized P&L tracking enabled - sells will update realized P&L");
+    }
+
+    // NOW start the orchestrator (after notifications are ready)
     await orchestrator.start();
     logger.info("✅ Simplified strategy orchestrator started successfully");
 
@@ -208,20 +232,6 @@ async function main(): Promise<void> {
       logger.warn(
         `[Orchestrator] Could not set session balance: ${err instanceof Error ? err.message : String(err)}`,
       );
-    }
-
-    // Start Telegram P&L updates if configured (use global reference for cleanup)
-    telegramService = createTelegramService(logger);
-    if (telegramService.isEnabled()) {
-      // Use getSummaryWithBalances for P&L updates to include balance info
-      // orchestrator is definitely defined here (we just created it above)
-      telegramService.startPnlUpdates(() => orchestrator!.getSummaryWithBalances());
-      logger.info("📱 Telegram P&L notifications started");
-
-      // Initialize centralized trade notification service for all strategies
-      initTradeNotificationService(telegramService, logger);
-      setTradeNotificationPnLCallback(() => orchestrator!.getSummaryWithBalances());
-      logger.info("📱 Trade notifications enabled - will notify on buys/sells/hedges/redemptions");
     }
   } else if (strategyConfig && !strategyConfig.enabled) {
     logger.info(

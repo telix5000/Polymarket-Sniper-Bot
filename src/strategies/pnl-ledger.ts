@@ -150,25 +150,45 @@ export class PnLLedger {
    * Record a sell trade
    */
   private recordSell(trade: Trade, existing?: PositionPnL): void {
+    let realizedPnl: number;
+
     if (!existing || existing.size <= 0) {
-      // Selling without position - could be a short or data issue
-      this.logger.warn(
-        `[PnLLedger] Sell without position for ${trade.tokenId}, treating as new short`,
-      );
-      return;
+      // No existing position - use the pnlRealized from the trade if provided
+      // This handles cases where BUY wasn't recorded (e.g., after bot restart)
+      if (trade.pnlRealized !== undefined) {
+        realizedPnl = trade.pnlRealized;
+        this.logger.debug(
+          `[PnLLedger] Using provided P&L for ${trade.tokenId}: $${realizedPnl.toFixed(2)} (no prior BUY recorded)`,
+        );
+      } else {
+        // No existing position and no pnlRealized provided - can't calculate P&L
+        this.logger.warn(
+          `[PnLLedger] Sell without position for ${trade.tokenId}, no P&L data available`,
+        );
+        return;
+      }
+    } else {
+      // Calculate realized P&L from cost basis
+      const tradeValue = trade.size * trade.price;
+      const avgCost = existing.costBasis / existing.size;
+      const costOfSold = trade.size * avgCost;
+      realizedPnl = tradeValue - costOfSold - trade.fees;
+
+      // Update position
+      existing.size -= trade.size;
+      existing.costBasis -= costOfSold;
+      existing.realizedPnl += realizedPnl;
+      existing.totalFees += trade.fees;
+      existing.trades++;
+
+      // Remove position if fully closed
+      if (existing.size <= 0.001) {
+        this.positions.delete(trade.tokenId);
+      }
     }
 
-    const tradeValue = trade.size * trade.price;
-    const avgCost = existing.costBasis / existing.size;
-    const costOfSold = trade.size * avgCost;
-    const realizedPnl = tradeValue - costOfSold - trade.fees;
-
-    // Update position
-    existing.size -= trade.size;
-    existing.costBasis -= costOfSold;
-    existing.realizedPnl += realizedPnl;
-    existing.totalFees += trade.fees;
-    existing.trades++;
+    // Track fees
+    this.totalFees += trade.fees;
 
     // Track overall realized PnL
     this.totalRealizedPnl += realizedPnl;
@@ -182,11 +202,6 @@ export class PnLLedger {
       this.wins.push(realizedPnl);
     } else if (realizedPnl < 0) {
       this.losses.push(realizedPnl);
-    }
-
-    // Remove position if fully closed
-    if (existing.size <= 0.001) {
-      this.positions.delete(trade.tokenId);
     }
 
     this.logger.debug(
