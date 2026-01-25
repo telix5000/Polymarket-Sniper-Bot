@@ -615,8 +615,12 @@ export class PositionStackingStrategy {
       });
 
       if (result.status === "submitted") {
-        // Deduct from budget after successful stack
-        this.deductFromCycleStackBudget(sizeUsd);
+        // Deduct from budget after successful stack, accounting for partial fills if available
+        const effectiveStackAmountUsd =
+          typeof (result as { filledAmountUsd?: number }).filledAmountUsd === "number"
+            ? (result as { filledAmountUsd?: number }).filledAmountUsd!
+            : sizeUsd;
+        this.deductFromCycleStackBudget(effectiveStackAmountUsd);
         
         // Record the stack in memory
         this.stackedPositions.set(position.tokenId, {
