@@ -284,10 +284,33 @@ export class AutoSellStrategy {
           break;
         case "NO_BID":
           skipReasons.noBid++;
-          this.logSkipOnce(
-            `NO_BID:${tokenIdShort}`,
-            `[AutoSell] skip tokenId=${tokenIdShort}... reason=NO_BID ${diagInfo} (cannot sell without bid)`,
-          );
+          // For near-resolution positions (>= 95¢), log at INFO level since this represents potentially stuck capital
+          // This helps users understand why high-value positions aren't being sold
+          {
+            const isNearResolution = position.currentPrice >= 0.95;
+            const bookStatusInfo = position.bookStatus ?? "UNKNOWN";
+            const noBidMessage =
+              `[AutoSell] ⚠️ NO_BID: tokenId=${tokenIdShort}... ${diagInfo} bookStatus=${bookStatusInfo}` +
+              (isNearResolution
+                ? ` — Position at ${currentPriceCents}¢ cannot be sold via CLOB (no orderbook bids). ` +
+                  `Check if market is in dispute window or orderbook is temporarily unavailable.`
+                : ` (cannot sell without bid)`);
+
+            if (isNearResolution) {
+              // Log at INFO for high-value positions so users see why their capital is stuck
+              // Use rate-limiting but with shorter TTL (30s) for high-value positions
+              if (
+                this.logDeduper.shouldLog(
+                  `AutoSell:NO_BID_HIGH_VALUE:${tokenIdShort}`,
+                  30_000,
+                )
+              ) {
+                this.logger.info(noBidMessage);
+              }
+            } else {
+              this.logSkipOnce(`NO_BID:${tokenIdShort}`, noBidMessage);
+            }
+          }
           break;
       }
       return false;

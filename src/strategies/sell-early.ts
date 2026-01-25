@@ -316,10 +316,28 @@ export class SellEarlyStrategy {
     // === BID PRICE CHECK ===
     if (position.currentBidPrice === undefined) {
       skipReasons.noBid++;
-      this.logSkipOnce(
-        "NO_BID",
-        `[SellEarly] skip tokenId=${tokenIdShort}... reason=NO_BID ${diagInfo}`,
-      );
+      // For near-resolution positions (>= 95¢), log at INFO level since this represents potentially stuck capital
+      const isNearResolution = position.currentPrice >= 0.95;
+      const bookStatusInfo = position.bookStatus ?? "UNKNOWN";
+      const noBidMessage =
+        `[SellEarly] ⚠️ NO_BID: tokenId=${tokenIdShort}... ${diagInfo} bookStatus=${bookStatusInfo}` +
+        (isNearResolution
+          ? ` — Position at ${currentPriceCents}¢ cannot be sold via CLOB (no orderbook bids). ` +
+            `Check if market is in dispute window or orderbook is temporarily unavailable.`
+          : ``);
+
+      if (isNearResolution) {
+        // Log at INFO for high-value positions so users see why their capital is stuck
+        // Use rate-limiting with 30s TTL for high-value positions
+        const now = Date.now();
+        const lastLog = this.skipLogTimestamps.get(`NO_BID_HIGH_VALUE:${tokenIdShort}`) ?? 0;
+        if (now - lastLog >= 30_000) {
+          this.logger.info(noBidMessage);
+          this.skipLogTimestamps.set(`NO_BID_HIGH_VALUE:${tokenIdShort}`, now);
+        }
+      } else {
+        this.logSkipOnce("NO_BID", noBidMessage);
+      }
       return null;
     }
 
