@@ -193,6 +193,12 @@ async function main(): Promise<void> {
       },
     });
 
+    // Set trade recording callback so realized P&L is tracked in the ledger
+    // This is wired REGARDLESS of Telegram config so P&L tracking works in all deployments
+    // BUY trades establish cost basis, SELL trades realize P&L
+    setTradeRecordCallback((trade) => orchestrator!.getPnLLedger().recordTrade(trade));
+    logger.info("📊 P&L tracking enabled - all trades will be recorded to ledger");
+
     // Initialize Telegram notifications BEFORE starting orchestrator
     // This ensures notifications are ready when the first trade happens
     telegramService = createTelegramService(logger);
@@ -203,16 +209,11 @@ async function main(): Promise<void> {
       // Set P&L callback for including balance snapshots with notifications
       setTradeNotificationPnLCallback(() => orchestrator!.getSummaryWithBalances());
       
-      // Set trade recording callback so realized P&L is tracked in the ledger
-      // This ensures SELL trades update the realized P&L shown in notifications
-      setTradeRecordCallback((trade) => orchestrator!.getPnLLedger().recordTrade(trade));
-      
       // Start periodic P&L updates
       telegramService.startPnlUpdates(() => orchestrator!.getSummaryWithBalances());
       
       logger.info("📱 Telegram notifications initialized BEFORE trading starts");
       logger.info("📱 Trade notifications enabled - will notify on buys/sells/hedges/redemptions");
-      logger.info("📱 Realized P&L tracking enabled - sells will update realized P&L");
     }
 
     // NOW start the orchestrator (after notifications are ready)

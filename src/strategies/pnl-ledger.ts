@@ -187,10 +187,8 @@ export class PnLLedger {
       }
     }
 
-    // Track fees
-    this.totalFees += trade.fees;
-
     // Track overall realized PnL
+    // Note: Fees are tracked centrally in recordTrade(), not here, to avoid double-counting
     this.totalRealizedPnl += realizedPnl;
     this.realizedByStrategy.set(
       trade.strategyId,

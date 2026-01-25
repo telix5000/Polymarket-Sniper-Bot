@@ -86,9 +86,10 @@ export function setTradeNotificationPnLCallback(
 }
 
 /**
- * Set the trade recording callback for tracking realized P&L.
+ * Set the trade recording callback for tracking P&L.
  * This should be called after the PnL ledger is initialized.
- * When set, all SELL trades will be automatically recorded to the ledger.
+ * When set, all trades (BUY and SELL) will be automatically recorded to the ledger.
+ * BUY trades establish cost basis, SELL trades realize P&L.
  */
 export function setTradeRecordCallback(
   callback: (trade: Trade) => void,

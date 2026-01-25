@@ -531,10 +531,13 @@ export class TelegramService {
 export function formatPrice(price: number): string {
   // Show as dollars if price is essentially $1 or more (handles rounding)
   if (price >= 0.995) {
-    return `$${price.toFixed(2)}`;
+    // Round to avoid floating-point issues (e.g., 0.995.toFixed(2) may yield "0.99")
+    const roundedDollars = Math.round(price * 100) / 100;
+    return `$${roundedDollars.toFixed(2)}`;
   }
   // Show as cents for prices below ~$1
-  return `${(price * 100).toFixed(1)}¢`;
+  const roundedCents = Math.round(price * 1000) / 10;
+  return `${roundedCents.toFixed(1)}¢`;
 }
 
 /**
