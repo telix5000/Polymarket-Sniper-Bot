@@ -148,21 +148,11 @@ Polymarket runs on the **Polygon network** (not Ethereum mainnet). You need to a
 
 An **RPC URL** is how the bot connects to the Polygon blockchain. Free public RPCs work, but can be slow or rate-limited. For best performance, get your own.
 
-### Option A: MetaMask Developer Tools (Free Tier)
+### Option A: Infura (Free Tier - 100k requests/day)
 
-MetaMask offers Infura-powered RPC endpoints through their developer portal:
+Infura is one of the most popular RPC providers. You can access it directly or through MetaMask's developer portal (which uses Infura under the hood).
 
-1. Go to [developer.metamask.io](https://developer.metamask.io/)
-2. Click **Sign Up** or **Get Started**
-3. Create a free account (email + password)
-4. After signing in, go to the **Dashboard**
-5. Click **Create New Project** or find your default project
-6. Look for your **API Key** or **Project ID**
-7. Your RPC URL will be: `https://polygon-mainnet.infura.io/v3/YOUR_PROJECT_ID`
-8. Copy this URL for your `.env` file
-
-### Option B: Infura (Free Tier - 100k requests/day)
-
+**Direct Infura signup:**
 1. Go to [infura.io](https://infura.io/)
 2. Click **Sign Up** (free account)
 3. Create a new project (name it anything, like "Polymarket Bot")
@@ -170,7 +160,12 @@ MetaMask offers Infura-powered RPC endpoints through their developer portal:
 5. Copy the HTTPS URL (looks like `https://polygon-mainnet.infura.io/v3/abc123...`)
 6. Save this URL for your `.env` file
 
-### Option C: Alchemy (Free Tier - 300M compute units/month)
+**Alternative: Via MetaMask Developer Tools:**
+1. Go to [developer.metamask.io](https://developer.metamask.io/)
+2. Sign up and create a project (this also uses Infura)
+3. Your RPC URL will be: `https://polygon-mainnet.infura.io/v3/YOUR_PROJECT_ID`
+
+### Option B: Alchemy (Free Tier - 300M compute units/month)
 
 1. Go to [alchemy.com](https://www.alchemy.com/)
 2. Click **Get started for free**
@@ -183,7 +178,7 @@ MetaMask offers Infura-powered RPC endpoints through their developer portal:
 6. Copy the HTTPS URL
 7. Save this URL for your `.env` file
 
-### Option D: QuickNode (Free Tier)
+### Option C: QuickNode (Free Tier)
 
 1. Go to [quicknode.com](https://www.quicknode.com/)
 2. Sign up for a free account
@@ -230,8 +225,8 @@ You need two types of tokens on Polygon:
 
 **Finding your wallet address:**
 1. Click the MetaMask fox icon
-2. Click on your account name at the top
-3. Your address will be copied (starts with `0x...`)
+2. Click on your account at the top (if it isn't already selected)
+3. Click on your wallet address (starts with `0x...`) or the copy icon next to it to copy it to your clipboard
 
 > ⚠️ **IMPORTANT:** When withdrawing, make sure to select **Polygon Network** (not Ethereum). Sending to the wrong network can result in lost funds.
 
@@ -263,7 +258,7 @@ After funding:
 2. Switch to **Polygon Mainnet**
 3. You should see your POL balance
 4. Click **Import Tokens** at the bottom
-5. Search for **USDC** or paste the contract address: `0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359`
+5. Search for **USDC.e** or paste the USDC.e contract address used by the bot: `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174`
 6. Add the token to see your balance
 
 ---
@@ -341,7 +336,7 @@ copy .env.example .env
 
 ```env
 # REQUIRED: Your wallet's private key from Step 3
-PRIVATE_KEY=0xyour_private_key_here_without_quotes
+PRIVATE_KEY=your_private_key_here
 
 # REQUIRED: Your RPC URL from Step 5
 RPC_URL=https://polygon-mainnet.infura.io/v3/your_project_id
@@ -522,7 +517,7 @@ If running on a VPS:
 Now that your bot is running, you might want to:
 
 1. **Read the [Complete Guide](./GUIDE.md)** - Detailed documentation on all features
-2. **Customize your strategy** - Check out `STRATEGY_IMPLEMENTATIONS.md`
+2. **Customize your strategy** - Check out `./STRATEGY_IMPLEMENTATIONS.md`
 3. **Set up monitoring** - Configure Telegram notifications in your `.env`
 4. **Fine-tune parameters** - Adjust `MIN_TRADE_SIZE_USD`, `FRONTRUN_SIZE_MULTIPLIER`, etc.
 
@@ -532,7 +527,7 @@ Now that your bot is running, you might want to:
 
 If you're stuck:
 
-1. Check the [docs folder](./docs/) for more detailed guides
+1. Check the other guides in this folder for more detailed documentation
 2. Review the [Troubleshooting](#troubleshooting) section above
 3. Check existing GitHub issues for similar problems
 4. Open a new issue with your logs (redact your private key!)
