@@ -117,6 +117,12 @@ export class TelegramService {
       return;
     }
 
+    // Clear any existing timer before creating a new one
+    if (this.pnlTimer) {
+      clearInterval(this.pnlTimer);
+      this.pnlTimer = undefined;
+    }
+
     this.getPnlSummary = getPnlSummary;
     const intervalMs = this.config.pnlIntervalMinutes * 60 * 1000;
 
@@ -152,7 +158,7 @@ export class TelegramService {
     const emoji = this.getTradeEmoji(trade.type);
     const action = this.getTradeAction(trade.type);
 
-    let message = `${emoji} <b>${this.config.notificationName}</b>\n\n`;
+    let message = `${emoji} <b>${this.escapeHtml(this.config.notificationName)}</b>\n\n`;
     message += `📍 <b>${action}</b>\n`;
 
     if (trade.marketQuestion) {
@@ -186,7 +192,7 @@ export class TelegramService {
     const summary = this.getPnlSummary();
     const netEmoji = summary.netPnl >= 0 ? "🟢" : "🔴";
 
-    let message = `📊 <b>${this.config.notificationName} - P&L Update</b>\n\n`;
+    let message = `📊 <b>${this.escapeHtml(this.config.notificationName)} - P&amp;L Update</b>\n\n`;
     message += `${netEmoji} <b>Net P&L: ${summary.netPnl >= 0 ? "+" : ""}$${summary.netPnl.toFixed(2)}</b>\n\n`;
     message += `💰 Realized: ${summary.totalRealizedPnl >= 0 ? "+" : ""}$${summary.totalRealizedPnl.toFixed(2)}\n`;
     message += `📈 Unrealized: ${summary.totalUnrealizedPnl >= 0 ? "+" : ""}$${summary.totalUnrealizedPnl.toFixed(2)}\n`;
@@ -216,7 +222,7 @@ export class TelegramService {
   async sendCustomMessage(text: string): Promise<boolean> {
     if (!this.config.enabled) return false;
 
-    const message = `📢 <b>${this.config.notificationName}</b>\n\n${this.escapeHtml(text)}`;
+    const message = `📢 <b>${this.escapeHtml(this.config.notificationName)}</b>\n\n${this.escapeHtml(text)}`;
     return this.sendMessage(message);
   }
 
@@ -238,7 +244,14 @@ export class TelegramService {
 
       // Add topic ID if specified (for forum-style groups)
       if (this.config.topicId) {
-        body.message_thread_id = parseInt(this.config.topicId, 10);
+        const topicIdNum = Number.parseInt(this.config.topicId, 10);
+        if (Number.isNaN(topicIdNum)) {
+          this.logger.warn(
+            `[Telegram] Invalid TELEGRAM_TOPIC_ID value "${this.config.topicId}" - skipping message_thread_id`,
+          );
+        } else {
+          body.message_thread_id = topicIdNum;
+        }
       }
 
       const response = await fetch(url, {
@@ -248,9 +261,36 @@ export class TelegramService {
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
+        const errorText = await response.text();
+        let safeErrorMessage = "Unknown error";
+        try {
+          const parsed = JSON.parse(errorText) as {
+            error_code?: number;
+            description?: string;
+          } | null;
+          if (parsed && typeof parsed === "object") {
+            const parts: string[] = [];
+            if (typeof parsed.error_code === "number") {
+              parts.push(`error_code=${parsed.error_code}`);
+            }
+            if (typeof parsed.description === "string") {
+              parts.push(`description=${parsed.description}`);
+            }
+            if (parts.length > 0) {
+              safeErrorMessage = parts.join(", ");
+            } else {
+              // Fallback: use a truncated version of the raw error text
+              safeErrorMessage = errorText.slice(0, 200);
+            }
+          } else {
+            safeErrorMessage = errorText.slice(0, 200);
+          }
+        } catch {
+          // If the response is not valid JSON, log a truncated version
+          safeErrorMessage = errorText.slice(0, 200);
+        }
         this.logger.error(
-          `[Telegram] API error (${response.status}): ${errorData}`,
+          `[Telegram] API error (${response.status}): ${safeErrorMessage}`,
         );
         return false;
       }

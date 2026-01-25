@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test, describe, beforeEach, mock } from "node:test";
+import { test, describe, beforeEach } from "node:test";
 
 /**
  * Unit tests for Telegram Notification Service
@@ -11,24 +11,6 @@ import { test, describe, beforeEach, mock } from "node:test";
  * 4. Silent mode support
  * 5. P&L update scheduling
  */
-
-// Mock logger interface
-interface MockLogger {
-  info: (msg: string) => void;
-  warn: (msg: string) => void;
-  error: (msg: string, err?: Error) => void;
-  debug: (msg: string) => void;
-}
-
-// Create mock logger
-function createMockLogger(): MockLogger {
-  return {
-    info: mock.fn(),
-    warn: mock.fn(),
-    error: mock.fn(),
-    debug: mock.fn(),
-  };
-}
 
 // Mock TelegramConfig interface (matches actual implementation)
 interface TelegramConfig {
