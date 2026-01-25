@@ -540,6 +540,8 @@ export class AutoRedeemStrategy {
    * @param wallet - The wallet instance with provider
    * @param ctfAddress - CTF contract address
    * @param usdcAddress - USDC collateral token address
+   * @param assumeWinner - If true, assume position is a winner when payout can't be determined
+   *                       (default: true, since this is called after successful redemption)
    * @returns Object with price (0-1 scale) and value (USD)
    */
   private async calculatePayoutValue(
@@ -547,14 +549,22 @@ export class AutoRedeemStrategy {
     wallet: Wallet,
     ctfAddress: string,
     usdcAddress: string,
+    assumeWinner: boolean = true,
   ): Promise<{ price: number; value: number }> {
-    // Default to zero if we can't determine the payout
-    // This is safer than overstating the value for losing positions
-    const zeroPayout = { price: 0, value: 0 };
+    // Default payout when we can't determine the exact value:
+    // - If assumeWinner is true (post-successful-redemption), default to $1.00 per share
+    //   because the transaction would have reverted if the position was worthless
+    // - If assumeWinner is false, default to zero to avoid overstating value
+    const defaultPayout = assumeWinner
+      ? { price: 1.0, value: position.size }
+      : { price: 0, value: 0 };
 
     try {
       if (!wallet.provider) {
-        return zeroPayout;
+        this.logger.debug(
+          `[AutoRedeem] No wallet provider - using default payout (assumeWinner=${assumeWinner})`,
+        );
+        return defaultPayout;
       }
 
       const ctfContract = new Contract(ctfAddress, CTF_ABI, wallet.provider);
@@ -578,8 +588,11 @@ export class AutoRedeemStrategy {
       }
 
       if (payoutDenominator === 0n) {
-        // Market not resolved - should not happen here, but be safe
-        return zeroPayout;
+        // Market not resolved - should not happen here, but use default payout
+        this.logger.debug(
+          `[AutoRedeem] payoutDenominator is 0 - using default payout (assumeWinner=${assumeWinner})`,
+        );
+        return defaultPayout;
       }
 
       // For binary markets, check both outcome slots to find which one matches our tokenId
@@ -627,17 +640,17 @@ export class AutoRedeemStrategy {
         }
       }
 
-      // Could not match tokenId to any outcome - return zero to be safe
+      // Could not match tokenId to any outcome - use default payout
       this.logger.debug(
-        `[AutoRedeem] Could not match tokenId ${position.tokenId.slice(0, 16)}... to any outcome`,
+        `[AutoRedeem] Could not match tokenId ${position.tokenId.slice(0, 16)}... to any outcome - using default payout (assumeWinner=${assumeWinner})`,
       );
-      return zeroPayout;
+      return defaultPayout;
     } catch (err) {
-      // On any error, return zero to avoid overstating value
+      // On error, use default payout based on assumeWinner flag
       this.logger.debug(
-        `[AutoRedeem] calculatePayoutValue error: ${err instanceof Error ? err.message : String(err)}`,
+        `[AutoRedeem] calculatePayoutValue error: ${err instanceof Error ? err.message : String(err)} - using default payout (assumeWinner=${assumeWinner})`,
       );
-      return zeroPayout;
+      return defaultPayout;
     }
   }
 
