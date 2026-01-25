@@ -10,13 +10,13 @@ import {
 } from "../../src/utils/price.util";
 
 /**
- * Tests for the state/price logic consistency fix between SmartHedging and PositionTracker.
+ * Tests for the state/price logic consistency fix between Hedging and PositionTracker.
  *
  * These tests verify:
  * 1. Near-resolution detection only triggers for >= 99.5¢
  * 2. Safety guard prevents near-resolution for prices < 50¢
  * 3. OrderbookQuality assessment correctly identifies broken orderbooks
- * 4. SmartHedging skip logic works correctly for near-resolution and invalid orderbooks
+ * 4. Hedging skip logic works correctly for near-resolution and invalid orderbooks
  * 5. No contradictory decisions: same position can't be both "catastrophic loss" and "high profit"
  */
 
@@ -41,7 +41,7 @@ function createMockPosition(overrides: Partial<Position> = {}): Position {
   };
 }
 
-describe("SmartHedging / PositionTracker State Consistency", () => {
+describe("Hedging / PositionTracker State Consistency", () => {
   describe("Near-Resolution Detection", () => {
     test("price >= 99.5¢ is near-resolution", () => {
       assert.strictEqual(
@@ -137,7 +137,7 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
     });
   });
 
-  describe("SmartHedging Skip Logic", () => {
+  describe("Hedging Skip Logic", () => {
     test("should skip near-resolution position (nearResolutionCandidate=true)", () => {
       const position = createMockPosition({
         currentPrice: 0.9995, // 99.95¢
@@ -147,19 +147,19 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
         pnlClassification: "PROFITABLE",
       });
 
-      // SmartHedging should skip this position
+      // Hedging should skip this position
       assert.strictEqual(
         position.nearResolutionCandidate,
         true,
         "Position should have nearResolutionCandidate=true",
       );
 
-      // Verify the logic SmartHedging would use
+      // Verify the logic Hedging would use
       const shouldSkip = position.nearResolutionCandidate === true;
       assert.strictEqual(
         shouldSkip,
         true,
-        "SmartHedging should skip near-resolution positions",
+        "Hedging should skip near-resolution positions",
       );
     });
 
@@ -173,7 +173,7 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
       assert.strictEqual(
         shouldSkip,
         true,
-        "SmartHedging should skip redeemable positions",
+        "Hedging should skip redeemable positions",
       );
     });
 
@@ -202,7 +202,7 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
     test("position at 99.95¢ should NOT trigger both 'near-resolution' AND 'catastrophic loss'", () => {
       // This is the exact bug scenario from the problem statement:
       // - PositionTracker logs "high profit current=100.0¢"
-      // - SmartHedging flags "catastrophic -99.9% loss"
+      // - Hedging flags "catastrophic -99.9% loss"
       // These are contradictory!
 
       const position = createMockPosition({
@@ -235,7 +235,7 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
         "Position should be classified as PROFITABLE",
       );
 
-      // SmartHedging skip logic
+      // Hedging skip logic
       const shouldSkipHedging =
         position.redeemable === true ||
         position.nearResolutionCandidate === true;
@@ -243,14 +243,14 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
       assert.strictEqual(
         shouldSkipHedging,
         true,
-        "SmartHedging should skip this position - no catastrophic loss logging",
+        "Hedging should skip this position - no catastrophic loss logging",
       );
     });
 
     test("position with broken orderbook (bid=1¢, Data-API=62¢) should NOT compute catastrophic loss", () => {
       // Scenario: Orderbook is broken, showing bid=1¢
       // Data-API shows correct price=62¢
-      // SmartHedging should NOT use the broken bid to compute "catastrophic loss"
+      // Hedging should NOT use the broken bid to compute "catastrophic loss"
 
       const position = createMockPosition({
         entryPrice: 0.65, // 65¢
@@ -276,12 +276,12 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
         "Should detect invalid orderbook",
       );
 
-      // SmartHedging should skip based on invalid orderbook
+      // Hedging should skip based on invalid orderbook
       const shouldSkip = quality.quality === "INVALID_BOOK";
       assert.strictEqual(
         shouldSkip,
         true,
-        "SmartHedging should skip position with invalid orderbook",
+        "Hedging should skip position with invalid orderbook",
       );
 
       // Verify the position's P&L is based on Data-API (not broken orderbook)
@@ -317,7 +317,7 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
 });
 
 describe("End-to-End Scenario Tests", () => {
-  test("Scenario F.1: Data-API price=0.9995, redeemable=false → PositionTracker logs near_resolution_candidate, SmartHedging skips", () => {
+  test("Scenario F.1: Data-API price=0.9995, redeemable=false → PositionTracker logs near_resolution_candidate, Hedging skips", () => {
     // Setup
     const currentPrice = 0.9995;
     const redeemable = false;
@@ -330,7 +330,7 @@ describe("End-to-End Scenario Tests", () => {
       "PositionTracker should mark as near_resolution_candidate",
     );
 
-    // SmartHedging behavior
+    // Hedging behavior
     const position = createMockPosition({
       currentPrice,
       redeemable,
@@ -341,20 +341,20 @@ describe("End-to-End Scenario Tests", () => {
     assert.strictEqual(
       shouldSkip,
       true,
-      "SmartHedging should skip near-resolution positions",
+      "Hedging should skip near-resolution positions",
     );
   });
 
-  test("Scenario F.2: Orderbook bid=0.01, ask=0.99, Data-API=0.62 → INVALID_BOOK, SmartHedging ignores orderbook", () => {
+  test("Scenario F.2: Orderbook bid=0.01, ask=0.99, Data-API=0.62 → INVALID_BOOK, Hedging ignores orderbook", () => {
     const quality = assessOrderbookQuality(0.01, 0.99, 0.62);
     assert.strictEqual(quality.quality, "INVALID_BOOK");
 
-    // SmartHedging should not use the broken orderbook for P&L
+    // Hedging should not use the broken orderbook for P&L
     const shouldSkipDueToInvalidBook = quality.quality === "INVALID_BOOK";
     assert.strictEqual(shouldSkipDueToInvalidBook, true);
   });
 
-  test("Scenario F.3: redeemable=true → SmartHedging routes to AutoRedeem, skips", () => {
+  test("Scenario F.3: redeemable=true → Hedging routes to AutoRedeem, skips", () => {
     const position = createMockPosition({
       redeemable: true,
       currentPrice: 1.0,
@@ -364,7 +364,7 @@ describe("End-to-End Scenario Tests", () => {
     assert.strictEqual(
       shouldSkip,
       true,
-      "SmartHedging should skip redeemable positions and route to AutoRedeem",
+      "Hedging should skip redeemable positions and route to AutoRedeem",
     );
   });
 

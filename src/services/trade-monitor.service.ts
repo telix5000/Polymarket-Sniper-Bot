@@ -13,6 +13,13 @@ export type TradeMonitorDeps = {
   logger: Logger;
   targetAddresses: string[];
   onDetectedTrade: (signal: TradeSignal) => Promise<void>;
+  /**
+   * Optional callback for sell signal monitoring.
+   * When provided, SELL signals will be routed here for protective action evaluation.
+   * This enables the bot to detect when tracked traders are exiting positions
+   * we also hold, potentially triggering early hedging or stop-loss.
+   */
+  onDetectedSell?: (signal: TradeSignal) => Promise<void>;
 };
 
 interface ActivityResponse {
@@ -148,7 +155,15 @@ export class TradeMonitorService {
         );
 
         newTradesFound++;
+        
+        // Route signal to appropriate handlers
         await this.deps.onDetectedTrade(signal);
+        
+        // Also route SELL signals to the sell monitor for protective action evaluation
+        // This enables early detection of tracked traders exiting positions we hold
+        if (signal.side === "SELL" && this.deps.onDetectedSell) {
+          await this.deps.onDetectedSell(signal);
+        }
       }
 
       // Rate-limit summary log - only log when there are new trades or meaningful changes

@@ -139,7 +139,7 @@ OnChainExit runs in the orchestrator after AutoSell but before AutoRedeem:
 2. AutoSell (99¢+ tradable positions)
 3. **OnChainExit** (99¢+ NOT_TRADABLE positions → checks on-chain redeemability)
 4. AutoRedeem (claims REDEEMABLE positions)
-5. Smart Hedging, Stop-Loss, etc.
+5. Hedging, Stop-Loss, etc.
 
 ## ⛓️ On-Chain Trading Mode (New - Framework Ready)
 

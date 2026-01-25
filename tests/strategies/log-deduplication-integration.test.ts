@@ -34,7 +34,7 @@ describe("Log Deduplication Integration", () => {
     resetLogDeduper();
   });
 
-  test("SmartHedging pattern: aggregated skip summary is not spammed", () => {
+  test("Hedging pattern: aggregated skip summary is not spammed", () => {
     // Simulate 10 cycles with the same 5 positions being skipped
     const positions = [
       { tokenId: "token1", reason: "redeemable" },
@@ -56,17 +56,17 @@ describe("Log Deduplication Integration", () => {
       const fingerprint = skipAggregator.getFingerprint();
       if (logDeduper.shouldLogSummary("Hedging", fingerprint, 120_000)) {
         mockLogger.debug(
-          `[SmartHedging] Skipped ${skipAggregator.getTotalCount()} positions: ${skipAggregator.getSummary()} (cycle=${cycle})`,
+          `[Hedging] Skipped ${skipAggregator.getTotalCount()} positions: ${skipAggregator.getSummary()} (cycle=${cycle})`,
         );
       }
     }
 
     // Should only log ONCE since fingerprint is identical across all cycles
-    const hedgingLogs = logs.filter((l) => l.includes("[SmartHedging]"));
+    const hedgingLogs = logs.filter((l) => l.includes("[Hedging]"));
     assert.strictEqual(
       hedgingLogs.length,
       1,
-      `Expected 1 SmartHedging log, got ${hedgingLogs.length}: ${JSON.stringify(hedgingLogs)}`,
+      `Expected 1 Hedging log, got ${hedgingLogs.length}: ${JSON.stringify(hedgingLogs)}`,
     );
 
     // Verify the log contains the aggregated summary
@@ -74,7 +74,7 @@ describe("Log Deduplication Integration", () => {
     assert.ok(hedgingLogs[0].includes("redeemable=2"));
   });
 
-  test("SmartHedging pattern: logs immediately on fingerprint change", () => {
+  test("Hedging pattern: logs immediately on fingerprint change", () => {
     // Cycle 1: Skip 3 positions
     let skipAggregator = new SkipReasonAggregator();
     skipAggregator.add("token1", "redeemable");
@@ -84,7 +84,7 @@ describe("Log Deduplication Integration", () => {
     let fingerprint = skipAggregator.getFingerprint();
     if (logDeduper.shouldLogSummary("Hedging", fingerprint)) {
       mockLogger.debug(
-        `[SmartHedging] Cycle 1: ${skipAggregator.getSummary()}`,
+        `[Hedging] Cycle 1: ${skipAggregator.getSummary()}`,
       );
     }
 
@@ -97,7 +97,7 @@ describe("Log Deduplication Integration", () => {
     fingerprint = skipAggregator.getFingerprint();
     if (logDeduper.shouldLogSummary("Hedging", fingerprint)) {
       mockLogger.debug(
-        `[SmartHedging] Cycle 2: ${skipAggregator.getSummary()}`,
+        `[Hedging] Cycle 2: ${skipAggregator.getSummary()}`,
       );
     }
 
@@ -111,11 +111,11 @@ describe("Log Deduplication Integration", () => {
     fingerprint = skipAggregator.getFingerprint();
     if (logDeduper.shouldLogSummary("Hedging", fingerprint)) {
       mockLogger.debug(
-        `[SmartHedging] Cycle 3: ${skipAggregator.getSummary()}`,
+        `[Hedging] Cycle 3: ${skipAggregator.getSummary()}`,
       );
     }
 
-    const hedgingLogs = logs.filter((l) => l.includes("[SmartHedging]"));
+    const hedgingLogs = logs.filter((l) => l.includes("[Hedging]"));
     assert.strictEqual(
       hedgingLogs.length,
       2,
@@ -241,7 +241,7 @@ describe("Log Deduplication Integration", () => {
     // Cycle 1: Position is not redeemable
     let previousReason = lastSkipReasonByTokenId.get(tokenId);
     if (previousReason !== "active") {
-      mockLogger.info(`[SmartHedging] Position ${tokenId} is active`);
+      mockLogger.info(`[Hedging] Position ${tokenId} is active`);
       lastSkipReasonByTokenId.set(tokenId, "active");
     }
 
@@ -249,7 +249,7 @@ describe("Log Deduplication Integration", () => {
     previousReason = lastSkipReasonByTokenId.get(tokenId);
     if (previousReason !== "redeemable") {
       mockLogger.info(
-        `[SmartHedging] 🔄 Position became redeemable: ${tokenId}`,
+        `[Hedging] 🔄 Position became redeemable: ${tokenId}`,
       );
       lastSkipReasonByTokenId.set(tokenId, "redeemable");
     }
@@ -258,7 +258,7 @@ describe("Log Deduplication Integration", () => {
     for (let cycle = 3; cycle <= 5; cycle++) {
       previousReason = lastSkipReasonByTokenId.get(tokenId);
       if (previousReason !== "redeemable") {
-        mockLogger.info(`[SmartHedging] This should not appear`);
+        mockLogger.info(`[Hedging] This should not appear`);
         lastSkipReasonByTokenId.set(tokenId, "redeemable");
       }
     }
@@ -279,7 +279,7 @@ describe("Log Deduplication Integration", () => {
 
     // Log once for each component
     if (logDeduper.shouldLogSummary("Hedging", fingerprint)) {
-      mockLogger.debug("[SmartHedging] Summary");
+      mockLogger.debug("[Hedging] Summary");
     }
     if (logDeduper.shouldLogSummary("Scalp", fingerprint)) {
       mockLogger.debug("[ScalpTrade] Summary");
@@ -290,7 +290,7 @@ describe("Log Deduplication Integration", () => {
 
     // Try again - should all be suppressed
     if (logDeduper.shouldLogSummary("Hedging", fingerprint)) {
-      mockLogger.debug("[SmartHedging] Summary 2");
+      mockLogger.debug("[Hedging] Summary 2");
     }
     if (logDeduper.shouldLogSummary("Scalp", fingerprint)) {
       mockLogger.debug("[ScalpTrade] Summary 2");
@@ -301,7 +301,7 @@ describe("Log Deduplication Integration", () => {
 
     // Should have exactly 3 logs (one per component)
     assert.strictEqual(logs.length, 3);
-    assert.ok(logs[0].includes("[SmartHedging]"));
+    assert.ok(logs[0].includes("[Hedging]"));
     assert.ok(logs[1].includes("[ScalpTrade]"));
     assert.ok(logs[2].includes("[Monitor]"));
   });

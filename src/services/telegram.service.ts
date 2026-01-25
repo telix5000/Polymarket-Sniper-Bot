@@ -459,7 +459,7 @@ export class TelegramService {
 
     // Risk management
     if (enabledStrategies.smartHedging) {
-      message += `✅ Smart Hedging (loss protection)\n`;
+      message += `✅ Hedging (loss protection)\n`;
     }
     if (enabledStrategies.stopLoss) {
       message += `✅ Stop-Loss\n`;

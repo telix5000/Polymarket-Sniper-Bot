@@ -1294,7 +1294,7 @@ export type StrategyConfig = {
   autoRedeemEnabled: boolean;
   autoRedeemMinPositionUsd: number;
   autoRedeemCheckIntervalMs: number;
-  // Smart Hedging settings (replaces stop-loss for risky tier positions)
+  // Hedging settings (replaces stop-loss for risky tier positions)
   smartHedgingEnabled: boolean;
   smartHedgingTriggerLossPct: number;
   smartHedgingMaxHedgeUsd: number;
@@ -1361,7 +1361,7 @@ export type StrategyConfig = {
    */
   smartHedgingNoHedgeWindowMinutes: number;
   /**
-   * Smart Hedging Direction: controls when hedging is active
+   * Hedging Direction: controls when hedging is active
    * - "down": Only hedge losing positions (traditional behavior)
    * - "up": Only buy more shares when winning at high probability (85¢+)
    * - "both": Both behaviors enabled (default - maximize wins AND minimize losses)

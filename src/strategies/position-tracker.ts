@@ -2398,7 +2398,7 @@ export class PositionTracker {
 
   /**
    * Get positions that are candidates for liquidation when funds are insufficient.
-   * Used by Smart Hedging to determine what positions to sell to free up funds
+   * Used by Hedging to determine what positions to sell to free up funds
    * for hedging other positions.
    *
    * Returns active losing positions sorted by loss percentage (worst losses first),
@@ -2478,7 +2478,7 @@ export class PositionTracker {
 
   /**
    * Get positions that are candidates for profit-based liquidation to free up funds.
-   * Used by Smart Hedging to sell *profitable* positions (lowest profit first) when
+   * Used by Hedging to sell *profitable* positions (lowest profit first) when
    * wallet balance is insufficient for hedging, before resorting to selling losing positions.
    *
    * Returns active, non-redeemable, **profitable** positions sorted by lowest profit

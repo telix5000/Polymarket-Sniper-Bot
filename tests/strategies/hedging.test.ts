@@ -2,25 +2,25 @@ import assert from "node:assert";
 import { test, describe } from "node:test";
 import {
   DEFAULT_HEDGING_CONFIG,
-  type SmartHedgingConfig,
-  type SmartHedgingDirection,
-} from "../../src/strategies/smart-hedging";
+  type HedgingConfig,
+  type HedgingDirection,
+} from "../../src/strategies/hedging";
 
 /**
- * Unit tests for Smart Hedging Strategy - Near-Close Behavior
+ * Unit tests for Hedging Strategy - Near-Close Behavior
  *
  * These tests verify the time-aware hedging logic that applies stricter
  * thresholds near market close to prevent unnecessary hedges.
  */
 
-describe("Smart Hedging Near-Close Logic", () => {
+describe("Hedging Near-Close Logic", () => {
   // Helper function to simulate the near-close decision logic
-  // This mirrors the logic in SmartHedgingStrategy.execute()
+  // This mirrors the logic in HedgingStrategy.execute()
   // 
   // UPDATED (Jan 2025): Near resolution, hedging is PRIORITIZED for significant losses
   // because buying the inverse locks in recovery value before market resolves.
   function shouldHedgePosition(
-    config: SmartHedgingConfig,
+    config: HedgingConfig,
     position: {
       entryPrice: number;
       currentPrice: number;
@@ -496,7 +496,7 @@ describe("Smart Hedging Near-Close Logic", () => {
 
   describe("Custom Configuration", () => {
     test("should respect custom nearCloseWindowMinutes", () => {
-      const customConfig: SmartHedgingConfig = {
+      const customConfig: HedgingConfig = {
         ...DEFAULT_HEDGING_CONFIG,
         nearCloseWindowMinutes: 10, // Shorter window
       };
@@ -524,7 +524,7 @@ describe("Smart Hedging Near-Close Logic", () => {
     });
 
     test("should respect custom noHedgeWindowMinutes", () => {
-      const customConfig: SmartHedgingConfig = {
+      const customConfig: HedgingConfig = {
         ...DEFAULT_HEDGING_CONFIG,
         noHedgeWindowMinutes: 5, // Longer no-hedge window
       };
@@ -557,7 +557,7 @@ describe("Smart Hedging Near-Close Logic", () => {
     });
 
     test("should respect custom nearClosePriceDropCents", () => {
-      const customConfig: SmartHedgingConfig = {
+      const customConfig: HedgingConfig = {
         ...DEFAULT_HEDGING_CONFIG,
         nearClosePriceDropCents: 8, // Lower threshold
       };
@@ -584,7 +584,7 @@ describe("Smart Hedging Near-Close Logic", () => {
     });
 
     test("should respect custom nearCloseLossPct", () => {
-      const customConfig: SmartHedgingConfig = {
+      const customConfig: HedgingConfig = {
         ...DEFAULT_HEDGING_CONFIG,
         nearCloseLossPct: 25, // Lower threshold
       };
@@ -653,7 +653,7 @@ describe("Default Configuration Values", () => {
   });
 });
 
-describe("Smart Hedging Liquidation Candidate Filtering", () => {
+describe("Hedging Liquidation Candidate Filtering", () => {
   // Helper type to represent a position for testing
   interface TestPosition {
     marketId: string;
@@ -668,7 +668,7 @@ describe("Smart Hedging Liquidation Candidate Filtering", () => {
   }
 
   /**
-   * Helper function to simulate the getLiquidationCandidates logic in SmartHedgingStrategy.
+   * Helper function to simulate the getLiquidationCandidates logic in HedgingStrategy.
    * Filters positions to find candidates suitable for liquidation, excluding already hedged
    * positions and positions in cooldown.
    *
@@ -982,7 +982,7 @@ describe("Smart Hedging Liquidation Candidate Filtering", () => {
  * These tests verify that the strategy correctly attempts to free funds by
  * selling profitable positions before falling back to selling the losing position.
  */
-describe("Smart Hedging Insufficient Funds Fallback Logic", () => {
+describe("Hedging Insufficient Funds Fallback Logic", () => {
   // Helper type for test positions
   interface TestPosition {
     marketId: string;
@@ -1319,7 +1319,7 @@ describe("Smart Hedging Insufficient Funds Fallback Logic", () => {
  * until the target hedge amount is reached. Freed funds are calculated net of
  * taker fees to ensure accurate budget tracking.
  */
-describe("Smart Hedging Multi-Position Fund-Freeing", () => {
+describe("Hedging Multi-Position Fund-Freeing", () => {
   // Import the fee constants for validation
   const POLYMARKET_TAKER_FEE_BPS = 1; // 0.01% = 1 basis point
   const BASIS_POINTS_DIVISOR = 10000;
@@ -1631,7 +1631,7 @@ describe("Smart Hedging Multi-Position Fund-Freeing", () => {
  * When a hedge order is partially filled, the position should be marked as hedged
  * to prevent multiple hedge attempts that exceed SMART_HEDGING_ABSOLUTE_MAX_USD.
  */
-describe("Smart Hedging Partial Fill Protection", () => {
+describe("Hedging Partial Fill Protection", () => {
   /**
    * Test: Partial fills should mark position as hedged
    *
@@ -1664,7 +1664,7 @@ describe("Smart Hedging Partial Fill Protection", () => {
     const hedgedPositions = new Set<string>();
     const positionKey = "market123-token456";
 
-    // This is the logic we added to smart-hedging.ts
+    // This is the logic we added to hedging.ts
     if (hedgeResult.success) {
       hedgedPositions.add(positionKey);
     } else if (hedgeResult.filledAmountUsd && hedgeResult.filledAmountUsd > 0) {
@@ -1756,15 +1756,15 @@ describe("Smart Hedging Partial Fill Protection", () => {
 });
 
 /**
- * Unit tests for Smart Hedging "Hedge Up" Feature
+ * Unit tests for Hedging "Hedge Up" Feature
  *
  * Tests the new "hedging up" behavior that buys additional shares
  * of high win probability positions (85¢+) near market close to maximize gains.
  */
-describe("Smart Hedging Up (High Win Probability)", () => {
+describe("Hedging Up (High Win Probability)", () => {
   // Helper function to simulate the hedge up eligibility logic
   function shouldHedgeUp(
-    config: SmartHedgingConfig,
+    config: HedgingConfig,
     position: {
       currentPrice: number;
       marketEndTime?: number;
@@ -1829,7 +1829,7 @@ describe("Smart Hedging Up (High Win Probability)", () => {
 
   describe("Direction setting", () => {
     test("should not hedge up when direction is 'down'", () => {
-      const direction: SmartHedgingDirection = "down";
+      const direction: HedgingDirection = "down";
       const config = { ...DEFAULT_HEDGING_CONFIG, direction };
       const now = Date.now();
       const marketEndTime = now + 15 * 60 * 1000; // 15 minutes from now
@@ -1848,7 +1848,7 @@ describe("Smart Hedging Up (High Win Probability)", () => {
     });
 
     test("should hedge up when direction is 'up'", () => {
-      const direction: SmartHedgingDirection = "up";
+      const direction: HedgingDirection = "up";
       const config = { ...DEFAULT_HEDGING_CONFIG, direction };
       const now = Date.now();
       const marketEndTime = now + 15 * 60 * 1000;
@@ -2140,10 +2140,10 @@ describe("Smart Hedging Up (High Win Probability)", () => {
   });
 });
 
-describe("Smart Hedging Reserve-Aware Sizing", () => {
+describe("Hedging Reserve-Aware Sizing", () => {
   /**
    * Simplified test helper function to simulate the reserve-aware hedge sizing logic.
-   * This mirrors the core logic in SmartHedgingStrategy.applyReserveAwareSizing() but
+   * This mirrors the core logic in HedgingStrategy.applyReserveAwareSizing() but
    * does not include all edge cases, error handling, or logging present in the actual
    * implementation.
    *
@@ -2159,7 +2159,7 @@ describe("Smart Hedging Reserve-Aware Sizing", () => {
    * @returns Object with final size and reason
    */
   function computeReserveAwareSize(
-    config: SmartHedgingConfig,
+    config: HedgingConfig,
     computedHedgeUsd: number,
     cycleHedgeBudgetRemaining: number | null,
   ): { finalSize: number; reason: "full" | "partial" | "skipped" | "no_reserve_plan" } {
@@ -2351,10 +2351,10 @@ describe("Smart Hedging Reserve-Aware Sizing", () => {
 describe("Untrusted P&L Exception Logic", () => {
   /**
    * Helper function to simulate the untrusted P&L decision logic
-   * This mirrors the logic in SmartHedgingStrategy.execute()
+   * This mirrors the logic in HedgingStrategy.execute()
    */
   function shouldProceedWithUntrustedPnl(
-    config: SmartHedgingConfig,
+    config: HedgingConfig,
     pnlPct: number,
     pnlTrusted: boolean,
   ): { shouldProceed: boolean; reason: string } {
@@ -2486,10 +2486,10 @@ describe("Untrusted P&L Exception Logic", () => {
 describe("Invalid Orderbook Exception Logic", () => {
   /**
    * Helper function to simulate the invalid orderbook decision logic
-   * This mirrors the logic in SmartHedgingStrategy.execute()
+   * This mirrors the logic in HedgingStrategy.execute()
    */
   function shouldProceedWithInvalidOrderbook(
-    config: SmartHedgingConfig,
+    config: HedgingConfig,
     pnlPct: number,
     pnlTrusted: boolean,
     orderbookQuality: "VALID" | "INVALID_BOOK" | "NO_BOOK",
@@ -2633,10 +2633,10 @@ describe("Invalid Orderbook Exception Logic", () => {
 describe("hedgeUpAnytime Configuration", () => {
   /**
    * Helper function to simulate hedge up eligibility based on time window
-   * This mirrors the time window logic in SmartHedgingStrategy.tryHedgeUp()
+   * This mirrors the time window logic in HedgingStrategy.tryHedgeUp()
    */
   function isHedgeUpEligibleByTime(
-    config: SmartHedgingConfig,
+    config: HedgingConfig,
     marketEndTime: number | undefined,
     now: number,
   ): { eligible: boolean; reason: string } {
@@ -2768,7 +2768,7 @@ describe("hedgeUpAnytime Configuration", () => {
 describe("Emergency Hedge Sizing", () => {
   /**
    * Simplified test helper function to simulate the emergency hedge sizing logic.
-   * This mirrors the core logic in SmartHedgingStrategy.executeHedge() for determining
+   * This mirrors the core logic in HedgingStrategy.executeHedge() for determining
    * hedge size based on loss percentage.
    *
    * @param config - Smart hedging config
@@ -2777,7 +2777,7 @@ describe("Emergency Hedge Sizing", () => {
    * @returns Object with target hedge size and whether emergency mode is active
    */
   function computeHedgeSizing(
-    config: SmartHedgingConfig,
+    config: HedgingConfig,
     profitableHedgeUsd: number,
     lossPct?: number,
   ): { hedgeUsd: number; isEmergency: boolean } {
@@ -2954,7 +2954,7 @@ describe("Emergency Hedge Sizing", () => {
      * This simulates the full hedge sizing flow including reserve constraints.
      */
     function computeHedgeSizingWithReserves(
-      config: SmartHedgingConfig,
+      config: HedgingConfig,
       profitableHedgeUsd: number,
       lossPct: number | undefined,
       cycleHedgeBudgetRemaining: number | null,
@@ -3037,7 +3037,7 @@ describe("Emergency Hedge Sizing", () => {
 describe("Hedge Exit Monitoring", () => {
   /**
    * Simplified test helper function to simulate the hedge exit decision logic.
-   * This mirrors the core logic in SmartHedgingStrategy.monitorHedgeExits().
+   * This mirrors the core logic in HedgingStrategy.monitorHedgeExits().
    *
    * @param config - Smart hedging config
    * @param originalPrice - Current price of the original position
@@ -3045,7 +3045,7 @@ describe("Hedge Exit Monitoring", () => {
    * @returns Object indicating which position should be exited (if any)
    */
   function checkHedgeExit(
-    config: SmartHedgingConfig,
+    config: HedgingConfig,
     originalPrice: number | null, // null means position not held
     hedgePrice: number | null, // null means position not held
   ): { shouldExitOriginal: boolean; shouldExitHedge: boolean; reason: string } {
@@ -3190,7 +3190,7 @@ describe("Hedge Exit Monitoring", () => {
 describe("Fund-Freeing Logic for Hedge Failures", () => {
   /**
    * Test helper to check if a hedge failure reason should trigger fund-freeing.
-   * This mirrors the logic in SmartHedgingStrategy.executeInternal().
+   * This mirrors the logic in HedgingStrategy.executeInternal().
    */
   function shouldTriggerFundFreeing(reason: string): boolean {
     return reason === "INSUFFICIENT_BALANCE_OR_ALLOWANCE" || reason === "RESERVE_SHORTFALL";

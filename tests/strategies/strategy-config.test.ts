@@ -129,7 +129,7 @@ test("SMART_HEDGING settings from aggressive preset are loaded correctly", () =>
   });
 
   const config = loadStrategyConfig();
-  // Aggressive preset has these smart hedging settings (see presets.ts)
+  // Aggressive preset has these hedging settings (see presets.ts)
   assert.equal(config.smartHedgingEnabled, true);
   assert.equal(config.smartHedgingTriggerLossPct, 20);
   assert.equal(config.smartHedgingMaxHedgeUsd, 50); // SMART_HEDGING_MAX_HEDGE_USD: 50 in aggressive preset
@@ -195,7 +195,7 @@ test("Smart hedging config respects absoluteMaxUsd over maxHedgeUsd when allowEx
   assert.equal(config.smartHedgingAbsoluteMaxUsd, 25);
   assert.equal(config.smartHedgingAllowExceedMax, true);
   // The reserve calculation should use absoluteMaxUsd (25) not maxHedgeUsd (10)
-  // This is verified by the smart-hedging.ts logic, not just config loading
+  // This is verified by the hedging.ts logic, not just config loading
 });
 
 test("SMART_HEDGING_MIN_HEDGE_USD defaults to 1", () => {

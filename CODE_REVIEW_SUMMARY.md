@@ -73,7 +73,7 @@ The orchestrator correctly implements single-flight protection:
 - `marketOutcomeCache`: Persistent cache for resolved market outcomes
 - `orderbookCache`: 2-second TTL for price data
 
-## PART D: Smart Hedging Review ✅
+## PART D: Hedging Review ✅
 
 ### Additive Hedging Only
 - Hedging buys OPPOSITE side (doesn't defer liquidation)

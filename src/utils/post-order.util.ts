@@ -592,7 +592,7 @@ async function postOrderClob(
 
   // === HEDGE OPERATION LOCK CHECK ===
   // Prevents BUY orders during hedge/liquidation operations on the same market.
-  // When Smart Hedging is selling a position to buy the inverse, we need to block
+  // When Hedging is selling a position to buy the inverse, we need to block
   // incoming BUY orders to prevent:
   // 1. Consuming freed funds intended for the hedge
   // 2. Creating conflicting positions

@@ -4,7 +4,7 @@
  * CRITICAL RULE: This strategy ONLY sells for PROFIT. NEVER for a loss.
  *
  * If a position is losing money, Quick Flip does NOTHING.
- * Losses are handled by Smart Hedging (which hedges or liquidates at configured thresholds).
+ * Losses are handled by Hedging (which hedges or liquidates at configured thresholds).
  *
  * LOGIC:
  * 1. Find positions that are profitable at ACTUAL BID PRICE (not mid-price)
@@ -13,7 +13,7 @@
  *
  * The separation of concerns:
  * - Quick Flip = MAKING money (profit-taking)
- * - Smart Hedging = PROTECTING money (loss mitigation at configured thresholds)
+ * - Hedging = PROTECTING money (loss mitigation at configured thresholds)
  */
 
 import type { ClobClient } from "@polymarket/clob-client";
@@ -64,7 +64,7 @@ export const DEFAULT_QUICKFLIP_CONFIG: QuickFlipConfig = {
  *
  * PROFIT ONLY - Never sells below entry price.
  * Takes the quickest reasonable profit above trading fees.
- * For loss handling, see Smart Hedging strategy.
+ * For loss handling, see Hedging strategy.
  */
 export class QuickFlipStrategy {
   private client: ClobClient;

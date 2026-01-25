@@ -16,7 +16,7 @@
  * 3. AutoSell - NEAR-RESOLUTION EXIT: Sell ACTIVE positions at 99¢+ (dispute exit at 99.9¢)
  * 4. OnChainExit - Route NOT_TRADABLE positions to on-chain redemption (≥99¢)
  * 5. Auto-Redeem - Claim REDEEMABLE positions (get money back!)
- * 6. Smart Hedging - Hedge losing positions
+ * 6. Hedging - Hedge losing positions
  * 7. Stop-Loss - Sell positions at max loss
  * 8. Scalp Take-Profit - Time-based profit taking with momentum checks
  * 9. Endgame Sweep - Buy high-confidence positions
@@ -28,10 +28,10 @@ import type { ConsoleLogger } from "../utils/logger.util";
 import { PositionTracker } from "./position-tracker";
 import { LogDeduper, HEARTBEAT_INTERVAL_MS } from "../utils/log-deduper.util";
 import {
-  SmartHedgingStrategy,
-  type SmartHedgingConfig,
+  HedgingStrategy,
+  type HedgingConfig,
   DEFAULT_HEDGING_CONFIG,
-} from "./smart-hedging";
+} from "./hedging";
 import {
   EndgameSweepStrategy,
   type EndgameSweepConfig,
@@ -93,7 +93,7 @@ export interface OrchestratorConfig {
   logger: ConsoleLogger;
   maxPositionUsd: number; // From MAX_POSITION_USD env
   riskPreset?: "conservative" | "balanced" | "aggressive";
-  hedgingConfig?: Partial<SmartHedgingConfig>;
+  hedgingConfig?: Partial<HedgingConfig>;
   endgameConfig?: Partial<EndgameSweepConfig>;
   // quickFlipConfig removed - module deprecated
   scalpConfig?: Partial<ScalpTradeConfig>;
@@ -122,7 +122,7 @@ export class Orchestrator {
   private autoSellStrategy: AutoSellStrategy;
   private onChainExitStrategy: OnChainExitStrategy;
   private autoRedeemStrategy: AutoRedeemStrategy;
-  private hedgingStrategy: SmartHedgingStrategy;
+  private hedgingStrategy: HedgingStrategy;
   private stopLossStrategy: StopLossStrategy;
   private scalpStrategy: ScalpTradeStrategy;
   private endgameStrategy: EndgameSweepStrategy;
@@ -271,13 +271,13 @@ export class Orchestrator {
       },
     });
 
-    // 4. Smart Hedging - Hedge losing positions
+    // 4. Hedging - Hedge losing positions
     const hedgingConfig = {
       ...DEFAULT_HEDGING_CONFIG,
       maxHedgeUsd: config.maxPositionUsd,
       ...config.hedgingConfig,
     };
-    this.hedgingStrategy = new SmartHedgingStrategy({
+    this.hedgingStrategy = new HedgingStrategy({
       client: config.client,
       logger: config.logger,
       positionTracker: this.positionTracker,
@@ -287,7 +287,7 @@ export class Orchestrator {
     });
 
     // 5. Stop-Loss - Protect against big losses
-    // When Smart Hedging is enabled, skip positions it handles (entry < maxEntryPrice)
+    // When Hedging is enabled, skip positions it handles (entry < maxEntryPrice)
     const smartHedgingEnabled = hedgingConfig.enabled;
     this.stopLossStrategy = new StopLossStrategy({
       client: config.client,
@@ -298,7 +298,7 @@ export class Orchestrator {
         maxStopLossPct: 25, // Max 25% loss
         useDynamicTiers: true,
         minHoldSeconds: 60, // Wait 60s before stop-loss
-        // Skip positions that Smart Hedging handles (below its maxEntryPrice)
+        // Skip positions that Hedging handles (below its maxEntryPrice)
         skipForSmartHedging: smartHedgingEnabled,
         hedgingMaxEntryPrice: hedgingConfig.maxEntryPrice,
         ...config.stopLossConfig,
@@ -517,7 +517,7 @@ export class Orchestrator {
       );
 
       // Phase 3: Risk management
-      // 4. Smart Hedging - protect losing positions by buying opposite side
+      // 4. Hedging - protect losing positions by buying opposite side
       await this.runStrategyTimed(
         "Hedging",
         () => this.hedgingStrategy.execute(),

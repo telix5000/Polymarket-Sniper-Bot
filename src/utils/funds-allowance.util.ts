@@ -238,10 +238,10 @@ export const resetInFlightBuys = (): void => {
 // ============================================================================
 // HEDGE OPERATION LOCK
 // ============================================================================
-// When Smart Hedging is performing a liquidation/hedge operation on a market,
+// When Hedging is performing a liquidation/hedge operation on a market,
 // we need to block incoming BUY orders on that market to prevent conflicts.
 //
-// PROBLEM: During smart hedging, we may need to:
+// PROBLEM: During hedging, we may need to:
 // 1. SELL a losing position to free funds
 // 2. BUY the opposite side (hedge/inverse)
 //
@@ -311,7 +311,7 @@ export const isMarketHedgeLocked = (
 
 /**
  * Acquire a hedge operation lock on a market.
- * Used by Smart Hedging before starting a hedge/liquidation operation.
+ * Used by Hedging before starting a hedge/liquidation operation.
  *
  * @param marketId - The market ID to lock
  * @param operationType - Type of operation (e.g., "HEDGE", "LIQUIDATE", "HEDGE_EXIT")

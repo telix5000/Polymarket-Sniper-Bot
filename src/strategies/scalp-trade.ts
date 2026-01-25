@@ -1262,7 +1262,7 @@ export class ScalpTradeStrategy {
 
       // EARLY SKIP: Skip positions in the red (negative profit) - UNLESS it's a low-price position
       // Low-price positions have time-limit logic that can exit at small losses
-      // Regular losing positions should be handled by Smart Hedging or Stop-Loss
+      // Regular losing positions should be handled by Hedging or Stop-Loss
       if (position.pnlPct < 0 && !isLowPricePosition) {
         skipAggregator.add(tokenIdShort, "losing");
         continue;

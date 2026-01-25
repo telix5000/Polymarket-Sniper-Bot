@@ -177,7 +177,7 @@ export const STRATEGY_PRESETS = {
     MAX_POSITION_USD: 25,
     AUTO_REDEEM_ENABLED: false,
     AUTO_REDEEM_MIN_POSITION_USD: 0, // No minimum, redeem everything
-    // Smart Hedging - disabled in "off" preset (STRATEGY_ENABLED=false disables all strategies)
+    // Hedging - disabled in "off" preset (STRATEGY_ENABLED=false disables all strategies)
     SMART_HEDGING_ENABLED: false,
     SMART_HEDGING_TRIGGER_LOSS_PCT: 20,
     SMART_HEDGING_MAX_HEDGE_USD: 10,
@@ -268,7 +268,7 @@ export const STRATEGY_PRESETS = {
     // NOTE: Quick-flip ONLY sells for PROFIT - never for a loss (verified at bid price)
     QUICK_FLIP_ENABLED: true,
     QUICK_FLIP_TARGET_PCT: 30, // 30% target - $3 profit on $10 positions
-    QUICK_FLIP_STOP_LOSS_PCT: 15, // IGNORED - quick flip never sells for loss, smart hedging handles losses
+    QUICK_FLIP_STOP_LOSS_PCT: 15, // IGNORED - quick flip never sells for loss, hedging handles losses
     QUICK_FLIP_MIN_HOLD_SECONDS: 60,
     QUICK_FLIP_MIN_PROFIT_USD: 2.0, // Minimum $2.00 profit per trade
     // Endgame sweep settings
@@ -403,7 +403,7 @@ export const STRATEGY_PRESETS = {
     // NOTE: Quick-flip ONLY sells for PROFIT - never for a loss (verified at bid price)
     QUICK_FLIP_ENABLED: true,
     QUICK_FLIP_TARGET_PCT: 20, // 20% gain target - $2 profit on $10 positions
-    QUICK_FLIP_STOP_LOSS_PCT: 10, // IGNORED - quick flip never sells for loss, smart hedging handles losses
+    QUICK_FLIP_STOP_LOSS_PCT: 10, // IGNORED - quick flip never sells for loss, hedging handles losses
     QUICK_FLIP_MIN_HOLD_SECONDS: 30,
     QUICK_FLIP_MIN_PROFIT_USD: 1.0, // Minimum $1.00 profit per trade
     // Endgame sweep settings

@@ -61,7 +61,7 @@ function shouldQuickFlipProcess(
   return { shouldProcess: true, reason: "Meets all criteria" };
 }
 
-// Helper function to simulate Smart Hedging strategy gate
+// Helper function to simulate Hedging strategy gate
 function shouldHedgingProcess(
   position: MockPosition,
   config: { triggerLossPct: number },
@@ -188,7 +188,7 @@ describe("Resolved Market Strategy Gate", () => {
     });
   });
 
-  describe("Smart Hedging Gate", () => {
+  describe("Hedging Gate", () => {
     test("should NOT hedge resolved LOSS positions", () => {
       const resolvedLossPosition: MockPosition = {
         marketId: "market-123",
