@@ -28,7 +28,7 @@ function createMockPosition(overrides: Partial<Position> = {}): Position {
     side: "YES",
     size: 100,
     entryPrice: 0.65,
-    currentPrice: 0.60,
+    currentPrice: 0.6,
     pnlPct: -7.69,
     pnlUsd: -5,
     redeemable: false,
@@ -44,15 +44,39 @@ function createMockPosition(overrides: Partial<Position> = {}): Position {
 describe("SmartHedging / PositionTracker State Consistency", () => {
   describe("Near-Resolution Detection", () => {
     test("price >= 99.5¢ is near-resolution", () => {
-      assert.strictEqual(isNearResolution(0.995), true, "99.5¢ is near-resolution");
-      assert.strictEqual(isNearResolution(0.9995), true, "99.95¢ is near-resolution");
-      assert.strictEqual(isNearResolution(1.0), true, "100¢ is near-resolution");
+      assert.strictEqual(
+        isNearResolution(0.995),
+        true,
+        "99.5¢ is near-resolution",
+      );
+      assert.strictEqual(
+        isNearResolution(0.9995),
+        true,
+        "99.95¢ is near-resolution",
+      );
+      assert.strictEqual(
+        isNearResolution(1.0),
+        true,
+        "100¢ is near-resolution",
+      );
     });
 
     test("price < 99.5¢ is NOT near-resolution", () => {
-      assert.strictEqual(isNearResolution(0.99), false, "99¢ is NOT near-resolution");
-      assert.strictEqual(isNearResolution(0.90), false, "90¢ is NOT near-resolution");
-      assert.strictEqual(isNearResolution(0.50), false, "50¢ is NOT near-resolution");
+      assert.strictEqual(
+        isNearResolution(0.99),
+        false,
+        "99¢ is NOT near-resolution",
+      );
+      assert.strictEqual(
+        isNearResolution(0.9),
+        false,
+        "90¢ is NOT near-resolution",
+      );
+      assert.strictEqual(
+        isNearResolution(0.5),
+        false,
+        "50¢ is NOT near-resolution",
+      );
     });
 
     test("SAFETY GUARD: price < 50¢ is NEVER near-resolution", () => {
@@ -64,7 +88,7 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
         "1¢ should NEVER be near-resolution (safety guard)",
       );
       assert.strictEqual(
-        isNearResolution(0.10),
+        isNearResolution(0.1),
         false,
         "10¢ should NEVER be near-resolution",
       );
@@ -95,7 +119,7 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
     test("detects INVALID_BOOK when bestBid diverges from dataApiPrice by > 30¢", () => {
       // Scenario: Data-API shows price=0.62 (62¢), but orderbook shows bestBid=0.30 (30¢)
       // Divergence = 32¢ > 30¢ threshold
-      const result = assessOrderbookQuality(0.30, 0.70, 0.62);
+      const result = assessOrderbookQuality(0.3, 0.7, 0.62);
       assert.strictEqual(result.quality, "INVALID_BOOK");
       assert.ok(result.reason?.includes("price_divergence"));
     });
@@ -103,7 +127,7 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
     test("returns VALID for normal orderbook", () => {
       // Scenario: Orderbook bestBid=0.60 (60¢), dataApiPrice=0.62 (62¢)
       // Divergence = 2¢ < 30¢ threshold, spread is normal
-      const result = assessOrderbookQuality(0.60, 0.65, 0.62);
+      const result = assessOrderbookQuality(0.6, 0.65, 0.62);
       assert.strictEqual(result.quality, "VALID");
     });
 
@@ -146,7 +170,11 @@ describe("SmartHedging / PositionTracker State Consistency", () => {
       });
 
       const shouldSkip = position.redeemable === true;
-      assert.strictEqual(shouldSkip, true, "SmartHedging should skip redeemable positions");
+      assert.strictEqual(
+        shouldSkip,
+        true,
+        "SmartHedging should skip redeemable positions",
+      );
     });
 
     test("should skip position with invalid orderbook", () => {
@@ -342,7 +370,7 @@ describe("End-to-End Scenario Tests", () => {
 
   test("Scenario F.4: No near-resolution for prices < 50¢", () => {
     // Test prices that should NEVER be near-resolution
-    const testPrices = [0.01, 0.10, 0.25, 0.49];
+    const testPrices = [0.01, 0.1, 0.25, 0.49];
 
     for (const price of testPrices) {
       assert.strictEqual(

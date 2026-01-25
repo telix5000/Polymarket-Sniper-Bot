@@ -288,6 +288,60 @@ export class LogDeduper {
   }
 
   /**
+   * Check if a log should be emitted using a composite key.
+   * This provides flexible deduplication keyed by multiple dimensions.
+   *
+   * Use this to prevent repeated identical spam lines by specifying:
+   * - module: The module emitting the log (e.g., "Monitor", "Hedging", "PositionTracker")
+   * - eventKey: The type of event (e.g., "skip_low_price", "batch_failure", "address_probe")
+   * - marketId: Optional market/condition ID
+   * - tokenId: Optional token ID (for position-specific logs)
+   * - reason: Optional reason string
+   * - priceBucket: Optional price bucket (e.g., "0-10", "10-50", "50+") for price-based grouping
+   *
+   * @param params Parameters for constructing the composite key
+   * @param ttlMs Optional custom TTL (default: SKIP_LOG_TTL_MS)
+   * @param fingerprint Optional fingerprint for change detection
+   * @returns Whether the log should be emitted
+   */
+  shouldLogComposite(
+    params: {
+      module: string;
+      eventKey: string;
+      marketId?: string;
+      tokenId?: string;
+      reason?: string;
+      priceBucket?: string;
+    },
+    ttlMs: number = SKIP_LOG_TTL_MS,
+    fingerprint?: string,
+  ): boolean {
+    // Build composite key from provided dimensions
+    const parts = [params.module, params.eventKey];
+    if (params.marketId) parts.push(`m:${params.marketId.slice(0, 12)}`);
+    if (params.tokenId) parts.push(`t:${params.tokenId.slice(0, 12)}`);
+    if (params.reason) parts.push(`r:${params.reason}`);
+    if (params.priceBucket) parts.push(`p:${params.priceBucket}`);
+    const key = parts.join(":");
+    return this.shouldLog(key, ttlMs, fingerprint);
+  }
+
+  /**
+   * Utility to bucket a price into ranges for deduplication.
+   * Useful for grouping "Skipping low-price BUY" logs by price range.
+   *
+   * @param price Price in 0-1 scale (e.g., 0.03 for 3¢)
+   * @returns Price bucket string (e.g., "0-10c", "10-50c", "50c+")
+   */
+  static priceToBucket(price: number): string {
+    const cents = price * 100;
+    if (cents < 10) return "0-10c";
+    if (cents < 20) return "10-20c";
+    if (cents < 50) return "20-50c";
+    return "50c+";
+  }
+
+  /**
    * Check if a summary log should be emitted
    * Logs immediately on state change (via fingerprint), otherwise rate-limited
    *

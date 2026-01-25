@@ -65,8 +65,8 @@ describe("Price Utility - isNearResolution", () => {
 
   test("returns false for prices < 99.5¢", () => {
     assert.strictEqual(isNearResolution(0.99), false);
-    assert.strictEqual(isNearResolution(0.90), false);
-    assert.strictEqual(isNearResolution(0.50), false);
+    assert.strictEqual(isNearResolution(0.9), false);
+    assert.strictEqual(isNearResolution(0.5), false);
   });
 
   test("returns false for prices < 50¢ (safety guard)", () => {
@@ -77,7 +77,7 @@ describe("Price Utility - isNearResolution", () => {
       "1¢ should never be near-resolution",
     );
     assert.strictEqual(
-      isNearResolution(0.10),
+      isNearResolution(0.1),
       false,
       "10¢ should never be near-resolution",
     );
@@ -119,19 +119,19 @@ describe("Price Utility - assessOrderbookQuality", () => {
 
   test("returns INVALID_BOOK for large divergence from Data-API price", () => {
     // bestBid=0.30, dataApiPrice=0.62, divergence=0.32 > 0.30
-    const result = assessOrderbookQuality(0.30, 0.70, 0.62);
+    const result = assessOrderbookQuality(0.3, 0.7, 0.62);
     assert.strictEqual(result.quality, "INVALID_BOOK");
     assert.ok(result.reason?.includes("price_divergence"));
   });
 
   test("returns VALID for normal orderbook", () => {
     // bestBid=0.60, dataApiPrice=0.62, divergence=0.02 < 0.30
-    const result = assessOrderbookQuality(0.60, 0.65, 0.62);
+    const result = assessOrderbookQuality(0.6, 0.65, 0.62);
     assert.strictEqual(result.quality, "VALID");
   });
 
   test("returns VALID when no Data-API price (can't check divergence)", () => {
-    const result = assessOrderbookQuality(0.60, 0.65, undefined);
+    const result = assessOrderbookQuality(0.6, 0.65, undefined);
     assert.strictEqual(result.quality, "VALID");
   });
 
@@ -151,7 +151,7 @@ describe("Price Utility - assessOrderbookQuality", () => {
     // At threshold: bid=0.05, ask=0.95 - condition is NOT met (not < 0.05, not > 0.95)
     // But condition IS met for bid=0.04, ask=0.96
     // Use dataApiPrice close to bid to avoid divergence threshold
-    const result1 = assessOrderbookQuality(0.06, 0.94, 0.10);
+    const result1 = assessOrderbookQuality(0.06, 0.94, 0.1);
     assert.strictEqual(
       result1.quality,
       "VALID",
@@ -159,7 +159,7 @@ describe("Price Utility - assessOrderbookQuality", () => {
     );
 
     // Divergence exactly at threshold: |0.32 - 0.62| = 0.30 - should be VALID
-    const result2 = assessOrderbookQuality(0.32, 0.70, 0.62);
+    const result2 = assessOrderbookQuality(0.32, 0.7, 0.62);
     assert.strictEqual(
       result2.quality,
       "VALID",
@@ -167,7 +167,7 @@ describe("Price Utility - assessOrderbookQuality", () => {
     );
 
     // Divergence just above threshold: |0.31 - 0.62| = 0.31 > 0.30
-    const result3 = assessOrderbookQuality(0.31, 0.70, 0.62);
+    const result3 = assessOrderbookQuality(0.31, 0.7, 0.62);
     assert.strictEqual(
       result3.quality,
       "INVALID_BOOK",

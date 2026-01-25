@@ -16,6 +16,7 @@ import {
 } from "../utils/sanitize-axios-error.util";
 import { parallelBatch } from "../utils/parallel-utils";
 import {
+  LogDeduper,
   MONITOR_HEARTBEAT_MS,
   MONITOR_DETAIL_HEARTBEAT_MS,
 } from "../utils/log-deduper.util";
@@ -41,6 +42,11 @@ interface ActivityResponse {
   status?: string; // 'pending' | 'confirmed'
 }
 
+// === MODULE-LEVEL STATE FOR ONE-TIME MEMPOOL BANNER ===
+// Track RPC URLs for which we've already logged the mempool warning banner.
+// This prevents repeated loud banner logs on service restarts or reconnects.
+const mempoolWarningLoggedForRpc = new Set<string>();
+
 export class MempoolMonitorService {
   private readonly deps: MempoolMonitorDeps;
   private provider?: JsonRpcProvider;
@@ -59,11 +65,25 @@ export class MempoolMonitorService {
   private lastDetailFingerprint: string | null = null;
   private lastDetailLoggedAt: number = 0;
 
+  // Track RPC mode selected for this instance
+  private runtimeMode: "mempool" | "api_polling" = "mempool";
+
+  // Log deduper for rate-limiting repeated log messages
+  private logDeduper = new LogDeduper();
+
   constructor(deps: MempoolMonitorDeps) {
     this.deps = deps;
     POLYMARKET_CONTRACTS.forEach((addr) =>
       this.targetAddresses.add(addr.toLowerCase()),
     );
+  }
+
+  /**
+   * Get the current runtime mode (mempool or api_polling).
+   * Returns the mode that was auto-detected during start().
+   */
+  getRuntimeMode(): "mempool" | "api_polling" {
+    return this.runtimeMode;
   }
 
   async start(): Promise<void> {
@@ -109,7 +129,7 @@ export class MempoolMonitorService {
   }
 
   private async enablePendingSubscription(): Promise<void> {
-    const { logger } = this.deps;
+    const { logger, env } = this.deps;
     if (!this.provider) {
       return;
     }
@@ -125,6 +145,7 @@ export class MempoolMonitorService {
       );
       await this.provider.send("eth_uninstallFilter", [filterId]);
 
+      this.runtimeMode = "mempool";
       logger.info(
         "[Monitor] ✅ RPC endpoint supports real-time mempool monitoring via eth_newPendingTransactionFilter",
       );
@@ -142,48 +163,64 @@ export class MempoolMonitorService {
         }
       });
     } catch (err) {
-      logger.info(
-        "[Monitor] ===================================================================",
-      );
-      logger.info(
-        "[Monitor] ℹ️  RPC Capability: eth_newPendingTransactionFilter NOT supported",
-      );
-      logger.info(
-        "[Monitor] ===================================================================",
-      );
-      logger.info(
-        "[Monitor] This RPC endpoint does not support real-time mempool monitoring.",
-      );
-      logger.info(
-        "[Monitor] This is expected and NORMAL for many RPC providers, including:",
-      );
-      logger.info("[Monitor]   • Alchemy Free Tier");
-      logger.info("[Monitor]   • Infura Free Tier");
-      logger.info("[Monitor]   • QuickNode (some plans)");
-      logger.info("[Monitor]   • Most public RPC endpoints");
-      logger.info("[Monitor] ");
-      logger.info(
-        "[Monitor] ✅ FALLBACK MODE: The bot will use Polymarket API polling instead.",
-      );
-      logger.info(
-        "[Monitor] This provides reliable trade detection via the Polymarket API,",
-      );
-      logger.info(
-        "[Monitor] checking for recent activity at regular intervals.",
-      );
-      logger.info("[Monitor] ");
-      logger.info(
-        "[Monitor] ℹ️  For real-time mempool monitoring, you can upgrade to:",
-      );
-      logger.info(
-        "[Monitor]   • Alchemy Growth or Scale plan with eth_subscribe",
-      );
-      logger.info("[Monitor]   • Infura with WebSocket support");
-      logger.info("[Monitor]   • QuickNode with stream add-on");
-      logger.info("[Monitor]   • Your own Polygon node");
-      logger.info(
-        "[Monitor] ===================================================================",
-      );
+      // Auto-fallback to API polling mode
+      this.runtimeMode = "api_polling";
+
+      // Only log the full banner ONCE per RPC URL to prevent repeated loud banner logs
+      const rpcUrl = env.rpcUrl;
+      const alreadyLogged = mempoolWarningLoggedForRpc.has(rpcUrl);
+
+      if (alreadyLogged) {
+        // Subsequent attempts: single-line log only
+        logger.info(
+          "[Monitor] ℹ️  RPC mempool unsupported (already logged); using API polling mode.",
+        );
+      } else {
+        // First time for this RPC URL: log the full banner
+        mempoolWarningLoggedForRpc.add(rpcUrl);
+        logger.info(
+          "[Monitor] ===================================================================",
+        );
+        logger.info(
+          "[Monitor] ℹ️  RPC Capability: eth_newPendingTransactionFilter NOT supported",
+        );
+        logger.info(
+          "[Monitor] ===================================================================",
+        );
+        logger.info(
+          "[Monitor] This RPC endpoint does not support real-time mempool monitoring.",
+        );
+        logger.info(
+          "[Monitor] This is expected and NORMAL for many RPC providers, including:",
+        );
+        logger.info("[Monitor]   • Alchemy Free Tier");
+        logger.info("[Monitor]   • Infura Free Tier");
+        logger.info("[Monitor]   • QuickNode (some plans)");
+        logger.info("[Monitor]   • Most public RPC endpoints");
+        logger.info("[Monitor] ");
+        logger.info(
+          "[Monitor] ✅ AUTO-FALLBACK: Runtime mode set to API polling.",
+        );
+        logger.info(
+          "[Monitor] This provides reliable trade detection via the Polymarket API,",
+        );
+        logger.info(
+          "[Monitor] checking for recent activity at regular intervals.",
+        );
+        logger.info("[Monitor] ");
+        logger.info(
+          "[Monitor] ℹ️  For real-time mempool monitoring, you can upgrade to:",
+        );
+        logger.info(
+          "[Monitor]   • Alchemy Growth or Scale plan with eth_subscribe",
+        );
+        logger.info("[Monitor]   • Infura with WebSocket support");
+        logger.info("[Monitor]   • QuickNode with stream add-on");
+        logger.info("[Monitor]   • Your own Polygon node");
+        logger.info(
+          "[Monitor] ===================================================================",
+        );
+      }
       logger.debug(
         `[Monitor] RPC capability check details: ${sanitizeErrorMessage(err)}`,
       );
@@ -476,9 +513,20 @@ export class MempoolMonitorService {
           const minBuyPrice = env.minBuyPrice ?? DEFAULT_CONFIG.MIN_BUY_PRICE;
           if (activity.price < minBuyPrice) {
             stats.skippedLowPriceTrades += 1;
-            logger.debug(
-              `[Monitor] Skipping low-price BUY: ${(activity.price * 100).toFixed(1)}¢ < ${(minBuyPrice * 100).toFixed(1)}¢ min on market ${activity.conditionId}`,
-            );
+            // Rate-limit this log using composite key with price bucket to prevent spam
+            const priceBucket = LogDeduper.priceToBucket(activity.price);
+            if (
+              this.logDeduper.shouldLogComposite({
+                module: "Monitor",
+                eventKey: "skip_low_price",
+                marketId: activity.conditionId,
+                priceBucket,
+              })
+            ) {
+              logger.debug(
+                `[Monitor] Skipping low-price BUY: ${(activity.price * 100).toFixed(1)}¢ < ${(minBuyPrice * 100).toFixed(1)}¢ min on market ${activity.conditionId.slice(0, 12)}... (bucket=${priceBucket})`,
+              );
+            }
             continue;
           }
         }

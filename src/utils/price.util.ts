@@ -39,13 +39,13 @@ export const NEAR_RESOLUTION_THRESHOLD_DOLLARS = 0.995; // 99.5¢
  * Minimum price in dollars for near-resolution classification.
  * Prevents false positives for low-priced positions.
  */
-export const NEAR_RESOLUTION_MIN_PRICE_DOLLARS = 0.50; // 50¢
+export const NEAR_RESOLUTION_MIN_PRICE_DOLLARS = 0.5; // 50¢
 
 /**
  * Maximum price divergence between orderbook and Data-API before book is invalid.
  * If |bestBid - dataApiPrice| > this, the orderbook is considered stale/broken.
  */
-export const MAX_BOOK_DIVERGENCE_DOLLARS = 0.30; // 30¢
+export const MAX_BOOK_DIVERGENCE_DOLLARS = 0.3; // 30¢
 
 /**
  * Threshold for detecting broken/invalid orderbooks.

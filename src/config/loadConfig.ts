@@ -729,6 +729,86 @@ const warnUnsafeOverrides = (scope: string, keys: string[]): void => {
   );
 };
 
+/**
+ * Mapping of legacy env var names to their unified/canonical equivalents.
+ * Used to detect conflicting configurations where both legacy and unified vars
+ * are set to different values.
+ */
+const LEGACY_TO_UNIFIED_MAP: Record<string, string> = {
+  // MIN_TRADE legacy aliases
+  MIN_TRADE_SIZE: "MIN_TRADE_SIZE_USD",
+  MIN_TRADE_USDC: "MIN_TRADE_SIZE_USD",
+  MIN_TRADE_SIZE_USDC: "MIN_TRADE_SIZE_USD",
+};
+
+/**
+ * Detect conflicts where both legacy and unified env vars are set to different values.
+ * Returns an array of conflict descriptions for logging.
+ */
+const detectLegacyUnifiedConflicts = (
+  overrides?: Overrides,
+): {
+  legacy: string;
+  unified: string;
+  legacyValue: string;
+  unifiedValue: string;
+}[] => {
+  const conflicts: {
+    legacy: string;
+    unified: string;
+    legacyValue: string;
+    unifiedValue: string;
+  }[] = [];
+
+  for (const [legacyKey, unifiedKey] of Object.entries(LEGACY_TO_UNIFIED_MAP)) {
+    const legacyValue = readEnv(legacyKey, overrides);
+    const unifiedValue = readEnv(unifiedKey, overrides);
+
+    if (
+      legacyValue !== undefined &&
+      unifiedValue !== undefined &&
+      legacyValue !== unifiedValue
+    ) {
+      conflicts.push({
+        legacy: legacyKey,
+        unified: unifiedKey,
+        legacyValue,
+        unifiedValue,
+      });
+    }
+  }
+
+  return conflicts;
+};
+
+/**
+ * Warn about legacy/unified conflicts and indicate which value is being used.
+ * The unified value always takes precedence.
+ */
+const warnLegacyUnifiedConflicts = (
+  scope: string,
+  conflicts: {
+    legacy: string;
+    unified: string;
+    legacyValue: string;
+    unifiedValue: string;
+  }[],
+): void => {
+  if (!conflicts.length) return;
+
+  console.warn(
+    `[Config] ${scope} ⚠️  LEGACY/UNIFIED CONFIG CONFLICT DETECTED:`,
+  );
+  for (const conflict of conflicts) {
+    console.warn(
+      `[Config]   ${conflict.legacy}="${conflict.legacyValue}" vs ${conflict.unified}="${conflict.unifiedValue}"`,
+    );
+    console.warn(
+      `[Config]   → Using UNIFIED value: ${conflict.unified}="${conflict.unifiedValue}" (legacy ignored)`,
+    );
+  }
+};
+
 const shouldPrintEffectiveConfig = (overrides?: Overrides): boolean =>
   readBool("PRINT_EFFECTIVE_CONFIG", false, overrides);
 
@@ -736,6 +816,43 @@ const redact = (value: string | undefined): string | undefined => {
   if (!value) return value;
   if (value.length <= 8) return "***";
   return `${value.slice(0, 4)}...${value.slice(-4)}`;
+};
+
+/**
+ * Config value with source tracking for debugging.
+ */
+type ConfigValueWithSource = {
+  value: unknown;
+  source: "preset" | "env_override" | "legacy_alias" | "default";
+};
+
+/**
+ * Print effective config with source information for each value.
+ * This helps debug config loading issues by showing where each value came from.
+ */
+const printEffectiveConfigWithSources = (
+  label: string,
+  payload: Record<string, unknown>,
+  sources: Record<string, string>,
+): void => {
+  console.info(
+    `[Config] ========== EFFECTIVE ${label.toUpperCase()} CONFIG ==========`,
+  );
+  for (const [key, value] of Object.entries(payload)) {
+    const source = sources[key] || "default";
+    const displayValue =
+      key.toLowerCase().includes("key") ||
+      key.toLowerCase().includes("secret") ||
+      key.toLowerCase().includes("private")
+        ? redact(String(value))
+        : value;
+    console.info(
+      `[Config]   ${key}=${JSON.stringify(displayValue)} (${source})`,
+    );
+  }
+  console.info(
+    `[Config] ==========================================================`,
+  );
 };
 
 const printEffectiveConfig = (
@@ -769,6 +886,10 @@ export function loadArbConfig(overrides: Overrides = {}): ArbRuntimeConfig {
     overrides,
     clobDeriveEnabled,
   );
+
+  // Check for legacy/unified conflicts EARLY and warn
+  const legacyConflicts = detectLegacyUnifiedConflicts(overrides);
+  warnLegacyUnifiedConflicts("ARB", legacyConflicts);
 
   if (presetName === "custom") {
     warnLegacyKeys("ARB", legacyKeysDetected);
@@ -921,6 +1042,10 @@ export function loadMonitorConfig(
     overrides,
     clobDeriveEnabled,
   );
+
+  // Check for legacy/unified conflicts EARLY and warn
+  const legacyConflicts = detectLegacyUnifiedConflicts(overrides);
+  warnLegacyUnifiedConflicts("MONITOR", legacyConflicts);
 
   if (presetName === "custom") {
     warnLegacyKeys("MONITOR", legacyKeysDetected);
