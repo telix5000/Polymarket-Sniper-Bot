@@ -15,10 +15,12 @@ export interface LeaderboardOptions {
   timePeriod: "MONTH";
   /** Order by field (PNL = profit and loss) */
   orderBy: "PNL";
-  /** Path to cache file for persisting addresses */
+  /** Path to cache file for persisting addresses (optional - set to empty string to disable caching) */
   cacheFile: string;
   /** Time-to-live for cache in seconds */
   ttlSeconds: number;
+  /** Whether to enable disk caching (default: false for stateless operation) */
+  enableCache: boolean;
 }
 
 /**
@@ -159,29 +161,37 @@ function isRetryableError(error: AxiosError): boolean {
 }
 
 /**
- * Fetches target addresses from the Polymarket leaderboard with caching support.
+ * Fetches target addresses from the Polymarket leaderboard with optional caching support.
  *
  * @param opts - Configuration options
  * @param logger - Optional logger instance
  * @returns Array of lowercase, validated EVM addresses
  *
  * Behavior:
- * - Returns cached addresses if cache is fresh (within TTL)
- * - Fetches from API if cache is stale or missing
- * - Falls back to stale cache if API fails
- * - Returns empty array if both cache and API fail
+ * - If enableCache is true: Returns cached addresses if cache is fresh (within TTL)
+ * - Fetches from API if cache is stale, missing, or caching is disabled
+ * - Falls back to stale cache if API fails (only when caching is enabled)
+ * - Returns empty array if API fails and no cache available
  */
 export async function getTargetAddressesFromLeaderboard(
   opts: LeaderboardOptions,
   logger: Logger = new ConsoleLogger(),
 ): Promise<string[]> {
-  const { limit, category, timePeriod, orderBy, cacheFile, ttlSeconds } = opts;
+  const {
+    limit,
+    category,
+    timePeriod,
+    orderBy,
+    cacheFile,
+    ttlSeconds,
+    enableCache,
+  } = opts;
 
   // Clamp limit to max 50
   const effectiveLimit = Math.min(Math.max(1, limit), MAX_LIMIT);
 
-  // Check cache first
-  const cache = readCache(cacheFile);
+  // Check cache first (only if caching is enabled)
+  const cache = enableCache ? readCache(cacheFile) : null;
   if (cache && isCacheFresh(cache, ttlSeconds)) {
     logger.info(
       `[Leaderboard] Using cached addresses (${cache.addresses.length} total, ` +
@@ -210,8 +220,10 @@ export async function getTargetAddressesFromLeaderboard(
       const addresses = parseLeaderboardResponse(response.data);
 
       if (addresses.length > 0) {
-        // Write to cache on successful fetch
-        writeCache(cacheFile, addresses);
+        // Write to cache on successful fetch (only if caching is enabled)
+        if (enableCache) {
+          writeCache(cacheFile, addresses);
+        }
         logger.info(
           `[Leaderboard] Fetched ${addresses.length} addresses from API ` +
             `(first 3: ${addresses.slice(0, 3).join(", ")}), source: live`,
@@ -322,6 +334,12 @@ export function getDefaultLeaderboardOptions(): LeaderboardOptions {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
   };
 
+  const readBoolean = (key: string, defaultValue: boolean): boolean => {
+    const value = readEnv(key, "");
+    if (value === "") return defaultValue;
+    return value.toLowerCase() === "true" || value === "1";
+  };
+
   return {
     limit: readNumber("LEADERBOARD_LIMIT", 20),
     category: "OVERALL",
@@ -329,6 +347,7 @@ export function getDefaultLeaderboardOptions(): LeaderboardOptions {
     orderBy: "PNL",
     cacheFile: readEnv("LEADERBOARD_CACHE_FILE", ".leaderboard-cache.json"),
     ttlSeconds: readNumber("LEADERBOARD_TTL_SECONDS", 3600), // 1 hour default
+    enableCache: readBoolean("LEADERBOARD_ENABLE_CACHE", false), // Default: stateless (no caching)
   };
 }
 

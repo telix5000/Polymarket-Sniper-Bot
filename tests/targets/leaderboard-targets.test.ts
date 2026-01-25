@@ -35,6 +35,7 @@ function createTestOptions(
     orderBy: "PNL",
     cacheFile: TEST_CACHE_FILE,
     ttlSeconds: 3600,
+    enableCache: true, // Enable cache for tests that need it
     ...overrides,
   };
 }
@@ -232,6 +233,7 @@ describe("getDefaultLeaderboardOptions", () => {
     delete process.env.LEADERBOARD_LIMIT;
     delete process.env.LEADERBOARD_TTL_SECONDS;
     delete process.env.LEADERBOARD_CACHE_FILE;
+    delete process.env.LEADERBOARD_ENABLE_CACHE;
 
     const opts = getDefaultLeaderboardOptions();
     assert.equal(opts.limit, 20);
@@ -240,6 +242,7 @@ describe("getDefaultLeaderboardOptions", () => {
     assert.equal(opts.category, "OVERALL");
     assert.equal(opts.timePeriod, "MONTH");
     assert.equal(opts.orderBy, "PNL");
+    assert.equal(opts.enableCache, false); // Default is stateless (no caching)
   });
 
   test("reads LEADERBOARD_LIMIT from env", () => {
@@ -258,6 +261,20 @@ describe("getDefaultLeaderboardOptions", () => {
     process.env.LEADERBOARD_CACHE_FILE = "/custom/path/cache.json";
     const opts = getDefaultLeaderboardOptions();
     assert.equal(opts.cacheFile, "/custom/path/cache.json");
+  });
+
+  test("reads LEADERBOARD_ENABLE_CACHE from env", () => {
+    process.env.LEADERBOARD_ENABLE_CACHE = "true";
+    const opts = getDefaultLeaderboardOptions();
+    assert.equal(opts.enableCache, true);
+
+    process.env.LEADERBOARD_ENABLE_CACHE = "1";
+    const opts2 = getDefaultLeaderboardOptions();
+    assert.equal(opts2.enableCache, true);
+
+    process.env.LEADERBOARD_ENABLE_CACHE = "false";
+    const opts3 = getDefaultLeaderboardOptions();
+    assert.equal(opts3.enableCache, false);
   });
 });
 
