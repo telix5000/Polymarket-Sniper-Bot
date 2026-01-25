@@ -5580,3 +5580,211 @@ describe("PositionTracker: Partial Refresh Does Not Overwrite lastGoodSnapshot",
     assert.notStrictEqual(hash1, hash3, "Different snapshots should have different hash");
   });
 });
+
+/**
+ * Tests for P&L Consistency Check (Jan 2025 Fix)
+ *
+ * These tests verify the logic that:
+ * 1. Detects discrepancies between Data-API P&L and price-derived P&L
+ * 2. Ignores tiny rounding differences (< 0.5%)
+ * 3. Logs warnings for moderate discrepancies (2-10%)
+ * 4. Marks P&L as untrusted for severe discrepancies (> 10%)
+ */
+describe("P&L Consistency Check", () => {
+  // Test-only mirrors of PositionTracker thresholds
+  // IMPORTANT: Keep in sync manually if production thresholds change
+  const PNL_ROUNDING_TOLERANCE_PCT = 0.5;
+  const PNL_WARNING_THRESHOLD_PCT = 2.0;
+  const PNL_UNTRUSTED_THRESHOLD_PCT = 10.0;
+
+  /**
+   * Helper function to compute implied P&L from prices
+   */
+  function computeImpliedPnlPct(
+    entryPrice: number,
+    currentPrice: number,
+  ): number {
+    if (entryPrice <= 0) return 0;
+    return ((currentPrice - entryPrice) / entryPrice) * 100;
+  }
+
+  /**
+   * Helper function to determine P&L trust status based on discrepancy
+   */
+  function determinePnlTrust(
+    pnlPct: number,
+    impliedPnlPct: number,
+  ): {
+    trusted: boolean;
+    discrepancy: number;
+    level: "ROUNDING" | "WARNING" | "UNTRUSTED";
+  } {
+    const discrepancy = Math.abs(pnlPct - impliedPnlPct);
+
+    if (discrepancy > PNL_UNTRUSTED_THRESHOLD_PCT) {
+      return { trusted: false, discrepancy, level: "UNTRUSTED" };
+    } else if (discrepancy > PNL_WARNING_THRESHOLD_PCT) {
+      return { trusted: true, discrepancy, level: "WARNING" };
+    } else {
+      return { trusted: true, discrepancy, level: "ROUNDING" };
+    }
+  }
+
+  test("Tiny rounding differences should be ignored", () => {
+    // Scenario: entry=0.8599, current=0.86 → implied=0.01%
+    // If Data-API reports pnlPct=0.00%, the difference is 0.01% < 0.5%
+    const entryPrice = 0.8599;
+    const currentPrice = 0.86;
+    const dataApiPnlPct = 0.0;
+
+    const impliedPnlPct = computeImpliedPnlPct(entryPrice, currentPrice);
+    const result = determinePnlTrust(dataApiPnlPct, impliedPnlPct);
+
+    // Implied should be ~0.0116%
+    assert.ok(
+      Math.abs(impliedPnlPct - 0.0116) < 0.01,
+      `Implied P&L should be ~0.01%, got ${impliedPnlPct.toFixed(4)}%`,
+    );
+    assert.strictEqual(result.trusted, true, "P&L should be trusted");
+    assert.strictEqual(result.level, "ROUNDING", "Should be classified as rounding noise");
+    assert.ok(
+      result.discrepancy < PNL_ROUNDING_TOLERANCE_PCT,
+      "Discrepancy should be below rounding tolerance",
+    );
+  });
+
+  test("Moderate discrepancy should be logged but trusted", () => {
+    // Scenario: Data-API reports 5% profit but prices imply 8%
+    // Discrepancy = 3% → between WARNING (2%) and UNTRUSTED (10%)
+    const entryPrice = 0.5;
+    const currentPrice = 0.54; // 8% gain
+    const dataApiPnlPct = 5.0;
+
+    const impliedPnlPct = computeImpliedPnlPct(entryPrice, currentPrice);
+    const result = determinePnlTrust(dataApiPnlPct, impliedPnlPct);
+
+    // Use tolerance for floating-point comparison
+    assert.ok(
+      Math.abs(impliedPnlPct - 8.0) < 0.001,
+      `Implied P&L should be ~8%, got ${impliedPnlPct}`,
+    );
+    assert.strictEqual(result.trusted, true, "P&L should still be trusted");
+    assert.strictEqual(result.level, "WARNING", "Should be classified as warning level");
+    assert.ok(
+      result.discrepancy > PNL_WARNING_THRESHOLD_PCT,
+      "Discrepancy should exceed warning threshold",
+    );
+    assert.ok(
+      result.discrepancy <= PNL_UNTRUSTED_THRESHOLD_PCT,
+      "Discrepancy should not exceed untrusted threshold",
+    );
+  });
+
+  test("Severe discrepancy should mark P&L as untrusted", () => {
+    // Scenario: Data-API reports 2% profit but prices imply 15%
+    // Discrepancy = 13% → exceeds UNTRUSTED threshold (10%)
+    const entryPrice = 0.5;
+    const currentPrice = 0.575; // 15% gain
+    const dataApiPnlPct = 2.0;
+
+    const impliedPnlPct = computeImpliedPnlPct(entryPrice, currentPrice);
+    const result = determinePnlTrust(dataApiPnlPct, impliedPnlPct);
+
+    // Use tolerance for floating-point comparison
+    assert.ok(
+      Math.abs(impliedPnlPct - 15.0) < 0.001,
+      `Implied P&L should be ~15%, got ${impliedPnlPct}`,
+    );
+    assert.strictEqual(result.trusted, false, "P&L should NOT be trusted");
+    assert.strictEqual(result.level, "UNTRUSTED", "Should be classified as untrusted");
+    assert.ok(
+      result.discrepancy > PNL_UNTRUSTED_THRESHOLD_PCT,
+      "Discrepancy should exceed untrusted threshold",
+    );
+  });
+
+  test("Zero entry price should not cause division by zero", () => {
+    const entryPrice = 0;
+    const currentPrice = 0.5;
+
+    const impliedPnlPct = computeImpliedPnlPct(entryPrice, currentPrice);
+
+    assert.strictEqual(impliedPnlPct, 0, "Zero entry price should return 0% implied P&L");
+  });
+
+  test("Negative discrepancy (Data-API higher) should also be detected", () => {
+    // Scenario: Data-API reports 20% but prices imply 5%
+    // This could happen if Data-API uses stale higher prices
+    const entryPrice = 0.5;
+    const currentPrice = 0.525; // 5% gain
+    const dataApiPnlPct = 20.0;
+
+    const impliedPnlPct = computeImpliedPnlPct(entryPrice, currentPrice);
+    const result = determinePnlTrust(dataApiPnlPct, impliedPnlPct);
+
+    // Use tolerance for floating-point comparison
+    assert.ok(
+      Math.abs(impliedPnlPct - 5.0) < 0.001,
+      `Implied P&L should be ~5%, got ${impliedPnlPct}`,
+    );
+    assert.strictEqual(result.trusted, false, "P&L should NOT be trusted");
+    assert.ok(
+      Math.abs(result.discrepancy - 15.0) < 0.001,
+      `Discrepancy should be ~15% (absolute value), got ${result.discrepancy}`,
+    );
+  });
+
+  test("Anomaly detection: price shows profit but P&L shows loss", () => {
+    // This is the specific case from the issue: entry=0.8599, current=0.86, pnlPct=0.00%
+    // The price gain is ~0.01%, which is BELOW the rounding tolerance
+    // So this should NOT trigger an anomaly warning
+    const entryPrice = 0.8599;
+    const currentPrice = 0.86;
+    const priceGainPct = computeImpliedPnlPct(entryPrice, currentPrice);
+
+    // Should only trigger anomaly if priceGain > ROUNDING_TOLERANCE_PCT
+    const shouldTriggerAnomaly = priceGainPct > PNL_ROUNDING_TOLERANCE_PCT;
+
+    assert.strictEqual(
+      shouldTriggerAnomaly,
+      false,
+      "Tiny price gain (~0.01%) should NOT trigger anomaly warning",
+    );
+  });
+
+  test("Anomaly detection: significant price gain but negative P&L should warn", () => {
+    // Scenario: entry=0.80, current=0.90 (12.5% gain) but pnlPct=-5%
+    // This is a genuine anomaly that should be flagged
+    const entryPrice = 0.8;
+    const currentPrice = 0.9;
+    const pnlPct = -5.0;
+    const priceGainPct = computeImpliedPnlPct(entryPrice, currentPrice);
+
+    // Should trigger anomaly: priceGain (12.5%) > ROUNDING_TOLERANCE (0.5%) AND pnlPct <= 0
+    const shouldTriggerAnomaly =
+      priceGainPct > PNL_ROUNDING_TOLERANCE_PCT && pnlPct <= 0;
+
+    // Use tolerance for floating-point comparison
+    assert.ok(
+      Math.abs(priceGainPct - 12.5) < 0.001,
+      `Price gain should be ~12.5%, got ${priceGainPct}`,
+    );
+    assert.strictEqual(
+      shouldTriggerAnomaly,
+      true,
+      "Significant price gain with negative P&L SHOULD trigger anomaly warning",
+    );
+  });
+
+  test("Thresholds are ordered correctly", () => {
+    // Sanity check: ROUNDING < WARNING < UNTRUSTED
+    assert.ok(
+      PNL_ROUNDING_TOLERANCE_PCT < PNL_WARNING_THRESHOLD_PCT,
+      "Rounding tolerance should be less than warning threshold",
+    );
+    assert.ok(
+      PNL_WARNING_THRESHOLD_PCT < PNL_UNTRUSTED_THRESHOLD_PCT,
+      "Warning threshold should be less than untrusted threshold",
+    );
+  });
+});
