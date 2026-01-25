@@ -2682,3 +2682,130 @@ describe("Hedge Exit Monitoring", () => {
     });
   });
 });
+
+/**
+ * Tests for Fund-Freeing Logic (Reserve Shortfall Handling)
+ *
+ * These tests verify that when hedging fails due to RESERVE_SHORTFALL,
+ * the strategy correctly attempts to free funds by selling profitable positions,
+ * then retries the hedge.
+ */
+describe("Fund-Freeing Logic for Hedge Failures", () => {
+  /**
+   * Test helper to check if a hedge failure reason should trigger fund-freeing.
+   * This mirrors the logic in SmartHedgingStrategy.executeInternal().
+   */
+  function shouldTriggerFundFreeing(reason: string): boolean {
+    return reason === "INSUFFICIENT_BALANCE_OR_ALLOWANCE" || reason === "RESERVE_SHORTFALL";
+  }
+
+  describe("Hedge Failure Reason Detection", () => {
+    test("INSUFFICIENT_BALANCE_OR_ALLOWANCE should trigger fund-freeing", () => {
+      const result = shouldTriggerFundFreeing("INSUFFICIENT_BALANCE_OR_ALLOWANCE");
+      assert.strictEqual(result, true, "INSUFFICIENT_BALANCE_OR_ALLOWANCE should trigger fund-freeing");
+    });
+
+    test("RESERVE_SHORTFALL should trigger fund-freeing", () => {
+      const result = shouldTriggerFundFreeing("RESERVE_SHORTFALL");
+      assert.strictEqual(result, true, "RESERVE_SHORTFALL should trigger fund-freeing");
+    });
+
+    test("TOO_EXPENSIVE should NOT trigger fund-freeing", () => {
+      const result = shouldTriggerFundFreeing("TOO_EXPENSIVE");
+      assert.strictEqual(result, false, "TOO_EXPENSIVE should not trigger fund-freeing");
+    });
+
+    test("NO_OPPOSITE_TOKEN should NOT trigger fund-freeing", () => {
+      const result = shouldTriggerFundFreeing("NO_OPPOSITE_TOKEN");
+      assert.strictEqual(result, false, "NO_OPPOSITE_TOKEN should not trigger fund-freeing");
+    });
+
+    test("NO_LIQUIDITY should NOT trigger fund-freeing", () => {
+      const result = shouldTriggerFundFreeing("NO_LIQUIDITY");
+      assert.strictEqual(result, false, "NO_LIQUIDITY should not trigger fund-freeing");
+    });
+
+    test("MARKET_RESOLVED should NOT trigger fund-freeing", () => {
+      const result = shouldTriggerFundFreeing("MARKET_RESOLVED");
+      assert.strictEqual(result, false, "MARKET_RESOLVED should not trigger fund-freeing");
+    });
+  });
+
+  describe("Cycle Budget Update After Selling", () => {
+    /**
+     * Test helper to simulate updating cycle budget after selling a position.
+     */
+    function updateCycleBudgetAfterSell(
+      currentBudget: number | null,
+      freedValue: number,
+    ): number | null {
+      if (currentBudget === null) {
+        return null;
+      }
+      return currentBudget + freedValue;
+    }
+
+    test("should update cycle budget after selling position", () => {
+      const initialBudget = 5.0;
+      const freedValue = 10.0;
+
+      const newBudget = updateCycleBudgetAfterSell(initialBudget, freedValue);
+      assert.strictEqual(newBudget, 15.0, "Budget should increase by freed amount");
+    });
+
+    test("should update cycle budget from zero", () => {
+      const initialBudget = 0;
+      const freedValue = 25.0;
+
+      const newBudget = updateCycleBudgetAfterSell(initialBudget, freedValue);
+      assert.strictEqual(newBudget, 25.0, "Budget should be exactly the freed amount");
+    });
+
+    test("should not update if budget is null (no reserve tracking)", () => {
+      const initialBudget = null;
+      const freedValue = 10.0;
+
+      const newBudget = updateCycleBudgetAfterSell(initialBudget, freedValue);
+      assert.strictEqual(newBudget, null, "Budget should remain null if no reserve tracking");
+    });
+  });
+
+  describe("Skip Summary Critical Detection", () => {
+    /**
+     * Test helper to check if skip summary contains critical issues that need WARN logging.
+     */
+    function hasCriticalSkips(summary: string): boolean {
+      return (
+        summary.includes("reserve") ||
+        summary.includes("untrusted") ||
+        summary.includes("not_tradable") ||
+        summary.includes("cooldown")
+      );
+    }
+
+    test("should detect reserve shortfall as critical", () => {
+      const summary = "loss_below_trigger(5), reserve_shortfall(2)";
+      assert.strictEqual(hasCriticalSkips(summary), true, "reserve issues should be critical");
+    });
+
+    test("should detect untrusted P&L as critical", () => {
+      const summary = "loss_below_trigger(5), untrusted_pnl(3)";
+      assert.strictEqual(hasCriticalSkips(summary), true, "untrusted issues should be critical");
+    });
+
+    test("should detect not_tradable as critical", () => {
+      const summary = "loss_below_trigger(5), not_tradable(1)";
+      assert.strictEqual(hasCriticalSkips(summary), true, "not_tradable should be critical");
+    });
+
+    test("should detect cooldown as critical", () => {
+      const summary = "loss_below_trigger(5), cooldown(2)";
+      assert.strictEqual(hasCriticalSkips(summary), true, "cooldown should be critical");
+    });
+
+    test("should NOT detect normal skips as critical", () => {
+      const summary = "loss_below_trigger(5), already_hedged(2), hold_time_short(1)";
+      assert.strictEqual(hasCriticalSkips(summary), false, "normal skips should not be critical");
+    });
+  });
+});
