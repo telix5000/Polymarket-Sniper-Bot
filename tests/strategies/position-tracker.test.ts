@@ -5591,8 +5591,10 @@ describe("PositionTracker: Partial Refresh Does Not Overwrite lastGoodSnapshot",
  * 4. Marks P&L as untrusted for severe discrepancies (> 10%)
  */
 describe("P&L Consistency Check", () => {
-  // Test-only mirrors of PositionTracker thresholds
-  // IMPORTANT: Keep in sync manually if production thresholds change
+  // Test-only mirrors of PositionTracker thresholds (private static readonly)
+  // SYNC REQUIREMENT: These values MUST match PositionTracker.PNL_*_PCT constants.
+  // If production thresholds change, update these test values to match.
+  // File: src/strategies/position-tracker.ts (search for "P&L CONSISTENCY THRESHOLDS")
   const PNL_ROUNDING_TOLERANCE_PCT = 0.5;
   const PNL_WARNING_THRESHOLD_PCT = 2.0;
   const PNL_UNTRUSTED_THRESHOLD_PCT = 10.0;
@@ -5640,10 +5642,11 @@ describe("P&L Consistency Check", () => {
     const impliedPnlPct = computeImpliedPnlPct(entryPrice, currentPrice);
     const result = determinePnlTrust(dataApiPnlPct, impliedPnlPct);
 
-    // Implied should be ~0.0116%
+    // Implied should be ~0.0116% ((0.86 - 0.8599) / 0.8599 * 100)
+    // Using smaller tolerance (0.0001) for precise verification
     assert.ok(
-      Math.abs(impliedPnlPct - 0.0116) < 0.01,
-      `Implied P&L should be ~0.01%, got ${impliedPnlPct.toFixed(4)}%`,
+      Math.abs(impliedPnlPct - 0.0116) < 0.0001,
+      `Implied P&L should be ~0.0116%, got ${impliedPnlPct.toFixed(6)}%`,
     );
     assert.strictEqual(result.trusted, true, "P&L should be trusted");
     assert.strictEqual(result.level, "ROUNDING", "Should be classified as rounding noise");
