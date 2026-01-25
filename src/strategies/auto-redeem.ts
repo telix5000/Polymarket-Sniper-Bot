@@ -1041,7 +1041,10 @@ export class AutoRedeemStrategy {
       // Use -1 as sentinel value for unknown payout price (will display as "Unknown" in notifications)
       // This happens when payout cannot be determined from on-chain data
       const payoutPrice = payoutInfo?.price ?? -1;
-      const payoutValue = payoutInfo?.value ?? position.size; // Fallback to share count as estimate
+      // When payout can't be determined, use position.size as a rough estimate of value.
+      // This is the share count, which at worst (loser) is $0 and at best (winner) is ~$1/share.
+      // Using size prevents showing $0 value for winning positions that just can't be verified.
+      const payoutValue = payoutInfo?.value ?? position.size;
 
       // Calculate realized P&L if entry price is available and payout is known
       let realizedPnl: number | undefined;
