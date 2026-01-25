@@ -234,6 +234,8 @@ async function main(): Promise<void> {
 
       // Send startup notification showing enabled strategies
       // This helps users verify Telegram is working and understand what to expect
+      // Check if mempool mode will also run (MODE=both or MODE=mempool)
+      const mempoolWillRun = mode === "mempool" || mode === "both";
       void telegramService
         .sendStartupNotification({
           endgameSweep: strategyConfig.endgameSweepEnabled,
@@ -244,7 +246,7 @@ async function main(): Promise<void> {
           smartHedging: strategyConfig.smartHedgingEnabled,
           stopLoss: true, // Always enabled when orchestrator runs
           autoRedeem: strategyConfig.autoRedeemEnabled,
-          frontrun: false, // Frontrun is handled by mempool mode, not orchestrator
+          frontrun: mempoolWillRun, // Copy trading enabled when mempool mode runs
         })
         .catch((err) => {
           logger.warn(

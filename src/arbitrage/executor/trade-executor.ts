@@ -240,8 +240,11 @@ export class ArbTradeExecutor implements TradeExecutor {
           strategy: "Arbitrage",
           outcome: first.outcome,
         },
-      ).catch(() => {
-        // Ignore notification errors - logging is handled by the service
+      ).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `[ARB] Failed to send first-leg BUY notification: ${message}`,
+        );
       });
 
       const refreshedFirst = await this.provider.getOrderBookTop(first.tokenId);
@@ -291,8 +294,11 @@ export class ArbTradeExecutor implements TradeExecutor {
           strategy: "Arbitrage",
           outcome: second.outcome,
         },
-      ).catch(() => {
-        // Ignore notification errors - logging is handled by the service
+      ).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `[ARB] Failed to send second-leg BUY notification: ${message}`,
+        );
       });
 
       return {

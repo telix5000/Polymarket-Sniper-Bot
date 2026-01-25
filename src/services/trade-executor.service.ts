@@ -291,22 +291,27 @@ export class TradeExecutorService {
             `[Frontrun] ⚠️ Partial fill: $${partialFill.toFixed(2)} of $${frontrunSize.toFixed(2)} USD filled`,
           );
           // Send notification for partial fills too - money was spent!
-          // Validate price to avoid division by zero or extreme values
-          const safePrice = signal.price > 0.001 ? signal.price : 0.5;
-          void notifyFrontrun(
-            signal.marketId,
-            signal.tokenId,
-            partialFill / safePrice,
-            signal.price,
-            partialFill,
-            {
-              outcome: signal.outcome,
-            },
-          ).catch((err) => {
-            logger.warn(
-              `[Frontrun] Failed to send Telegram notification for partial fill: ${err instanceof Error ? err.message : String(err)}`,
+          // Validate price to avoid division by zero or invalid values
+          if (signal.price <= 0) {
+            logger.error(
+              `[Frontrun] Skipping partial fill notification due to invalid signal price: ${signal.price}`,
             );
-          });
+          } else {
+            void notifyFrontrun(
+              signal.marketId,
+              signal.tokenId,
+              partialFill / signal.price,
+              signal.price,
+              partialFill,
+              {
+                outcome: signal.outcome,
+              },
+            ).catch((err) => {
+              logger.warn(
+                `[Frontrun] Failed to send Telegram notification for partial fill: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
+          }
         } else {
           logger.warn(
             `[Frontrun] ❌ Order failed: ${submissionResult.reason ?? "unknown reason"}`,
