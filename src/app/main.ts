@@ -191,6 +191,12 @@ async function main(): Promise<void> {
         minGainCents: strategyConfig.positionStackingMinGainCents,
         maxCurrentPrice: strategyConfig.positionStackingMaxCurrentPrice,
       },
+      // Pass auto-redeem config to respect AUTO_REDEEM_MIN_POSITION_USD env var
+      autoRedeemConfig: {
+        enabled: strategyConfig.autoRedeemEnabled,
+        minPositionUsd: strategyConfig.autoRedeemMinPositionUsd,
+        checkIntervalMs: strategyConfig.autoRedeemCheckIntervalMs,
+      },
     });
 
     // Set trade recording callback so realized P&L is tracked in the ledger

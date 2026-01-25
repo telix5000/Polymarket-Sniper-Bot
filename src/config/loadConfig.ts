@@ -1705,11 +1705,11 @@ export function loadStrategyConfig(
       parseBool(readEnv("AUTO_REDEEM_ENABLED", overrides) ?? "") ??
       preset.AUTO_REDEEM_ENABLED ??
       true, // Enabled by default - always claim resolved positions
-    // AUTO_REDEEM_MIN_POSITION_USD: respect env override > preset > default ($0.10)
+    // AUTO_REDEEM_MIN_POSITION_USD: respect env override > preset > default (0 = no minimum)
     autoRedeemMinPositionUsd:
       parseNumber(readEnv("AUTO_REDEEM_MIN_POSITION_USD", overrides) ?? "") ??
       preset.AUTO_REDEEM_MIN_POSITION_USD ??
-      0.1, // Skip dust below 10 cents
+      0, // Default: no minimum, redeem everything (including micro-positions)
     // AUTO_REDEEM_CHECK_INTERVAL_MS: how often to check for redeemable positions (default: 30000ms = 30 seconds)
     autoRedeemCheckIntervalMs:
       parseNumber(readEnv("AUTO_REDEEM_CHECK_INTERVAL_MS", overrides) ?? "") ??

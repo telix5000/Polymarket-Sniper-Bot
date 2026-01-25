@@ -247,7 +247,7 @@ export class Orchestrator {
       relayer: relayerContext,
       config: {
         enabled: true,
-        minPositionUsd: 0.01, // Redeem anything
+        minPositionUsd: 0, // Default: redeem anything (no minimum threshold)
         checkIntervalMs: 30000, // Check every 30s
         ...config.autoRedeemConfig,
       },
