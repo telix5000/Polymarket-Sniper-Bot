@@ -1,7 +1,7 @@
 import { afterEach, test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { loadStrategyConfig } from "../../src/config/loadConfig";
-import { DEFAULT_SCALP_TAKE_PROFIT_CONFIG } from "../../src/strategies/scalp-take-profit";
+import { DEFAULT_SCALP_TRADE_CONFIG } from '../../src/strategies/scalp-trade';
 
 const baseEnv = {
   RPC_URL: "http://localhost:8545",
@@ -390,26 +390,26 @@ test("SCALP_LEGACY_POSITION_MODE falls back to default for invalid values", () =
 // === SCALP Legacy Position Mode Default Config Tests ===
 
 describe("Legacy Position Mode Default Config", () => {
-  test("DEFAULT_SCALP_TAKE_PROFIT_CONFIG has legacyPositionMode set to 'allow_profitable_only'", () => {
+  test("DEFAULT_SCALP_TRADE_CONFIG has legacyPositionMode set to 'allow_profitable_only'", () => {
     assert.equal(
-      DEFAULT_SCALP_TAKE_PROFIT_CONFIG.legacyPositionMode,
+      DEFAULT_SCALP_TRADE_CONFIG.legacyPositionMode,
       "allow_profitable_only",
     );
   });
 
-  test("DEFAULT_SCALP_TAKE_PROFIT_CONFIG has required P&L thresholds for legacy mode", () => {
+  test("DEFAULT_SCALP_TRADE_CONFIG has required P&L thresholds for legacy mode", () => {
     // These thresholds are used by evaluatePnlOnlyExit() for legacy positions
     assert.ok(
-      DEFAULT_SCALP_TAKE_PROFIT_CONFIG.minProfitPct > 0,
+      DEFAULT_SCALP_TRADE_CONFIG.minProfitPct > 0,
       "minProfitPct should be positive",
     );
     assert.ok(
-      DEFAULT_SCALP_TAKE_PROFIT_CONFIG.minProfitUsd > 0,
+      DEFAULT_SCALP_TRADE_CONFIG.minProfitUsd > 0,
       "minProfitUsd should be positive",
     );
     assert.ok(
-      DEFAULT_SCALP_TAKE_PROFIT_CONFIG.targetProfitPct >
-        DEFAULT_SCALP_TAKE_PROFIT_CONFIG.minProfitPct,
+      DEFAULT_SCALP_TRADE_CONFIG.targetProfitPct >
+        DEFAULT_SCALP_TRADE_CONFIG.minProfitPct,
       "targetProfitPct should be greater than minProfitPct",
     );
   });
@@ -430,7 +430,7 @@ describe("Legacy Position Mode Behavior Documentation", () => {
     //
     // This ensures that unreliable timeHeldSec values don't affect scalp decisions
     // for legacy positions.
-    const config = DEFAULT_SCALP_TAKE_PROFIT_CONFIG;
+    const config = DEFAULT_SCALP_TRADE_CONFIG;
     assert.equal(config.legacyPositionMode, "allow_profitable_only");
     // The implementation bypasses hold-time checks for this mode
   });

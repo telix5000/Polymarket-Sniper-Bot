@@ -24,7 +24,7 @@ import { isLiveTradingEnabled } from "./live-trading.util";
 import {
   validateOrderbookQuality,
   type OrderbookQualityResult,
-} from "../strategies/scalp-take-profit";
+} from "../strategies/scalp-trade";
 
 // On-chain trading support
 import type { Wallet } from "ethers";

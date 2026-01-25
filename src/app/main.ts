@@ -149,7 +149,7 @@ async function main(): Promise<void> {
         // Hedge exit monitoring
         hedgeExitThreshold: strategyConfig.smartHedgingHedgeExitThreshold,
       },
-      // Quick flip module removed - functionality covered by ScalpTakeProfit
+      // Quick flip module removed - functionality covered by ScalpTrade
       // Pass endgame config
       endgameConfig: {
         enabled: strategyConfig.endgameSweepEnabled,

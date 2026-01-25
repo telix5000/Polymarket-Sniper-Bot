@@ -137,7 +137,7 @@ function mapTypeToStrategyId(type: TradeNotification["type"], strategy?: string)
       "SellEarly": "QUICK_FLIP",        // SellEarly is capital efficiency
       "AutoRedeem": "MANUAL",           // Redemption - closest match
       "SmartHedging": "SMART_HEDGE",    // Smart hedging strategy
-      "ScalpTakeProfit": "QUICK_FLIP",  // Scalp is profit-taking
+      "ScalpTrade": "QUICK_FLIP",  // Scalp is profit-taking
       "UniversalStopLoss": "STOP_LOSS", // Direct match
       "PositionStacking": "ENDGAME",    // Stacking builds positions like endgame
       "EndgameSweep": "ENDGAME",        // Direct match
@@ -460,7 +460,7 @@ export async function notifyScalp(
     size,
     price,
     sizeUsd,
-    strategy: "ScalpTakeProfit",
+    strategy: "ScalpTrade",
     ...options,
   });
 }

@@ -6,7 +6,7 @@
  * from remote APIs each run - no local persistence (files, SQLite, volumes).
  *
  * WHY THIS EXISTS:
- * ScalpTakeProfit previously used container uptime to calculate "time held".
+ * ScalpTrade previously used container uptime to calculate "time held".
  * After container redeploys/upgrades, the clock reset, causing the scalper
  * to miss valid take-profit opportunities on positions already in the green.
  *

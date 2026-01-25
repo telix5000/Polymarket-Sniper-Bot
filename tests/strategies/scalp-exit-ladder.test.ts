@@ -2,10 +2,10 @@ import { afterEach, test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { loadStrategyConfig } from "../../src/config/loadConfig";
 import {
-  DEFAULT_SCALP_TAKE_PROFIT_CONFIG,
+  DEFAULT_SCALP_TRADE_CONFIG,
   type ExitPlan,
   type ExitLadderStage,
-} from "../../src/strategies/scalp-take-profit";
+} from "../../src/strategies/scalp-trade";
 
 const baseEnv = {
   RPC_URL: "http://localhost:8545",
@@ -71,11 +71,11 @@ describe("Exit Ladder Configuration", () => {
     assert.equal(config?.scalpProfitRetrySec, 10);
   });
 
-  test("DEFAULT_SCALP_TAKE_PROFIT_CONFIG has exit ladder fields", () => {
+  test("DEFAULT_SCALP_TRADE_CONFIG has exit ladder fields", () => {
     // Verify the default config has the new exit ladder fields
-    assert.equal(DEFAULT_SCALP_TAKE_PROFIT_CONFIG.exitWindowSec, 120);
-    assert.equal(DEFAULT_SCALP_TAKE_PROFIT_CONFIG.profitRetrySec, 15);
-    assert.equal(DEFAULT_SCALP_TAKE_PROFIT_CONFIG.minOrderUsd, 5);
+    assert.equal(DEFAULT_SCALP_TRADE_CONFIG.exitWindowSec, 120);
+    assert.equal(DEFAULT_SCALP_TRADE_CONFIG.profitRetrySec, 15);
+    assert.equal(DEFAULT_SCALP_TRADE_CONFIG.minOrderUsd, 5);
   });
 });
 
@@ -586,7 +586,7 @@ import {
   ILLIQUID_EXIT_THRESHOLDS,
   ILLIQUID_BACKOFF_MS,
   MAX_ILLIQUID_RECHECKS,
-} from "../../src/strategies/scalp-take-profit";
+} from "../../src/strategies/scalp-trade";
 
 describe("Illiquid Exit Detection", () => {
   test("Extreme spread triggers illiquid exit (spread > 30¢)", () => {

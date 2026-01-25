@@ -127,7 +127,7 @@ describe("Log Deduplication Integration", () => {
     assert.ok(hedgingLogs[1].includes("Cycle 3"));
   });
 
-  test("ScalpTakeProfit pattern: no-book positions don't spam logs", () => {
+  test("ScalpTrade pattern: no-book positions don't spam logs", () => {
     // Simulate 5 cycles where the same position has NO_BOOK status
     for (let cycle = 1; cycle <= 5; cycle++) {
       const skipAggregator = new SkipReasonAggregator();
@@ -140,16 +140,16 @@ describe("Log Deduplication Integration", () => {
       const fingerprint = skipAggregator.getFingerprint();
       if (logDeduper.shouldLogSummary("Scalp", fingerprint)) {
         mockLogger.debug(
-          `[ScalpTakeProfit] Skipped: ${skipAggregator.getSummary()} (cycle=${cycle})`,
+          `[ScalpTrade] Skipped: ${skipAggregator.getSummary()} (cycle=${cycle})`,
         );
       }
     }
 
-    const scalpLogs = logs.filter((l) => l.includes("[ScalpTakeProfit]"));
+    const scalpLogs = logs.filter((l) => l.includes("[ScalpTrade]"));
     assert.strictEqual(
       scalpLogs.length,
       1,
-      `Expected 1 ScalpTakeProfit log, got ${scalpLogs.length}`,
+      `Expected 1 ScalpTrade log, got ${scalpLogs.length}`,
     );
   });
 
@@ -282,7 +282,7 @@ describe("Log Deduplication Integration", () => {
       mockLogger.debug("[SmartHedging] Summary");
     }
     if (logDeduper.shouldLogSummary("Scalp", fingerprint)) {
-      mockLogger.debug("[ScalpTakeProfit] Summary");
+      mockLogger.debug("[ScalpTrade] Summary");
     }
     if (logDeduper.shouldLogSummary("Monitor", fingerprint)) {
       mockLogger.debug("[Monitor] Summary");
@@ -293,7 +293,7 @@ describe("Log Deduplication Integration", () => {
       mockLogger.debug("[SmartHedging] Summary 2");
     }
     if (logDeduper.shouldLogSummary("Scalp", fingerprint)) {
-      mockLogger.debug("[ScalpTakeProfit] Summary 2");
+      mockLogger.debug("[ScalpTrade] Summary 2");
     }
     if (logDeduper.shouldLogSummary("Monitor", fingerprint)) {
       mockLogger.debug("[Monitor] Summary 2");
@@ -302,7 +302,7 @@ describe("Log Deduplication Integration", () => {
     // Should have exactly 3 logs (one per component)
     assert.strictEqual(logs.length, 3);
     assert.ok(logs[0].includes("[SmartHedging]"));
-    assert.ok(logs[1].includes("[ScalpTakeProfit]"));
+    assert.ok(logs[1].includes("[ScalpTrade]"));
     assert.ok(logs[2].includes("[Monitor]"));
   });
 

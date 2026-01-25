@@ -7,8 +7,8 @@ import { test, describe } from "node:test";
  * These tests verify:
  * 1. PositionTracker produces immutable PortfolioSnapshot objects
  * 2. Orchestrator passes snapshot to strategies
- * 3. ScalpTakeProfit uses snapshot.activePositions correctly
- * 4. Regression: ScalpTakeProfit sees same activeTotal as PositionTracker reports
+ * 3. ScalpTrade uses snapshot.activePositions correctly
+ * 4. Regression: ScalpTrade sees same activeTotal as PositionTracker reports
  * 5. Filtering cannot collapse to zero without logging explicit reasons
  */
 
@@ -208,8 +208,8 @@ describe("PortfolioSnapshot Structure", () => {
   });
 });
 
-describe("Regression: ScalpTakeProfit sees same activeTotal as PositionTracker", () => {
-  test("When snapshot.activeTotal=22, ScalpTakeProfit should see 22 positions", () => {
+describe("Regression: ScalpTrade sees same activeTotal as PositionTracker", () => {
+  test("When snapshot.activeTotal=22, ScalpTrade should see 22 positions", () => {
     // Create snapshot with 22 active positions
     const activePositions = Array.from({ length: 22 }, (_, i) =>
       createMockPosition({
@@ -232,13 +232,13 @@ describe("Regression: ScalpTakeProfit sees same activeTotal as PositionTracker",
       },
     });
 
-    // Simulate what ScalpTakeProfit does with snapshot
+    // Simulate what ScalpTrade does with snapshot
     const activeFromSnapshot = snapshot.activePositions;
 
     assert.strictEqual(
       activeFromSnapshot.length,
       22,
-      "ScalpTakeProfit should see 22 positions from snapshot",
+      "ScalpTrade should see 22 positions from snapshot",
     );
     assert.strictEqual(
       activeFromSnapshot.length,
@@ -308,13 +308,13 @@ describe("Bug Detection: Zero active positions when snapshot says otherwise", ()
       },
     };
 
-    // Simulate the bug detection logic from ScalpTakeProfit
+    // Simulate the bug detection logic from ScalpTrade
     if (
       buggySnapshot.summary.activeTotal > 0 &&
       buggySnapshot.activePositions.length === 0
     ) {
       logger.error(
-        `[ScalpTakeProfit] BUG DETECTED: cycleId=${buggySnapshot.cycleId} ` +
+        `[ScalpTrade] BUG DETECTED: cycleId=${buggySnapshot.cycleId} ` +
           `addressUsed=${buggySnapshot.addressUsed} ` +
           `snapshot.summary.activeTotal=${buggySnapshot.summary.activeTotal} ` +
           `but activePositions.length=0. ` +
@@ -393,7 +393,7 @@ describe("Filtering Step Logging", () => {
 
     // Log filter steps
     logger.info(
-      `[ScalpTakeProfit] Filter steps: ` +
+      `[ScalpTrade] Filter steps: ` +
         `start=${snapshot.summary.activeTotal} ` +
         `afterStateFilter=${afterStateFilter} ` +
         `afterPnlTrusted=${afterPnlTrusted} ` +
@@ -726,8 +726,8 @@ describe("REGRESSION: Address Stability", () => {
   });
 });
 
-describe("REGRESSION: ScalpTakeProfit Snapshot Consistency", () => {
-  test("ScalpTakeProfit cannot see 0 when snapshot says >0", () => {
+describe("REGRESSION: ScalpTrade Snapshot Consistency", () => {
+  test("ScalpTrade cannot see 0 when snapshot says >0", () => {
     const logger = createMockLogger();
 
     // Create a proper snapshot with 10 active positions
@@ -751,13 +751,13 @@ describe("REGRESSION: ScalpTakeProfit Snapshot Consistency", () => {
       },
     });
 
-    // Simulate ScalpTakeProfit accessing positions from snapshot
+    // Simulate ScalpTrade accessing positions from snapshot
     const positionsFromSnapshot = snapshot.activePositions;
 
     // This should NEVER happen: snapshot says 10, but we see different
     if (snapshot.summary.activeTotal !== positionsFromSnapshot.length) {
       logger.error(
-        `[ScalpTakeProfit] SNAPSHOT_MISMATCH: summary says ${snapshot.summary.activeTotal} but array has ${positionsFromSnapshot.length}`,
+        `[ScalpTrade] SNAPSHOT_MISMATCH: summary says ${snapshot.summary.activeTotal} but array has ${positionsFromSnapshot.length}`,
       );
     }
 
@@ -798,7 +798,7 @@ describe("REGRESSION: ScalpTakeProfit Snapshot Consistency", () => {
       buggySnapshot.summary.activeTotal !== buggySnapshot.activePositions.length
     ) {
       logger.error(
-        `[ScalpTakeProfit] 🐛 SNAPSHOT_MISMATCH: summary.activeTotal=${buggySnapshot.summary.activeTotal} but activePositions.length=${buggySnapshot.activePositions.length}`,
+        `[ScalpTrade] 🐛 SNAPSHOT_MISMATCH: summary.activeTotal=${buggySnapshot.summary.activeTotal} but activePositions.length=${buggySnapshot.activePositions.length}`,
       );
     }
 

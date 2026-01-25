@@ -300,7 +300,7 @@ describe("Trade Notification Service", () => {
       const [, options] = mockFetch.mock.calls[0].arguments;
       const body = JSON.parse(options.body);
       assert.ok(body.text.includes("Scalp Profit Taken"));
-      assert.ok(body.text.includes("ScalpTakeProfit"));
+      assert.ok(body.text.includes("ScalpTrade"));
     });
 
     test("notifyFrontrun sends FRONTRUN notification", async () => {
