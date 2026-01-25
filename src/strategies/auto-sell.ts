@@ -965,8 +965,7 @@ export class AutoSellStrategy {
       }
 
       // Skip already sold positions
-      const positionKey = `${pos.marketId}-${pos.tokenId}`;
-      if (this.soldPositions.has(positionKey)) {
+      if (this.soldPositions.has(posKey)) {
         continue;
       }
 
@@ -1023,6 +1022,26 @@ export class AutoSellStrategy {
         // due to slippage. Actual fill price may vary by up to 3% from currentBidPrice.
         const estimatedProfitUsd = position.pnlUsd;
         const estimatedCapital = position.size * (position.currentBidPrice ?? position.currentPrice);
+        const bestBid = position.currentBidPrice ?? position.currentPrice;
+        const sizeUsd = position.size * bestBid;
+
+        // Send distinct notification for quick win exits (not stale position exits)
+        const tradePnl = (bestBid - position.entryPrice) * position.size;
+        void notifySell(
+          position.marketId,
+          position.tokenId,
+          position.size,
+          bestBid,
+          sizeUsd,
+          {
+            strategy: "AutoSell (Quick Win)",
+            entryPrice: position.entryPrice,
+            pnl: tradePnl,
+            outcome: position.side,
+          },
+        ).catch(() => {
+          // Ignore notification errors
+        });
 
         this.logger.info(
           `[AutoSell] ✅ QUICK_WIN: Sold position held ${timeHeldMinutes.toFixed(1)}m, estimated profit $${estimatedProfitUsd.toFixed(2)} (+${position.pnlPct.toFixed(1)}%), freed ~$${estimatedCapital.toFixed(2)} capital (actual fill may vary by slippage)`,
