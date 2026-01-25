@@ -9,7 +9,10 @@ import {
   type OrderbookQualityStatus,
   type OrderbookQualityResult,
 } from "../../src/strategies/scalp-take-profit";
-import { OrderbookQualityError, extractOrderbookPrices } from "../../src/utils/post-order.util";
+import {
+  OrderbookQualityError,
+  extractOrderbookPrices,
+} from "../../src/utils/post-order.util";
 
 // === ORDERBOOK PRICE EXTRACTION TESTS ===
 
@@ -22,9 +25,7 @@ describe("Orderbook Price Extraction", () => {
           { price: "0.64", size: "200" },
           { price: "0.63", size: "150" },
         ],
-        asks: [
-          { price: "0.66", size: "100" },
-        ],
+        asks: [{ price: "0.66", size: "100" }],
       });
 
       assert.equal(result.bestBid, 0.65);
@@ -105,7 +106,7 @@ describe("Orderbook Price Extraction", () => {
 
       assert.equal(result.hasAnomaly, true);
       assert.ok(result.anomalyReason?.includes("Crossed book"));
-      assert.equal(result.bestBid, 0.70);
+      assert.equal(result.bestBid, 0.7);
       assert.equal(result.bestAsk, 0.65);
     });
 
@@ -147,7 +148,7 @@ describe("Orderbook Price Extraction", () => {
         asks: [{ price: "0.51", size: "100" }],
       });
 
-      assert.equal(result.bestBid, 0.50);
+      assert.equal(result.bestBid, 0.5);
       assert.equal(result.bestAsk, 0.51);
       assert.equal(result.bidCount, 1);
       assert.equal(result.askCount, 1);
@@ -155,7 +156,7 @@ describe("Orderbook Price Extraction", () => {
 
     test("should handle large orderbook (>5 levels)", () => {
       const bids = Array.from({ length: 20 }, (_, i) => ({
-        price: (0.50 - i * 0.01).toFixed(2),
+        price: (0.5 - i * 0.01).toFixed(2),
         size: "100",
       }));
       // Insert a higher bid at position 15 to test full scan
@@ -227,18 +228,18 @@ describe("Orderbook Quality Validation", () => {
       assert.equal(result.status, "EXEC_PRICE_UNTRUSTED");
       assert.ok(result.reason?.includes("deviates from dataApiPrice"));
       assert.ok(result.diagnostics?.priceDeviation !== undefined);
-      assert.ok(result.diagnostics!.priceDeviation! > 0.30);
+      assert.ok(result.diagnostics!.priceDeviation! > 0.3);
     });
 
     test("dataApiPrice=0.60, bestBid=0.25 => EXEC_PRICE_UNTRUSTED (35¢ deviation)", () => {
-      const result = validateOrderbookQuality(0.25, 0.30, 0.60);
+      const result = validateOrderbookQuality(0.25, 0.3, 0.6);
 
       assert.equal(result.status, "EXEC_PRICE_UNTRUSTED");
       assert.ok(Math.abs(result.diagnostics!.priceDeviation! - 0.35) < 0.001);
     });
 
     test("dataApiPrice=0.60, bestBid=0.35 => VALID (25¢ deviation, within threshold)", () => {
-      const result = validateOrderbookQuality(0.35, 0.40, 0.60);
+      const result = validateOrderbookQuality(0.35, 0.4, 0.6);
 
       assert.equal(result.status, "VALID");
     });
@@ -282,21 +283,21 @@ describe("Orderbook Quality Validation", () => {
     test("wide spread but not extreme: bestBid=0.30, bestAsk=0.70 => VALID", () => {
       // 40¢ spread is wide but doesn't trigger INVALID_BOOK
       // (bid not < 5¢, ask not > 95¢)
-      const result = validateOrderbookQuality(0.30, 0.70);
+      const result = validateOrderbookQuality(0.3, 0.7);
 
       assert.equal(result.status, "VALID");
     });
 
     test("low bid only (no extreme ask): bestBid=0.02, bestAsk=0.10 => VALID", () => {
       // Low bid but ask is also low, not INVALID_BOOK
-      const result = validateOrderbookQuality(0.02, 0.10);
+      const result = validateOrderbookQuality(0.02, 0.1);
 
       assert.equal(result.status, "VALID");
     });
 
     test("high ask only (no extreme bid): bestBid=0.90, bestAsk=0.98 => VALID", () => {
       // High ask but bid is also high, not INVALID_BOOK
-      const result = validateOrderbookQuality(0.90, 0.98);
+      const result = validateOrderbookQuality(0.9, 0.98);
 
       assert.equal(result.status, "VALID");
     });
@@ -315,7 +316,7 @@ describe("Orderbook Quality Thresholds", () => {
   });
 
   test("MAX_PRICE_DEVIATION is 0.30 (30¢)", () => {
-    assert.equal(ORDERBOOK_QUALITY_THRESHOLDS.MAX_PRICE_DEVIATION, 0.30);
+    assert.equal(ORDERBOOK_QUALITY_THRESHOLDS.MAX_PRICE_DEVIATION, 0.3);
   });
 });
 
@@ -332,30 +333,45 @@ describe("Circuit Breaker Cooldowns", () => {
 
   test("first failure gets 1 minute cooldown", () => {
     const failureCount = 1;
-    const cooldownMs = CIRCUIT_BREAKER_COOLDOWNS_MS[Math.min(failureCount - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)];
+    const cooldownMs =
+      CIRCUIT_BREAKER_COOLDOWNS_MS[
+        Math.min(failureCount - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)
+      ];
     assert.equal(cooldownMs, 60_000);
   });
 
   test("second failure gets 5 minute cooldown", () => {
     const failureCount = 2;
-    const cooldownMs = CIRCUIT_BREAKER_COOLDOWNS_MS[Math.min(failureCount - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)];
+    const cooldownMs =
+      CIRCUIT_BREAKER_COOLDOWNS_MS[
+        Math.min(failureCount - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)
+      ];
     assert.equal(cooldownMs, 300_000);
   });
 
   test("third failure gets 15 minute cooldown", () => {
     const failureCount = 3;
-    const cooldownMs = CIRCUIT_BREAKER_COOLDOWNS_MS[Math.min(failureCount - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)];
+    const cooldownMs =
+      CIRCUIT_BREAKER_COOLDOWNS_MS[
+        Math.min(failureCount - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)
+      ];
     assert.equal(cooldownMs, 900_000);
   });
 
   test("fourth+ failure gets 60 minute cooldown (max)", () => {
     const failureCount = 4;
-    const cooldownMs = CIRCUIT_BREAKER_COOLDOWNS_MS[Math.min(failureCount - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)];
+    const cooldownMs =
+      CIRCUIT_BREAKER_COOLDOWNS_MS[
+        Math.min(failureCount - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)
+      ];
     assert.equal(cooldownMs, 3_600_000);
 
     // Higher failure counts still get max
     const failureCount10 = 10;
-    const cooldownMs10 = CIRCUIT_BREAKER_COOLDOWNS_MS[Math.min(failureCount10 - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)];
+    const cooldownMs10 =
+      CIRCUIT_BREAKER_COOLDOWNS_MS[
+        Math.min(failureCount10 - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)
+      ];
     assert.equal(cooldownMs10, 3_600_000);
   });
 
@@ -377,22 +393,22 @@ describe("Dust Cooldown", () => {
 
 describe("Edge Cases", () => {
   test("bestAsk=null with valid bestBid => VALID (no INVALID_BOOK check possible)", () => {
-    const result = validateOrderbookQuality(0.50, null);
+    const result = validateOrderbookQuality(0.5, null);
     assert.equal(result.status, "VALID");
   });
 
   test("bestAsk=0 with valid bestBid => VALID (zero ask treated as no ask)", () => {
-    const result = validateOrderbookQuality(0.50, 0);
+    const result = validateOrderbookQuality(0.5, 0);
     assert.equal(result.status, "VALID");
   });
 
   test("dataApiPrice=0 is ignored for deviation check", () => {
-    const result = validateOrderbookQuality(0.50, 0.55, 0);
+    const result = validateOrderbookQuality(0.5, 0.55, 0);
     assert.equal(result.status, "VALID");
   });
 
   test("dataApiPrice=undefined skips deviation check", () => {
-    const result = validateOrderbookQuality(0.01, 0.10, undefined);
+    const result = validateOrderbookQuality(0.01, 0.1, undefined);
     // bestBid=1¢ with no dataApiPrice for comparison
     // Not INVALID_BOOK (ask not > 95¢), not EXEC_PRICE_UNTRUSTED (no reference)
     assert.equal(result.status, "VALID");
@@ -452,8 +468,8 @@ describe("OrderbookQualityError", () => {
       reason: "Price deviation too large",
       diagnostics: {
         bestBid: 0.25,
-        bestAsk: 0.30,
-        dataApiPrice: 0.60,
+        bestAsk: 0.3,
+        dataApiPrice: 0.6,
         priceDeviation: 0.35,
       },
     };
@@ -474,7 +490,11 @@ describe("OrderbookQualityError", () => {
       },
     };
 
-    const error = new OrderbookQualityError("No bid", qualityResult, "token456");
+    const error = new OrderbookQualityError(
+      "No bid",
+      qualityResult,
+      "token456",
+    );
 
     // Simulate catch block usage
     try {
@@ -495,7 +515,7 @@ describe("OrderbookQualityError", () => {
 describe("Crossed Book Detection", () => {
   test("bestBid > bestAsk => INVALID_BOOK (impossible state)", () => {
     // This should never happen in a valid orderbook
-    const result = validateOrderbookQuality(0.65, 0.60);
+    const result = validateOrderbookQuality(0.65, 0.6);
 
     assert.equal(result.status, "INVALID_BOOK");
     assert.ok(result.reason?.includes("Crossed book"));

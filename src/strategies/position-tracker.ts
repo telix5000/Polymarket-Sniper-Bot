@@ -2585,6 +2585,36 @@ export class PositionTracker {
         this.logger.info(`[PositionTracker] positions_url=${positionsUrl}`);
       }
 
+      // === ADDRESS INVARIANT CHECK (D) ===
+      // Verify positions_url user param matches cachedHoldingAddress (addressUsed).
+      // If mismatch occurs, reject snapshot, log high-severity diagnostic, and retry.
+      let urlAddress: string | null = null;
+      try {
+        // Use URL API for robust parameter extraction
+        const parsedUrl = new URL(positionsUrl);
+        urlAddress = parsedUrl.searchParams.get("user");
+      } catch {
+        // Fall back to regex if URL parsing fails (shouldn't happen in practice)
+        const urlAddressMatch = positionsUrl.match(/user=([^&]+)/);
+        urlAddress = urlAddressMatch ? urlAddressMatch[1] : null;
+      }
+      if (
+        urlAddress &&
+        urlAddress.toLowerCase() !== holdingAddress.toLowerCase()
+      ) {
+        this.logger.error(
+          `[PositionTracker] 🐛 ADDRESS_INVARIANT_VIOLATION: positions_url user param (${urlAddress.slice(0, 10)}...) != holdingAddress (${holdingAddress.slice(0, 10)}...)`,
+        );
+        this.logger.error(
+          `[PositionTracker] This is a critical bug that risks the "portfolio collapse" issue. Rejecting fetch, forcing re-probe.`,
+        );
+        // Force re-probe on next cycle
+        this.addressProbeCompleted = false;
+        this.cachedHoldingAddress = null;
+        this.holdingAddressCacheMs = 0;
+        return [];
+      }
+
       let apiPositions = await httpGet<ApiPosition[]>(positionsUrl, {
         timeout: PositionTracker.API_TIMEOUT_MS,
       });
@@ -4230,9 +4260,10 @@ export class PositionTracker {
 
         if (is422 || is429 || is5xx) {
           // Log at WARN level for batch failures that trigger fallback
+          // Mark enrichment as DEGRADED - positions remain ACTIVE but outcome unknown
           this.logger.warn(
-            `[PositionTracker] ⚠️ GAMMA_BATCH_FAILURE: ${is422 ? "422" : is429 ? "429" : "5xx"} error for batch of ${chunk.length} tokenIds. ` +
-              `Falling back to single-token requests. error="${errMsg.slice(0, 100)}"`,
+            `[PositionTracker] ⚠️ GAMMA_BATCH_FAILURE (enrichment degraded): ${is422 ? "422" : is429 ? "429" : "5xx"} error for batch of ${chunk.length} tokenIds. ` +
+              `Auto-fallback to single-token requests. Positions remain ACTIVE. error="${errMsg.slice(0, 100)}"`,
           );
           fallbackToSingleRequests = true;
           failedTokenIds.push(...chunk);

@@ -89,7 +89,49 @@ export interface EntryMetaResolverConfig {
    * When false (default), timeHeldSec = now - firstAcquiredAt (time since first buy).
    */
   useLastAcquiredForTimeHeld?: boolean;
+  /**
+   * Maximum history depth in days to scan (default: unlimited).
+   * Trades older than this many days are ignored to speed up boot time.
+   * Set to e.g. 30 to only consider last 30 days of trades.
+   */
+  maxHistoryDays?: number;
+  /**
+   * Maximum total trades to scan per token (default: unlimited).
+   * Stops scanning after this many trades to limit boot time scanning.
+   */
+  maxTradesPerToken?: number;
 }
+
+/**
+ * Read max history depth controls from environment variables.
+ * Returns defaults if not set.
+ */
+const parseHistoryDepthConfig = (): {
+  maxHistoryDays: number | undefined;
+  maxTradesPerToken: number | undefined;
+} => {
+  const daysEnv = process.env.HISTORY_MAX_DAYS;
+  const tradesEnv = process.env.HISTORY_MAX_TRADES_PER_TOKEN;
+
+  let maxHistoryDays: number | undefined;
+  let maxTradesPerToken: number | undefined;
+
+  if (daysEnv) {
+    const parsed = parseInt(daysEnv, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      maxHistoryDays = parsed;
+    }
+  }
+
+  if (tradesEnv) {
+    const parsed = parseInt(tradesEnv, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      maxTradesPerToken = parsed;
+    }
+  }
+
+  return { maxHistoryDays, maxTradesPerToken };
+};
 
 /**
  * EntryMetaResolver - Computes stateless entry metadata from trade history
@@ -101,6 +143,8 @@ export class EntryMetaResolver {
   private maxPagesPerToken: number;
   private tradesPerPage: number;
   private useLastAcquiredForTimeHeld: boolean;
+  private maxHistoryDays: number | undefined;
+  private maxTradesPerToken: number | undefined;
 
   // In-memory cache: key = "address-tokenId"
   private cache: Map<string, CacheEntry> = new Map();
@@ -118,6 +162,19 @@ export class EntryMetaResolver {
     this.tradesPerPage = config.tradesPerPage ?? 500;
     this.useLastAcquiredForTimeHeld =
       config.useLastAcquiredForTimeHeld ?? false;
+
+    // Parse max history depth from config or environment
+    const envConfig = parseHistoryDepthConfig();
+    this.maxHistoryDays = config.maxHistoryDays ?? envConfig.maxHistoryDays;
+    this.maxTradesPerToken =
+      config.maxTradesPerToken ?? envConfig.maxTradesPerToken;
+
+    // Log history depth controls if configured
+    if (this.maxHistoryDays || this.maxTradesPerToken) {
+      this.logger.info(
+        `[EntryMetaResolver] History depth controls: maxDays=${this.maxHistoryDays ?? "unlimited"} maxTradesPerToken=${this.maxTradesPerToken ?? "unlimited"}`,
+      );
+    }
   }
 
   /**
@@ -204,6 +261,12 @@ export class EntryMetaResolver {
     let offset = 0;
     let pageCount = 0;
 
+    // Calculate cutoff timestamp if maxHistoryDays is set
+    const now = Date.now();
+    const cutoffTimestamp = this.maxHistoryDays
+      ? Math.floor((now - this.maxHistoryDays * 24 * 60 * 60 * 1000) / 1000)
+      : 0;
+
     while (pageCount < this.maxPagesPerToken) {
       pageCount++;
 
@@ -220,7 +283,30 @@ export class EntryMetaResolver {
         break;
       }
 
-      trades.push(...response);
+      // Apply history depth filter: only include trades within maxHistoryDays
+      let filteredResponse = response;
+      if (cutoffTimestamp > 0) {
+        filteredResponse = response.filter(
+          (t) => t.timestamp >= cutoffTimestamp,
+        );
+        // If all trades in this page are too old, stop scanning
+        if (filteredResponse.length === 0 && response.length > 0) {
+          this.logger.debug(
+            `[EntryMetaResolver] Stopping scan for ${tokenId.slice(0, 12)}... - trades older than ${this.maxHistoryDays} days`,
+          );
+          break;
+        }
+      }
+
+      trades.push(...filteredResponse);
+
+      // Check maxTradesPerToken limit
+      if (this.maxTradesPerToken && trades.length >= this.maxTradesPerToken) {
+        this.logger.debug(
+          `[EntryMetaResolver] Stopping scan for ${tokenId.slice(0, 12)}... - reached ${this.maxTradesPerToken} trades limit`,
+        );
+        break;
+      }
 
       // Stop if we got fewer results than requested (end of data)
       if (response.length < this.tradesPerPage) {

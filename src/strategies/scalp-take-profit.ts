@@ -48,7 +48,11 @@ import type {
   Position,
   PortfolioSnapshot,
 } from "./position-tracker";
-import { postOrder, OrderbookQualityError, extractOrderbookPrices } from "../utils/post-order.util";
+import {
+  postOrder,
+  OrderbookQualityError,
+  extractOrderbookPrices,
+} from "../utils/post-order.util";
 import {
   LogDeduper,
   SkipReasonAggregator,
@@ -226,7 +230,7 @@ export const ORDERBOOK_QUALITY_THRESHOLDS = {
   /** If bestAsk is above this, it's suspiciously high */
   INVALID_ASK_THRESHOLD: 0.95, // 95¢
   /** Max acceptable difference between bestBid and dataApiPrice */
-  MAX_PRICE_DEVIATION: 0.30, // 30¢
+  MAX_PRICE_DEVIATION: 0.3, // 30¢
 };
 
 /**
@@ -415,7 +419,12 @@ export interface ExitPlan {
   /** P&L USD when plan started (for logging) */
   initialPnlUsd: number;
   /** If blocked due to execution issues, track for backoff */
-  blockedReason?: "NO_BID" | "DUST" | "INVALID_BOOK" | "EXEC_PRICE_UNTRUSTED" | "DUST_COOLDOWN";
+  blockedReason?:
+    | "NO_BID"
+    | "DUST"
+    | "INVALID_BOOK"
+    | "EXEC_PRICE_UNTRUSTED"
+    | "DUST_COOLDOWN";
   /** When blocked, timestamp of last block occurrence */
   blockedAtMs?: number;
   /** Whether START log has been emitted for this plan (prevents re-logging) */
@@ -609,7 +618,8 @@ export class ScalpTakeProfitStrategy {
   // === EXECUTION CIRCUIT BREAKER ===
   // Tracks disabled tokens due to invalid orderbook data
   // Key: tokenId, Value: ExecutionCircuitBreakerEntry
-  private executionCircuitBreaker: Map<string, ExecutionCircuitBreakerEntry> = new Map();
+  private executionCircuitBreaker: Map<string, ExecutionCircuitBreakerEntry> =
+    new Map();
 
   // === DUST COOLDOWN TRACKING ===
   // Tracks tokens in dust cooldown to prevent repeated plan restarts
@@ -1009,7 +1019,10 @@ export class ScalpTakeProfitStrategy {
       // === EXECUTION STATUS CHECK (Jan 2025 - Handle NOT_TRADABLE_ON_CLOB) ===
       // If position has executionStatus set to NOT_TRADABLE_ON_CLOB, skip execution.
       // This handles orderbook 404, empty book, and other CLOB unavailability scenarios.
-      if (position.executionStatus === "NOT_TRADABLE_ON_CLOB" || position.executionStatus === "EXECUTION_BLOCKED") {
+      if (
+        position.executionStatus === "NOT_TRADABLE_ON_CLOB" ||
+        position.executionStatus === "EXECUTION_BLOCKED"
+      ) {
         skipAggregator.add(tokenIdShort, "not_tradable");
         continue;
       }
@@ -1110,14 +1123,23 @@ export class ScalpTakeProfitStrategy {
       const bestAsk = position.currentAskPrice ?? null;
       const dataApiPrice = position.currentPrice;
 
-      const preflightQuality = validateOrderbookQuality(bestBid, bestAsk, dataApiPrice);
+      const preflightQuality = validateOrderbookQuality(
+        bestBid,
+        bestAsk,
+        dataApiPrice,
+      );
 
       if (preflightQuality.status !== "VALID") {
         // Orderbook quality is poor - enter circuit breaker instead of creating plan
         this.updateCircuitBreaker(position.tokenId, preflightQuality, now);
 
         // Log only once per TTL
-        if (this.logDeduper.shouldLog(`ScalpExit:PREFLIGHT_INVALID:${position.tokenId}`, 30_000)) {
+        if (
+          this.logDeduper.shouldLog(
+            `ScalpExit:PREFLIGHT_INVALID:${position.tokenId}`,
+            30_000,
+          )
+        ) {
           this.logger.warn(
             `[CLOB] INVALID_BOOK (preflight) tokenId=${position.tokenId.slice(0, 12)}... ` +
               `bestBid=${bestBid !== null ? (bestBid * 100).toFixed(1) + "¢" : "null"} ` +
@@ -1274,11 +1296,11 @@ export class ScalpTakeProfitStrategy {
     // === CRITICAL SAFEGUARD: Resolution exclusion ===
     // Protect near-resolution positions from EARLY exits, but still allow
     // time-based exits when maxHoldMinutes is exceeded (to free up capital).
-    // 
+    //
     // This prevents force-exiting positions that are almost certain $1.00 winners
     // while still respecting the user's capital efficiency settings.
     const isNearResolutionCandidate = this.shouldExcludeFromTimeExit(position);
-    
+
     // Only block if near resolution AND not yet at max hold time
     // This allows capital to be freed if the position has been held too long
     if (isNearResolutionCandidate && holdMinutes < this.config.maxHoldMinutes) {
@@ -1364,8 +1386,8 @@ export class ScalpTakeProfitStrategy {
     // This check now also applies to near-resolution positions that exceeded maxHoldMinutes
     // to allow capital to be freed rather than waiting indefinitely for resolution
     if (holdMinutes >= this.config.maxHoldMinutes) {
-      const nearResNote = isNearResolutionCandidate 
-        ? " (near-resolution capital release)" 
+      const nearResNote = isNearResolutionCandidate
+        ? " (near-resolution capital release)"
         : "";
       return {
         shouldExit: true,
@@ -1578,7 +1600,11 @@ export class ScalpTakeProfitStrategy {
 
         // Use safe price extraction to ensure correct best prices
         const priceExtraction = extractOrderbookPrices(orderbook);
-        if (priceExtraction.bestBid === null || priceExtraction.bestAsk === null) continue;
+        if (
+          priceExtraction.bestBid === null ||
+          priceExtraction.bestAsk === null
+        )
+          continue;
 
         // Skip if anomaly detected (crossed book or extreme spread)
         if (priceExtraction.hasAnomaly) {
@@ -1671,7 +1697,8 @@ export class ScalpTakeProfitStrategy {
     try {
       // Use provided limit price or fall back to current bid
       const effectiveLimitCents =
-        limitPriceCents ?? (position.currentBidPrice ?? position.currentPrice) * 100;
+        limitPriceCents ??
+        (position.currentBidPrice ?? position.currentPrice) * 100;
       const effectiveLimitPrice = effectiveLimitCents / 100;
 
       // CRITICAL: Compute notional as sharesHeld * limitPrice (what we'll receive)
@@ -1736,7 +1763,12 @@ export class ScalpTakeProfitStrategy {
         this.updateCircuitBreaker(position.tokenId, err.qualityResult, now);
 
         // Rate-limited logging - don't spam for repeated failures on the same token
-        if (this.logDeduper.shouldLog(`ScalpExit:QUALITY_ERROR:${position.tokenId}`, 30_000)) {
+        if (
+          this.logDeduper.shouldLog(
+            `ScalpExit:QUALITY_ERROR:${position.tokenId}`,
+            30_000,
+          )
+        ) {
           this.logger.warn(
             `[ScalpTakeProfit] ⚠️ Orderbook quality error (entering cooldown): ` +
               `status=${err.qualityResult.status} tokenId=${position.tokenId.slice(0, 12)}... ` +
@@ -1755,7 +1787,9 @@ export class ScalpTakeProfitStrategy {
         ? `stage=${exitPlan.stage}, attempts=${exitPlan.attempts}, elapsed=${Math.round((Date.now() - exitPlan.startedAtMs) / 1000)}s`
         : "no active plan";
       // Recalculate limit/notional for error logging (same logic as try block)
-      const errLimitCents = limitPriceCents ?? (position.currentBidPrice ?? position.currentPrice) * 100;
+      const errLimitCents =
+        limitPriceCents ??
+        (position.currentBidPrice ?? position.currentPrice) * 100;
       const errNotionalUsd = position.size * (errLimitCents / 100);
       this.logger.error(
         `[ScalpTakeProfit] ❌ Scalp failed: ${err instanceof Error ? err.message : String(err)} ` +
@@ -1777,8 +1811,10 @@ export class ScalpTakeProfitStrategy {
    */
   private createExitPlan(position: Position, now: number): ExitPlan {
     // Calculate target price: entry + target profit %
-    const avgEntryCents = position.avgEntryPriceCents ?? position.entryPrice * 100;
-    const targetPriceCents = avgEntryCents * (1 + this.config.targetProfitPct / 100);
+    const avgEntryCents =
+      position.avgEntryPriceCents ?? position.entryPrice * 100;
+    const targetPriceCents =
+      avgEntryCents * (1 + this.config.targetProfitPct / 100);
 
     const plan: ExitPlan = {
       tokenId: position.tokenId,
@@ -1819,7 +1855,10 @@ export class ScalpTakeProfitStrategy {
         `[ScalpExit] ESCALATE tokenId=${plan.tokenId.slice(0, 12)}... ` +
           `PROFIT->BREAKEVEN reason=WINDOW_PROGRESS (${elapsedSec.toFixed(0)}s elapsed)`,
       );
-    } else if (plan.stage === "BREAKEVEN" && elapsedSec >= this.config.exitWindowSec) {
+    } else if (
+      plan.stage === "BREAKEVEN" &&
+      elapsedSec >= this.config.exitWindowSec
+    ) {
       plan.stage = "FORCE";
       this.logger.info(
         `[ScalpExit] ESCALATE tokenId=${plan.tokenId.slice(0, 12)}... ` +
@@ -1907,22 +1946,38 @@ export class ScalpTakeProfitStrategy {
       plan.blockedReason = circuitBreaker.reason as typeof plan.blockedReason;
       plan.blockedAtMs = now;
       // Log only once per 30 seconds to avoid spam
-      if (this.logDeduper.shouldLog(`ScalpExit:CIRCUIT_BREAKER:${plan.tokenId}`, 30_000)) {
-        const remainingSec = Math.ceil((circuitBreaker.disabledUntilMs - now) / 1000);
+      if (
+        this.logDeduper.shouldLog(
+          `ScalpExit:CIRCUIT_BREAKER:${plan.tokenId}`,
+          30_000,
+        )
+      ) {
+        const remainingSec = Math.ceil(
+          (circuitBreaker.disabledUntilMs - now) / 1000,
+        );
         this.logger.debug(
           `[ScalpExit] CIRCUIT_BREAKER tokenId=${plan.tokenId.slice(0, 12)}... ` +
             `reason=${circuitBreaker.reason} cooldown=${remainingSec}s remaining`,
         );
       }
-      return { filled: false, reason: circuitBreaker.reason, shouldContinue: true };
+      return {
+        filled: false,
+        reason: circuitBreaker.reason,
+        shouldContinue: true,
+      };
     }
 
     // Check for NO_BID condition
-    if (position.currentBidPrice === undefined || position.status === "NO_BOOK") {
+    if (
+      position.currentBidPrice === undefined ||
+      position.status === "NO_BOOK"
+    ) {
       // Mark as blocked
       plan.blockedReason = "NO_BID";
       plan.blockedAtMs = now;
-      if (this.logDeduper.shouldLog(`ScalpExit:NO_BID:${plan.tokenId}`, 30_000)) {
+      if (
+        this.logDeduper.shouldLog(`ScalpExit:NO_BID:${plan.tokenId}`, 30_000)
+      ) {
         this.logger.warn(
           `[ScalpExit] BLOCKED tokenId=${plan.tokenId.slice(0, 12)}... reason=NO_BID`,
         );
@@ -1936,7 +1991,11 @@ export class ScalpTakeProfitStrategy {
     const bestAsk = position.currentAskPrice ?? null;
     const dataApiPrice = position.currentPrice; // Use Data-API mark price as reference
 
-    const qualityResult = validateOrderbookQuality(bestBid, bestAsk, dataApiPrice);
+    const qualityResult = validateOrderbookQuality(
+      bestBid,
+      bestAsk,
+      dataApiPrice,
+    );
 
     if (qualityResult.status !== "VALID") {
       // Orderbook quality is poor - enter circuit breaker
@@ -1946,7 +2005,12 @@ export class ScalpTakeProfitStrategy {
       plan.blockedAtMs = now;
 
       // Log only once per TTL to prevent spam
-      if (this.logDeduper.shouldLog(`ScalpExit:INVALID_BOOK:${plan.tokenId}`, 30_000)) {
+      if (
+        this.logDeduper.shouldLog(
+          `ScalpExit:INVALID_BOOK:${plan.tokenId}`,
+          30_000,
+        )
+      ) {
         this.logger.warn(
           `[CLOB] INVALID_BOOK tokenId=${plan.tokenId.slice(0, 12)}... ` +
             `bestBid=${qualityResult.diagnostics?.bestBid !== null ? (qualityResult.diagnostics?.bestBid! * 100).toFixed(1) + "¢" : "null"} ` +
@@ -1956,11 +2020,19 @@ export class ScalpTakeProfitStrategy {
         );
       }
 
-      return { filled: false, reason: qualityResult.status, shouldContinue: true };
+      return {
+        filled: false,
+        reason: qualityResult.status,
+        shouldContinue: true,
+      };
     }
 
     // Clear blocked state if we now have valid orderbook
-    if (plan.blockedReason === "NO_BID" || plan.blockedReason === "INVALID_BOOK" || plan.blockedReason === "EXEC_PRICE_UNTRUSTED") {
+    if (
+      plan.blockedReason === "NO_BID" ||
+      plan.blockedReason === "INVALID_BOOK" ||
+      plan.blockedReason === "EXEC_PRICE_UNTRUSTED"
+    ) {
       plan.blockedReason = undefined;
       plan.blockedAtMs = undefined;
       // Clear circuit breaker on successful validation
@@ -1975,11 +2047,17 @@ export class ScalpTakeProfitStrategy {
     this.updateExitPlanStage(plan, now);
 
     // Calculate limit price for current stage
-    const { limitCents, reason } = this.calculateExitLimitPrice(plan, bestBidCents);
+    const { limitCents, reason } = this.calculateExitLimitPrice(
+      plan,
+      bestBidCents,
+    );
 
     // Check retry cadence
     const timeSinceLastAttempt = now - plan.lastAttemptAtMs;
-    if (timeSinceLastAttempt < this.config.profitRetrySec * 1000 && plan.attempts > 0) {
+    if (
+      timeSinceLastAttempt < this.config.profitRetrySec * 1000 &&
+      plan.attempts > 0
+    ) {
       return { filled: false, reason: "RETRY_COOLDOWN", shouldContinue: true };
     }
 
@@ -2005,7 +2083,13 @@ export class ScalpTakeProfitStrategy {
     plan.lastAttemptAtMs = now;
 
     // Rate-limited attempt logging
-    if (this.logDeduper.shouldLog(`ScalpExit:TRY:${plan.tokenId}`, 5000, plan.stage)) {
+    if (
+      this.logDeduper.shouldLog(
+        `ScalpExit:TRY:${plan.tokenId}`,
+        5000,
+        plan.stage,
+      )
+    ) {
       this.logger.info(
         `[ScalpExit] TRY stage=${plan.stage} tokenId=${plan.tokenId.slice(0, 12)}... ` +
           `price=${limitCents.toFixed(1)}¢ notional=$${notionalUsd.toFixed(2)} ` +
@@ -2021,7 +2105,11 @@ export class ScalpTakeProfitStrategy {
         `[ScalpExit] FILLED tokenId=${plan.tokenId.slice(0, 12)}... ` +
           `stage=${plan.stage} price=${limitCents.toFixed(1)}¢`,
       );
-      return { filled: true, attemptedPriceCents: limitCents, shouldContinue: false };
+      return {
+        filled: true,
+        attemptedPriceCents: limitCents,
+        shouldContinue: false,
+      };
     }
 
     // Check if FORCE stage and window expired - should still try
@@ -2068,13 +2156,22 @@ export class ScalpTakeProfitStrategy {
     if (existing) {
       // If failure happened recently (within escalation window), escalate
       // Using separate constant for clarity, not tied to cooldown values
-      if (now - existing.lastFailureAtMs < CIRCUIT_BREAKER_ESCALATION_WINDOW_MS) {
-        failureCount = Math.min(existing.failureCount + 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length);
+      if (
+        now - existing.lastFailureAtMs <
+        CIRCUIT_BREAKER_ESCALATION_WINDOW_MS
+      ) {
+        failureCount = Math.min(
+          existing.failureCount + 1,
+          CIRCUIT_BREAKER_COOLDOWNS_MS.length,
+        );
       }
     }
 
     // Get cooldown based on failure count (0-indexed)
-    const cooldownMs = CIRCUIT_BREAKER_COOLDOWNS_MS[Math.min(failureCount - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)];
+    const cooldownMs =
+      CIRCUIT_BREAKER_COOLDOWNS_MS[
+        Math.min(failureCount - 1, CIRCUIT_BREAKER_COOLDOWNS_MS.length - 1)
+      ];
 
     this.executionCircuitBreaker.set(tokenId, {
       disabledUntilMs: now + cooldownMs,
@@ -2087,7 +2184,9 @@ export class ScalpTakeProfitStrategy {
 
     // Enhanced diagnostics logging (rate-limited to once per cooldown period)
     // This is the key log for diagnosing INVALID_BOOK issues per Deliverable G
-    if (this.logDeduper.shouldLog(`ScalpExit:CB_UPDATE:${tokenId}`, cooldownMs)) {
+    if (
+      this.logDeduper.shouldLog(`ScalpExit:CB_UPDATE:${tokenId}`, cooldownMs)
+    ) {
       const bid = qualityResult.diagnostics?.bestBid;
       const ask = qualityResult.diagnostics?.bestAsk;
       const dataApi = qualityResult.diagnostics?.dataApiPrice;
