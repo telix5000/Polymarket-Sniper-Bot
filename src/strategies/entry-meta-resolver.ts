@@ -48,6 +48,21 @@ export interface EntryMeta {
   remainingShares: number;
   /** Cache age in milliseconds (0 if freshly fetched) */
   cacheAgeMs: number;
+  /**
+   * Whether the entry metadata is trusted for P&L/sizing calculations.
+   *
+   * Set to false (UNTRUSTED_ENTRY) when:
+   * - Computed netShares differs from Data API position shares by >2% or >0.5 shares
+   *
+   * When untrusted, strategies should NOT use this metadata for:
+   * - P&L calculation
+   * - Scalp sizing decisions
+   */
+  trusted: boolean;
+  /**
+   * Reason why entry is untrusted (only set when trusted === false)
+   */
+  untrustedReason?: string;
 }
 
 /**
@@ -126,12 +141,14 @@ export class EntryMetaResolver {
    * @param address - Wallet address (or proxy address) that holds/traded the position
    * @param tokenId - The token ID of the position (outcome token)
    * @param marketId - The market ID (conditionId) - used for filtering trades
+   * @param livePositionShares - Optional: live position shares from Data API for validation
    * @returns EntryMeta if successful, null if unable to resolve
    */
   async resolveEntryMeta(
     address: string,
     tokenId: string,
     marketId: string,
+    livePositionShares?: number,
   ): Promise<EntryMeta | null> {
     const cacheKey = `${address.toLowerCase()}-${tokenId}`;
     const now = Date.now();
@@ -171,11 +188,18 @@ export class EntryMetaResolver {
       );
 
       if (meta) {
+        // Validate against live position shares if provided
+        const validatedMeta = this.validateAgainstLiveShares(
+          meta,
+          livePositionShares,
+          tokenId,
+        );
+
         // Cache the result
-        this.cache.set(cacheKey, { meta, fetchedAt: now });
+        this.cache.set(cacheKey, { meta: validatedMeta, fetchedAt: now });
         // Clear any previous error
         this.fetchErrors.delete(cacheKey);
-        return { ...meta, cacheAgeMs: 0 };
+        return { ...validatedMeta, cacheAgeMs: 0 };
       }
 
       return null;
@@ -187,6 +211,56 @@ export class EntryMetaResolver {
       );
       return null;
     }
+  }
+
+  /**
+   * Validate computed entry metadata against live position shares.
+   *
+   * Marks entry as UNTRUSTED if computed shares differ materially from Data API:
+   * - Difference > 2% OR
+   * - Difference > 0.5 shares (absolute)
+   *
+   * This prevents the bug where trade history is incorrectly mapped (e.g., multiple
+   * tokenIds getting identical reconstructed values).
+   *
+   * @param meta - Computed entry metadata
+   * @param liveShares - Live position shares from Data API (optional)
+   * @param tokenId - Token ID for logging
+   * @returns EntryMeta with trusted flag set appropriately
+   */
+  private validateAgainstLiveShares(
+    meta: EntryMeta,
+    liveShares: number | undefined,
+    tokenId: string,
+  ): EntryMeta {
+    // If no live shares provided, can't validate - assume trusted
+    if (liveShares === undefined || liveShares <= 0) {
+      return { ...meta, trusted: true };
+    }
+
+    const computedShares = meta.remainingShares;
+    const difference = Math.abs(computedShares - liveShares);
+    const percentDiff = (difference / liveShares) * 100;
+
+    // Threshold constants
+    const MAX_PERCENT_DIFF = 2; // 2%
+    const MAX_ABSOLUTE_DIFF = 0.5; // 0.5 shares
+
+    if (percentDiff > MAX_PERCENT_DIFF || difference > MAX_ABSOLUTE_DIFF) {
+      const reason = `Shares mismatch: computed=${computedShares.toFixed(2)} vs live=${liveShares.toFixed(2)} (diff=${difference.toFixed(2)}, ${percentDiff.toFixed(1)}%)`;
+
+      this.logger.warn(
+        `[EntryMetaResolver] UNTRUSTED_ENTRY tokenId=${tokenId.slice(0, 12)}... ${reason}`,
+      );
+
+      return {
+        ...meta,
+        trusted: false,
+        untrustedReason: reason,
+      };
+    }
+
+    return { ...meta, trusted: true };
   }
 
   /**
@@ -369,6 +443,7 @@ export class EntryMetaResolver {
       timeHeldSec,
       remainingShares: totalShares,
       cacheAgeMs: 0,
+      trusted: true, // Will be validated against live shares in resolveEntryMeta
     };
   }
 
