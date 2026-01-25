@@ -41,6 +41,14 @@ export type OrderOutcome = "YES" | "NO";
 export const GLOBAL_MIN_BUY_PRICE = 0.1;
 
 /**
+ * Absolute minimum tradeable price to prevent orders at $0.
+ * This is a hard floor that applies to ALL orders regardless of any threshold settings.
+ * Orders at $0 are impossible - you can't buy something for nothing.
+ * This value is intentionally very low (0.1¢) to only catch truly invalid prices.
+ */
+export const ABSOLUTE_MIN_TRADEABLE_PRICE = 0.001;
+
+/**
  * Error class for INVALID_BOOK or EXEC_PRICE_UNTRUSTED orderbook quality issues.
  * This error is thrown when the orderbook data is corrupted/untrusted, not when
  * the price simply doesn't meet the acceptable threshold.
@@ -799,6 +807,19 @@ async function postOrderClobInner(
       // BUY: Use top ask level pricing
       const level = currentLevels[0];
       const levelPrice = parseFloat(level.price);
+
+      // HARD GUARD: Reject zero-price levels - you can't buy something for $0
+      // This applies regardless of SCALP_LOW_PRICE_THRESHOLD or MIN_BUY_PRICE settings
+      if (levelPrice <= ABSOLUTE_MIN_TRADEABLE_PRICE) {
+        logger.warn(
+          `[CLOB] 🚫 Order blocked (ZERO_PRICE): Cannot BUY at ${(levelPrice * 100).toFixed(2)}¢ - price must be > ${(ABSOLUTE_MIN_TRADEABLE_PRICE * 100).toFixed(2)}¢. Token: ${tokenId.slice(0, 16)}...`,
+        );
+        return {
+          status: "skipped",
+          reason: "ZERO_PRICE_LEVEL",
+        };
+      }
+
       const levelSize = parseFloat(level.size);
       const levelValue = levelSize * levelPrice;
       orderValue = Math.min(remaining, levelValue);
@@ -808,7 +829,20 @@ async function postOrderClobInner(
       // SELL: Compute cumulative bid depth at/above the limit price (minAcceptablePrice)
       // This allows orders to fill across multiple bid levels, not just the top level.
       // Submit at the limit price so the exchange can match against all levels >= limit.
-      const limitPrice = minAcceptablePrice ?? parseFloat(currentLevels[0].price);
+      const limitPrice =
+        minAcceptablePrice ?? parseFloat(currentLevels[0].price);
+
+      // HARD GUARD: Reject zero-price levels - you can't sell something for $0
+      // This applies regardless of any settings - selling at $0 is always invalid
+      if (limitPrice <= ABSOLUTE_MIN_TRADEABLE_PRICE) {
+        logger.warn(
+          `[CLOB] 🚫 Order blocked (ZERO_PRICE): Cannot SELL at ${(limitPrice * 100).toFixed(2)}¢ - price must be > ${(ABSOLUTE_MIN_TRADEABLE_PRICE * 100).toFixed(2)}¢. Token: ${tokenId.slice(0, 16)}...`,
+        );
+        return {
+          status: "skipped",
+          reason: "ZERO_PRICE_LEVEL",
+        };
+      }
 
       // Calculate cumulative depth at/above limit price
       let cumulativeDepthUsd = 0;
