@@ -226,6 +226,13 @@ export const STRATEGY_PRESETS = {
     ON_CHAIN_EXIT_ENABLED: true, // Enable on-chain exit for non-tradable high-price positions
     ON_CHAIN_EXIT_PRICE_THRESHOLD: 0.99, // Only consider positions at 99¢+
     ON_CHAIN_EXIT_MIN_POSITION_USD: 0.01, // Attempt exit for any non-dust position
+    /**
+     * POSITION STACKING - Disabled in "off" preset
+     * Double down on winning positions that are up 20+ cents from entry.
+     */
+    POSITION_STACKING_ENABLED: false,
+    POSITION_STACKING_MIN_GAIN_CENTS: 20, // Minimum gain in cents to allow stacking
+    POSITION_STACKING_MAX_CURRENT_PRICE: 0.95, // Don't stack if price already near $1
   },
   conservative: {
     STRATEGY_ENABLED: true,
@@ -331,6 +338,14 @@ export const STRATEGY_PRESETS = {
     ON_CHAIN_EXIT_ENABLED: true, // Enable on-chain exit for non-tradable high-price positions
     ON_CHAIN_EXIT_PRICE_THRESHOLD: 0.99, // Only consider positions at 99¢+
     ON_CHAIN_EXIT_MIN_POSITION_USD: 0.01, // Attempt exit for any non-dust position
+    /**
+     * POSITION STACKING - Conservative settings
+     * Double down on winning positions that are up 20+ cents from entry.
+     * Conservative: Higher gain threshold before stacking.
+     */
+    POSITION_STACKING_ENABLED: true, // ENABLED BY DEFAULT
+    POSITION_STACKING_MIN_GAIN_CENTS: 25, // Conservative: require 25¢ gain
+    POSITION_STACKING_MAX_CURRENT_PRICE: 0.90, // Conservative: don't stack above 90¢
     // Rate limits
     ORDER_SUBMIT_MAX_PER_HOUR: 30,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 10000,
@@ -453,6 +468,14 @@ export const STRATEGY_PRESETS = {
     ON_CHAIN_EXIT_ENABLED: true, // Enable on-chain exit for non-tradable high-price positions
     ON_CHAIN_EXIT_PRICE_THRESHOLD: 0.99, // Only consider positions at 99¢+
     ON_CHAIN_EXIT_MIN_POSITION_USD: 0.01, // Attempt exit for any non-dust position
+    /**
+     * POSITION STACKING - Balanced settings
+     * Double down on winning positions that are up 20+ cents from entry.
+     * Stack once per position at MAX_POSITION_USD when position is winning.
+     */
+    POSITION_STACKING_ENABLED: true, // ENABLED BY DEFAULT
+    POSITION_STACKING_MIN_GAIN_CENTS: 20, // Stack when up 20¢ from entry
+    POSITION_STACKING_MAX_CURRENT_PRICE: 0.95, // Don't stack above 95¢
     // Rate limits (higher for more trades)
     ORDER_SUBMIT_MAX_PER_HOUR: 60,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 5000,
@@ -635,6 +658,15 @@ export const STRATEGY_PRESETS = {
     ON_CHAIN_EXIT_ENABLED: true, // Enable on-chain exit for non-tradable high-price positions
     ON_CHAIN_EXIT_PRICE_THRESHOLD: 0.99, // Only consider positions at 99¢+
     ON_CHAIN_EXIT_MIN_POSITION_USD: 0.01, // Attempt exit for any non-dust position
+
+    /**
+     * POSITION STACKING - Aggressive settings
+     * Double down on winning positions that are up 15+ cents from entry.
+     * More aggressive: lower gain threshold for faster stacking.
+     */
+    POSITION_STACKING_ENABLED: true, // ENABLED BY DEFAULT
+    POSITION_STACKING_MIN_GAIN_CENTS: 15, // Aggressive: stack when up 15¢
+    POSITION_STACKING_MAX_CURRENT_PRICE: 0.95, // Don't stack above 95¢
 
     /**
      * RATE LIMITS - HIGH THROUGHPUT

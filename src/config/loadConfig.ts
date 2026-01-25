@@ -1593,6 +1593,27 @@ export type StrategyConfig = {
    * Default: 0.01
    */
   onChainExitMinPositionUsd: number;
+  // === POSITION STACKING SETTINGS ===
+  // Double down on winning positions that are up 20+ cents from entry
+  /**
+   * Enable position stacking strategy
+   * When a position is up significantly (minGainCents) from entry and profitable,
+   * allow stacking once at MAX_POSITION_USD to double the position.
+   * Default: true (enabled by default)
+   */
+  positionStackingEnabled: boolean;
+  /**
+   * Minimum gain in cents from entry price to allow stacking
+   * Position must be up at least this many cents from avgEntryPriceCents
+   * Default: 20 (20¢ gain required)
+   */
+  positionStackingMinGainCents: number;
+  /**
+   * Maximum current price to allow stacking (0.0-1.0 scale)
+   * Prevents stacking on positions already near $1 (limited upside)
+   * Default: 0.95 (95¢)
+   */
+  positionStackingMaxCurrentPrice: number;
   // Combined settings from ARB and MONITOR
   arbConfig?: ArbRuntimeConfig;
   monitorConfig?: MonitorRuntimeConfig;
@@ -2214,6 +2235,35 @@ export function loadStrategyConfig(
             .ON_CHAIN_EXIT_MIN_POSITION_USD
         : undefined) ??
       0.01, // Default: $0.01 - attempt for any non-dust position
+    // === POSITION STACKING STRATEGY (Double down on winners) ===
+    // POSITION_STACKING_ENABLED: Enable stacking (doubling down) on winning positions
+    positionStackingEnabled:
+      parseBool(readEnv("POSITION_STACKING_ENABLED", overrides) ?? "") ??
+      ("POSITION_STACKING_ENABLED" in preset
+        ? (preset as { POSITION_STACKING_ENABLED: boolean })
+            .POSITION_STACKING_ENABLED
+        : undefined) ??
+      true, // Default: enabled - double down on winners
+    // POSITION_STACKING_MIN_GAIN_CENTS: Minimum gain in cents from entry to allow stacking
+    positionStackingMinGainCents:
+      parseNumber(
+        readEnv("POSITION_STACKING_MIN_GAIN_CENTS", overrides) ?? "",
+      ) ??
+      ("POSITION_STACKING_MIN_GAIN_CENTS" in preset
+        ? (preset as { POSITION_STACKING_MIN_GAIN_CENTS: number })
+            .POSITION_STACKING_MIN_GAIN_CENTS
+        : undefined) ??
+      20, // Default: 20¢ gain required
+    // POSITION_STACKING_MAX_CURRENT_PRICE: Maximum current price to allow stacking
+    positionStackingMaxCurrentPrice:
+      parseNumber(
+        readEnv("POSITION_STACKING_MAX_CURRENT_PRICE", overrides) ?? "",
+      ) ??
+      ("POSITION_STACKING_MAX_CURRENT_PRICE" in preset
+        ? (preset as { POSITION_STACKING_MAX_CURRENT_PRICE: number })
+            .POSITION_STACKING_MAX_CURRENT_PRICE
+        : undefined) ??
+      0.95, // Default: 95¢ - don't stack if already near $1
   };
 
   // Apply preset settings to environment for ARB and MONITOR config loaders
