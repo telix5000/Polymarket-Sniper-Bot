@@ -251,6 +251,24 @@ export class Orchestrator {
         checkIntervalMs: 30000, // Check every 30s
         ...config.autoRedeemConfig,
       },
+      // Provide callback to get position P&L data for realized gains calculation
+      getPositionPnL: (tokenId: string) => {
+        const snapshot = this.positionTracker.getSnapshot();
+        if (!snapshot) return undefined;
+
+        // Check both active and redeemable positions
+        const allPositions = [
+          ...snapshot.activePositions,
+          ...snapshot.redeemablePositions,
+        ];
+        const position = allPositions.find((p) => p.tokenId === tokenId);
+        if (!position) return undefined;
+
+        return {
+          entryPrice: position.entryPrice,
+          pnlUsd: position.pnlUsd,
+        };
+      },
     });
 
     // 4. Smart Hedging - Hedge losing positions

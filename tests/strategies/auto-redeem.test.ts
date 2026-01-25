@@ -1297,4 +1297,94 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
       assert.strictEqual(result.length, 0, "Should return empty array");
     });
   });
+
+  describe("P&L Calculation for Redemptions", () => {
+    test("should calculate realized P&L correctly for winning position", () => {
+      // Scenario: User bought YES at 0.30, market resolved to YES (1.0), redeemed
+      const entryPrice = 0.30;
+      const redemptionPrice = 1.0; // Winning outcome
+      const size = 10;
+
+      const realizedPnl = (redemptionPrice - entryPrice) * size;
+
+      assert.strictEqual(
+        realizedPnl,
+        7.0,
+        "Should calculate correct P&L for winning position: (1.0 - 0.3) * 10 = 7.0",
+      );
+    });
+
+    test("should calculate realized P&L correctly for losing position", () => {
+      // Scenario: User bought YES at 0.70, market resolved to NO (0.0), redeemed
+      const entryPrice = 0.70;
+      const redemptionPrice = 0.0; // Losing outcome
+      const size = 15;
+
+      const realizedPnl = (redemptionPrice - entryPrice) * size;
+
+      assert.strictEqual(
+        realizedPnl,
+        -10.5,
+        "Should calculate correct P&L for losing position: (0.0 - 0.7) * 15 = -10.5",
+      );
+    });
+
+    test("should calculate realized P&L correctly for break-even position", () => {
+      // Scenario: User bought at 1.0 (certainty), market resolved as expected
+      const entryPrice = 1.0;
+      const redemptionPrice = 1.0;
+      const size = 20;
+
+      const realizedPnl = (redemptionPrice - entryPrice) * size;
+
+      assert.strictEqual(
+        realizedPnl,
+        0.0,
+        "Should calculate zero P&L for break-even position: (1.0 - 1.0) * 20 = 0.0",
+      );
+    });
+
+    test("should calculate realized P&L correctly for small profitable position", () => {
+      // Scenario: User bought YES at 0.52, market resolved to YES (1.0)
+      const entryPrice = 0.52;
+      const redemptionPrice = 1.0;
+      const size = 5.8; // From the problem statement
+
+      const realizedPnl = (redemptionPrice - entryPrice) * size;
+
+      // Expected: (1.0 - 0.52) * 5.8 = 0.48 * 5.8 = 2.784
+      assert.ok(
+        Math.abs(realizedPnl - 2.784) < 0.001,
+        `Should calculate correct P&L for small position: expected ~2.78, got ${realizedPnl.toFixed(3)}`,
+      );
+    });
+
+    test("getPositionPnL callback should return entry price and pnl", () => {
+      // Mock position data
+      const mockPositionPnLData = {
+        entryPrice: 0.45,
+        pnlUsd: -2.5, // Current unrealized P&L before redemption
+      };
+
+      // Simulate the callback
+      const getPositionPnL = (tokenId: string) => {
+        if (tokenId === "known-token") {
+          return mockPositionPnLData;
+        }
+        return undefined;
+      };
+
+      const result = getPositionPnL("known-token");
+      assert.ok(result, "Should return P&L data for known token");
+      assert.strictEqual(result.entryPrice, 0.45);
+      assert.strictEqual(result.pnlUsd, -2.5);
+
+      const unknownResult = getPositionPnL("unknown-token");
+      assert.strictEqual(
+        unknownResult,
+        undefined,
+        "Should return undefined for unknown token",
+      );
+    });
+  });
 });

@@ -102,6 +102,16 @@ export interface RedemptionResult {
 }
 
 /**
+ * Position P&L data for calculating realized gains
+ */
+export interface PositionPnLData {
+  /** Entry price (average cost basis per share, 0-1 scale) */
+  entryPrice: number;
+  /** Unrealized P&L in USD (before redemption) */
+  pnlUsd: number;
+}
+
+/**
  * Auto-Redeem Strategy Options
  *
  * NOTE: AutoRedeem does NOT use PositionTracker. It fetches positions directly
@@ -114,6 +124,12 @@ export interface AutoRedeemStrategyOptions {
   logger: ConsoleLogger;
   relayer?: RelayerContext;
   config: AutoRedeemConfig;
+  /**
+   * Optional callback to get position P&L data (entry price and unrealized P&L)
+   * Used for calculating realized gains when positions are redeemed.
+   * If not provided, P&L will not be included in redemption notifications.
+   */
+  getPositionPnL?: (tokenId: string) => PositionPnLData | undefined;
 }
 
 /**
@@ -138,6 +154,7 @@ export class AutoRedeemStrategy {
   private client: ClobClient;
   private logger: ConsoleLogger;
   private config: AutoRedeemConfig;
+  private getPositionPnL?: (tokenId: string) => PositionPnLData | undefined;
 
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
@@ -186,6 +203,7 @@ export class AutoRedeemStrategy {
     this.client = options.client;
     this.logger = options.logger;
     this.config = options.config;
+    this.getPositionPnL = options.getPositionPnL;
   }
 
   /**
@@ -1023,6 +1041,21 @@ export class AutoRedeemStrategy {
         ctfAddress,
         usdcAddress,
       );
+
+      // Calculate realized P&L if entry price is available
+      let realizedPnl: number | undefined;
+      if (this.getPositionPnL) {
+        const pnlData = this.getPositionPnL(position.tokenId);
+        if (pnlData) {
+          // When redeeming, we get payoutInfo.price (0 or 1) per share
+          // P&L = (redemption_price - entry_price) * size
+          realizedPnl = (payoutInfo.price - pnlData.entryPrice) * position.size;
+          this.logger.debug(
+            `[AutoRedeem] Calculated P&L: redemption=${payoutInfo.price} - entry=${pnlData.entryPrice.toFixed(4)} = ${((payoutInfo.price - pnlData.entryPrice) * 100).toFixed(2)}¢/share × ${position.size} shares = $${realizedPnl.toFixed(2)}`,
+          );
+        }
+      }
+
       void notifyRedeem(
         position.marketId,
         position.tokenId,
@@ -1031,6 +1064,7 @@ export class AutoRedeemStrategy {
         payoutInfo.value,
         {
           txHash: tx.hash,
+          pnl: realizedPnl,
         },
       ).catch(() => {
         // Ignore notification errors - logging is handled by the service
