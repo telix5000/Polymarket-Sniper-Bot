@@ -189,7 +189,22 @@ export class TelegramService {
   async sendPnlUpdate(): Promise<boolean> {
     if (!this.config.enabled || !this.getPnlSummary) return false;
 
+    // Track performance of P&L summary generation
+    const startTime = Date.now();
     const summary = this.getPnlSummary();
+    const summaryDurationMs = Date.now() - startTime;
+
+    // Log slow summary generation for performance monitoring
+    if (summaryDurationMs > 1000) {
+      this.logger.warn(
+        `[Telegram] P&L summary generation took ${summaryDurationMs}ms (>1s) - consider optimizing if this persists`,
+      );
+    } else if (summaryDurationMs > 500) {
+      this.logger.debug(
+        `[Telegram] P&L summary generation took ${summaryDurationMs}ms`,
+      );
+    }
+
     const netEmoji = summary.netPnl >= 0 ? "🟢" : "🔴";
 
     let message = `📊 <b>${this.escapeHtml(this.config.notificationName)} - P&amp;L Update</b>\n\n`;
@@ -312,45 +327,66 @@ export class TelegramService {
   }
 
   /**
-   * Get emoji for trade type
+   * Get emoji for trade type (uses exported helper)
    */
   private getTradeEmoji(type: TradeNotificationType): string {
-    switch (type) {
-      case "BUY":
-        return "🛒";
-      case "SELL":
-        return "💵";
-      case "REDEEM":
-        return "🏦";
-      default:
-        return "📌";
-    }
+    return getTradeEmoji(type);
   }
 
   /**
-   * Get action text for trade type
+   * Get action text for trade type (uses exported helper)
    */
   private getTradeAction(type: TradeNotificationType): string {
-    switch (type) {
-      case "BUY":
-        return "Position Bought";
-      case "SELL":
-        return "Position Sold";
-      case "REDEEM":
-        return "Position Redeemed";
-      default:
-        return "Trade Executed";
-    }
+    return getTradeAction(type);
   }
 
   /**
-   * Escape HTML entities for Telegram message
+   * Escape HTML entities for Telegram message (uses exported helper)
    */
   private escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
+    return escapeHtml(text);
+  }
+}
+
+/**
+ * Escape HTML entities for Telegram message
+ */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * Get emoji for trade notification type
+ */
+export function getTradeEmoji(type: TradeNotificationType): string {
+  switch (type) {
+    case "BUY":
+      return "🛒";
+    case "SELL":
+      return "💵";
+    case "REDEEM":
+      return "🏦";
+    default:
+      return "📌";
+  }
+}
+
+/**
+ * Get action text for trade notification type
+ */
+export function getTradeAction(type: TradeNotificationType): string {
+  switch (type) {
+    case "BUY":
+      return "Position Bought";
+    case "SELL":
+      return "Position Sold";
+    case "REDEEM":
+      return "Position Redeemed";
+    default:
+      return "Trade Executed";
   }
 }
 
