@@ -678,33 +678,52 @@ export class Orchestrator {
    * Get P&L summary enriched with balance information.
    *
    * This method provides a full picture of portfolio status:
-   * - P&L metrics from the ledger
+   * - P&L metrics from the ledger (realized P&L)
+   * - Unrealized P&L calculated from position tracker snapshot (pnlUsd from active positions)
    * - USDC balance (reserves)
    * - Holdings value (sum of position values)
    * - Total portfolio value
    *
    * If balance fetch fails, returns the base summary without balance info.
+   *
+   * NOTE: Since strategies don't record trades to the PnL ledger, we calculate
+   * unrealized P&L directly from the position tracker snapshot, which has
+   * accurate pnlUsd values for each position based on entry price vs current price.
    */
   async getSummaryWithBalances(): Promise<LedgerSummary> {
     const summary = this.pnlLedger.getSummary();
 
-    // Try to add balance information
+    // Try to add balance and unrealized P&L information from position tracker
     try {
-      if (this.getWalletBalances) {
-        const balances = await this.getWalletBalances();
-        const snapshot = this.positionTracker.getSnapshot();
+      const snapshot = this.positionTracker.getSnapshot();
 
-        // Calculate holdings value from active positions
-        let holdingsValue = 0;
-        if (snapshot) {
-          for (const pos of snapshot.activePositions) {
-            // Use current price (bid price for what we can sell at)
-            holdingsValue += pos.size * pos.currentPrice;
+      // Calculate unrealized P&L and holdings value from active positions
+      // The position tracker's pnlUsd is authoritative for unrealized P&L since
+      // it's calculated from actual entry prices and current bid prices.
+      let holdingsValue = 0;
+      let unrealizedPnl = 0;
+      if (snapshot) {
+        for (const pos of snapshot.activePositions) {
+          // Use current price (bid price for what we can sell at)
+          holdingsValue += pos.size * pos.currentPrice;
+          // Sum unrealized P&L from positions with trusted P&L data
+          if (pos.pnlTrusted && typeof pos.pnlUsd === "number") {
+            unrealizedPnl += pos.pnlUsd;
           }
         }
+      }
 
+      // Override the ledger's unrealized P&L with the position tracker's value
+      // since the ledger isn't being populated with trades by strategies
+      summary.totalUnrealizedPnl = unrealizedPnl;
+      // Recalculate net P&L: realized (from ledger) + unrealized (from positions)
+      summary.netPnl = summary.totalRealizedPnl + unrealizedPnl;
+      summary.holdingsValue = holdingsValue;
+
+      // Add USDC balance if wallet balance fetcher is available
+      if (this.getWalletBalances) {
+        const balances = await this.getWalletBalances();
         summary.usdcBalance = balances.usdcBalance;
-        summary.holdingsValue = holdingsValue;
         summary.totalValue = balances.usdcBalance + holdingsValue;
       }
     } catch (err) {
