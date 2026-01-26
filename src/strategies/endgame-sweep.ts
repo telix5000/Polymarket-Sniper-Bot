@@ -24,6 +24,7 @@ import { postOrder } from "../utils/post-order.util";
 import { isLiveTradingEnabled } from "../utils/live-trading.util";
 import type { ReservePlan } from "../risk";
 import { notifyBuy } from "../services/trade-notification.service";
+import { POLYGON_USDC_ADDRESS } from "../constants/polymarket.constants";
 
 /**
  * Endgame Sweep Configuration
@@ -327,6 +328,8 @@ export class EndgameSweepStrategy {
         outcome: market.side,
         side: "BUY",
         sizeUsd,
+        collateralTokenAddress: POLYGON_USDC_ADDRESS,
+        collateralTokenDecimals: 6,
         // Use buySlippagePct to compute maxAcceptablePrice from FRESH orderbook data.
         // This ensures we don't overpay based on stale cached prices in hot markets.
         buySlippagePct: 2, // Allow 2% slippage above fresh best ask

@@ -36,6 +36,7 @@ import { isLiveTradingEnabled } from "../utils/live-trading.util";
 import type { ReservePlan } from "../risk";
 import { LogDeduper } from "../utils/log-deduper.util";
 import { notifyStack } from "../services/trade-notification.service";
+import { POLYGON_USDC_ADDRESS } from "../constants/polymarket.constants";
 
 /**
  * Stacking Configuration
@@ -445,6 +446,8 @@ export class StackingStrategy {
         outcome: outcome as "YES" | "NO",
         side: "BUY",
         sizeUsd,
+        collateralTokenAddress: POLYGON_USDC_ADDRESS,
+        collateralTokenDecimals: 6,
         buySlippagePct: 2,
         logger: this.logger,
       });

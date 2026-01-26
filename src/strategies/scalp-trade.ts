@@ -75,6 +75,7 @@ import {
 import { notifyScalp } from "../services/trade-notification.service";
 import { DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
 import { fetchOrderbookWithFallback } from "../utils/fast-orderbook.util";
+import { POLYGON_USDC_ADDRESS } from "../constants/polymarket.constants";
 
 /**
  * Scalp Take-Profit Configuration
@@ -2013,6 +2014,8 @@ export class ScalpTradeStrategy {
         outcome: (position.side?.toUpperCase() as "YES" | "NO") || "YES",
         side: "SELL",
         sizeUsd: notionalUsd,
+        collateralTokenAddress: POLYGON_USDC_ADDRESS,
+        collateralTokenDecimals: 6,
         // Use sellSlippagePct to compute minAcceptablePrice from FRESH orderbook best bid.
         // This ensures price protection is based on actual market conditions, not stale cached data.
         sellSlippagePct: DEFAULT_SELL_SLIPPAGE_PCT,
