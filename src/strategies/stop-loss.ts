@@ -130,11 +130,24 @@ export class StopLossStrategy {
    */
   private stopLossTriggered: Map<string, number> = new Map();
 
+  /**
+   * Timestamp of last diagnostic log to rate-limit log spam
+   */
+  private lastDiagnosticLogAt = 0;
+
   constructor(strategyConfig: StopLossStrategyConfig) {
     this.client = strategyConfig.client;
     this.logger = strategyConfig.logger;
     this.positionTracker = strategyConfig.positionTracker;
     this.config = strategyConfig.config;
+  }
+
+  /**
+   * Check if a position has catastrophic loss (>= maxStopLossPct).
+   * Used to bypass safety checks like entry time and hold time verification.
+   */
+  private isCatastrophicLoss(position: Position): boolean {
+    return position.pnlPct < 0 && Math.abs(position.pnlPct) >= this.config.maxStopLossPct;
   }
 
   /**
@@ -171,15 +184,51 @@ export class StopLossStrategy {
 
     let soldCount = 0;
     const allPositions = this.positionTracker.getPositions();
+    const now = Date.now();
 
     // Skip resolved/redeemable positions (they can't be sold, only redeemed)
     let activePositions = allPositions.filter((pos) => !pos.redeemable);
 
+    // === DIAGNOSTIC: Log high-loss positions before filtering (rate-limited) ===
+    // This helps debug why positions aren't being acted upon
+    const highLossPositions = activePositions.filter(
+      (p) => p.pnlPct < 0 && Math.abs(p.pnlPct) >= this.config.maxStopLossPct
+    );
+    // Rate-limit diagnostic logging to once per minute to prevent log spam
+    const DIAGNOSTIC_LOG_INTERVAL_MS = 60_000;
+    if (highLossPositions.length > 0 && now - this.lastDiagnosticLogAt >= DIAGNOSTIC_LOG_INTERVAL_MS) {
+      this.lastDiagnosticLogAt = now;
+      for (const pos of highLossPositions) {
+        const lossPct = Math.abs(pos.pnlPct);
+        this.logger.info(
+          `[StopLoss] 🔍 Diagnostic: High-loss position ${pos.side ?? "?"} ${pos.tokenId.slice(0, 16)}... ` +
+            `entry=${(pos.entryPrice * 100).toFixed(1)}¢ current=${(pos.currentPrice * 100).toFixed(1)}¢ ` +
+            `loss=${lossPct.toFixed(1)}% pnlTrusted=${pos.pnlTrusted} ` +
+            `execStatus=${pos.executionStatus ?? "unknown"} ` +
+            `${pos.pnlUntrustedReason ? `reason=${pos.pnlUntrustedReason}` : ""}`,
+        );
+      }
+    }
+
     // === CRITICAL: P&L TRUST FILTER ===
     // NEVER trigger stop-loss on positions with untrusted P&L.
     // We might be selling winners that only APPEAR to be losing due to bad data.
+    // EXCEPTION: For CATASTROPHIC losses (>= maxStopLossPct), allow action even with
+    // untrusted P&L because the risk of inaction is greater than the risk of acting.
     activePositions = activePositions.filter((pos) => {
       if (!pos.pnlTrusted) {
+        // Check for catastrophic loss exception using helper method
+        if (this.isCatastrophicLoss(pos)) {
+          // CATASTROPHIC LOSS with untrusted P&L - ALLOW stop-loss with warning
+          // The risk of doing nothing is greater than the risk of acting on imperfect data
+          const lossPctMagnitude = Math.abs(pos.pnlPct);
+          this.logger.warn(
+            `[StopLoss] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}% >= ${this.config.maxStopLossPct}%) with untrusted P&L ` +
+            `(${pos.pnlUntrustedReason ?? "unknown reason"}) - PROCEEDING WITH STOP-LOSS despite data uncertainty`,
+          );
+          return true; // Keep the position for stop-loss processing
+        }
+        
         this.logger.debug(
           `[StopLoss] 📋 Skip (UNTRUSTED_PNL): ${pos.tokenId.slice(0, 16)}... has untrusted P&L (${pos.pnlUntrustedReason ?? "unknown reason"})`,
         );
@@ -189,16 +238,40 @@ export class StopLossStrategy {
     });
 
     // Skip positions that Hedging will handle
-    // When skipForSmartHedging is true, defer to Hedging for ALL positions
+    // When skipForSmartHedging is true, defer to Hedging for positions it can act on.
+    // CRITICAL FIX (Jan 2025): Do NOT skip positions that Hedging would also skip!
+    // If a position has executionStatus === NOT_TRADABLE_ON_CLOB, Hedging skips it,
+    // so Stop-Loss MUST handle it as a last line of defense.
     if (this.config.skipForSmartHedging) {
       // Use configured threshold or default to 100¢ (matches Hedging default - handles ALL positions)
       const hedgingThreshold = this.config.hedgingMaxEntryPrice ?? 1.0;
-      activePositions = activePositions.filter(
-        (pos) => pos.entryPrice >= hedgingThreshold,
-      );
+      activePositions = activePositions.filter((pos) => {
+        // Keep positions with entry >= hedgingThreshold (Hedging won't handle these)
+        if (pos.entryPrice >= hedgingThreshold) {
+          return true;
+        }
+        
+        // CRITICAL: Also keep positions that Hedging would skip due to NOT_TRADABLE_ON_CLOB
+        // These positions can't be hedged (no orderbook), so Stop-Loss must try to sell them.
+        // This prevents positions from falling through the cracks when both strategies skip them.
+        if (
+          pos.executionStatus === "NOT_TRADABLE_ON_CLOB" ||
+          pos.executionStatus === "EXECUTION_BLOCKED"
+        ) {
+          this.logger.debug(
+            `[StopLoss] 📋 Including position despite skipForSmartHedging: ${pos.tokenId.slice(0, 16)}... ` +
+              `(executionStatus=${pos.executionStatus}, entry=${(pos.entryPrice * 100).toFixed(1)}¢) - ` +
+              `Hedging cannot act on NOT_TRADABLE positions`,
+          );
+          return true;
+        }
+        
+        // Defer to Hedging for tradable positions below hedgingThreshold
+        return false;
+      });
 
       // NOTE: We intentionally don't log skipped positions here.
-      // Hedging handles these positions with its own fallback mechanism
+      // Hedging handles tradable positions with its own fallback mechanism
       // (liquidation if hedge fails), so this skip is expected and silent.
     }
 
@@ -208,7 +281,6 @@ export class StopLossStrategy {
 
     // Get minimum hold time from config (default to 60 seconds if not set)
     const minHoldSeconds = this.config.minHoldSeconds ?? 60;
-    const now = Date.now();
 
     // Find positions exceeding their stop-loss threshold
     const positionsToStop: Array<{ position: Position; stopLossPct: number }> =
@@ -219,6 +291,9 @@ export class StopLossStrategy {
 
       // Check if position exceeds stop-loss (negative P&L beyond threshold)
       if (position.pnlPct <= -stopLossPct) {
+        // Use helper method to check for catastrophic loss
+        const isCatastrophic = this.isCatastrophicLoss(position);
+        
         // Check minimum hold time before allowing stop-loss
         // Use PositionTracker's entry time as single source of truth
         const entryTime = this.positionTracker.getPositionEntryTime(
@@ -226,27 +301,38 @@ export class StopLossStrategy {
           position.tokenId,
         );
 
-        // CRITICAL: If we don't have entry time, skip stop-loss entirely.
-        // This can happen on container restart when we haven't tracked when the position
-        // was first seen. Without knowing when we bought, we can't determine if we've held
-        // long enough for stop-loss. Being conservative here prevents mass sells on restart.
-        // The entry time will be set on the next position tracker refresh cycle.
+        // CRITICAL FIX (Jan 2025): For CATASTROPHIC losses, skip entry time and hold time checks.
+        // If Data API says we're down 25%+, we should act immediately.
+        // The original conservative approach prevented action on positions after container restart,
+        // but it also prevented action on legitimately losing positions.
         if (!entryTime) {
-          this.logger.debug(
-            `[StopLoss] ⏳ Position at ${position.pnlPct.toFixed(2)}% loss but no entry time - skipping stop-loss (will check after next refresh)`,
-          );
-          continue;
+          if (isCatastrophic) {
+            // CATASTROPHIC LOSS with no entry time - ACT ANYWAY
+            const lossPctMagnitude = Math.abs(position.pnlPct);
+            this.logger.warn(
+              `[StopLoss] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}%) with no entry time - PROCEEDING ANYWAY (Data API is source of truth)`,
+            );
+            // Fall through to add to positionsToStop
+          } else {
+            this.logger.debug(
+              `[StopLoss] ⏳ Position at ${position.pnlPct.toFixed(2)}% loss but no entry time - skipping stop-loss (will check after next refresh)`,
+            );
+            continue;
+          }
         }
 
-        const holdTimeSeconds = (now - entryTime) / 1000;
+        // Check hold time (but skip for catastrophic losses)
+        if (entryTime && !isCatastrophic) {
+          const holdTimeSeconds = (now - entryTime) / 1000;
 
-        if (holdTimeSeconds < minHoldSeconds) {
-          // Position hasn't been held long enough - skip stop-loss for now
-          // This prevents selling positions immediately after buying due to bid-ask spread
-          this.logger.debug(
-            `[StopLoss] ⏳ Position at ${position.pnlPct.toFixed(2)}% loss (threshold: -${stopLossPct}%) held for ${holdTimeSeconds.toFixed(0)}s, need ${minHoldSeconds}s before stop-loss can trigger`,
-          );
-          continue;
+          if (holdTimeSeconds < minHoldSeconds) {
+            // Position hasn't been held long enough - skip stop-loss for now
+            // This prevents selling positions immediately after buying due to bid-ask spread
+            this.logger.debug(
+              `[StopLoss] ⏳ Position at ${position.pnlPct.toFixed(2)}% loss (threshold: -${stopLossPct}%) held for ${holdTimeSeconds.toFixed(0)}s, need ${minHoldSeconds}s before stop-loss can trigger`,
+            );
+            continue;
+          }
         }
 
         positionsToStop.push({ position, stopLossPct });
@@ -288,6 +374,7 @@ export class StopLossStrategy {
           position.pnlPct,
           position.entryPrice,
           position.pnlUsd,
+          position.currentPrice, // Pass Data API price as fallback for illiquid positions
         );
 
         if (sold) {
@@ -345,6 +432,10 @@ export class StopLossStrategy {
 
   /**
    * Sell a position using postOrder utility
+   * 
+   * CRITICAL FIX (Jan 2025): Now accepts dataApiPrice as fallback when orderbook unavailable.
+   * If Data API provided curPrice, we can use that for sell pricing even without an orderbook.
+   * This allows stop-loss to work on illiquid positions where the Data API still tracks value.
    */
   private async sellPosition(
     marketId: string,
@@ -353,35 +444,70 @@ export class StopLossStrategy {
     currentLossPct: number,
     entryPrice: number,
     pnlUsd: number,
+    dataApiPrice?: number, // Data API curPrice as fallback
   ): Promise<boolean> {
     try {
       const { postOrder } = await import("../utils/post-order.util");
 
-      // Get current orderbook
-      const orderbook = await this.client.getOrderBook(tokenId);
+      let sellPrice: number;
+      let priceSource: "orderbook" | "data_api";
 
-      if (!orderbook.bids || orderbook.bids.length === 0) {
-        if (!this.noLiquidityTokens.has(tokenId)) {
-          this.logger.warn(
-            `[StopLoss] ⚠️ No bids for token ${tokenId} - cannot execute stop-loss (illiquid)`,
-          );
-          this.noLiquidityTokens.add(tokenId);
+      // Try to get orderbook price first (most accurate for execution)
+      try {
+        const orderbook = await this.client.getOrderBook(tokenId);
+
+        if (orderbook.bids && orderbook.bids.length > 0) {
+          sellPrice = parseFloat(orderbook.bids[0].price);
+          priceSource = "orderbook";
+          // Clear no-liquidity flag if liquidity returned
+          this.noLiquidityTokens.delete(tokenId);
+        } else {
+          // Empty orderbook - try Data API fallback
+          if (dataApiPrice !== undefined && dataApiPrice > 0) {
+            sellPrice = dataApiPrice;
+            priceSource = "data_api";
+            this.logger.info(
+              `[StopLoss] 📊 Empty orderbook for ${tokenId.slice(0, 16)}... - using Data API price ${(dataApiPrice * 100).toFixed(1)}¢ for stop-loss`,
+            );
+          } else {
+            if (!this.noLiquidityTokens.has(tokenId)) {
+              this.logger.warn(
+                `[StopLoss] ⚠️ No bids for token ${tokenId.slice(0, 16)}... and no Data API price - cannot execute stop-loss (illiquid)`,
+              );
+              this.noLiquidityTokens.add(tokenId);
+            }
+            return false;
+          }
         }
-        return false;
+      } catch (orderbookErr) {
+        // Orderbook fetch failed (404, timeout, etc.) - try Data API fallback
+        const errMsg = orderbookErr instanceof Error ? orderbookErr.message : String(orderbookErr);
+        
+        if (dataApiPrice !== undefined && dataApiPrice > 0) {
+          sellPrice = dataApiPrice;
+          priceSource = "data_api";
+          this.logger.info(
+            `[StopLoss] 📊 Orderbook fetch failed (${errMsg}) - using Data API price ${(dataApiPrice * 100).toFixed(1)}¢ for stop-loss`,
+          );
+        } else {
+          if (!this.noLiquidityTokens.has(tokenId)) {
+            this.logger.warn(
+              `[StopLoss] ⚠️ Orderbook fetch failed (${errMsg}) and no Data API price - cannot execute stop-loss`,
+            );
+            this.noLiquidityTokens.add(tokenId);
+          }
+          return false;
+        }
       }
 
-      // Clear no-liquidity flag if liquidity returned
-      this.noLiquidityTokens.delete(tokenId);
-
-      const bestBid = parseFloat(orderbook.bids[0].price);
-      const sizeUsd = size * bestBid;
+      const sizeUsd = size * sellPrice;
 
       // Extract wallet if available
       const wallet = (this.client as { wallet?: Wallet }).wallet;
 
       this.logger.info(
         `[StopLoss] 🔄 Executing stop-loss sell: ${size.toFixed(2)} shares ` +
-          `at ~${(bestBid * 100).toFixed(1)}¢ ($${sizeUsd.toFixed(2)}, loss: ${currentLossPct.toFixed(2)}%)`,
+          `at ~${(sellPrice * 100).toFixed(1)}¢ ($${sizeUsd.toFixed(2)}, loss: ${currentLossPct.toFixed(2)}%) [source: ${priceSource}]`,
       );
 
       // Execute sell order with liberal slippage tolerance for stop-loss
@@ -396,7 +522,7 @@ export class StopLossStrategy {
         outcome: "YES",
         side: "SELL",
         sizeUsd,
-        minAcceptablePrice: calculateMinAcceptablePrice(bestBid, FALLING_KNIFE_SLIPPAGE_PCT),
+        minAcceptablePrice: calculateMinAcceptablePrice(sellPrice, FALLING_KNIFE_SLIPPAGE_PCT),
         logger: this.logger,
         priority: true, // High priority for stop-loss
         skipDuplicatePrevention: true, // Stop-loss must bypass duplicate prevention
@@ -409,7 +535,7 @@ export class StopLossStrategy {
           marketId,
           tokenId,
           size,
-          bestBid,
+          sellPrice,
           sizeUsd,
           {
             entryPrice,
