@@ -38,6 +38,11 @@ export interface FastOrderbookConfig {
   timeoutMs: number;
 }
 
+/**
+ * Read environment variable with case-insensitive fallback.
+ * Checks both UPPER_CASE and lower_case versions for flexibility.
+ * This matches the pattern used elsewhere in the codebase (vpn-rpc-bypass.util.ts).
+ */
 const readEnv = (key: string): string | undefined =>
   process.env[key] ?? process.env[key.toLowerCase()];
 
@@ -47,7 +52,11 @@ const parseBool = (raw: string | undefined, defaultValue: boolean): boolean => {
 };
 
 /**
- * Get fast orderbook configuration from environment
+ * Get fast orderbook configuration from environment variables.
+ *
+ * Environment variables:
+ * - CLOB_BYPASS_VPN_FOR_READS: Enable direct (non-VPN) orderbook fetches (default: true)
+ * - CLOB_READ_TIMEOUT_MS: Timeout for direct orderbook fetches in milliseconds (default: 5000)
  */
 export const getFastOrderbookConfig = (): FastOrderbookConfig => ({
   enabled: parseBool(readEnv("CLOB_BYPASS_VPN_FOR_READS"), true),
@@ -103,11 +112,11 @@ export async function fetchOrderbookDirect(
     };
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), cfg.timeoutMs);
+
   try {
     const url = `${CLOB_HOST}/book?token_id=${tokenId}`;
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), cfg.timeoutMs);
 
     const response = await fetch(url, {
       method: "GET",
@@ -117,8 +126,6 @@ export async function fetchOrderbookDirect(
       },
       signal: controller.signal,
     });
-
-    clearTimeout(timeoutId);
 
     if (!response.ok) {
       return {
@@ -162,6 +169,9 @@ export async function fetchOrderbookDirect(
       source: "direct",
       error: errorMsg,
     };
+  } finally {
+    // Always clear timeout to prevent memory leak
+    clearTimeout(timeoutId);
   }
 }
 
