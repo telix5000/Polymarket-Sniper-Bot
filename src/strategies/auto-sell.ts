@@ -10,10 +10,10 @@ import {
 } from "../utils/log-deduper.util";
 import { notifySell } from "../services/trade-notification.service";
 import {
-  STALE_SELL_SLIPPAGE_PCT,
-  URGENT_SELL_SLIPPAGE_PCT,
+  FALLING_KNIFE_SLIPPAGE_PCT,
   calculateMinAcceptablePrice,
 } from "./constants";
+import { postOrder } from "../utils/post-order.util";
 
 export interface AutoSellConfig {
   enabled: boolean;
@@ -595,89 +595,72 @@ export class AutoSellStrategy {
   }
 
   /**
-   * Sell a stale profitable position with tighter slippage controls
-   * Unlike near-resolution sells which accept 10% slippage for urgent exit,
-   * stale position sells use tighter 3% slippage to avoid turning small
-   * green positions into realized losses.
+   * Unified sell method that follows the same methodology as hedging/stop-loss.
+   * 
+   * Uses the same approach as hedging's sellPosition():
+   * - Uses position's currentBidPrice/currentPrice (no manual orderbook fetch)
+   * - postOrder() handles orderbook validation internally (single source of truth)
+   * - Uses FALLING_KNIFE_SLIPPAGE_PCT (25%) for reliable fills
+   * - Uses skipMinOrderSizeCheck: true to allow liquidating small positions
    *
-   * @param position - The position to sell (must have entry price info for P&L logging)
+   * @param position - The position to sell
+   * @param strategyLabel - Label for logging (e.g., "AutoSell", "AutoSell (Stale)")
    * @returns true if order was submitted successfully
    */
-  private async sellStalePosition(position: Position): Promise<boolean> {
+  private async executeSell(position: Position, strategyLabel: string): Promise<boolean> {
     try {
-      const { postOrder } = await import("../utils/post-order.util");
-
-      const orderbook = await this.client.getOrderBook(position.tokenId);
-
-      if (!orderbook.bids || orderbook.bids.length === 0) {
-        if (!this.noLiquidityTokens.has(position.tokenId)) {
-          this.logger.warn(
-            `[AutoSell] ⚠️ No bids available for stale position ${position.tokenId.slice(0, 12)}... - cannot sell`,
-          );
-          this.noLiquidityTokens.add(position.tokenId);
-        }
-        return false;
-      }
-
-      this.noLiquidityTokens.delete(position.tokenId);
-
-      const bestBid = parseFloat(orderbook.bids[0].price);
-      const sizeUsd = position.size * bestBid;
-
-      // For stale positions, calculate actual P&L based on entry price
-      const entryPrice = position.entryPrice;
-      const expectedProfit = (bestBid - entryPrice) * position.size;
-      const profitPct = entryPrice > 0 ? ((bestBid - entryPrice) / entryPrice) * 100 : 0;
-
-      // Use STALE_SELL_SLIPPAGE_PCT (3%) for stale sells to protect small profits
-      // Unlike near-resolution sells that need urgent exit at any cost,
-      // stale positions can wait for better fills
-      const minAcceptablePrice = calculateMinAcceptablePrice(bestBid, STALE_SELL_SLIPPAGE_PCT);
-
-      // Warn if slippage could turn profit into loss
-      const worstCaseProfit = (minAcceptablePrice - entryPrice) * position.size;
-      if (worstCaseProfit < 0 && expectedProfit > 0) {
-        this.logger.warn(
-          `[AutoSell] ⚠️ Stale sell may turn profit into loss: expected $${expectedProfit.toFixed(2)} but worst case $${worstCaseProfit.toFixed(2)}`,
-        );
-      }
-
-      this.logger.info(
-        `[AutoSell] Executing stale sell: ${position.size.toFixed(2)} shares at ~${(bestBid * 100).toFixed(1)}¢ (entry: ${(entryPrice * 100).toFixed(1)}¢, expected P&L: $${expectedProfit.toFixed(2)} / ${profitPct.toFixed(1)}%)`,
-      );
-
       const wallet = (this.client as { wallet?: Wallet }).wallet;
-
+      
+      // Use position's currentBidPrice or currentPrice (same as hedging)
+      // No manual orderbook fetch - let postOrder() handle validation
+      const currentPrice = position.currentBidPrice ?? position.currentPrice;
+      const sizeUsd = position.size * currentPrice;
+      
+      // Calculate P&L info for logging
+      const entryPrice = position.entryPrice;
+      const expectedProfit = (currentPrice - entryPrice) * position.size;
+      const profitPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+      
+      // Use FALLING_KNIFE_SLIPPAGE_PCT (25%) for reliable fills
+      // This matches hedging/stop-loss methodology
+      const minAcceptablePrice = calculateMinAcceptablePrice(currentPrice, FALLING_KNIFE_SLIPPAGE_PCT);
+      
+      this.logger.info(
+        `[AutoSell] Executing ${strategyLabel} sell: ${position.size.toFixed(2)} shares at ~${(currentPrice * 100).toFixed(1)}¢ ` +
+        `(entry: ${(entryPrice * 100).toFixed(1)}¢, expected P&L: $${expectedProfit.toFixed(2)} / ${profitPct >= 0 ? "+" : ""}${profitPct.toFixed(1)}%)`,
+      );
+      
+      // Execute sell using same pattern as hedging's sellPosition()
       const result = await postOrder({
         client: this.client,
         wallet,
         marketId: position.marketId,
         tokenId: position.tokenId,
-        outcome: "YES",
+        outcome: (position.side?.toUpperCase() as "YES" | "NO") || "YES",
         side: "SELL",
         sizeUsd,
-        minAcceptablePrice, // STALE_SELL_SLIPPAGE_PCT (3%) slippage for stale exits
+        // FALLING_KNIFE_SLIPPAGE_PCT (25%) for reliable fills - same as hedging
+        minAcceptablePrice,
         logger: this.logger,
-        priority: false,
-        skipDuplicatePrevention: true,
-        orderConfig: { minOrderUsd: 0 },
+        skipDuplicatePrevention: true, // Required for exits
+        skipMinOrderSizeCheck: true, // Allow selling small positions - same as hedging
       });
-
+      
       if (result.status === "submitted") {
         this.logger.info(
-          `[AutoSell] ✓ Stale sell submitted: ${position.size.toFixed(2)} shares, expected $${expectedProfit.toFixed(2)} profit`,
+          `[AutoSell] ✓ ${strategyLabel} sell submitted: ${position.size.toFixed(2)} shares, expected P&L $${expectedProfit.toFixed(2)}`,
         );
-
-        // Send telegram notification for stale position sell
-        const tradePnl = (bestBid - position.entryPrice) * position.size;
+        
+        // Send telegram notification
+        const tradePnl = (currentPrice - position.entryPrice) * position.size;
         void notifySell(
           position.marketId,
           position.tokenId,
           position.size,
-          bestBid,
+          currentPrice,
           sizeUsd,
           {
-            strategy: "AutoSell (Stale)",
+            strategy: strategyLabel,
             entryPrice: position.entryPrice,
             pnl: tradePnl,
             outcome: position.side,
@@ -685,27 +668,27 @@ export class AutoSellStrategy {
         ).catch(() => {
           // Ignore notification errors
         });
-
+        
         return true;
       } else if (result.status === "skipped") {
         this.logger.warn(
-          `[AutoSell] Stale sell skipped: ${result.reason ?? "unknown reason"}`,
+          `[AutoSell] ${strategyLabel} sell skipped: ${result.reason ?? "unknown reason"}`,
         );
         return false;
       } else if (result.reason === "FOK_ORDER_KILLED") {
         this.logger.warn(
-          `[AutoSell] ⚠️ Stale sell not filled (FOK killed) - market has insufficient liquidity`,
+          `[AutoSell] ⚠️ ${strategyLabel} sell not filled (FOK killed) - market has insufficient liquidity`,
         );
         return false;
       } else {
         this.logger.error(
-          `[AutoSell] Stale sell failed: ${result.reason ?? "unknown reason"}`,
+          `[AutoSell] ${strategyLabel} sell failed: ${result.reason ?? "unknown reason"}`,
         );
-        throw new Error(`Stale sell failed: ${result.reason ?? "unknown"}`);
+        throw new Error(`${strategyLabel} sell failed: ${result.reason ?? "unknown"}`);
       }
     } catch (err) {
       this.logger.error(
-        `[AutoSell] Failed to sell stale position: ${err instanceof Error ? err.message : String(err)}`,
+        `[AutoSell] Failed to execute ${strategyLabel} sell: ${err instanceof Error ? err.message : String(err)}`,
       );
       throw err;
     }
