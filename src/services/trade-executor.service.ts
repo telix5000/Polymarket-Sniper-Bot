@@ -261,7 +261,7 @@ export class TradeExecutorService {
 
         // Send telegram notification for successful frontrun/copy trade
         // notifyFrontrun handles its own logging; we just catch any unexpected errors
-        notifyFrontrun(
+        void notifyFrontrun(
           signal.marketId,
           signal.tokenId,
           frontrunSize / signal.price, // Calculate shares from USD
@@ -295,7 +295,7 @@ export class TradeExecutorService {
               `[Frontrun] Skipping partial fill notification due to invalid signal price: ${signal.price}`,
             );
           } else {
-            notifyFrontrun(
+            void notifyFrontrun(
               signal.marketId,
               signal.tokenId,
               partialFill / signal.price,
