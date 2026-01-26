@@ -89,13 +89,13 @@ export async function capturePreVpnRouting(
   logger?: Logger,
 ): Promise<PreVpnRouting> {
   try {
-    // These commands only read system info, no user input involved
-    const gateway = execSync("ip route | grep default | awk '{print $3}'", {
-      encoding: "utf8",
-    }).trim();
-    const iface = execSync("ip route | grep default | awk '{print $5}'", {
-      encoding: "utf8",
-    }).trim();
+    // Get both gateway and interface in a single command for efficiency
+    const routeInfo = execSync(
+      "ip route | grep default | awk '{print $3 \" \" $5}'",
+      { encoding: "utf8" },
+    ).trim();
+
+    const [gateway, iface] = routeInfo.split(" ");
 
     // Validate the output before storing
     if (gateway && iface && isValidIp(gateway) && isValidIface(iface)) {
