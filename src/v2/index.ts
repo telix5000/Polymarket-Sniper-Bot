@@ -2715,15 +2715,16 @@ async function redeem(walletAddr: string, cfg: Config) {
           state.wallet,
         ).redeemPositions(USDC_ADDRESS, ZeroHash, pos.conditionId, INDEX_SETS);
       }
-      log(`✅ Redeem: ${tx.hash.slice(0, 10)}... | $${pos.value.toFixed(2)}`);
-      // Send Telegram alert for successful redemption
+      log(`⏳ Redeem: ${tx.hash.slice(0, 10)}... | $${pos.value.toFixed(2)} (confirming...)`);
+      await tx.wait();
+      log(`✅ Redeem confirmed: ${tx.hash.slice(0, 10)}...`);
+      // Send Telegram alert for successful redemption after confirmation
       // Note: Redemptions are not recorded as trades to avoid skewing P&L statistics
       await alert(
         "REDEEM ✅",
         `${$(pos.value)} redeemed | Tx: ${tx.hash.slice(0, 10)}...`,
         true,
       );
-      await tx.wait();
     } catch (e: any) {
       log(`❌ Redeem: ${e.message?.slice(0, 40)}`);
       await alert(

@@ -211,7 +211,7 @@ export class AutoSellStrategy {
         ? ` oversizedExit=$${this.config.oversizedExitThresholdUsd}@${this.config.oversizedExitHoursBeforeEvent}h`
         : "";
       this.logger.info(
-        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}${staleInfo}${quickWinInfo}${oversizedInfo}`,
+        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}${staleInfo}${expiryHoldInfo}${quickWinInfo}${oversizedInfo}`,
       );
     }
   }
