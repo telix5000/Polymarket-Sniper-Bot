@@ -144,9 +144,24 @@ export function formatErrorForLog(error: unknown, maxLength = 500): string {
 
   // If it's a Cloudflare block, provide a clean message instead of the HTML
   if (isCloudflareBlock(errorStr)) {
-    // Extract Ray ID if present
-    const rayIdMatch = errorStr.match(/Ray ID:\s*<[^>]*>([^<]+)/);
-    const rayId = rayIdMatch ? rayIdMatch[1].trim() : null;
+    // Extract Ray ID if present - handles multiple HTML formats:
+    // - <strong class="font-semibold">abc123</strong>
+    // - <strong>abc123</strong>
+    // - Ray ID: abc123
+    const rayIdPatterns = [
+      /Ray ID:\s*<strong[^>]*>([^<]+)<\/strong>/i,
+      /Ray ID:\s*<[^>]*>([^<]+)/i,
+      /Ray ID:\s*([a-f0-9]+)/i,
+    ];
+
+    let rayId: string | null = null;
+    for (const pattern of rayIdPatterns) {
+      const match = errorStr.match(pattern);
+      if (match) {
+        rayId = match[1].trim();
+        break;
+      }
+    }
 
     return `Cloudflare block (403 Forbidden)${rayId ? ` - Ray ID: ${rayId}` : ""}`;
   }

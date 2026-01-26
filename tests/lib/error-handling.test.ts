@@ -97,15 +97,25 @@ describe("Error Handling Utilities", () => {
   });
 
   describe("formatErrorForLog", () => {
-    it("should format Cloudflare blocks cleanly", () => {
+    it("should format Cloudflare blocks cleanly with Ray ID", () => {
       const cloudflareHtml = `<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head>
-        <body>Sorry, you have been blocked. Ray ID: <strong>abc123</strong></body></html>`;
+        <body>Sorry, you have been blocked. <span>Cloudflare Ray ID: <strong class="font-semibold">9c429198aa8c2a94</strong></span></body></html>`;
+
+      const result = formatErrorForLog(cloudflareHtml);
+      assert.ok(result.includes("Cloudflare block"), "Should mention Cloudflare block");
+      assert.ok(result.includes("403 Forbidden"), "Should mention 403 Forbidden");
+      assert.ok(result.includes("9c429198aa8c2a94"), "Should extract Ray ID");
+      // Should not include the full HTML
+      assert.ok(result.length < 200, "Should be much shorter than HTML");
+    });
+
+    it("should format Cloudflare blocks without Ray ID tag", () => {
+      const cloudflareHtml = `<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head>
+        <body>Sorry, you have been blocked.</body></html>`;
 
       const result = formatErrorForLog(cloudflareHtml);
       assert.ok(result.includes("Cloudflare block"));
       assert.ok(result.includes("403 Forbidden"));
-      // Should not include the full HTML
-      assert.ok(result.length < 200);
     });
 
     it("should truncate long error messages", () => {

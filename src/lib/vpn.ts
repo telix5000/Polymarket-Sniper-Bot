@@ -32,6 +32,41 @@ interface PreVpnRouting {
 
 let preVpnRouting: PreVpnRouting | null = null;
 
+// Validation patterns to prevent command injection
+const HOSTNAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$/;
+const IP_PATTERN = /^(\d{1,3}\.){3}\d{1,3}$/;
+const IFACE_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * Validate a hostname to prevent command injection
+ */
+function isValidHostname(hostname: string): boolean {
+  return (
+    hostname.length > 0 &&
+    hostname.length <= 253 &&
+    HOSTNAME_PATTERN.test(hostname)
+  );
+}
+
+/**
+ * Validate an IP address
+ */
+function isValidIp(ip: string): boolean {
+  if (!IP_PATTERN.test(ip)) return false;
+  const parts = ip.split(".");
+  return parts.every((p) => {
+    const n = parseInt(p, 10);
+    return n >= 0 && n <= 255;
+  });
+}
+
+/**
+ * Validate a network interface name
+ */
+function isValidIface(iface: string): boolean {
+  return iface.length > 0 && iface.length <= 16 && IFACE_PATTERN.test(iface);
+}
+
 /**
  * Check if VPN is currently active
  */
@@ -54,6 +89,7 @@ export async function capturePreVpnRouting(
   logger?: Logger,
 ): Promise<PreVpnRouting> {
   try {
+    // These commands only read system info, no user input involved
     const gateway = execSync("ip route | grep default | awk '{print $3}'", {
       encoding: "utf8",
     }).trim();
@@ -61,10 +97,15 @@ export async function capturePreVpnRouting(
       encoding: "utf8",
     }).trim();
 
-    if (gateway && iface) {
+    // Validate the output before storing
+    if (gateway && iface && isValidIp(gateway) && isValidIface(iface)) {
       preVpnRouting = { gateway, iface };
       logger?.info?.(`Pre-VPN routing: gateway=${gateway} iface=${iface}`);
       return preVpnRouting;
+    } else if (gateway || iface) {
+      logger?.warn?.(
+        `Invalid routing info: gateway=${gateway} iface=${iface}`,
+      );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -139,7 +180,13 @@ function addBypassRoute(
   hostname: string,
   logger?: Logger,
 ): { ip: string; gateway: string } | null {
-  // Use captured pre-VPN routing
+  // Validate hostname to prevent command injection
+  if (!isValidHostname(hostname)) {
+    logger?.warn?.(`Invalid hostname format: ${hostname}`);
+    return null;
+  }
+
+  // Use captured pre-VPN routing (already validated in capturePreVpnRouting)
   const effectiveGateway = preVpnRouting?.gateway;
   const effectiveIface = preVpnRouting?.iface;
 
@@ -151,16 +198,18 @@ function addBypassRoute(
   }
 
   try {
-    // Get host IP
+    // Get host IP - hostname is validated above
     const ip = execSync(`getent hosts ${hostname} | awk '{print $1}'`, {
       encoding: "utf8",
     }).trim();
-    if (!ip) {
-      logger?.warn?.(`Cannot resolve IP for ${hostname}`);
+
+    // Validate the resolved IP
+    if (!ip || !isValidIp(ip)) {
+      logger?.warn?.(`Cannot resolve valid IP for ${hostname}: got ${ip}`);
       return null;
     }
 
-    // Add route to bypass VPN (use pre-VPN gateway)
+    // Add route to bypass VPN (all values validated)
     execSync(
       `ip route add ${ip}/32 via ${effectiveGateway} dev ${effectiveIface}`,
       {
