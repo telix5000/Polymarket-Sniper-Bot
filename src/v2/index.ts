@@ -321,6 +321,7 @@ const state = {
   hedged: new Set<string>(),
   sold: new Set<string>(),
   copied: new Set<string>(),
+  zeroPriceTokens: new Set<string>(), // Tokens with zero price level - cannot sell via CLOB, only redeem
   sellSignalCooldown: new Map<string, number>(),
   positionEntryTime: new Map<string, number>(),
   positionPriceHistory: new Map<string, { price: number; time: number }[]>(), // For momentum tracking
@@ -1145,6 +1146,11 @@ const simpleLogger = {
 async function executeSell(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string, cfg: Config, curPrice?: number): Promise<boolean> {
   const priceStr = curPrice ? ` @ ${$price(curPrice)}` : "";
   
+  // Skip if token has zero price level - these can only be redeemed, not sold via CLOB
+  if (state.zeroPriceTokens.has(tokenId)) {
+    return false;
+  }
+  
   // Risk check (SELL orders are always allowed for protective exits, but still rate limited)
   const riskCheck = checkRiskLimits(cfg);
   if (!riskCheck.allowed && !reason.includes("StopLoss") && !reason.includes("AutoSell") && !reason.includes("ForceLiq")) {
@@ -1232,6 +1238,15 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
       invalidate();
       return true;
     }
+    
+    // Handle ZERO_PRICE_LEVEL: Add to ignore list to prevent infinite retry
+    // These positions can only be redeemed, not sold via CLOB
+    if (result.reason === "ZERO_PRICE_LEVEL") {
+      state.zeroPriceTokens.add(tokenId);
+      log(`⚠️ SELL | ${reason} | Zero price - added to redeem-only list | ${outcome} ${$(sizeUsd)}`);
+      return false;
+    }
+    
     await alertTrade("SELL", reason, outcome, sizeUsd, curPrice, false, result.reason);
     recordTrade("SELL", outcome, reason, sizeUsd, curPrice || 0, false);
     return false;
