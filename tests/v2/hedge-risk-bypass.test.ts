@@ -133,6 +133,9 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
  */
 
 describe("V2 No-Hedge Window with Real Market Close Time", () => {
+  // Constant mirroring V2's ASSUMED_MARKET_DURATION_HOURS
+  const ASSUMED_MARKET_DURATION_HOURS = 24;
+  
   // Helper function that mirrors the V2 no-hedge window logic
   function computeNoHedgeWindow(
     marketEndTime: number | undefined,
@@ -153,7 +156,7 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
     // Fallback: If no market close time, use hold-time-based heuristic
     if (minutesToClose === undefined) {
       const holdMinutesForHedge = holdTimeSeconds / 60;
-      inNoHedgeWindow = holdMinutesForHedge >= 24 * 60 - noHedgeWindowMinutes; // Assuming 24h markets
+      inNoHedgeWindow = holdMinutesForHedge >= ASSUMED_MARKET_DURATION_HOURS * 60 - noHedgeWindowMinutes;
       usedFallback = true;
     }
 
@@ -219,7 +222,7 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
 
     test("Long hold time (23h 58min) should trigger no-hedge window via fallback", () => {
       const now = Date.now();
-      const holdTimeSeconds = (24 * 60 - 2) * 60; // 23h 58min in seconds
+      const holdTimeSeconds = (ASSUMED_MARKET_DURATION_HOURS * 60 - 2) * 60; // 23h 58min in seconds
       const noHedgeWindowMinutes = 5;
 
       const result = computeNoHedgeWindow(undefined, now, holdTimeSeconds, noHedgeWindowMinutes);

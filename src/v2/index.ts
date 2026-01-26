@@ -287,11 +287,13 @@ const PRESETS: Record<Preset, Config> = {
 // ============ CONSTANTS ============
 
 const API = "https://data-api.polymarket.com";
+const GAMMA_API = "https://gamma-api.polymarket.com";
 const CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
 const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 const INDEX_SETS: number[] = [1, 2];
 const PROXY_ABI = ["function proxy(address dest, bytes calldata data) external returns (bytes memory)"];
 const CTF_ABI = ["function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets) external"];
+const ASSUMED_MARKET_DURATION_HOURS = 24; // Used for hold-time fallback when market end time is unavailable
 
 // ============ STATE ============
 
@@ -889,15 +891,16 @@ async function fetchPositions(wallet: string): Promise<Position[]> {
         };
       });
     
-    // Fetch market end times for all positions (in parallel, with batching to avoid rate limits)
-    // This is needed for the near-close hedging behavior
-    const positions: Position[] = [];
-    for (const p of rawPositions) {
-      const marketEndTime = await fetchMarketEndTime(p.tokenId);
-      positions.push({ ...p, marketEndTime });
-    }
+    // Fetch market end times for all positions in parallel
+    // Uses cache to avoid redundant API calls - only fresh positions need network requests
+    const positionsWithEndTime = await Promise.all(
+      rawPositions.map(async (p: Omit<Position, 'marketEndTime'>) => {
+        const marketEndTime = await fetchMarketEndTime(p.tokenId);
+        return { ...p, marketEndTime };
+      })
+    );
     
-    state.positions = positions;
+    state.positions = positionsWithEndTime;
     state.lastFetch = Date.now();
     log(`📊 ${state.positions.length} positions`);
   } catch (e) { log(`❌ API: ${e}`); }
@@ -925,7 +928,7 @@ async function fetchMarketEndTime(tokenId: string): Promise<number | undefined> 
 
   try {
     // Gamma API endpoint for token/market info
-    const { data } = await axios.get(`https://gamma-api.polymarket.com/markets?clob_token_ids=${tokenId}`, { timeout: 5000 });
+    const { data } = await axios.get(`${GAMMA_API}/markets?clob_token_ids=${tokenId}`, { timeout: 5000 });
     
     const market = data?.[0];
     if (!market) return undefined;
@@ -1485,7 +1488,7 @@ async function arbitrage(cfg: Config, scanActiveMarkets = true) {
   if (scanActiveMarkets) {
     try {
       // Fetch active markets from Gamma API (same as V1's endgame-sweep)
-      const { data } = await axios.get("https://gamma-api.polymarket.com/markets?closed=false&limit=50", { timeout: 10000 });
+      const { data } = await axios.get(`${GAMMA_API}/markets?closed=false&limit=50`, { timeout: 10000 });
       
       if (Array.isArray(data)) {
         for (const market of data) {
@@ -1667,7 +1670,7 @@ async function cycle(walletAddr: string, cfg: Config) {
     // This preserves backward compatibility for positions without end time data
     if (minutesToClose === undefined) {
       const holdMinutesForHedge = holdTime / 60;
-      inNoHedgeWindow = holdMinutesForHedge >= (24 * 60 - cfg.hedge.noHedgeWindowMinutes); // Assuming 24h markets
+      inNoHedgeWindow = holdMinutesForHedge >= (ASSUMED_MARKET_DURATION_HOURS * 60 - cfg.hedge.noHedgeWindowMinutes);
     }
     
     if (cfg.hedge.enabled && !state.hedged.has(p.tokenId) && p.pnlPct <= -cfg.hedge.triggerPct && holdTime >= cfg.hedge.minHoldSeconds && !inNoHedgeWindow) {
