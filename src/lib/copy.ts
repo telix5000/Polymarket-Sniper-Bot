@@ -11,7 +11,9 @@ const seenTrades = new Set<string>();
 /**
  * Fetch recent trades from addresses
  */
-export async function fetchRecentTrades(addresses: string[]): Promise<TradeSignal[]> {
+export async function fetchRecentTrades(
+  addresses: string[],
+): Promise<TradeSignal[]> {
   const trades: TradeSignal[] = [];
   const now = Date.now();
 

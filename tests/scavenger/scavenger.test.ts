@@ -42,17 +42,19 @@ import {
 } from "../../src/lib/scavenger";
 
 // Helper to create a mock position
-function createMockPosition(overrides: Partial<{
-  tokenId: string;
-  outcome: string;
-  size: number;
-  avgPrice: number;
-  curPrice: number;
-  pnlPct: number;
-  pnlUsd: number;
-  gainCents: number;
-  value: number;
-}> = {}) {
+function createMockPosition(
+  overrides: Partial<{
+    tokenId: string;
+    outcome: string;
+    size: number;
+    avgPrice: number;
+    curPrice: number;
+    pnlPct: number;
+    pnlUsd: number;
+    gainCents: number;
+    value: number;
+  }> = {},
+) {
   const size = overrides.size ?? 100;
   const avgPrice = overrides.avgPrice ?? 0.5;
   const curPrice = overrides.curPrice ?? 0.55;
@@ -179,7 +181,10 @@ describe("Scavenger Risk Constraints", () => {
   });
 
   test("blocks micro-buy when disabled", () => {
-    const disabled = { ...config, microBuy: { ...config.microBuy, enabled: false } };
+    const disabled = {
+      ...config,
+      microBuy: { ...config.microBuy, enabled: false },
+    };
     const result = canMicroBuy(createScavengerState(), disabled, 1000, "token");
     assert.strictEqual(result.allowed, false);
   });
@@ -216,7 +221,11 @@ describe("Scavenger Mode Detection", () => {
 
   test("records order book snapshots", () => {
     let state = createScavengerState();
-    state = recordOrderBookSnapshot(state, { bidDepthUsd: 500, askDepthUsd: 500, bestBid: 0.5, bestAsk: 0.51 }, 120000);
+    state = recordOrderBookSnapshot(
+      state,
+      { bidDepthUsd: 500, askDepthUsd: 500, bestBid: 0.5, bestAsk: 0.51 },
+      120000,
+    );
     assert.strictEqual(state.orderBookSnapshots.length, 1);
   });
 
@@ -229,10 +238,17 @@ describe("Scavenger Mode Detection", () => {
   test("detects low liquidity conditions", () => {
     let state = createScavengerState();
     state = recordVolumeSample(state, 100, 300000); // Low volume
-    state = recordOrderBookSnapshot(state, { bidDepthUsd: 100, askDepthUsd: 100, bestBid: 0.5, bestAsk: 0.51 }, 120000); // Thin book
+    state = recordOrderBookSnapshot(
+      state,
+      { bidDepthUsd: 100, askDepthUsd: 100, bestBid: 0.5, bestAsk: 0.51 },
+      120000,
+    ); // Thin book
     state = recordTargetActivity(state, 0, 10, 300000); // No active targets
 
-    const { reasons } = analyzeMarketConditions(state, DEFAULT_SCAVENGER_CONFIG);
+    const { reasons } = analyzeMarketConditions(
+      state,
+      DEFAULT_SCAVENGER_CONFIG,
+    );
     assert.ok(reasons.length > 0);
   });
 
@@ -240,10 +256,17 @@ describe("Scavenger Mode Detection", () => {
     let state = createScavengerState();
     state.lowLiquidityDetectedAt = Date.now() - 300000; // 5 min ago
     state = recordVolumeSample(state, 100, 300000);
-    state = recordOrderBookSnapshot(state, { bidDepthUsd: 100, askDepthUsd: 100, bestBid: 0.5, bestAsk: 0.51 }, 120000);
+    state = recordOrderBookSnapshot(
+      state,
+      { bidDepthUsd: 100, askDepthUsd: 100, bestBid: 0.5, bestAsk: 0.51 },
+      120000,
+    );
     state = recordTargetActivity(state, 0, 10, 300000);
 
-    const { shouldSwitch, newMode } = analyzeMarketConditions(state, DEFAULT_SCAVENGER_CONFIG);
+    const { shouldSwitch, newMode } = analyzeMarketConditions(
+      state,
+      DEFAULT_SCAVENGER_CONFIG,
+    );
     assert.strictEqual(shouldSwitch, true);
     assert.strictEqual(newMode, TradingMode.SCAVENGER);
   });

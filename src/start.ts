@@ -172,11 +172,15 @@ async function buy(
   if (!state.client) return false;
 
   // Apply absolute cap (overrides all strategies)
-  const absoluteMaxUsd = parseFloat(process.env.ABSOLUTE_MAX_POSITION_USD ?? "25");
+  const absoluteMaxUsd = parseFloat(
+    process.env.ABSOLUTE_MAX_POSITION_USD ?? "25",
+  );
   const cappedSize = Math.min(sizeUsd, state.maxPositionUsd, absoluteMaxUsd);
-  
+
   if (cappedSize < sizeUsd) {
-    logger.warn(`⚠️  Position capped: $${sizeUsd.toFixed(2)} → $${cappedSize.toFixed(2)}`);
+    logger.warn(
+      `⚠️  Position capped: $${sizeUsd.toFixed(2)} → $${cappedSize.toFixed(2)}`,
+    );
   }
 
   const size = cappedSize;
@@ -203,11 +207,11 @@ async function buy(
     const filled = result.filledUsd ?? size;
     const filledShares = filled / avgPrice;
     logger.info(
-      `✅ Buy Success! ${outcome} ${filledShares.toFixed(1)} shares @ $${avgPrice.toFixed(2)} ($${filled.toFixed(2)} total) | ${reason}`
+      `✅ Buy Success! ${outcome} ${filledShares.toFixed(1)} shares @ $${avgPrice.toFixed(2)} ($${filled.toFixed(2)} total) | ${reason}`,
     );
     await sendTelegram(
       "💰 BUY",
-      `${outcome} @ $${avgPrice.toFixed(2)}\n${filledShares.toFixed(1)} shares for $${filled.toFixed(2)}\n${reason}`
+      `${outcome} @ $${avgPrice.toFixed(2)}\n${filledShares.toFixed(1)} shares for $${filled.toFixed(2)}\n${reason}`,
     );
     state.tradesExecuted++;
     invalidatePositions();
@@ -250,11 +254,11 @@ async function sell(
     const avgPrice = result.avgPrice ?? 0;
     const filled = result.filledUsd ?? sizeUsd;
     logger.info(
-      `✅ Sell Success! ${outcome} @ $${avgPrice.toFixed(2)} ($${filled.toFixed(2)} total) | ${reason}`
+      `✅ Sell Success! ${outcome} @ $${avgPrice.toFixed(2)} ($${filled.toFixed(2)} total) | ${reason}`,
     );
     await sendTelegram(
       "💸 SELL",
-      `${outcome} @ $${avgPrice.toFixed(2)}\n$${filled.toFixed(2)} total\n${reason}`
+      `${outcome} @ $${avgPrice.toFixed(2)}\n$${filled.toFixed(2)} total\n${reason}`,
     );
     state.tradesExecuted++;
     invalidatePositions();
@@ -285,22 +289,28 @@ async function runAutoSell(positions: Position[]): Promise<void> {
   if (!cfg.enabled) return;
 
   // === EMERGENCY TRIMMING (Immediate) ===
-  const absoluteMaxUsd = parseFloat(process.env.ABSOLUTE_MAX_POSITION_USD ?? "25");
-  const winnerThreshold = 0.90; // $0.90 = winner protection
+  const absoluteMaxUsd = parseFloat(
+    process.env.ABSOLUTE_MAX_POSITION_USD ?? "25",
+  );
+  const winnerThreshold = 0.9; // $0.90 = winner protection
 
   for (const p of positions) {
     // Emergency: position over limit and not a winner
     if (p.value > absoluteMaxUsd && p.curPrice < winnerThreshold) {
       const trimAmount = p.value - absoluteMaxUsd;
-      logger.warn(`⚠️  EMERGENCY TRIM: ${p.outcome} $${p.value.toFixed(2)} @ $${p.curPrice.toFixed(2)}`);
-      logger.warn(`   → Trimming $${trimAmount.toFixed(2)} immediately (not a winner)`);
-      
+      logger.warn(
+        `⚠️  EMERGENCY TRIM: ${p.outcome} $${p.value.toFixed(2)} @ $${p.curPrice.toFixed(2)}`,
+      );
+      logger.warn(
+        `   → Trimming $${trimAmount.toFixed(2)} immediately (not a winner)`,
+      );
+
       await sell(
         p.tokenId,
         p.outcome as "YES" | "NO",
         trimAmount,
         `Emergency trim (over $${absoluteMaxUsd})`,
-        (trimAmount / p.curPrice) // shares to sell
+        trimAmount / p.curPrice, // shares to sell
       );
     }
   }
@@ -324,17 +334,21 @@ async function runAutoSell(positions: Position[]): Promise<void> {
   if (now - state.lastRebalanceCheck < 10 * 60 * 1000) return;
   state.lastRebalanceCheck = now;
 
-  const maxTotalExposure = parseFloat(process.env.MAX_TOTAL_EXPOSURE_USD ?? "200");
+  const maxTotalExposure = parseFloat(
+    process.env.MAX_TOTAL_EXPOSURE_USD ?? "200",
+  );
   const totalExposure = positions.reduce((sum, p) => sum + p.value, 0);
 
   if (totalExposure > maxTotalExposure) {
     const trimNeeded = totalExposure - maxTotalExposure;
-    logger.info(`⚖️  REBALANCE: Portfolio $${totalExposure.toFixed(2)} over $${maxTotalExposure.toFixed(2)} limit`);
+    logger.info(
+      `⚖️  REBALANCE: Portfolio $${totalExposure.toFixed(2)} over $${maxTotalExposure.toFixed(2)} limit`,
+    );
     logger.info(`   → Need to trim $${trimNeeded.toFixed(2)}`);
 
     // Get green positions sorted by: lowest profit % → oldest first
     const greenPositions = positions
-      .filter(p => p.pnlPct > 0 && p.curPrice < winnerThreshold) // profitable but not winners
+      .filter((p) => p.pnlPct > 0 && p.curPrice < winnerThreshold) // profitable but not winners
       .sort((a, b) => {
         if (a.pnlPct !== b.pnlPct) return a.pnlPct - b.pnlPct; // worst profit first
         return (a.entryTime ?? 0) - (b.entryTime ?? 0); // oldest first
@@ -345,16 +359,18 @@ async function runAutoSell(positions: Position[]): Promise<void> {
       if (trimmed >= trimNeeded) break;
 
       const sellAmount = Math.min(p.value, trimNeeded - trimmed);
-      logger.info(`   📊 Trimming: ${p.outcome} +${p.pnlPct.toFixed(1)}% → Sell $${sellAmount.toFixed(2)}`);
-      
+      logger.info(
+        `   📊 Trimming: ${p.outcome} +${p.pnlPct.toFixed(1)}% → Sell $${sellAmount.toFixed(2)}`,
+      );
+
       await sell(
         p.tokenId,
         p.outcome as "YES" | "NO",
         sellAmount,
         `Rebalance (weak green)`,
-        (sellAmount / p.curPrice)
+        sellAmount / p.curPrice,
       );
-      
+
       trimmed += sellAmount;
     }
 
@@ -535,11 +551,19 @@ async function runCopyTrading(): Promise<void> {
 
   // Log copy trading activity for debugging
   if (trades.length > 0) {
-    const totalFiltered = filtered.sell + filtered.lowPrice + filtered.tooSmall + filtered.alreadyActed;
+    const totalFiltered =
+      filtered.sell +
+      filtered.lowPrice +
+      filtered.tooSmall +
+      filtered.alreadyActed;
     if (totalFiltered === trades.length) {
-      logger.info(`Copy: ${trades.length} trades filtered (${filtered.sell} sell, ${filtered.lowPrice} low price, ${filtered.tooSmall} too small, ${filtered.alreadyActed} already acted)`);
+      logger.info(
+        `Copy: ${trades.length} trades filtered (${filtered.sell} sell, ${filtered.lowPrice} low price, ${filtered.tooSmall} too small, ${filtered.alreadyActed} already acted)`,
+      );
     } else if (processed > 0) {
-      logger.info(`Copy: ${processed}/${trades.length} trades processed (${totalFiltered} filtered)`);
+      logger.info(
+        `Copy: ${processed}/${trades.length} trades processed (${totalFiltered} filtered)`,
+      );
     }
   }
 }
@@ -621,12 +645,17 @@ async function runModeDetection(positions: Position[]): Promise<void> {
     const maxRuntime = 15 * 60 * 1000; // 15 minutes
 
     if (runtime > maxRuntime) {
-      logger.info(`💤 SCAVENGER AUTO-EXIT: Ran for ${(runtime / 60000).toFixed(0)} minutes`);
+      logger.info(
+        `💤 SCAVENGER AUTO-EXIT: Ran for ${(runtime / 60000).toFixed(0)} minutes`,
+      );
       state.scavengerState = resetScavengerState(state.scavengerState);
       state.scavengerState.mode = TradingMode.NORMAL;
       state.scavengerStartTime = null;
       state.scavengerLastExit = now;
-      await sendTelegram("💤 Scavenger Sleeping", "Max runtime (15min) reached");
+      await sendTelegram(
+        "💤 Scavenger Sleeping",
+        "Max runtime (15min) reached",
+      );
       return;
     }
   }
@@ -647,13 +676,13 @@ async function runModeDetection(positions: Position[]): Promise<void> {
     // (This requires tracking price history - use existing priceHistory from scavengerState)
     const history = state.scavengerState.priceHistory.get(p.tokenId) ?? [];
     const oneHourAgo = now - idleWindow;
-    const recentPrices = history.filter(h => h.timestamp > oneHourAgo);
-    
+    const recentPrices = history.filter((h) => h.timestamp > oneHourAgo);
+
     if (recentPrices.length >= 2) {
       const oldestRecent = recentPrices[0].price;
       const newest = recentPrices[recentPrices.length - 1].price;
-      const changePct = Math.abs(newest - oldestRecent) / oldestRecent * 100;
-      
+      const changePct = (Math.abs(newest - oldestRecent) / oldestRecent) * 100;
+
       if (changePct > movementThreshold) {
         hasSignificantMovement = true;
         break;
@@ -681,7 +710,12 @@ async function runModeDetection(positions: Position[]): Promise<void> {
     checkTargetActivity(state.targets, cfg.detection.targetActivityWindowMs),
     state.client
       ? fetchOrderBookDepth(state.client, tokenIds)
-      : Promise.resolve({ avgBidDepthUsd: 0, avgAskDepthUsd: 0, bestBid: 0, bestAsk: 0 }),
+      : Promise.resolve({
+          avgBidDepthUsd: 0,
+          avgAskDepthUsd: 0,
+          bestBid: 0,
+          bestAsk: 0,
+        }),
   ]);
 
   // Record samples
@@ -741,7 +775,9 @@ async function runScavengerMode(positions: Position[]): Promise<void> {
   if (!isScavengerMode(state.scavengerState)) return;
 
   const cfg = state.scavengerConfig;
-  const balance = state.wallet ? await getUsdcBalance(state.wallet, state.address) : 0;
+  const balance = state.wallet
+    ? await getUsdcBalance(state.wallet, state.address)
+    : 0;
 
   // Run scavenger cycle
   const { results, newState } = await runScavengerCycle(
@@ -756,12 +792,17 @@ async function runScavengerMode(positions: Position[]): Promise<void> {
   state.scavengerState = newState;
 
   // Update trade count
-  const executions = results.filter((r) => r.action !== "NONE" && r.orderResult?.success);
+  const executions = results.filter(
+    (r) => r.action !== "NONE" && r.orderResult?.success,
+  );
   state.tradesExecuted += executions.length;
 
   // Send notifications for significant actions
   for (const result of executions) {
-    if (result.action === "EXIT_GREEN" || result.action === "EXIT_RED_RECOVERY") {
+    if (
+      result.action === "EXIT_GREEN" ||
+      result.action === "EXIT_RED_RECOVERY"
+    ) {
       await sendTelegram(
         `🦅 ${result.action === "EXIT_GREEN" ? "Green Exit" : "Recovery Exit"}`,
         `${result.outcome} | $${result.sizeUsd?.toFixed(2)} | ${result.reason}`,
@@ -830,7 +871,9 @@ async function printSummary(): Promise<void> {
 
   // Add scavenger summary if in scavenger mode
   if (isScavengerMode(state.scavengerState)) {
-    summaryLines.push(getScavengerSummary(state.scavengerState, state.scavengerConfig));
+    summaryLines.push(
+      getScavengerSummary(state.scavengerState, state.scavengerConfig),
+    );
   }
 
   const summary = summaryLines.join("\n");
@@ -856,16 +899,25 @@ async function main(): Promise<void> {
   logger.info(`Preset: ${name}`);
   logger.info(`Max Position: ${$(state.maxPositionUsd)}`);
   logger.info(`Live Trading: ${state.liveTrading ? "ENABLED" : "DISABLED"}`);
-  logger.info(`POL Reserve: ${state.polReserveConfig.enabled ? `ON (target: ${state.polReserveConfig.targetPol} POL)` : "OFF"}`);
-  logger.info(`Scavenger Mode: ${state.scavengerConfig.enabled ? "ENABLED" : "DISABLED"}`);
+  logger.info(
+    `POL Reserve: ${state.polReserveConfig.enabled ? `ON (target: ${state.polReserveConfig.targetPol} POL)` : "OFF"}`,
+  );
+  logger.info(
+    `Scavenger Mode: ${state.scavengerConfig.enabled ? "ENABLED" : "DISABLED"}`,
+  );
 
   // Debug: Log exact LIVE_TRADING value to catch typos/whitespace
   if (!state.liveTrading) {
-    const rawValue = process.env.LIVE_TRADING ?? process.env.ARB_LIVE_TRADING ?? "";
+    const rawValue =
+      process.env.LIVE_TRADING ?? process.env.ARB_LIVE_TRADING ?? "";
     if (rawValue && rawValue !== "I_UNDERSTAND_THE_RISKS") {
-      logger.warn(`LIVE_TRADING value "${rawValue}" is not valid. Expected exact string: "I_UNDERSTAND_THE_RISKS"`);
+      logger.warn(
+        `LIVE_TRADING value "${rawValue}" is not valid. Expected exact string: "I_UNDERSTAND_THE_RISKS"`,
+      );
     } else if (!rawValue) {
-      logger.warn(`LIVE_TRADING not set - running in SIMULATION mode (no real trades will execute)`);
+      logger.warn(
+        `LIVE_TRADING not set - running in SIMULATION mode (no real trades will execute)`,
+      );
     }
   }
 

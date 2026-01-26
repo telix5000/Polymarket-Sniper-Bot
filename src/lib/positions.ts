@@ -12,9 +12,16 @@ let lastFetch = 0;
 /**
  * Fetch positions for wallet
  */
-export async function getPositions(address: string, force = false): Promise<Position[]> {
+export async function getPositions(
+  address: string,
+  force = false,
+): Promise<Position[]> {
   const now = Date.now();
-  if (!force && now - lastFetch < TIMING.POSITION_CACHE_MS && cache.length > 0) {
+  if (
+    !force &&
+    now - lastFetch < TIMING.POSITION_CACHE_MS &&
+    cache.length > 0
+  ) {
     return cache;
   }
 

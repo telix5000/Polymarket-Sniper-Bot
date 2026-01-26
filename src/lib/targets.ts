@@ -27,9 +27,10 @@ export async function fetchLeaderboard(limit = 20): Promise<string[]> {
  * Get target addresses from env or leaderboard
  */
 export async function getTargetAddresses(): Promise<string[]> {
-  const env = process.env.TARGET_ADDRESSES ?? 
-              process.env.COPY_ADDRESSES ?? 
-              process.env.MONITOR_ADDRESSES;
+  const env =
+    process.env.TARGET_ADDRESSES ??
+    process.env.COPY_ADDRESSES ??
+    process.env.MONITOR_ADDRESSES;
 
   if (env) {
     const addrs = env

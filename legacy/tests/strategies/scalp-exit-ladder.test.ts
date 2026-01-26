@@ -193,7 +193,10 @@ describe("Sell Sizing - Position Notional NOT Profit", () => {
     assert.equal(notionalUsd, 11.0); // But $11 notional
 
     // Notional is the correct value to use for sizeUsd
-    assert.ok(notionalUsd > profitUsd, "notionalUsd should be used, not profitUsd");
+    assert.ok(
+      notionalUsd > profitUsd,
+      "notionalUsd should be used, not profitUsd",
+    );
   });
 });
 

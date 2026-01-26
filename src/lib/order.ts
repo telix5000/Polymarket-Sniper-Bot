@@ -49,21 +49,29 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
   const { client, tokenId, side, sizeUsd, logger, maxAcceptablePrice } = input;
 
   // HARD CAP: Absolute maximum position size (overrides ALL strategies)
-  const absoluteMaxUsd = parseFloat(process.env.ABSOLUTE_MAX_POSITION_USD ?? "25");
+  const absoluteMaxUsd = parseFloat(
+    process.env.ABSOLUTE_MAX_POSITION_USD ?? "25",
+  );
   if (sizeUsd > absoluteMaxUsd) {
-    logger?.warn?.(`🚫 ORDER BLOCKED: $${sizeUsd.toFixed(2)} exceeds limit ($${absoluteMaxUsd})`);
+    logger?.warn?.(
+      `🚫 ORDER BLOCKED: $${sizeUsd.toFixed(2)} exceeds limit ($${absoluteMaxUsd})`,
+    );
     return { success: false, reason: "EXCEEDS_ABSOLUTE_MAX" };
   }
 
   // Check live trading
   if (!isLiveTradingEnabled()) {
-    logger?.warn?.(`[SIM] ${side} ${sizeUsd.toFixed(2)} USD - live trading disabled`);
+    logger?.warn?.(
+      `[SIM] ${side} ${sizeUsd.toFixed(2)} USD - live trading disabled`,
+    );
     return { success: true, reason: "SIMULATED" };
   }
 
   // Check minimum size
   if (sizeUsd < ORDER.MIN_ORDER_USD) {
-    logger?.debug?.(`Order rejected: ORDER_TOO_SMALL (${sizeUsd.toFixed(4)} < ${ORDER.MIN_ORDER_USD})`);
+    logger?.debug?.(
+      `Order rejected: ORDER_TOO_SMALL (${sizeUsd.toFixed(4)} < ${ORDER.MIN_ORDER_USD})`,
+    );
     return { success: false, reason: "ORDER_TOO_SMALL" };
   }
 
@@ -74,7 +82,9 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     // Token-level cooldown
     const lastOrder = inFlight.get(tokenId);
     if (lastOrder && now - lastOrder < ORDER.COOLDOWN_MS) {
-      logger?.debug?.(`Order rejected: IN_FLIGHT (token ${tokenId.slice(0, 8)}... cooldown)`);
+      logger?.debug?.(
+        `Order rejected: IN_FLIGHT (token ${tokenId.slice(0, 8)}... cooldown)`,
+      );
       return { success: false, reason: "IN_FLIGHT" };
     }
 
@@ -82,7 +92,9 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     if (input.marketId) {
       const lastMarket = marketCooldown.get(input.marketId);
       if (lastMarket && now - lastMarket < ORDER.MARKET_COOLDOWN_MS) {
-        logger?.debug?.(`Order rejected: MARKET_COOLDOWN (market ${input.marketId.slice(0, 8)}...)`);
+        logger?.debug?.(
+          `Order rejected: MARKET_COOLDOWN (market ${input.marketId.slice(0, 8)}...)`,
+        );
         return { success: false, reason: "MARKET_COOLDOWN" };
       }
     }
@@ -97,7 +109,9 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       try {
         const market = await client.getMarket(input.marketId);
         if (!market) {
-          logger?.debug?.(`Order rejected: MARKET_NOT_FOUND (${input.marketId})`);
+          logger?.debug?.(
+            `Order rejected: MARKET_NOT_FOUND (${input.marketId})`,
+          );
           return { success: false, reason: "MARKET_NOT_FOUND" };
         }
       } catch {
@@ -111,15 +125,22 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       orderBook = await client.getOrderBook(tokenId);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      if (errorMessage.includes("No orderbook exists") || errorMessage.includes("404")) {
-        logger?.debug?.(`Order rejected: MARKET_CLOSED (no orderbook for ${tokenId.slice(0, 8)}...)`);
+      if (
+        errorMessage.includes("No orderbook exists") ||
+        errorMessage.includes("404")
+      ) {
+        logger?.debug?.(
+          `Order rejected: MARKET_CLOSED (no orderbook for ${tokenId.slice(0, 8)}...)`,
+        );
         return { success: false, reason: "MARKET_CLOSED" };
       }
       throw err;
     }
 
     if (!orderBook) {
-      logger?.debug?.(`Order rejected: NO_ORDERBOOK (null response for ${tokenId.slice(0, 8)}...)`);
+      logger?.debug?.(
+        `Order rejected: NO_ORDERBOOK (null response for ${tokenId.slice(0, 8)}...)`,
+      );
       return { success: false, reason: "NO_ORDERBOOK" };
     }
 
@@ -128,7 +149,9 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
 
     if (!levels || levels.length === 0) {
       const reason = isBuy ? "NO_ASKS" : "NO_BIDS";
-      logger?.debug?.(`Order rejected: ${reason} (empty ${isBuy ? "asks" : "bids"} for ${tokenId.slice(0, 8)}...)`);
+      logger?.debug?.(
+        `Order rejected: ${reason} (empty ${isBuy ? "asks" : "bids"} for ${tokenId.slice(0, 8)}...)`,
+      );
       return { success: false, reason };
     }
 
@@ -136,24 +159,36 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
 
     // Price validation
     if (bestPrice <= ORDER.MIN_TRADEABLE_PRICE) {
-      logger?.debug?.(`Order rejected: ZERO_PRICE (${bestPrice} <= ${ORDER.MIN_TRADEABLE_PRICE})`);
+      logger?.debug?.(
+        `Order rejected: ZERO_PRICE (${bestPrice} <= ${ORDER.MIN_TRADEABLE_PRICE})`,
+      );
       return { success: false, reason: "ZERO_PRICE" };
     }
 
     // Loser position check for buys (price too low indicates likely losing outcome)
-    if (isBuy && bestPrice < ORDER.GLOBAL_MIN_BUY_PRICE && !input.skipDuplicateCheck) {
-      logger?.debug?.(`Order rejected: LOSER_POSITION (price ${bestPrice} < ${ORDER.GLOBAL_MIN_BUY_PRICE})`);
+    if (
+      isBuy &&
+      bestPrice < ORDER.GLOBAL_MIN_BUY_PRICE &&
+      !input.skipDuplicateCheck
+    ) {
+      logger?.debug?.(
+        `Order rejected: LOSER_POSITION (price ${bestPrice} < ${ORDER.GLOBAL_MIN_BUY_PRICE})`,
+      );
       return { success: false, reason: "LOSER_POSITION" };
     }
 
     // Price protection check
     if (maxAcceptablePrice !== undefined) {
       if (isBuy && bestPrice > maxAcceptablePrice) {
-        logger?.debug?.(`Order rejected: PRICE_TOO_HIGH (${bestPrice} > max ${maxAcceptablePrice})`);
+        logger?.debug?.(
+          `Order rejected: PRICE_TOO_HIGH (${bestPrice} > max ${maxAcceptablePrice})`,
+        );
         return { success: false, reason: "PRICE_TOO_HIGH" };
       }
       if (!isBuy && bestPrice < maxAcceptablePrice) {
-        logger?.debug?.(`Order rejected: PRICE_TOO_LOW (${bestPrice} < min ${maxAcceptablePrice})`);
+        logger?.debug?.(
+          `Order rejected: PRICE_TOO_LOW (${bestPrice} < min ${maxAcceptablePrice})`,
+        );
         return { success: false, reason: "PRICE_TOO_LOW" };
       }
     }
@@ -169,14 +204,21 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     // For SELL orders with shares specified, also check if remainingShares is exhausted
     const shouldContinue = () => {
       if (remaining <= ORDER.MIN_ORDER_USD) return false;
-      if (!isBuy && remainingShares !== undefined && remainingShares <= ORDER.MIN_SHARES_THRESHOLD) return false;
+      if (
+        !isBuy &&
+        remainingShares !== undefined &&
+        remainingShares <= ORDER.MIN_SHARES_THRESHOLD
+      )
+        return false;
       return retryCount < ORDER.MAX_RETRIES;
     };
 
     while (shouldContinue()) {
       // Refresh orderbook for each iteration
       const currentOrderBook = await client.getOrderBook(tokenId);
-      const currentLevels = isBuy ? currentOrderBook.asks : currentOrderBook.bids;
+      const currentLevels = isBuy
+        ? currentOrderBook.asks
+        : currentOrderBook.bids;
 
       if (!currentLevels || currentLevels.length === 0) {
         break;
@@ -232,14 +274,17 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
         } else {
           retryCount++;
           // Check for Cloudflare block in response
-          const errorMsg = response.errorMsg || response.error || "Unknown error";
+          const errorMsg =
+            response.errorMsg || response.error || "Unknown error";
           if (isCloudflareBlock(errorMsg) || isCloudflareBlock(response)) {
             logger?.error?.(
               `Order blocked by Cloudflare (403). Your IP may be geo-blocked. Consider using a VPN.`,
             );
             return { success: false, reason: "CLOUDFLARE_BLOCKED" };
           }
-          logger?.warn?.(`Order attempt failed: ${formatErrorForLog(errorMsg)}`);
+          logger?.warn?.(
+            `Order attempt failed: ${formatErrorForLog(errorMsg)}`,
+          );
         }
       } catch (err) {
         retryCount++;
@@ -266,7 +311,9 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       };
     }
 
-    logger?.debug?.(`Order rejected: NO_FILLS after ${ORDER.MAX_RETRIES} retries for ${tokenId.slice(0, 8)}...`);
+    logger?.debug?.(
+      `Order rejected: NO_FILLS after ${ORDER.MAX_RETRIES} retries for ${tokenId.slice(0, 8)}...`,
+    );
     return { success: false, reason: "NO_FILLS" };
   } catch (err) {
     // Check for Cloudflare block
@@ -274,8 +321,15 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       return { success: false, reason: "CLOUDFLARE_BLOCKED" };
     }
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("No orderbook") || msg.includes("404") || msg.includes("closed") || msg.includes("resolved")) {
-      logger?.debug?.(`Order rejected: MARKET_CLOSED (error: ${msg.slice(0, 50)})`);
+    if (
+      msg.includes("No orderbook") ||
+      msg.includes("404") ||
+      msg.includes("closed") ||
+      msg.includes("resolved")
+    ) {
+      logger?.debug?.(
+        `Order rejected: MARKET_CLOSED (error: ${msg.slice(0, 50)})`,
+      );
       return { success: false, reason: "MARKET_CLOSED" };
     }
     logger?.debug?.(`Order rejected: ${msg.slice(0, 100)}`);

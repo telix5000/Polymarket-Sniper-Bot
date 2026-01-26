@@ -118,11 +118,7 @@ test("cooldown is set when trust mode disabled or approvals not verified", async
       sizeUsd: 10,
       logger: createLogger(),
     });
-    assert.equal(
-      result1.ok,
-      false,
-      "Should fail when trust mode is disabled",
-    );
+    assert.equal(result1.ok, false, "Should fail when trust mode is disabled");
 
     // Scenario 2: Trust mode enabled but approvals not verified
     process.env.TRUST_ONCHAIN_APPROVALS = "true";
@@ -139,11 +135,7 @@ test("cooldown is set when trust mode disabled or approvals not verified", async
       sizeUsd: 10,
       logger: createLogger(),
     });
-    assert.equal(
-      result2.ok,
-      false,
-      "Should fail when approvals not verified",
-    );
+    assert.equal(result2.ok, false, "Should fail when approvals not verified");
   } finally {
     // Restore environment
     if (oldEnv !== undefined) {

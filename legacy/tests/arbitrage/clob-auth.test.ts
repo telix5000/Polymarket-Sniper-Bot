@@ -278,7 +278,7 @@ test("postOrder SELL proceeds with top bid even when bids are below computed lim
   // NEW BEHAVIOR: Uses 40¢ directly, proceeds to execute
   let orderbookCallCount = 0;
   let orderSubmittedAtPrice: string | undefined;
-  
+
   const getOrderBook = async () => {
     orderbookCallCount++;
     if (orderbookCallCount === 1) {
@@ -302,7 +302,12 @@ test("postOrder SELL proceeds with top bid even when bids are below computed lim
   const client = {
     getOrderBook,
     getBalanceAllowance: async () => ({ balance: "100", allowance: "100" }),
-    createMarketOrder: async (args: { side: string; tokenID: string; amount: number; price: number }) => {
+    createMarketOrder: async (args: {
+      side: string;
+      tokenID: string;
+      amount: number;
+      price: number;
+    }) => {
       // Capture the price at which order was created
       orderSubmittedAtPrice = String(args.price);
       return { signed: true };
@@ -320,7 +325,7 @@ test("postOrder SELL proceeds with top bid even when bids are below computed lim
     },
     getNetwork: async () => ({ chainId: 137n }),
   };
-  
+
   Object.defineProperty(client, "wallet", {
     value: {
       address: "0x1234567890123456789012345678901234567890",
@@ -366,15 +371,24 @@ test("postOrder SELL proceeds with top bid even when bids are below computed lim
 
     // NEW BEHAVIOR: SELL proceeds with top bid (40¢) instead of skipping
     // The order should be submitted successfully
-    assert.equal(result.status, "submitted", 
-      "SELL order should be submitted successfully");
-    assert.notEqual(result.reason, "NO_LIQUIDITY_AT_PRICE", 
-      "SELL should not skip with NO_LIQUIDITY_AT_PRICE when bids exist");
-    
+    assert.equal(
+      result.status,
+      "submitted",
+      "SELL order should be submitted successfully",
+    );
+    assert.notEqual(
+      result.reason,
+      "NO_LIQUIDITY_AT_PRICE",
+      "SELL should not skip with NO_LIQUIDITY_AT_PRICE when bids exist",
+    );
+
     // Verify the order was submitted at the top bid price (40¢), not the old limit price
     if (orderSubmittedAtPrice !== undefined) {
-      assert.equal(orderSubmittedAtPrice, "0.4", 
-        "Order should be submitted at top bid price (40¢)");
+      assert.equal(
+        orderSubmittedAtPrice,
+        "0.4",
+        "Order should be submitted at top bid price (40¢)",
+      );
     }
   } finally {
     process.env.ARB_LIVE_TRADING = previousLiveTrading;

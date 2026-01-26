@@ -3987,7 +3987,11 @@ describe("Anti-Stacking Safeguard (Per-Market Hedge Limit)", () => {
       cycleHedgeCountByMarket,
       maxHedgesPerMarketPerCycle,
     );
-    assert.strictEqual(result4.allowed, false, "Fourth hedge should be blocked");
+    assert.strictEqual(
+      result4.allowed,
+      false,
+      "Fourth hedge should be blocked",
+    );
     assert.strictEqual(result4.currentCount, 3, "Count should be 3");
   });
 
@@ -4002,7 +4006,11 @@ describe("Anti-Stacking Safeguard (Per-Market Hedge Limit)", () => {
         cycleHedgeCountByMarket,
         maxHedgesPerMarketPerCycle,
       );
-      assert.strictEqual(result.allowed, true, `Hedge ${i + 1} should be allowed`);
+      assert.strictEqual(
+        result.allowed,
+        true,
+        `Hedge ${i + 1} should be allowed`,
+      );
       assert.strictEqual(result.reason, "limit_disabled");
       recordHedgeOnMarket("market-unlimited", cycleHedgeCountByMarket);
     }
@@ -4129,6 +4137,10 @@ describe("Anti-Stacking: Hedge Position Blocking", () => {
     hedgedPositions.add(keyB2);
 
     // All positions now hedged
-    assert.strictEqual(hedgedPositions.size, 4, "All 4 positions should be marked");
+    assert.strictEqual(
+      hedgedPositions.size,
+      4,
+      "All 4 positions should be marked",
+    );
   });
 });

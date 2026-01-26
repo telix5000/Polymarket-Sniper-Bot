@@ -17,7 +17,9 @@ interface RedeemablePosition {
 /**
  * Fetch redeemable positions
  */
-export async function getRedeemablePositions(address: string): Promise<RedeemablePosition[]> {
+export async function getRedeemablePositions(
+  address: string,
+): Promise<RedeemablePosition[]> {
   try {
     const url = `${POLYMARKET_API.DATA}/positions?user=${address}&limit=500`;
     const { data } = await axios.get(url, { timeout: 10000 });
@@ -51,7 +53,9 @@ export async function redeemPosition(
     // Check if resolved
     const denom = await ctf.payoutDenominator(conditionId);
     if (denom === 0n) {
-      logger?.warn?.(`Position ${conditionId.slice(0, 10)}... not resolved yet`);
+      logger?.warn?.(
+        `Position ${conditionId.slice(0, 10)}... not resolved yet`,
+      );
       return false;
     }
 

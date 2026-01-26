@@ -166,9 +166,7 @@ export async function capturePreVpnRouting(
       logger?.info?.(`Pre-VPN routing: gateway=${gateway} iface=${iface}`);
       return preVpnRouting;
     } else if (gateway || iface) {
-      logger?.warn?.(
-        `Invalid routing info: gateway=${gateway} iface=${iface}`,
-      );
+      logger?.warn?.(`Invalid routing info: gateway=${gateway} iface=${iface}`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -196,11 +194,17 @@ function generateWireguardConfig(logger?: Logger): string | null {
   const peerEndpoint = process.env.WIREGUARD_PEER_ENDPOINT;
   const allowedIPs = process.env.WIREGUARD_ALLOWED_IPS;
 
-  if (!privateKey || !address || !peerPublicKey || !peerEndpoint || !allowedIPs) {
+  if (
+    !privateKey ||
+    !address ||
+    !peerPublicKey ||
+    !peerEndpoint ||
+    !allowedIPs
+  ) {
     logger?.warn?.(
       "WIREGUARD_ENABLED=true but missing required env vars: " +
         "WIREGUARD_PRIVATE_KEY, WIREGUARD_ADDRESS, WIREGUARD_PEER_PUBLIC_KEY, " +
-        "WIREGUARD_PEER_ENDPOINT, WIREGUARD_ALLOWED_IPS"
+        "WIREGUARD_PEER_ENDPOINT, WIREGUARD_ALLOWED_IPS",
     );
     return null;
   }
@@ -239,7 +243,10 @@ function generateWireguardConfig(logger?: Logger): string | null {
     if (isContainer) {
       // Container workaround: Use PostUp/PostDown scripts to manage DNS directly
       // This avoids resolvconf which fails with "could not detect a useable init system"
-      const dnsServers = dns.split(",").map((s) => s.trim()).filter(Boolean);
+      const dnsServers = dns
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
       // Validate each DNS server to prevent shell injection attacks
       const validDnsServers = dnsServers.filter((server) => {
         if (!isValidIp(server)) {
@@ -259,11 +266,11 @@ function generateWireguardConfig(logger?: Logger): string | null {
         // Restore backup if it exists, otherwise fall back to a default DNS server
         config += `PostDown = if [ -f ${backupPath} ]; then cp ${backupPath} /etc/resolv.conf 2>/dev/null || true; else echo 'nameserver 8.8.8.8' > /etc/resolv.conf; fi\n`;
         logger?.info?.(
-          `WIREGUARD_DNS detected in container - using PostUp/PostDown scripts instead of resolvconf`
+          `WIREGUARD_DNS detected in container - using PostUp/PostDown scripts instead of resolvconf`,
         );
       } else {
         logger?.warn?.(
-          `WIREGUARD_DNS specified but no valid IP addresses found, skipping DNS config`
+          `WIREGUARD_DNS specified but no valid IP addresses found, skipping DNS config`,
         );
       }
     } else {
@@ -277,7 +284,8 @@ function generateWireguardConfig(logger?: Logger): string | null {
   if (presharedKey) config += `PresharedKey = ${presharedKey}\n`;
   config += `Endpoint = ${peerEndpoint}\n`;
   config += `AllowedIPs = ${allowedIPs}\n`;
-  if (persistentKeepalive) config += `PersistentKeepalive = ${persistentKeepalive}\n`;
+  if (persistentKeepalive)
+    config += `PersistentKeepalive = ${persistentKeepalive}\n`;
 
   // Write config
   const configDir = "/etc/wireguard";
@@ -313,11 +321,14 @@ export async function startWireguard(logger?: Logger): Promise<boolean> {
   }
 
   // Check for force restart
-  const forceRestart = process.env.WIREGUARD_FORCE_RESTART?.toLowerCase() === "true";
+  const forceRestart =
+    process.env.WIREGUARD_FORCE_RESTART?.toLowerCase() === "true";
 
   if (forceRestart) {
     try {
-      execSync(`wg-quick down ${interfaceName} 2>/dev/null || true`, { stdio: "pipe" });
+      execSync(`wg-quick down ${interfaceName} 2>/dev/null || true`, {
+        stdio: "pipe",
+      });
       logger?.info?.(`Force restarted WireGuard interface ${interfaceName}`);
     } catch {
       // Ignore errors if interface doesn't exist
@@ -326,13 +337,13 @@ export async function startWireguard(logger?: Logger): Promise<boolean> {
 
   // First, try explicit config path (WG_CONFIG only - for reading existing files)
   let configPath: string | null = process.env.WG_CONFIG ?? null;
-  
+
   // If no explicit path, check for config file content from env
   if (!configPath && process.env.WIREGUARD_CONFIG) {
     // Write the full config content to file
     const configDir = "/etc/wireguard";
     const targetPath = `${configDir}/${interfaceName}.conf`;
-    
+
     // Check if interface is active before overwriting
     if (existsSync(targetPath) && !forceRestart) {
       try {
@@ -340,7 +351,7 @@ export async function startWireguard(logger?: Logger): Promise<boolean> {
         // Interface is active - don't overwrite
         logger?.warn?.(
           `WireGuard interface ${interfaceName} appears active; not overwriting existing config at ${targetPath}. ` +
-            `Set WIREGUARD_FORCE_RESTART=true to force restart with a new configuration.`
+            `Set WIREGUARD_FORCE_RESTART=true to force restart with a new configuration.`,
         );
         configPath = targetPath;
       } catch {
@@ -349,8 +360,12 @@ export async function startWireguard(logger?: Logger): Promise<boolean> {
           if (!existsSync(configDir)) {
             mkdirSync(configDir, { recursive: true, mode: 0o700 });
           }
-          writeFileSync(targetPath, process.env.WIREGUARD_CONFIG, { mode: 0o600 });
-          logger?.info?.(`Wrote WireGuard config from WIREGUARD_CONFIG env var`);
+          writeFileSync(targetPath, process.env.WIREGUARD_CONFIG, {
+            mode: 0o600,
+          });
+          logger?.info?.(
+            `Wrote WireGuard config from WIREGUARD_CONFIG env var`,
+          );
           configPath = targetPath;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -362,7 +377,9 @@ export async function startWireguard(logger?: Logger): Promise<boolean> {
         if (!existsSync(configDir)) {
           mkdirSync(configDir, { recursive: true, mode: 0o700 });
         }
-        writeFileSync(targetPath, process.env.WIREGUARD_CONFIG, { mode: 0o600 });
+        writeFileSync(targetPath, process.env.WIREGUARD_CONFIG, {
+          mode: 0o600,
+        });
         logger?.info?.(`Wrote WireGuard config from WIREGUARD_CONFIG env var`);
         configPath = targetPath;
       } catch (err) {
@@ -371,7 +388,7 @@ export async function startWireguard(logger?: Logger): Promise<boolean> {
       }
     }
   }
-  
+
   // If still no config, try to generate from individual env vars
   if (!configPath || !existsSync(configPath)) {
     const generatedPath = generateWireguardConfig(logger);
@@ -419,13 +436,14 @@ function generateOpenvpnConfig(logger?: Logger): string | null {
   if (!configContent) {
     logger?.warn?.(
       "OPENVPN_ENABLED=true but OPENVPN_CONFIG env var not set. " +
-        "Provide the full OpenVPN config content."
+        "Provide the full OpenVPN config content.",
     );
     return null;
   }
 
   const configDir = "/etc/openvpn";
-  const configPath = process.env.OPENVPN_CONFIG_PATH ?? `${configDir}/client.ovpn`;
+  const configPath =
+    process.env.OPENVPN_CONFIG_PATH ?? `${configDir}/client.ovpn`;
   const authPath = process.env.OPENVPN_AUTH_PATH ?? `${configDir}/auth.txt`;
 
   // Validate paths to prevent path traversal attacks
@@ -459,7 +477,9 @@ function generateOpenvpnConfig(logger?: Logger): string | null {
       }
       writeFileSync(authPath, `${username}\n${password}\n`, { mode: 0o600 });
       logger?.info?.(`Generated OpenVPN auth file at ${authPath}`);
-      logger?.info?.(`Ensure your OPENVPN_CONFIG includes: auth-user-pass ${authPath}`);
+      logger?.info?.(
+        `Ensure your OPENVPN_CONFIG includes: auth-user-pass ${authPath}`,
+      );
     }
 
     return configPath;
@@ -476,7 +496,7 @@ function generateOpenvpnConfig(logger?: Logger): string | null {
 export async function startOpenvpn(logger?: Logger): Promise<boolean> {
   // First, try explicit config path (OVPN_CONFIG only - for reading existing files)
   let configPath: string | null = process.env.OVPN_CONFIG ?? null;
-  
+
   // If no explicit path, try to generate from env vars
   if (!configPath || !existsSync(configPath)) {
     const generatedPath = generateOpenvpnConfig(logger);
@@ -499,7 +519,7 @@ export async function startOpenvpn(logger?: Logger): Promise<boolean> {
 
     // Build command arguments
     const args = ["--config", configPath, "--daemon"];
-    
+
     // Add extra args if provided
     // Note: Args are split on whitespace - quoted args with spaces are NOT supported
     const extraArgs = process.env.OPENVPN_EXTRA_ARGS;
@@ -634,9 +654,7 @@ export async function setupPolymarketReadBypass(
 ): Promise<void> {
   // Check if bypass is disabled
   if (process.env.VPN_BYPASS_POLYMARKET_READS === "false") {
-    logger?.info?.(
-      "Polymarket read bypass disabled - all traffic through VPN",
-    );
+    logger?.info?.("Polymarket read bypass disabled - all traffic through VPN");
     return;
   }
 
