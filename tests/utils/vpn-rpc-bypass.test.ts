@@ -1,4 +1,4 @@
-import { test, describe } from "node:test";
+import { test, describe, after } from "node:test";
 import assert from "node:assert/strict";
 import { getVpnBypassConfig } from "../../src/utils/vpn-rpc-bypass.util";
 
@@ -76,7 +76,7 @@ describe("VPN RPC Bypass Configuration", () => {
   });
 
   // Restore original environment after all tests
-  test.after(() => {
+  after(() => {
     resetEnv();
     Object.assign(process.env, originalEnv);
   });

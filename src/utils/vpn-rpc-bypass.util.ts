@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { lookup } from "node:dns/promises";
 import { promisify } from "node:util";
 import type { Logger } from "./logger.util";
 
@@ -52,24 +53,16 @@ const extractHost = (url: string): string | undefined => {
 };
 
 /**
- * Resolves a hostname to its IP address using system DNS.
+ * Resolves a hostname to its IP address using Node's built-in DNS.
+ * Uses dns.lookup which respects /etc/hosts and system DNS configuration.
  * Returns undefined if resolution fails.
  */
 const resolveHost = async (hostname: string): Promise<string | undefined> => {
   try {
-    // Use getent which is available on most Linux systems
-    const { stdout } = await execFileAsync("getent", ["ahosts", hostname]);
-    // getent ahosts returns lines like "1.2.3.4 STREAM hostname"
-    // We want the first valid IPv4 address
-    const lines = stdout.trim().split("\n");
-    for (const line of lines) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length >= 1) {
-        const ip = parts[0];
-        if (isValidIpv4(ip)) {
-          return ip;
-        }
-      }
+    // Use Node's built-in DNS lookup which works on all platforms including Alpine
+    const result = await lookup(hostname, { family: 4 }); // Force IPv4
+    if (result.address && isValidIpv4(result.address)) {
+      return result.address;
     }
     return undefined;
   } catch {
