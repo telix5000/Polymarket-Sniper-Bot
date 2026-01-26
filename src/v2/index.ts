@@ -31,6 +31,7 @@ import { JsonRpcProvider, Wallet, Contract, Interface, ZeroHash } from "ethers";
 import { ClobClient } from "@polymarket/clob-client";
 import axios from "axios";
 import { postOrder, type OrderSide, type OrderOutcome } from "../utils/post-order.util";
+import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 
 // ============ TYPES ============
 
@@ -198,10 +199,11 @@ const state = {
   telegram: undefined as { token: string; chatId: string } | undefined,
   proxyAddress: undefined as string | undefined,
   copyLastCheck: new Map<string, number>(),
-  clobClient: undefined as ClobClient | undefined,
+  clobClient: undefined as (ClobClient & { wallet: Wallet }) | undefined,
   wallet: undefined as Wallet | undefined,
   provider: undefined as JsonRpcProvider | undefined,
   liveTrading: false,
+  authOk: false, // Track if CLOB authentication succeeded
 };
 
 // ============ LOGGING ============
@@ -964,16 +966,40 @@ export async function startV2() {
     }
   }
   
-  const provider = new JsonRpcProvider(settings.rpcUrl);
-  const wallet = new Wallet(settings.privateKey, provider);
-  const addr = wallet.address.toLowerCase();
-
-  // Initialize CLOB client for trading
-  const clobClient = new ClobClient("https://clob.polymarket.com", 137, wallet as any);
+  // Initialize CLOB client using EXACT same method as V1
+  // Uses createPolymarketAuthFromEnv which handles:
+  // - PRIVATE_KEY, RPC_URL
+  // - Optional: CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE (pre-configured)
+  // - Optional: POLYMARKET_SIGNATURE_TYPE (0=EOA, 1=Proxy)
+  // - Auto derives credentials if not provided
+  log("🔐 Authenticating with Polymarket...");
   
-  state.wallet = wallet;
-  state.provider = provider;
+  // Create a minimal logger for auth
+  const authLogger = {
+    info: (msg: string) => log(msg),
+    warn: (msg: string) => log(`⚠️ ${msg}`),
+    error: (msg: string) => log(`❌ ${msg}`),
+    debug: () => {}, // Suppress debug spam
+  };
+  
+  const auth = createPolymarketAuthFromEnv(authLogger as any);
+  const authResult = await auth.authenticate();
+  
+  if (!authResult.success) {
+    log(`❌ Authentication failed: ${authResult.error}`);
+    throw new Error(`Cannot proceed without valid credentials: ${authResult.error}`);
+  }
+  
+  log("✅ Authentication successful");
+  
+  // Get authenticated CLOB client (same as V1 main.ts line 98)
+  const clobClient = await auth.getClobClient();
+  const addr = auth.getAddress().toLowerCase();
+  
+  state.wallet = clobClient.wallet;
+  state.provider = clobClient.wallet.provider as JsonRpcProvider;
   state.clobClient = clobClient;
+  state.authOk = true; // Auth succeeded
   state.proxyAddress = await fetchProxy(addr);
   state.telegram = settings.telegram;
   state.liveTrading = settings.liveTrading;
