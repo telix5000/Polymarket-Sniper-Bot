@@ -7,8 +7,8 @@ import { test, describe } from "node:test";
  * These tests verify that:
  * 1. SELL orders should NEVER be blocked by position cap (they reduce positions)
  * 2. Protective exits (StopLoss, AutoSell, ForceLiq, DisputeExit) bypass ALL risk checks
- * 3. BUY orders ARE blocked when at or above effective position cap
- * 4. Protective hedges can bypass effective cap but NOT the hard cap (maxOpenPositions)
+ * 3. BUY orders ARE blocked when at or above the hard position cap (maxOpenPositions)
+ * 4. BUY orders below the hard position cap are NOT blocked
  */
 
 describe("V2 Position Cap Fix", () => {
