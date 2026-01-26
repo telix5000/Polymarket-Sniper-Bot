@@ -590,6 +590,11 @@ async function arbitrage(cfg: Config) {
       const noPrice = Number(no.price) || 0;
       const total = yesPrice + noPrice;
       
+      // Check minBuyPrice - skip if either side is below threshold (likely loser)
+      if (yesPrice < cfg.arbitrage.minBuyPrice || noPrice < cfg.arbitrage.minBuyPrice) {
+        continue;
+      }
+      
       if (total < 0.98 && total > 0.5) {
         const profitPct = (1 - total) * 100;
         log(`💎 Arb | YES ${$price(yesPrice)} + NO ${$price(noPrice)} = ${profitPct.toFixed(1)}% profit`);
