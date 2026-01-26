@@ -174,8 +174,21 @@ export function getAuthDiagnostics(
   const isProxyMode =
     signerAddress.toLowerCase() !== effectiveAddress.toLowerCase();
 
-  const signatureTypeLabel =
-    signatureType === "0" ? "EOA" : signatureType === "1" ? "Proxy" : "Safe";
+  let signatureTypeLabel: string;
+  switch (signatureType) {
+    case "0":
+      signatureTypeLabel = "EOA";
+      break;
+    case "1":
+      signatureTypeLabel = "Proxy";
+      break;
+    case "2":
+      signatureTypeLabel = "Safe";
+      break;
+    default:
+      signatureTypeLabel = `Unknown(${signatureType})`;
+      break;
+  }
 
   return {
     signatureType,

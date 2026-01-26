@@ -66,8 +66,8 @@ const effectiveAddress = effectiveSignatureType > 0 && funderAddress ? funderAdd
 |-----------|--------------|-------------|
 | **CLOB Signing** | Signer (wallet.address) | `src/lib/auth.ts:98-105` - ClobClient gets wallet for signing |
 | **CLOB Funder Parameter** | effectiveAddress (funder in proxy mode) | `src/lib/auth.ts:104,123-124` - Passed to ClobClient |
-| **Balance Checks** | effectiveAddress (via `state.address`) | `src/start.ts:474-475`, `src/lib/balance.ts:11-18` |
-| **Allowance Checks** | N/A (not explicitly checked in V2) | Balance.ts only checks balanceOf |
+| **Balance Checks** | effectiveAddress (via `state.address`) | `src/start.ts:540-542`, `src/lib/balance.ts:11-26` |
+| **Allowance Checks** | effectiveAddress (via `state.address`) | `src/lib/balance.ts:47-65` - `getUsdcAllowance()`, `src/start.ts:542` |
 | **Order Placement** | effectiveAddress (via client's funder) | `src/lib/order.ts:193-200` - client.createMarketOrder() |
 | **Logging** | effectiveAddress (via `state.address`) | `src/start.ts:471` |
 | **Position Fetches** | effectiveAddress (via `state.address`) | `src/start.ts:390`, `src/lib/positions.ts:15` |

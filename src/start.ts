@@ -545,15 +545,17 @@ async function main(): Promise<void> {
   logger.info(`USDC Allowance: ${$(allowance)}`);
   logger.info(`POL: ${pol.toFixed(4)}`);
 
-  // Warn if allowance might cause issues
-  if (allowance === 0 && usdc > 0) {
-    logger.warn(
-      `⚠️ No USDC allowance set. Orders will fail. Approve CTF Exchange first.`,
-    );
-  } else if (allowance < usdc && usdc > 0) {
-    logger.warn(
-      `⚠️ Allowance (${$(allowance)}) < Balance (${$(usdc)}). Large orders may fail.`,
-    );
+  // Warn if allowance might cause issues (only relevant for live trading)
+  if (state.liveTrading) {
+    if (allowance === 0) {
+      logger.warn(
+        `⚠️ No USDC allowance set. Orders will fail. Approve CTF Exchange first.`,
+      );
+    } else if (allowance < usdc && usdc > 0) {
+      logger.warn(
+        `⚠️ Allowance (${$(allowance)}) < Balance (${$(usdc)}). Large orders may fail.`,
+      );
+    }
   }
 
   state.startBalance = usdc;
