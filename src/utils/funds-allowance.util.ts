@@ -613,11 +613,32 @@ const fetchBalanceAllowance = async (
     // Log friendly balance breakdown for collateral
     logBalanceSnapshot(logger, snapshot);
 
+    // BUGFIX: Don't set zero-allowance cooldown if trust mode is enabled and on-chain approvals are verified
+    // The CLOB API has a known bug where it returns allowance=0 even when on-chain approvals are correct.
+    // Setting the cooldown prevents trading when we have valid on-chain approvals.
+    // Trust mode is enabled by default (when env var is undefined or not explicitly "false")
+    const trustOnchainApprovals =
+      process.env.TRUST_ONCHAIN_APPROVALS?.toLowerCase() !== "false";
+    const onchainApprovalsVerified =
+      "onchainApprovalsVerified" in client &&
+      (client as { onchainApprovalsVerified?: boolean })
+        .onchainApprovalsVerified === true;
+    const shouldSkipCooldown =
+      trustOnchainApprovals &&
+      onchainApprovalsVerified &&
+      assetType === AssetType.COLLATERAL;
+
     if (snapshot.allowanceUsd <= 0 && assetType === AssetType.COLLATERAL) {
-      zeroAllowanceCooldown.set(cacheKey, {
-        until: now + ZERO_ALLOWANCE_COOLDOWN_MS,
-        lastLogged: now,
-      });
+      if (!shouldSkipCooldown) {
+        zeroAllowanceCooldown.set(cacheKey, {
+          until: now + ZERO_ALLOWANCE_COOLDOWN_MS,
+          lastLogged: now,
+        });
+      } else {
+        logger.info(
+          `[CLOB][TrustMode] Skipping zero-allowance cooldown (on-chain approvals verified, CLOB API bug workaround active)`,
+        );
+      }
     } else if (assetType === AssetType.COLLATERAL) {
       zeroAllowanceCooldown.delete(cacheKey);
     }

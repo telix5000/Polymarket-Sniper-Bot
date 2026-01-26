@@ -47,6 +47,113 @@ test("checkFundsAndAllowance refreshes via second balance-allowance read", async
   assert.equal(collateralCalls, 2);
 });
 
+test("trust mode bypasses zero allowance cooldown when on-chain approvals verified", async () => {
+  // Test for the fix: when TRUST_ONCHAIN_APPROVALS=true and onchainApprovalsVerified=true,
+  // the code should NOT set a cooldown when CLOB API returns allowance=0.
+  // This fixes the bug where users with valid on-chain approvals were blocked from trading.
+
+  // Set environment to enable trust mode
+  const oldEnv = process.env.TRUST_ONCHAIN_APPROVALS;
+  process.env.TRUST_ONCHAIN_APPROVALS = "true";
+
+  try {
+    // Mock client with verified on-chain approvals
+    const client = {
+      getBalanceAllowance: async () => {
+        // Simulate CLOB API bug: returns allowance=0 even when on-chain approvals are correct
+        return { balance: "100", allowance: "0" };
+      },
+      onchainApprovalsVerified: true, // Set during preflight
+    };
+
+    // First call should succeed despite allowance=0 because trust mode is active
+    const result1 = await checkFundsAndAllowance({
+      client: client as never,
+      sizeUsd: 10,
+      logger: createLogger(),
+    });
+    assert.equal(result1.ok, true, "First call should succeed with trust mode");
+
+    // Second call immediately after should also succeed (no cooldown set)
+    const result2 = await checkFundsAndAllowance({
+      client: client as never,
+      sizeUsd: 10,
+      logger: createLogger(),
+    });
+    assert.equal(
+      result2.ok,
+      true,
+      "Second call should succeed (no cooldown with trust mode)",
+    );
+  } finally {
+    // Restore environment
+    if (oldEnv !== undefined) {
+      process.env.TRUST_ONCHAIN_APPROVALS = oldEnv;
+    } else {
+      delete process.env.TRUST_ONCHAIN_APPROVALS;
+    }
+  }
+});
+
+test("cooldown is set when trust mode disabled or approvals not verified", async () => {
+  // Test that cooldown is still set in the correct scenarios:
+  // 1. When TRUST_ONCHAIN_APPROVALS=false
+  // 2. When onchainApprovalsVerified=false
+
+  const oldEnv = process.env.TRUST_ONCHAIN_APPROVALS;
+
+  try {
+    // Scenario 1: Trust mode disabled
+    process.env.TRUST_ONCHAIN_APPROVALS = "false";
+
+    const client1 = {
+      getBalanceAllowance: async () => {
+        return { balance: "100", allowance: "0" };
+      },
+      onchainApprovalsVerified: true,
+    };
+
+    const result1 = await checkFundsAndAllowance({
+      client: client1 as never,
+      sizeUsd: 10,
+      logger: createLogger(),
+    });
+    assert.equal(
+      result1.ok,
+      false,
+      "Should fail when trust mode is disabled",
+    );
+
+    // Scenario 2: Trust mode enabled but approvals not verified
+    process.env.TRUST_ONCHAIN_APPROVALS = "true";
+
+    const client2 = {
+      getBalanceAllowance: async () => {
+        return { balance: "100", allowance: "0" };
+      },
+      onchainApprovalsVerified: false, // Not verified
+    };
+
+    const result2 = await checkFundsAndAllowance({
+      client: client2 as never,
+      sizeUsd: 10,
+      logger: createLogger(),
+    });
+    assert.equal(
+      result2.ok,
+      false,
+      "Should fail when approvals not verified",
+    );
+  } finally {
+    // Restore environment
+    if (oldEnv !== undefined) {
+      process.env.TRUST_ONCHAIN_APPROVALS = oldEnv;
+    } else {
+      delete process.env.TRUST_ONCHAIN_APPROVALS;
+    }
+  }
+});
+
 test("in-flight buy tracking", async (t) => {
   // Reset state before each test group
   resetInFlightBuys();
