@@ -56,8 +56,22 @@ interface Config {
   stack: { enabled: boolean; minGainCents: number; maxUsd: number; maxPrice: number };
   endgame: { enabled: boolean; minPrice: number; maxPrice: number; maxUsd: number };
   redeem: { enabled: boolean; intervalMin: number; minPositionUsd: number };
-  copy: { enabled: boolean; addresses: string[]; multiplier: number; minUsd: number; maxUsd: number };
-  arbitrage: { enabled: boolean; maxUsd: number; minEdgeBps: number };
+  copy: { 
+    enabled: boolean; 
+    addresses: string[]; 
+    multiplier: number; 
+    minUsd: number; 
+    maxUsd: number; 
+    minBuyPrice: number;  // MIN_BUY_PRICE - don't copy BUYs below this (default: 0.50 = 50¢)
+  };
+  sellSignal: {
+    enabled: boolean;
+    minLossPctToAct: number;      // Only act if losing >= this % (default: 15)
+    profitThresholdToSkip: number; // Skip if profit >= this % (default: 20, "knee deep in positive")
+    severeLossPct: number;         // Trigger stop-loss if loss >= this % (default: 40)
+    cooldownMs: number;            // Cooldown per position (default: 60000ms)
+  };
+  arbitrage: { enabled: boolean; maxUsd: number; minEdgeBps: number; minBuyPrice: number };
   maxPositionUsd: number; // Global position size limit
   // Reserve system - keep % of balance for hedging/emergencies
   reservePct: number; // Percentage of balance to reserve (e.g., 20 = keep 20% reserved)
@@ -95,10 +109,12 @@ const PRESETS: Record<Preset, Config> = {
     // ENDGAME_MIN_PRICE: 0.985, ENDGAME_MAX_PRICE: 0.995
     endgame: { enabled: true, minPrice: 0.985, maxPrice: 0.995, maxUsd: 15 },
     redeem: { enabled: true, intervalMin: 15, minPositionUsd: 0 },
-    // MIN_TRADE_SIZE_USD: 50, TRADE_MULTIPLIER: 0.15
-    copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 50, maxUsd: 50 },
-    // ARB_MIN_EDGE_BPS: 300
-    arbitrage: { enabled: true, maxUsd: 15, minEdgeBps: 300 },
+    // MIN_TRADE_SIZE_USD: 50, TRADE_MULTIPLIER: 0.15, MIN_BUY_PRICE: 0.50
+    copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 50, maxUsd: 50, minBuyPrice: 0.50 },
+    // Sell signal: V1 defaults from sell-signal-monitor.service.ts
+    sellSignal: { enabled: true, minLossPctToAct: 15, profitThresholdToSkip: 20, severeLossPct: 40, cooldownMs: 60000 },
+    // ARB_MIN_EDGE_BPS: 300, ARB_MIN_BUY_PRICE: 0.05
+    arbitrage: { enabled: true, maxUsd: 15, minEdgeBps: 300, minBuyPrice: 0.05 },
     // MAX_POSITION_USD: 15
     maxPositionUsd: 15,
     // HEDGING_RESERVE_PCT: 25
@@ -118,10 +134,12 @@ const PRESETS: Record<Preset, Config> = {
     // ENDGAME_MIN_PRICE: 0.985, ENDGAME_MAX_PRICE: 0.995
     endgame: { enabled: true, minPrice: 0.985, maxPrice: 0.995, maxUsd: 25 },
     redeem: { enabled: true, intervalMin: 15, minPositionUsd: 0 },
-    // MIN_TRADE_SIZE_USD: 1, TRADE_MULTIPLIER: 0.15
-    copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 1, maxUsd: 100 },
-    // ARB_MIN_EDGE_BPS: 200
-    arbitrage: { enabled: true, maxUsd: 25, minEdgeBps: 200 },
+    // MIN_TRADE_SIZE_USD: 1, TRADE_MULTIPLIER: 0.15, MIN_BUY_PRICE: 0.50
+    copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 1, maxUsd: 100, minBuyPrice: 0.50 },
+    // Sell signal: V1 defaults from sell-signal-monitor.service.ts
+    sellSignal: { enabled: true, minLossPctToAct: 15, profitThresholdToSkip: 20, severeLossPct: 40, cooldownMs: 60000 },
+    // ARB_MIN_EDGE_BPS: 200, ARB_MIN_BUY_PRICE: 0.05
+    arbitrage: { enabled: true, maxUsd: 25, minEdgeBps: 200, minBuyPrice: 0.05 },
     // MAX_POSITION_USD: 25
     maxPositionUsd: 25,
     // HEDGING_RESERVE_PCT: 20
@@ -141,10 +159,12 @@ const PRESETS: Record<Preset, Config> = {
     // ENDGAME_MIN_PRICE: 0.85, ENDGAME_MAX_PRICE: 0.94
     endgame: { enabled: true, minPrice: 0.85, maxPrice: 0.94, maxUsd: 100 },
     redeem: { enabled: true, intervalMin: 10, minPositionUsd: 0 },
-    // MIN_TRADE_SIZE_USD: 5, higher multiplier for aggressive
-    copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 5, maxUsd: 200 },
-    // ARB_MIN_EDGE_BPS: 200
-    arbitrage: { enabled: true, maxUsd: 100, minEdgeBps: 200 },
+    // MIN_TRADE_SIZE_USD: 5, MIN_BUY_PRICE: 0.50 (aggressive keeps 50¢ min)
+    copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 5, maxUsd: 200, minBuyPrice: 0.50 },
+    // Sell signal: V1 defaults from sell-signal-monitor.service.ts
+    sellSignal: { enabled: true, minLossPctToAct: 15, profitThresholdToSkip: 20, severeLossPct: 40, cooldownMs: 60000 },
+    // ARB_MIN_EDGE_BPS: 200, ARB_MIN_BUY_PRICE: 0.05 (arb can go lower)
+    arbitrage: { enabled: true, maxUsd: 100, minEdgeBps: 200, minBuyPrice: 0.05 },
     // MAX_POSITION_USD: 100
     maxPositionUsd: 100,
     // HEDGING_RESERVE_PCT: 15
@@ -174,6 +194,7 @@ const state = {
   sold: new Set<string>(),
   copied: new Set<string>(),
   positionAcquiredAt: new Map<string, number>(), // tokenId -> timestamp when acquired
+  sellSignalCooldowns: new Map<string, number>(), // tokenId -> cooldown expiry timestamp
   telegram: undefined as { token: string; chatId: string } | undefined,
   proxyAddress: undefined as string | undefined,
   copyLastCheck: new Map<string, number>(),
@@ -191,13 +212,52 @@ function log(msg: string) {
 
 // ============ ALERTS ============
 
-async function alert(title: string, msg: string) {
-  log(`📢 ${title}: ${msg}`);
+/**
+ * Send clean alerts for Telegram
+ * Format: ACTION | RESULT | DETAILS
+ * Example: "SELL ✅ | AutoSell | YES $25.00 @ 99¢"
+ */
+async function alert(action: string, details: string, success = true) {
+  const icon = success ? "✅" : "❌";
+  const line = `${action} ${icon} | ${details}`;
+  log(`📢 ${line}`);
   if (state.telegram) {
     await axios.post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
-      chat_id: state.telegram.chatId, text: `*${title}*\n${msg}`, parse_mode: "Markdown",
+      chat_id: state.telegram.chatId, 
+      text: line,
+      parse_mode: "Markdown",
     }).catch(() => {});
   }
+}
+
+/** Send startup/shutdown alerts */
+async function alertStatus(msg: string) {
+  log(`📢 ${msg}`);
+  if (state.telegram) {
+    await axios.post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
+      chat_id: state.telegram.chatId, 
+      text: `🤖 ${msg}`,
+      parse_mode: "Markdown",
+    }).catch(() => {});
+  }
+}
+
+// ============ FORMATTING ============
+
+/** Format USD amount as $1.23 */
+function $(amount: number): string {
+  return `$${amount.toFixed(2)}`;
+}
+
+/** Format price as $0.XX (dollar format, not cents) */
+function $price(price: number): string {
+  return `$${price.toFixed(2)}`;
+}
+
+/** Format percentage with sign */
+function pct(value: number): string {
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${value.toFixed(1)}%`;
 }
 
 // ============ API ============
@@ -336,18 +396,24 @@ const simpleLogger = {
   debug: logLevel === "debug" ? log : () => {},
 };
 
-async function executeSell(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string): Promise<boolean> {
+/**
+ * Execute a SELL order
+ * Alert format: "SELL ✅ | {reason} | {outcome} {amount} @ {price}"
+ */
+async function executeSell(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string, curPrice?: number): Promise<boolean> {
+  const priceStr = curPrice ? ` @ ${$price(curPrice)}` : "";
+  
   if (!state.liveTrading) {
-    log(`🔸 ${reason}: SELL ${outcome} $${sizeUsd.toFixed(2)} [SIMULATED]`);
+    log(`🔸 SELL [SIM] | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
     return true;
   }
   
   if (!state.clobClient || !state.wallet) {
-    log(`❌ ${reason}: No CLOB client`);
+    log(`❌ SELL | ${reason} | No CLOB client`);
     return false;
   }
 
-  log(`💰 ${reason}: SELL ${outcome} $${sizeUsd.toFixed(2)}`);
+  log(`💰 SELL | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
   
   try {
     const result = await postOrder({
@@ -362,37 +428,43 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
     });
     
     if (result.status === "submitted") {
-      await alert(reason, `Sold ${outcome} $${sizeUsd.toFixed(2)}`);
+      await alert("SELL", `${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`, true);
       invalidate();
       return true;
     }
-    log(`⚠️ ${reason}: ${result.reason || "failed"}`);
+    await alert("SELL", `${reason} | ${outcome} | ${result.reason || "failed"}`, false);
     return false;
   } catch (e: any) {
-    log(`❌ ${reason}: ${e.message?.slice(0, 50)}`);
+    await alert("SELL", `${reason} | ${outcome} | ${e.message?.slice(0, 30)}`, false);
     return false;
   }
 }
 
-async function executeBuy(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string, cfg: Config, allowReserve = false): Promise<boolean> {
+/**
+ * Execute a BUY order
+ * Alert format: "BUY ✅ | {reason} | {outcome} {amount} @ {price}"
+ */
+async function executeBuy(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string, cfg: Config, allowReserve = false, price?: number): Promise<boolean> {
+  const priceStr = price ? ` @ ${$price(price)}` : "";
+  
   // Check reserves before buying (hedging can dip into reserves)
   if (!canSpend(sizeUsd, cfg, allowReserve)) {
     const avail = allowReserve ? state.balance : getAvailableBalance(cfg);
-    log(`⚠️ ${reason}: Insufficient funds ($${sizeUsd.toFixed(2)} needed, $${avail.toFixed(2)} available)`);
+    log(`⚠️ BUY | ${reason} | Insufficient (${$(sizeUsd)} > ${$(avail)} avail)`);
     return false;
   }
 
   if (!state.liveTrading) {
-    log(`🔸 ${reason}: BUY ${outcome} $${sizeUsd.toFixed(2)} [SIMULATED]`);
+    log(`🔸 BUY [SIM] | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
     return true;
   }
   
   if (!state.clobClient || !state.wallet) {
-    log(`❌ ${reason}: No CLOB client`);
+    log(`❌ BUY | ${reason} | No CLOB client`);
     return false;
   }
 
-  log(`🛒 ${reason}: BUY ${outcome} $${sizeUsd.toFixed(2)}`);
+  log(`🛒 BUY | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
   
   try {
     const result = await postOrder({
@@ -407,20 +479,29 @@ async function executeBuy(tokenId: string, conditionId: string, outcome: string,
     });
     
     if (result.status === "submitted") {
-      await alert(reason, `Bought ${outcome} $${sizeUsd.toFixed(2)}`);
+      await alert("BUY", `${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`, true);
       invalidate();
       return true;
     }
-    log(`⚠️ ${reason}: ${result.reason || "failed"}`);
+    await alert("BUY", `${reason} | ${outcome} | ${result.reason || "failed"}`, false);
     return false;
   } catch (e: any) {
-    log(`❌ ${reason}: ${e.message?.slice(0, 50)}`);
+    await alert("BUY", `${reason} | ${outcome} | ${e.message?.slice(0, 30)}`, false);
     return false;
   }
 }
 
 // ============ COPY TRADING ============
 
+/**
+ * Copy BUY trades from tracked traders
+ * 
+ * RULES (from V1):
+ * - Only copy BUY signals (SELL signals handled by sellSignalProtection)
+ * - Skip if price < MIN_BUY_PRICE (default 50¢) - avoids loser positions
+ * - Respect position limits (COPY_MAX_USD)
+ * - Apply multiplier and clamp to min/max USD
+ */
 async function copyTrades(cfg: Config) {
   if (!cfg.copy.enabled || !cfg.copy.addresses.length) return;
 
@@ -432,8 +513,15 @@ async function copyTrades(cfg: Config) {
       if (signal.timestamp <= lastCheck) continue;
       const key = `${signal.tokenId}-${signal.timestamp}`;
       if (state.copied.has(key)) continue;
-      if (signal.side !== "BUY") continue; // Only copy buys
-      if (signal.price < 0.05) continue; // Skip garbage
+      if (signal.side !== "BUY") continue; // Only copy buys (sells handled by sellSignalProtection)
+      
+      // MIN_BUY_PRICE check - don't buy positions below threshold (default $0.50)
+      // This prevents copying into likely loser positions
+      if (signal.price < cfg.copy.minBuyPrice) {
+        log(`🚫 Copy skip | ${$price(signal.price)} < ${$price(cfg.copy.minBuyPrice)} min`);
+        state.copied.add(key);
+        continue;
+      }
       
       let copyUsd = signal.usdSize * cfg.copy.multiplier;
       copyUsd = Math.max(cfg.copy.minUsd, Math.min(cfg.copy.maxUsd, copyUsd));
@@ -444,9 +532,9 @@ async function copyTrades(cfg: Config) {
         continue;
       }
       
-      log(`👀 Copy ${addr.slice(0,8)}...: ${signal.outcome} $${copyUsd.toFixed(0)}`);
+      log(`👀 Copy | ${addr.slice(0,8)}... | ${signal.outcome} ${$(copyUsd)} @ ${$price(signal.price)}`);
       // Copy trades respect reserves (normal trade)
-      await executeBuy(signal.tokenId, signal.conditionId, signal.outcome, copyUsd, "Copy", cfg, false);
+      await executeBuy(signal.tokenId, signal.conditionId, signal.outcome, copyUsd, "Copy", cfg, false, signal.price);
       state.copied.add(key);
     }
     state.copyLastCheck.set(addr, Math.floor(Date.now() / 1000));
@@ -503,12 +591,12 @@ async function arbitrage(cfg: Config) {
       const total = yesPrice + noPrice;
       
       if (total < 0.98 && total > 0.5) {
-        const profit = (1 - total) * 100;
-        log(`💎 Arb: YES=${(yesPrice*100).toFixed(0)}¢ + NO=${(noPrice*100).toFixed(0)}¢ = ${profit.toFixed(1)}% profit`);
+        const profitPct = (1 - total) * 100;
+        log(`💎 Arb | YES ${$price(yesPrice)} + NO ${$price(noPrice)} = ${profitPct.toFixed(1)}% profit`);
         const arbUsd = cfg.arbitrage.maxUsd / 2;
         // Arbitrage respects reserves (normal trade)
-        await executeBuy(yes.token_id, cid, "YES", arbUsd, "Arb", cfg, false);
-        await executeBuy(no.token_id, cid, "NO", arbUsd, "Arb", cfg, false);
+        await executeBuy(yes.token_id, cid, "YES", arbUsd, "Arb", cfg, false, yesPrice);
+        await executeBuy(no.token_id, cid, "NO", arbUsd, "Arb", cfg, false, noPrice);
       }
     } catch { /* skip */ }
   }
@@ -516,8 +604,22 @@ async function arbitrage(cfg: Config) {
 
 // ============ SELL SIGNAL PROTECTION ============
 
+/**
+ * Sell Signal Monitor (from V1 sell-signal-monitor.service.ts)
+ * 
+ * When a tracked trader SELLS a position we also hold:
+ * 1. ALERT us (log + telegram) - this is the main purpose
+ * 2. Check if WE are losing on this position
+ * 3. If profitable (>= profitThresholdToSkip) - ignore, we're "knee deep in positive"
+ * 4. If small loss (< minLossPctToAct) - just alert, no action
+ * 5. If moderate loss (minLossPctToAct to severeLossPct) - HEDGE (buy opposite)
+ * 6. If severe loss (>= severeLossPct) - STOP-LOSS (sell immediately)
+ * 7. Cooldown prevents repeated actions on same position
+ * 
+ * This is NOT copying their sell - it's monitoring for warning signs.
+ */
 async function sellSignalProtection(cfg: Config) {
-  if (!cfg.copy.enabled || !cfg.copy.addresses.length) return;
+  if (!cfg.sellSignal.enabled || !cfg.copy.addresses.length) return;
   
   for (const addr of cfg.copy.addresses) {
     const activities = await fetchActivity(addr);
@@ -525,20 +627,49 @@ async function sellSignalProtection(cfg: Config) {
     for (const signal of activities) {
       if (signal.side !== "SELL") continue;
       
+      // Do we hold this position?
       const ourPos = state.positions.find(p => p.tokenId === signal.tokenId);
       if (!ourPos) continue;
-      if (ourPos.pnlPct > 20) continue;
       
-      if (ourPos.pnlPct < -15 && !state.sold.has(ourPos.tokenId)) {
-        log(`⚠️ Tracked trader sold - we are down ${ourPos.pnlPct.toFixed(1)}%`);
-        
-        if (ourPos.pnlPct < -40) {
-          await executeSell(ourPos.tokenId, ourPos.conditionId, ourPos.outcome, ourPos.value, "SellSignal");
+      // Check cooldown
+      const now = Date.now();
+      const cooldownExpiry = state.sellSignalCooldowns.get(ourPos.tokenId);
+      if (cooldownExpiry && now < cooldownExpiry) continue;
+      
+      const pnlPct = ourPos.pnlPct;
+      const lossPct = Math.abs(pnlPct);
+      
+      // If profitable >= threshold, we're "knee deep in positive" - ignore
+      if (pnlPct >= cfg.sellSignal.profitThresholdToSkip) {
+        log(`📊 SellSignal | Trader sold but we're ${pct(pnlPct)} - holding`);
+        continue;
+      }
+      
+      // If not losing enough, just alert (no action)
+      if (pnlPct >= 0 || lossPct < cfg.sellSignal.minLossPctToAct) {
+        log(`📊 SellSignal | Trader sold, we're ${pct(pnlPct)} - monitoring`);
+        continue;
+      }
+      
+      // Set cooldown
+      state.sellSignalCooldowns.set(ourPos.tokenId, now + cfg.sellSignal.cooldownMs);
+      
+      // SEVERE LOSS: Stop-loss (sell immediately)
+      if (lossPct >= cfg.sellSignal.severeLossPct) {
+        await alert("⚠️ SELL SIGNAL", `Trader sold | We're ${pct(-lossPct)} | STOP-LOSS`, true);
+        if (await executeSell(ourPos.tokenId, ourPos.conditionId, ourPos.outcome, ourPos.value, "SellSignal-StopLoss", ourPos.curPrice)) {
           state.sold.add(ourPos.tokenId);
-        } else if (!state.hedged.has(ourPos.tokenId)) {
-          const opp = ourPos.outcome === "YES" ? "NO" : "YES";
-          // Sell signal hedge CAN dip into reserves (protective)
-          await executeBuy(ourPos.tokenId, ourPos.conditionId, opp, ourPos.value * 0.5, "SellSignal-Hedge", cfg, true);
+        }
+        continue;
+      }
+      
+      // MODERATE LOSS: Hedge (buy opposite side)
+      if (!state.hedged.has(ourPos.tokenId)) {
+        await alert("⚠️ SELL SIGNAL", `Trader sold | We're ${pct(-lossPct)} | HEDGE`, true);
+        const opp = ourPos.outcome === "YES" ? "NO" : "YES";
+        const hedgeAmt = ourPos.value * 0.5;
+        // Sell signal hedge CAN dip into reserves (protective action)
+        if (await executeBuy(ourPos.tokenId, ourPos.conditionId, opp, hedgeAmt, "SellSignal-Hedge", cfg, true, ourPos.curPrice)) {
           state.hedged.add(ourPos.tokenId);
         }
       }
@@ -580,7 +711,7 @@ async function cycle(walletAddr: string, cfg: Config) {
     
     // 1. AUTO-SELL: Near $1 - guaranteed profit
     if (cfg.autoSell.enabled && p.curPrice >= cfg.autoSell.threshold) {
-      if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "AutoSell")) {
+      if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "AutoSell", p.curPrice)) {
         state.sold.add(p.tokenId);
         cycleActed.add(p.tokenId);
       }
@@ -589,7 +720,7 @@ async function cycle(walletAddr: string, cfg: Config) {
     
     // 2. STOP-LOSS: Losing badly - protect capital
     if (cfg.stopLoss.enabled && p.pnlPct <= -cfg.stopLoss.maxLossPct) {
-      if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "StopLoss")) {
+      if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, `StopLoss (${pct(p.pnlPct)})`, p.curPrice)) {
         state.sold.add(p.tokenId);
         cycleActed.add(p.tokenId);
       }
@@ -602,7 +733,7 @@ async function cycle(walletAddr: string, cfg: Config) {
       // Check min USD profit if configured
       const profitUsd = p.value * (p.pnlPct / 100);
       if (profitUsd >= cfg.scalp.minProfitUsd) {
-        if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "Scalp")) {
+        if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, `Scalp (${pct(p.pnlPct)})`, p.curPrice)) {
           state.sold.add(p.tokenId);
           cycleActed.add(p.tokenId);
         }
@@ -614,7 +745,7 @@ async function cycle(walletAddr: string, cfg: Config) {
     if (cfg.hedge.enabled && !state.hedged.has(p.tokenId) && p.pnlPct <= -cfg.hedge.triggerPct) {
       const opp = p.outcome === "YES" ? "NO" : "YES";
       const hedgeAmt = cfg.hedge.allowExceedMax ? cfg.hedge.absoluteMaxUsd : cfg.hedge.maxUsd;
-      if (await executeBuy(p.tokenId, p.conditionId, opp, hedgeAmt, "Hedge", cfg, true)) {
+      if (await executeBuy(p.tokenId, p.conditionId, opp, hedgeAmt, `Hedge (${pct(p.pnlPct)})`, cfg, true, p.curPrice)) {
         state.hedged.add(p.tokenId);
         cycleActed.add(p.tokenId);
       }
@@ -628,7 +759,7 @@ async function cycle(walletAddr: string, cfg: Config) {
         state.stacked.add(p.tokenId);
         continue;
       }
-      if (await executeBuy(p.tokenId, p.conditionId, p.outcome, cfg.stack.maxUsd, "Stack", cfg, false)) {
+      if (await executeBuy(p.tokenId, p.conditionId, p.outcome, cfg.stack.maxUsd, `Stack (${pct(p.pnlPct)})`, cfg, false, p.curPrice)) {
         state.stacked.add(p.tokenId);
         cycleActed.add(p.tokenId);
       }
@@ -640,7 +771,7 @@ async function cycle(walletAddr: string, cfg: Config) {
       if (p.value < cfg.endgame.maxUsd * 2) {
         const addAmt = Math.min(cfg.endgame.maxUsd, cfg.endgame.maxUsd * 2 - p.value);
         if (addAmt >= 5) {
-          await executeBuy(p.tokenId, p.conditionId, p.outcome, addAmt, "Endgame", cfg, false);
+          await executeBuy(p.tokenId, p.conditionId, p.outcome, addAmt, "Endgame", cfg, false, p.curPrice);
           cycleActed.add(p.tokenId);
         }
       }
@@ -756,8 +887,8 @@ export function loadConfig() {
   if (envNum("AUTO_REDEEM_MIN_POSITION_USD") !== undefined) cfg.redeem.minPositionUsd = envNum("AUTO_REDEEM_MIN_POSITION_USD")!;
   
   // ========== COPY TRADING ==========
-  // V1: TARGET_ADDRESSES, TRADE_MULTIPLIER, MIN_TRADE_SIZE_USD
-  // V2: COPY_ADDRESSES, COPY_MULTIPLIER, COPY_MIN_USD, COPY_MAX_USD
+  // V1: TARGET_ADDRESSES, TRADE_MULTIPLIER, MIN_TRADE_SIZE_USD, MIN_BUY_PRICE
+  // V2: COPY_ADDRESSES, COPY_MULTIPLIER, COPY_MIN_USD, COPY_MAX_USD, COPY_MIN_BUY_PRICE
   // Also: MONITOR_ADDRESSES
   const copyAddrs = env("COPY_ADDRESSES") || env("TARGET_ADDRESSES") || env("MONITOR_ADDRESSES");
   if (copyAddrs) {
@@ -769,12 +900,28 @@ export function loadConfig() {
   if (envNum("COPY_MIN_USD") !== undefined) cfg.copy.minUsd = envNum("COPY_MIN_USD")!;
   if (envNum("MIN_TRADE_SIZE_USD") !== undefined) cfg.copy.minUsd = envNum("MIN_TRADE_SIZE_USD")!;
   if (envNum("COPY_MAX_USD") !== undefined) cfg.copy.maxUsd = envNum("COPY_MAX_USD")!;
+  if (envNum("COPY_MIN_BUY_PRICE") !== undefined) cfg.copy.minBuyPrice = envNum("COPY_MIN_BUY_PRICE")!;
+  if (envNum("MIN_BUY_PRICE") !== undefined) cfg.copy.minBuyPrice = envNum("MIN_BUY_PRICE")!;
+  
+  // ========== SELL SIGNAL MONITOR ==========
+  // When tracked trader sells, check our position and take protective action
+  // V1: SELL_SIGNAL_MIN_LOSS_PCT_TO_ACT, SELL_SIGNAL_PROFIT_THRESHOLD_TO_SKIP, SELL_SIGNAL_SEVERE_LOSS_PCT
+  // V2: SELL_SIGNAL_ENABLED, SELL_SIGNAL_MIN_LOSS_PCT, SELL_SIGNAL_PROFIT_SKIP_PCT, SELL_SIGNAL_SEVERE_PCT
+  if (envBool("SELL_SIGNAL_ENABLED") !== undefined) cfg.sellSignal.enabled = envBool("SELL_SIGNAL_ENABLED")!;
+  if (envNum("SELL_SIGNAL_MIN_LOSS_PCT") !== undefined) cfg.sellSignal.minLossPctToAct = envNum("SELL_SIGNAL_MIN_LOSS_PCT")!;
+  if (envNum("SELL_SIGNAL_MIN_LOSS_PCT_TO_ACT") !== undefined) cfg.sellSignal.minLossPctToAct = envNum("SELL_SIGNAL_MIN_LOSS_PCT_TO_ACT")!;
+  if (envNum("SELL_SIGNAL_PROFIT_SKIP_PCT") !== undefined) cfg.sellSignal.profitThresholdToSkip = envNum("SELL_SIGNAL_PROFIT_SKIP_PCT")!;
+  if (envNum("SELL_SIGNAL_PROFIT_THRESHOLD_TO_SKIP") !== undefined) cfg.sellSignal.profitThresholdToSkip = envNum("SELL_SIGNAL_PROFIT_THRESHOLD_TO_SKIP")!;
+  if (envNum("SELL_SIGNAL_SEVERE_PCT") !== undefined) cfg.sellSignal.severeLossPct = envNum("SELL_SIGNAL_SEVERE_PCT")!;
+  if (envNum("SELL_SIGNAL_SEVERE_LOSS_PCT") !== undefined) cfg.sellSignal.severeLossPct = envNum("SELL_SIGNAL_SEVERE_LOSS_PCT")!;
+  if (envNum("SELL_SIGNAL_COOLDOWN_MS") !== undefined) cfg.sellSignal.cooldownMs = envNum("SELL_SIGNAL_COOLDOWN_MS")!;
   
   // ========== ARBITRAGE ==========
-  // V1: ARB_ENABLED, ARB_DRY_RUN, ARB_MIN_EDGE_BPS
+  // V1: ARB_ENABLED, ARB_DRY_RUN, ARB_MIN_EDGE_BPS, ARB_MIN_BUY_PRICE
   if (envBool("ARB_ENABLED") !== undefined) cfg.arbitrage.enabled = envBool("ARB_ENABLED")!;
   if (envNum("ARB_MAX_USD") !== undefined) cfg.arbitrage.maxUsd = envNum("ARB_MAX_USD")!;
   if (envNum("ARB_MIN_EDGE_BPS") !== undefined) cfg.arbitrage.minEdgeBps = envNum("ARB_MIN_EDGE_BPS")!;
+  if (envNum("ARB_MIN_BUY_PRICE") !== undefined) cfg.arbitrage.minBuyPrice = envNum("ARB_MIN_BUY_PRICE")!;
 
   // ========== LIVE TRADING ==========
   // V1: ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS
@@ -831,18 +978,18 @@ export async function startV2() {
 
   log(`Preset: ${settings.preset}`);
   log(`Wallet: ${addr.slice(0, 10)}...`);
-  log(`Balance: $${state.balance.toFixed(2)} (${settings.config.reservePct}% reserved)`);
+  log(`Balance: ${$(state.balance)} (${settings.config.reservePct}% reserved)`);
   log(`Trading: ${state.liveTrading ? "🟢 LIVE" : "🔸 SIMULATED"}`);
   if (state.proxyAddress) log(`Proxy: ${state.proxyAddress.slice(0, 10)}...`);
   if (settings.config.copy.enabled) log(`👀 Copying ${settings.config.copy.addresses.length} trader(s)`);
   
-  await alert("Bot Started", `${settings.preset} | ${state.liveTrading ? "LIVE" : "SIM"} | $${state.balance.toFixed(2)}`);
+  await alertStatus(`Bot Started | ${settings.preset} | ${state.liveTrading ? "LIVE" : "SIM"} | ${$(state.balance)}`);
 
   await cycle(addr, settings.config);
   setInterval(() => cycle(addr, settings.config).catch(e => log(`❌ ${e}`)), settings.intervalMs);
 
   process.on("SIGINT", async () => {
-    await alert("Bot Stopped", "Shutdown");
+    await alertStatus("Bot Stopped | Shutdown");
     process.exit(0);
   });
 }
