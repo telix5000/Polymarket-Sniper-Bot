@@ -33,6 +33,10 @@ services:
       - TARGET_ADDRESSES=${TARGET_ADDRESSES}
 
       # ======== OPTIONAL - All have sensible defaults ========
+      # Use V2 (new simple) system instead of V1 (legacy)
+      # Set USE_V2=true to enable V2 (default: false = V1)
+      - USE_V2=${USE_V2:-false}
+
       # Mode: arb, mempool, or both
       - MODE=arb
 
