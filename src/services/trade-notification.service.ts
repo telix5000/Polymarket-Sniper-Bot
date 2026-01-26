@@ -61,20 +61,57 @@ let telegramService: TelegramService | null = null;
 let getPnLSummary: (() => LedgerSummary | Promise<LedgerSummary>) | null = null;
 let recordTradeCallback: ((trade: Trade) => void) | null = null;
 let logger: Logger | null = null;
+let initialized = false;
 
 /**
  * Initialize the trade notification service with a Telegram service instance.
  * This should be called once during application startup.
+ *
+ * IDEMPOTENT: If already initialized, logs once and returns without overwriting.
+ * This prevents duplicate initialization when called from multiple runtime paths.
  */
 export function initTradeNotificationService(
   telegram: TelegramService,
   log?: Logger,
 ): void {
+  // Idempotency guard: prevent duplicate initialization
+  // Only check `initialized` flag for simplicity since both flags are always set together
+  if (initialized) {
+    log?.debug(
+      "[TradeNotification] Service already initialized - skipping duplicate init",
+    );
+    return;
+  }
+
   telegramService = telegram;
+  initialized = true;
   if (log) {
     logger = log;
-    logger.debug("[TradeNotification] Service initialized");
+    logger.info(
+      `[TradeNotification] Service initialized (enabled: ${telegram.isEnabled()})`,
+    );
   }
+}
+
+/**
+ * Check if the trade notification service has been initialized.
+ * Useful for diagnostics and testing.
+ */
+export function isTradeNotificationInitialized(): boolean {
+  return initialized;
+}
+
+/**
+ * Reset the trade notification service state.
+ * ONLY FOR TESTING - allows tests to reset singleton state between runs.
+ * @internal
+ */
+export function resetTradeNotificationServiceForTesting(): void {
+  telegramService = null;
+  getPnLSummary = null;
+  recordTradeCallback = null;
+  logger = null;
+  initialized = false;
 }
 
 /**
@@ -235,15 +272,20 @@ export async function notifyTrade(
   recordTradeToLedger(input);
 
   if (!telegramService) {
+    // More diagnostic message: show MODE and suggest fix
+    const mode = process.env.MODE ?? process.env.mode ?? "unknown";
     logger?.warn(
-      `[TradeNotification] Cannot send ${input.type} notification - telegramService not initialized`,
+      `[TradeNotification] ⚠️ SKIPPED ${input.type} notification - service not initialized ` +
+        `(mode=${mode}). Ensure initTradeNotificationService() is called before trades execute.`,
     );
     return false;
   }
 
   if (!telegramService.isEnabled()) {
+    // Debug-level: user intentionally hasn't configured Telegram
     logger?.debug(
-      `[TradeNotification] Cannot send ${input.type} notification - Telegram not enabled`,
+      `[TradeNotification] Skipping ${input.type} notification - Telegram not configured ` +
+        `(missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID)`,
     );
     return false;
   }

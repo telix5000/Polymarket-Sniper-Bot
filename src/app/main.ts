@@ -49,16 +49,25 @@ async function main(): Promise<void> {
   // This fetches top traders from Polymarket leaderboard dynamically
   await populateTargetAddressesFromLeaderboard(logger);
 
-  // Check if unified STRATEGY_PRESET is configured
+  // Load unified STRATEGY_PRESET configuration
+  // This controls which strategies/components are enabled
   const strategyConfig = loadStrategyConfig(cliOverrides);
 
-  const mode = String(
-    process.env.MODE ?? process.env.mode ?? "mempool",
-  ).toLowerCase();
-  logger.info(`🚀 Starting Polymarket runtime mode=${mode}`);
+  // Determine what runs based on strategyConfig
+  // If no strategyConfig is set, both arb and monitor default to enabled
+  const arbEnabled = strategyConfig?.arbEnabled ?? true;
+  const monitorEnabled = strategyConfig?.monitorEnabled ?? true;
+
+  // Log startup mode
+  if (strategyConfig) {
+    logger.info(`🚀 Starting Polymarket (preset: ${strategyConfig.presetName})`);
+    logger.info(`📊 Components: orchestrator=${strategyConfig.enabled ? "ON" : "OFF"}, arb=${arbEnabled ? "ON" : "OFF"}, monitor=${monitorEnabled ? "ON" : "OFF"}`);
+  } else {
+    logger.info(`🚀 Starting Polymarket with default config`);
+    logger.info(`📊 Components: arb=${arbEnabled ? "ON" : "OFF"}, monitor=${monitorEnabled ? "ON" : "OFF"}`);
+  }
 
   // Run authentication and preflight ONCE at top level before starting any engines
-  // This ensures MODE=both only runs preflight once, not twice
   logger.info("🔐 Authenticating with Polymarket...");
   const auth = createPolymarketAuthFromEnv(logger);
 
@@ -74,13 +83,12 @@ async function main(): Promise<void> {
   const client = await auth.getClobClient();
 
   // Load config to get parameters for preflight
-  // For MODE=both, prefer ARB config as it has all necessary parameters
-  const env =
-    mode === "arb" || mode === "both"
-      ? loadArbConfig(cliOverrides)
-      : loadMonitorConfig(cliOverrides);
+  // Use ARB config when arbitrage is enabled, otherwise monitor config
+  const env = arbEnabled
+    ? loadArbConfig(cliOverrides)
+    : loadMonitorConfig(cliOverrides);
 
-  // Run preflight ONCE for all modes
+  // Run preflight ONCE for all components
   logger.info("🔍 Running preflight checks...");
   const tradingReady = await ensureTradingReady({
     client,
@@ -243,8 +251,6 @@ async function main(): Promise<void> {
 
       // Send startup notification showing enabled strategies
       // This helps users verify Telegram is working and understand what to expect
-      // Check if mempool mode will also run (MODE=both or MODE=mempool)
-      const mempoolWillRun = mode === "mempool" || mode === "both";
       void telegramService
         .sendStartupNotification({
           endgameSweep: strategyConfig.endgameSweepEnabled,
@@ -255,7 +261,7 @@ async function main(): Promise<void> {
           hedging: strategyConfig.hedgingEnabled,
           stopLoss: true, // Always enabled when orchestrator runs
           autoRedeem: strategyConfig.autoRedeemEnabled,
-          frontrun: mempoolWillRun, // Frontrun/copy trading enabled when mempool mode runs
+          frontrun: monitorEnabled, // Frontrun/copy trading enabled when monitor runs
         })
         .catch((err) => {
           logger.warn(
@@ -288,17 +294,17 @@ async function main(): Promise<void> {
     }
   } else if (strategyConfig && !strategyConfig.enabled) {
     logger.info(
-      `[Strategy] Preset=${strategyConfig.presetName} disabled; using individual ARB/MONITOR presets.`,
+      `[Strategy] Preset=${strategyConfig.presetName} disabled; using individual config flags.`,
     );
   }
 
-  // Start ARB engine if configured, passing pre-authenticated client
-  if (mode === "arb" || mode === "both") {
+  // Start ARB engine if enabled via config
+  if (arbEnabled) {
     await startArbitrageEngine(cliOverrides, client, tradingReady);
   }
 
-  // Start MEMPOOL monitor if configured, using same authenticated client
-  if (mode === "mempool" || mode === "both") {
+  // Start MEMPOOL monitor if enabled via config
+  if (monitorEnabled) {
     const mempoolEnv = loadMonitorConfig(cliOverrides);
     logger.info(formatClobCredsChecklist(mempoolEnv.clobCredsChecklist));
 

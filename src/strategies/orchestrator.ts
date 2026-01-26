@@ -19,7 +19,9 @@
  * 6. Hedging - Hedge losing positions
  * 7. Stop-Loss - Sell positions at max loss
  * 8. Scalp Take-Profit - Time-based profit taking with momentum checks
- * 9. Endgame Sweep - Buy high-confidence positions
+ * 9. Position Stacking - Double down on winning positions
+ * 10. Endgame Sweep - Buy high-confidence positions
+ * 11. Arbitrage - Scan markets for yes+no < $1 opportunities (optional)
  */
 
 import { randomUUID } from "crypto";
@@ -73,6 +75,11 @@ import {
   type PositionStackingConfig,
   DEFAULT_POSITION_STACKING_CONFIG,
 } from "./position-stacking";
+import {
+  ArbitrageStrategy,
+  type ArbitrageStrategyConfig,
+  DEFAULT_ARBITRAGE_STRATEGY_CONFIG,
+} from "./arbitrage";
 import { RiskManager, createRiskManager } from "./risk-manager";
 import { PnLLedger, type LedgerSummary } from "./pnl-ledger";
 import type { RelayerContext } from "../polymarket/relayer";
@@ -104,6 +111,7 @@ export interface OrchestratorConfig {
   stopLossConfig?: Partial<StopLossConfig>;
   dynamicReservesConfig?: Partial<DynamicReservesConfig>;
   positionStackingConfig?: Partial<PositionStackingConfig>;
+  arbitrageConfig?: Partial<ArbitrageStrategyConfig>;
   /** Wallet balance fetcher for dynamic reserves (optional - if not provided, reserves are disabled) */
   getWalletBalances?: () => Promise<WalletBalances>;
 }
@@ -127,6 +135,7 @@ export class Orchestrator {
   private scalpStrategy: ScalpTradeStrategy;
   private endgameStrategy: EndgameSweepStrategy;
   private positionStackingStrategy: PositionStackingStrategy;
+  private arbitrageStrategy?: ArbitrageStrategy;
   // quickFlipStrategy removed - module deprecated
 
   private executionTimer?: NodeJS.Timeout;
@@ -345,6 +354,27 @@ export class Orchestrator {
       },
     });
 
+    // 9. Arbitrage - Scan markets for yes+no < $1 opportunities
+    // Only initialize if config is provided (requires arbConfig with all settings)
+    if (config.arbitrageConfig?.enabled && config.arbitrageConfig?.arbConfig) {
+      // Cast client to include wallet (required by ArbitrageStrategy)
+      const clientWithWallet = config.client as ClobClient & { wallet: import("ethers").Wallet };
+      if (clientWithWallet.wallet) {
+        this.arbitrageStrategy = new ArbitrageStrategy({
+          client: clientWithWallet,
+          logger: config.logger,
+          config: {
+            ...DEFAULT_ARBITRAGE_STRATEGY_CONFIG,
+            ...config.arbitrageConfig,
+          } as ArbitrageStrategyConfig,
+        });
+      } else {
+        config.logger.warn(
+          "[Orchestrator] Arbitrage enabled but client.wallet not available - skipping",
+        );
+      }
+    }
+
     // Quick Flip module removed - ScalpTrade handles profit-taking
 
     this.logger.info(
@@ -561,6 +591,16 @@ export class Orchestrator {
           this.endgameStrategy.execute(this.currentReservePlan ?? undefined),
         strategyTimings,
       );
+
+      // 9. Arbitrage - Scan markets for yes+no < $1 opportunities
+      // Runs last as it scans ALL markets (not just positions)
+      if (this.arbitrageStrategy) {
+        await this.runStrategyTimed(
+          "Arbitrage",
+          () => this.arbitrageStrategy!.execute(),
+          strategyTimings,
+        );
+      }
 
       // Quick Flip removed - functionality covered by ScalpTrade
     } catch (err) {
