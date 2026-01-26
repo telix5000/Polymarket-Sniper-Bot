@@ -1423,14 +1423,20 @@ async function alert(action: string, details: string, success = true) {
   const line = `${action} ${icon} | ${details}`;
   log(`📢 ${line}`);
   if (state.telegram) {
+    // Escape markdown in user-provided content to avoid 400 errors
+    const safeLine = `${escapeMarkdown(action)} ${icon} | ${escapeMarkdown(details)}`;
     await axios
       .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
         chat_id: state.telegram.chatId,
-        text: line,
+        text: safeLine,
         parse_mode: "Markdown",
         disable_notification: state.telegram.silent,
       })
-      .catch((e) => log(`⚠️ Telegram error: ${e.message}`));
+      .catch((e) => {
+        // Log more details from Telegram API response if available
+        const responseData = e.response?.data?.description || e.message;
+        log(`⚠️ Telegram error: ${responseData}`);
+      });
   }
 }
 
@@ -1464,14 +1470,28 @@ async function alertTrade(
   log(`📢 ${msg.replace(/\n/g, " | ").replace(/\*/g, "")}`);
 
   if (state.telegram) {
+    // Escape user-provided content (strategy, outcome, errorMsg) to avoid Telegram Markdown parse errors
+    const safeStrategy = escapeMarkdown(strategy);
+    const safeOutcome = escapeMarkdown(outcome);
+    let safeMsg: string;
+    if (success) {
+      safeMsg = `${side} ${icon} | *${safeStrategy}*\n${safeOutcome} ${$(sizeUsd)}${priceStr}${balanceStr}${pnlStr}`;
+    } else {
+      const safeError = escapeMarkdown(errorMsg || "Failed");
+      safeMsg = `${side} ${icon} | *${safeStrategy}*\n${safeOutcome} ${$(sizeUsd)} | ${safeError}`;
+    }
     await axios
       .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
         chat_id: state.telegram.chatId,
-        text: msg,
+        text: safeMsg,
         parse_mode: "Markdown",
         disable_notification: state.telegram.silent,
       })
-      .catch((e) => log(`⚠️ Telegram error: ${e.message}`));
+      .catch((e) => {
+        // Log more details from Telegram API response if available
+        const responseData = e.response?.data?.description || e.message;
+        log(`⚠️ Telegram error: ${responseData}`);
+      });
   }
 }
 
@@ -1479,14 +1499,20 @@ async function alertTrade(
 async function alertStatus(msg: string) {
   log(`📢 ${msg}`);
   if (state.telegram) {
+    // Escape markdown in message to avoid 400 errors
+    const safeMsg = escapeMarkdown(msg);
     await axios
       .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
         chat_id: state.telegram.chatId,
-        text: `🤖 ${msg}`,
+        text: `🤖 ${safeMsg}`,
         parse_mode: "Markdown",
         disable_notification: state.telegram.silent,
       })
-      .catch((e) => log(`⚠️ Telegram error: ${e.message}`));
+      .catch((e) => {
+        // Log more details from Telegram API response if available
+        const responseData = e.response?.data?.description || e.message;
+        log(`⚠️ Telegram error: ${responseData}`);
+      });
   }
 }
 
@@ -1506,6 +1532,20 @@ function $price(price: number): string {
 function pct(value: number): string {
   const sign = value >= 0 ? "+" : "";
   return `${sign}${value.toFixed(1)}%`;
+}
+
+/**
+ * Escape special characters for Telegram Markdown
+ * Telegram's Markdown parser requires escaping: _ * [ ] ( ) ~ ` > # + - = | { } . !
+ * For MarkdownV2, all need escaping; for legacy Markdown, main ones are: _ * [ ` 
+ */
+function escapeMarkdown(text: string): string {
+  // Escape characters that break Telegram's legacy Markdown parser
+  return text
+    .replace(/\*/g, "\\*")
+    .replace(/_/g, "\\_")
+    .replace(/\[/g, "\\[")
+    .replace(/`/g, "\\`");
 }
 
 // ============ API ============
