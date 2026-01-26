@@ -130,11 +130,11 @@ export interface PnLSnapshot {
  * Strategy status for startup notification
  */
 export interface StartupStrategyStatus {
-  // Core modules
+  // Core modules (required - always show status)
   presetName?: string;
-  orchestrator?: boolean;
-  arb?: boolean;
-  monitor?: boolean;
+  orchestrator: boolean;
+  arb: boolean;
+  monitor: boolean;
   // Strategies
   endgameSweep?: boolean;
   positionStacking?: boolean;

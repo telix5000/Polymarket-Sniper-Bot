@@ -694,6 +694,81 @@ describe("TelegramService Class", () => {
     assert.ok(body.text.includes("Tx:")); // Tx hash label
     assert.ok(body.text.includes("0xabcdef12345678")); // Truncated tx hash
   });
+
+  test("sendStartupNotification includes preset name and core module status", async () => {
+    const logger = createMockLogger();
+    const service = new TelegramService(
+      { botToken: "test-token", chatId: "123456" },
+      logger,
+    );
+
+    const result = await service.sendStartupNotification({
+      presetName: "balanced",
+      orchestrator: true,
+      arb: true,
+      monitor: true,
+      endgameSweep: true,
+      positionStacking: true,
+      hedging: true,
+    });
+
+    assert.strictEqual(result, true);
+    assert.strictEqual(mockFetch.mock.calls.length, 1);
+
+    const [, options] = mockFetch.mock.calls[0].arguments;
+    const body = JSON.parse(options.body);
+    // Check preset name is included
+    assert.ok(body.text.includes("balanced"), "Message should include preset name");
+    // Check core modules section with ✅ indicators
+    assert.ok(body.text.includes("Core Modules"), "Message should include Core Modules section");
+    assert.ok(body.text.includes("✅ Orchestrator"), "Message should show Orchestrator enabled");
+    assert.ok(body.text.includes("✅ Arbitrage"), "Message should show Arbitrage enabled");
+    assert.ok(body.text.includes("✅ Monitor"), "Message should show Monitor enabled");
+    // Check strategies are included
+    assert.ok(body.text.includes("Endgame Sweep"), "Message should include Endgame Sweep strategy");
+    assert.ok(body.text.includes("Position Stacking"), "Message should include Position Stacking strategy");
+    assert.ok(body.text.includes("Hedging"), "Message should include Hedging strategy");
+  });
+
+  test("sendStartupNotification shows ❌ for disabled core modules", async () => {
+    const logger = createMockLogger();
+    const service = new TelegramService(
+      { botToken: "test-token", chatId: "123456" },
+      logger,
+    );
+
+    const result = await service.sendStartupNotification({
+      presetName: "off",
+      orchestrator: false,
+      arb: false,
+      monitor: false,
+    });
+
+    assert.strictEqual(result, true);
+    assert.strictEqual(mockFetch.mock.calls.length, 1);
+
+    const [, options] = mockFetch.mock.calls[0].arguments;
+    const body = JSON.parse(options.body);
+    // Check core modules are shown as disabled
+    assert.ok(body.text.includes("❌ Orchestrator"), "Message should show Orchestrator disabled");
+    assert.ok(body.text.includes("❌ Arbitrage"), "Message should show Arbitrage disabled");
+    assert.ok(body.text.includes("❌ Monitor"), "Message should show Monitor disabled");
+  });
+
+  test("sendStartupNotification returns false when disabled", async () => {
+    const logger = createMockLogger();
+    const service = new TelegramService({}, logger);
+
+    const result = await service.sendStartupNotification({
+      presetName: "balanced",
+      orchestrator: true,
+      arb: true,
+      monitor: true,
+    });
+
+    assert.strictEqual(result, false);
+    assert.strictEqual(mockFetch.mock.calls.length, 0);
+  });
 });
 
 describe("Telegram API Request Body Construction", () => {

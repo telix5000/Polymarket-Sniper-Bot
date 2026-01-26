@@ -1615,7 +1615,8 @@ export type StrategyConfig = {
 
 /**
  * Load unified strategy configuration from STRATEGY_PRESET
- * Falls back to individual ARB_PRESET and MONITOR_PRESET if not set
+ * Defaults to "balanced" preset when STRATEGY_PRESET is not set,
+ * which enables orchestrator and core strategies.
  * Supports LIVE_TRADING as alias for ARB_LIVE_TRADING
  */
 export function loadStrategyConfig(
