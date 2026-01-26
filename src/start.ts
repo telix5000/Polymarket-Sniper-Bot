@@ -14,6 +14,7 @@
  *   TELEGRAM_BOT_TOKEN   - Telegram alerts
  *   TELEGRAM_CHAT_ID     - Telegram chat
  *   INTERVAL_MS          - Cycle interval (default: 5000)
+ *   SCAVENGER_ENABLED    - Enable/disable scavenger mode (default: true)
  */
 
 import "dotenv/config";
@@ -27,6 +28,10 @@ import {
   type OrderResult,
   type Logger,
   type PolReserveConfig,
+  type ScavengerConfig,
+  type TradingModeState,
+  type DetectionState,
+  type ScavengerState,
   // Auth
   createClobClient,
   isLiveTradingEnabled,
@@ -59,6 +64,27 @@ import {
   // POL Reserve
   loadPolReserveConfig,
   runPolReserve,
+  // Trading Mode
+  TradingMode,
+  createTradingModeState,
+  transitionMode,
+  isScavengerMode,
+  formatModeState,
+  // Scavenger
+  loadScavengerConfig,
+  createDetectionState,
+  createScavengerState,
+  resetScavengerState,
+  analyzeMarketConditions,
+  recordVolumeSample,
+  recordTargetActivity,
+  recordOrderBookSnapshot,
+  checkTargetActivity,
+  fetchRecentVolume,
+  fetchOrderBookDepth,
+  runScavengerCycle,
+  getScavengerSummary,
+  canMicroBuy,
 } from "./lib";
 
 // ============ STATE ============
@@ -69,6 +95,7 @@ interface State {
   address: string;
   config: PresetConfig;
   polReserveConfig: PolReserveConfig;
+  scavengerConfig: ScavengerConfig;
   presetName: string;
   maxPositionUsd: number;
   liveTrading: boolean;
@@ -85,12 +112,18 @@ interface State {
   lastRedeem: number;
   lastSummary: number;
   lastPolReserveCheck: number;
+  lastDetectionCheck: number;
+  // Trading Mode
+  tradingModeState: TradingModeState;
+  detectionState: DetectionState;
+  scavengerState: ScavengerState;
 }
 
 const state: State = {
   address: "",
   config: {} as PresetConfig,
   polReserveConfig: {} as PolReserveConfig,
+  scavengerConfig: {} as ScavengerConfig,
   presetName: "balanced",
   maxPositionUsd: 25,
   liveTrading: false,
@@ -104,6 +137,10 @@ const state: State = {
   lastRedeem: 0,
   lastSummary: 0,
   lastPolReserveCheck: 0,
+  lastDetectionCheck: 0,
+  tradingModeState: createTradingModeState(),
+  detectionState: createDetectionState(),
+  scavengerState: createScavengerState(),
 };
 
 // ============ LOGGER ============
@@ -421,6 +458,159 @@ async function runPolReserveCheck(): Promise<void> {
   }
 }
 
+// ============ SCAVENGER MODE ============
+
+/**
+ * Check market conditions and potentially switch trading modes
+ */
+async function runModeDetection(positions: Position[]): Promise<void> {
+  const cfg = state.scavengerConfig;
+  if (!cfg.enabled) return;
+
+  const now = Date.now();
+  const DETECTION_INTERVAL_MS = 30000; // Check every 30 seconds
+
+  if (now - state.lastDetectionCheck < DETECTION_INTERVAL_MS) return;
+  state.lastDetectionCheck = now;
+
+  // Gather market data in parallel to minimize blocking
+  const tokenIds = positions.map((p) => p.tokenId);
+
+  const [volume, targetActivity, orderBookDepth] = await Promise.all([
+    fetchRecentVolume(tokenIds),
+    checkTargetActivity(state.targets, cfg.detection.targetActivityWindowMs),
+    state.client
+      ? fetchOrderBookDepth(state.client, tokenIds)
+      : Promise.resolve({ avgBidDepthUsd: 0, avgAskDepthUsd: 0, bestBid: 0, bestAsk: 0 }),
+  ]);
+
+  // Record samples
+  state.detectionState = recordVolumeSample(
+    state.detectionState,
+    volume,
+    cfg.detection.volumeWindowMs,
+  );
+  state.detectionState = recordTargetActivity(
+    state.detectionState,
+    targetActivity.activeCount,
+    targetActivity.totalCount,
+    cfg.detection.targetActivityWindowMs,
+  );
+  // Record order book snapshot
+  state.detectionState = recordOrderBookSnapshot(
+    state.detectionState,
+    {
+      bidDepthUsd: orderBookDepth.avgBidDepthUsd,
+      askDepthUsd: orderBookDepth.avgAskDepthUsd,
+      bestBid: orderBookDepth.bestBid,
+      bestAsk: orderBookDepth.bestAsk,
+    },
+    cfg.detection.stagnantBookThresholdMs,
+  );
+
+  // Analyze conditions
+  const currentlyInScavengerMode = isScavengerMode(state.tradingModeState);
+  const { result, newState } = analyzeMarketConditions(
+    state.detectionState,
+    cfg.detection,
+    currentlyInScavengerMode,
+    cfg.reversion,
+    logger,
+  );
+  state.detectionState = newState;
+
+  // Handle mode transitions
+  if (result.shouldEnterScavengerMode && !currentlyInScavengerMode) {
+    state.tradingModeState = transitionMode(
+      state.tradingModeState,
+      TradingMode.LOW_LIQUIDITY_SCAVENGE_MODE,
+      {
+        trigger: "Low liquidity detected",
+        metrics: {
+          volumeUsd: result.metrics.recentVolumeUsd,
+          volumeThreshold: cfg.detection.volumeThresholdUsd,
+          orderBookDepth: result.metrics.avgOrderBookDepthUsd,
+          depthThreshold: cfg.detection.minOrderBookDepthUsd,
+          staleDurationMs: result.metrics.lowLiquidityDurationMs,
+          staleThresholdMs: cfg.detection.sustainedConditionMs,
+        },
+      },
+      logger,
+    );
+
+    // Reset scavenger state for fresh start
+    state.scavengerState = createScavengerState();
+
+    await sendTelegram(
+      "🦅 Scavenger Mode Activated",
+      `Low liquidity detected\nVolume: $${result.metrics.recentVolumeUsd.toFixed(2)}\nReasons: ${result.reasons.join(", ")}`,
+    );
+  } else if (result.shouldExitScavengerMode && currentlyInScavengerMode) {
+    state.tradingModeState = transitionMode(
+      state.tradingModeState,
+      TradingMode.NORMAL_MODE,
+      {
+        trigger: "Market activity recovered",
+        metrics: {
+          volumeUsd: result.metrics.recentVolumeUsd,
+          volumeThreshold: cfg.reversion.volumeRecoveryThresholdUsd,
+          orderBookDepth: result.metrics.avgOrderBookDepthUsd,
+          depthThreshold: cfg.reversion.depthRecoveryThresholdUsd,
+          activeTargets: targetActivity.activeCount,
+          totalTargets: targetActivity.totalCount,
+        },
+      },
+      logger,
+    );
+
+    // Reset scavenger state
+    state.scavengerState = resetScavengerState(state.scavengerState);
+
+    await sendTelegram(
+      "🔄 Normal Mode Restored",
+      `Market activity recovered\nVolume: $${result.metrics.recentVolumeUsd.toFixed(2)}\nReasons: ${result.reasons.join(", ")}`,
+    );
+  }
+}
+
+/**
+ * Run scavenger mode logic (position management in low liquidity)
+ */
+async function runScavengerMode(positions: Position[]): Promise<void> {
+  if (!state.client) return;
+  if (!isScavengerMode(state.tradingModeState)) return;
+
+  const cfg = state.scavengerConfig;
+  const balance = state.wallet ? await getUsdcBalance(state.wallet, state.address) : 0;
+
+  // Run scavenger cycle
+  const { results, newState } = await runScavengerCycle(
+    state.client,
+    positions,
+    state.scavengerState,
+    cfg,
+    balance,
+    logger,
+  );
+
+  state.scavengerState = newState;
+
+  // Update trade count
+  const executions = results.filter((r) => r.action !== "NONE" && r.orderResult?.success);
+  state.tradesExecuted += executions.length;
+
+  // Send notifications for significant actions
+  for (const result of executions) {
+    if (result.action === "EXIT_GREEN" || result.action === "EXIT_RED_RECOVERY") {
+      await sendTelegram(
+        `🦅 ${result.action === "EXIT_GREEN" ? "Green Exit" : "Recovery Exit"}`,
+        `${result.outcome} | $${result.sizeUsd?.toFixed(2)} | ${result.reason}`,
+      );
+      invalidatePositions();
+    }
+  }
+}
+
 // ============ MAIN CYCLE ============
 
 async function runCycle(): Promise<void> {
@@ -428,16 +618,32 @@ async function runCycle(): Promise<void> {
 
   const positions = await getPositions(state.address);
 
-  // Strategies in priority order
-  await runCopyTrading();
-  await runAutoSell(positions);
-  await runHedge(positions);
-  await runStopLoss(positions);
-  await runScalp(positions);
-  await runStack(positions);
-  await runEndgame(positions);
-  await runRedeem();
-  await runPolReserveCheck();
+  // Run mode detection (checks for mode transitions)
+  await runModeDetection(positions);
+
+  // Check current mode and run appropriate strategies
+  if (isScavengerMode(state.tradingModeState)) {
+    // SCAVENGER MODE: Conservative capital preservation
+    // Only run essential strategies + scavenger logic
+    await runAutoSell(positions); // Still exit at high prices
+    await runScavengerMode(positions); // Scavenger-specific logic
+    await runRedeem();
+    await runPolReserveCheck();
+
+    // NO copy trading, stacking, hedging, or endgame in scavenger mode
+    // These could deploy capital in unfavorable conditions
+  } else {
+    // NORMAL MODE: Full strategy execution
+    await runCopyTrading();
+    await runAutoSell(positions);
+    await runHedge(positions);
+    await runStopLoss(positions);
+    await runScalp(positions);
+    await runStack(positions);
+    await runEndgame(positions);
+    await runRedeem();
+    await runPolReserveCheck();
+  }
 }
 
 // ============ SUMMARY ============
@@ -453,13 +659,21 @@ async function printSummary(): Promise<void> {
   const equity = balance + totalValue;
   const sessionPnl = equity - state.startBalance;
 
-  const summary = [
+  const summaryLines = [
     `💰 Balance: ${$(balance)}`,
     `📊 Positions: ${positions.length} (${$(totalValue)})`,
     `📈 Unrealized: ${totalPnl >= 0 ? "+" : ""}${$(totalPnl)}`,
     `📊 Session: ${sessionPnl >= 0 ? "+" : ""}${$(sessionPnl)}`,
     `🔄 Trades: ${state.tradesExecuted}`,
-  ].join("\n");
+    `⚙️ ${formatModeState(state.tradingModeState)}`,
+  ];
+
+  // Add scavenger summary if in scavenger mode
+  if (isScavengerMode(state.tradingModeState)) {
+    summaryLines.push(getScavengerSummary(state.scavengerState, state.scavengerConfig));
+  }
+
+  const summary = summaryLines.join("\n");
 
   logger.info(`\n=== Summary ===\n${summary}\n===============`);
   await sendTelegram("📊 Summary", summary);
@@ -475,12 +689,15 @@ async function main(): Promise<void> {
   state.presetName = name;
   state.config = config;
   state.polReserveConfig = loadPolReserveConfig(config);
+  state.scavengerConfig = loadScavengerConfig();
   state.maxPositionUsd = getMaxPositionUsd(config);
   state.liveTrading = isLiveTradingEnabled();
 
   logger.info(`Preset: ${name}`);
   logger.info(`Max Position: ${$(state.maxPositionUsd)}`);
   logger.info(`Live Trading: ${state.liveTrading ? "ENABLED" : "DISABLED"}`);
+  logger.info(`POL Reserve: ${state.polReserveConfig.enabled ? `ON (target: ${state.polReserveConfig.targetPol} POL)` : "OFF"}`);
+  logger.info(`Scavenger Mode: ${state.scavengerConfig.enabled ? "ENABLED" : "DISABLED"}`);
   logger.info(
     `POL Reserve: ${state.polReserveConfig.enabled ? `ON (target: ${state.polReserveConfig.targetPol} POL)` : "OFF"}`,
   );
