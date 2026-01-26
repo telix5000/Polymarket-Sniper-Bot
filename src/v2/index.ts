@@ -3236,7 +3236,7 @@ export function loadConfig() {
   const cfg: Config = JSON.parse(JSON.stringify(PRESETS[preset]));
   const env = (k: string) => process.env[k];
   const envBool = (k: string) => {
-    const val = env(k);
+    const val = env(k)?.trim().toLowerCase();
     if (!val) return undefined;
     return val === "true" || val === "1" || val === "yes";
   };
@@ -3578,7 +3578,7 @@ export function loadConfig() {
         ? {
             token: (env("TELEGRAM_TOKEN") || env("TELEGRAM_BOT_TOKEN"))!,
             chatId: (env("TELEGRAM_CHAT") || env("TELEGRAM_CHAT_ID"))!,
-            silent: (env("TELEGRAM_SILENT") ?? "").toLowerCase() === "true",
+            silent: !!envBool("TELEGRAM_SILENT"),
           }
         : undefined,
   };
