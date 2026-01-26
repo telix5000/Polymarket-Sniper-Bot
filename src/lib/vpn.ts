@@ -217,10 +217,14 @@ function generateWireguardConfig(logger?: Logger): string | null {
   const presharedKey = process.env.WIREGUARD_PEER_PRESHARED_KEY;
   const persistentKeepalive = process.env.WIREGUARD_PERSISTENT_KEEPALIVE;
 
-  // Detect container environment - resolvconf doesn't work in Alpine containers
-  // because they lack an init system (systemd/OpenRC) that resolvconf expects.
-  // In containers, use PostUp/PostDown scripts to manage DNS directly.
-  const isContainer = existsSync("/.dockerenv") || !!process.env.container;
+  // Detect container environment - Alpine containers often have resolvconf installed
+  // but it requires an init system (systemd/OpenRC) to manage DNS state, which
+  // containers typically lack. In containers, use PostUp/PostDown scripts to manage DNS directly.
+  const isContainer =
+    existsSync("/.dockerenv") ||
+    process.env.container?.toLowerCase() === "docker" ||
+    process.env.container?.toLowerCase() === "podman" ||
+    !!process.env.container;
 
   // Build config
   let config = "[Interface]\n";
@@ -248,8 +252,12 @@ function generateWireguardConfig(logger?: Logger): string | null {
         const nameserverLines = validDnsServers
           .map((s) => `nameserver ${s}`)
           .join("\\n");
-        config += `PostUp = cp /etc/resolv.conf /etc/resolv.conf.wg-backup 2>/dev/null || true; printf '${nameserverLines}\\n' > /etc/resolv.conf\n`;
-        config += `PostDown = cp /etc/resolv.conf.wg-backup /etc/resolv.conf 2>/dev/null || true\n`;
+        // Use interface-specific backup file to avoid conflicts with multiple WireGuard interfaces
+        const backupPath = `/etc/resolv.conf.${interfaceName}-backup`;
+        // Preserve existing DNS entries by prepending VPN DNS servers to the original resolv.conf
+        config += `PostUp = cp /etc/resolv.conf ${backupPath} 2>/dev/null || true; (printf '${nameserverLines}\\n'; cat ${backupPath} 2>/dev/null || cat /etc/resolv.conf) > /etc/resolv.conf.tmp && mv /etc/resolv.conf.tmp /etc/resolv.conf\n`;
+        // Restore backup if it exists, otherwise fall back to a default DNS server
+        config += `PostDown = if [ -f ${backupPath} ]; then cp ${backupPath} /etc/resolv.conf 2>/dev/null || true; else echo 'nameserver 8.8.8.8' > /etc/resolv.conf; fi\n`;
         logger?.info?.(
           `WIREGUARD_DNS detected in container - using PostUp/PostDown scripts instead of resolvconf`
         );

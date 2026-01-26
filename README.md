@@ -514,29 +514,29 @@ No complex internal logic or cross-strategy dependencies. What you set is what i
 
 If you're in a geo-blocked region, you'll need a VPN to access Polymarket APIs. The bot supports both WireGuard and OpenVPN.
 
-### ⚠️ CRITICAL: WireGuard DNS Issue in Docker (Alpine Linux)
+### WireGuard DNS in Docker (Alpine Linux)
 
-**DO NOT SET `WIREGUARD_DNS` when running in Alpine Linux Docker containers** (the default for this bot). This causes WireGuard to fail with:
-```
-resolvconf: could not detect a useable init system
-resolvconf: signature mismatch: /etc/resolv.conf
-```
+**Setting `WIREGUARD_DNS` is optional and now fully supported in Alpine containers.** The bot automatically handles DNS configuration using PostUp/PostDown scripts instead of resolvconf.
 
-**Why:** Alpine Linux containers don't have an init system (systemd/OpenRC) that `resolvconf` requires. When you set DNS in your WireGuard config, `wg-quick` tries to use `resolvconf` to update DNS, which fails and tears down the entire VPN connection.
+**What happens internally:**
+- The bot detects it's running in a container
+- Instead of using the `DNS` directive (which requires resolvconf), it generates PostUp/PostDown scripts
+- PostUp prepends your VPN DNS servers to `/etc/resolv.conf` while preserving Docker's DNS entries
+- PostDown restores the original DNS configuration when the VPN disconnects
 
-**Solution:** Simply omit `WIREGUARD_DNS` from your environment variables. Docker manages DNS automatically via `/etc/resolv.conf`, and your container will work fine without it.
+**Recommendation:** You can safely omit `WIREGUARD_DNS` because Docker manages DNS automatically. However, if you need custom DNS servers (e.g., for privacy or specific resolver requirements), setting `WIREGUARD_DNS` will work correctly.
 
 ### WireGuard Setup
 
 ```bash
-# Minimal WireGuard config (NO DNS!)
+# Minimal WireGuard config
 WIREGUARD_ENABLED=true
 WIREGUARD_ADDRESS=10.0.0.2/24
 WIREGUARD_PRIVATE_KEY=your_private_key
 WIREGUARD_PEER_PUBLIC_KEY=peer_public_key  
 WIREGUARD_PEER_ENDPOINT=vpn.example.com:51820
 WIREGUARD_ALLOWED_IPS=0.0.0.0/0
-# WIREGUARD_DNS=1.1.1.1  # ❌ DO NOT SET THIS IN DOCKER!
+# WIREGUARD_DNS=1.1.1.1  # Optional - Docker manages DNS, but custom DNS is supported
 ```
 
 ### OpenVPN Setup
