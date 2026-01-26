@@ -13,6 +13,32 @@ const parseBool = (raw: string | undefined, defaultValue: boolean): boolean => {
 };
 
 /**
+ * Validates that a string is a valid IPv4 address.
+ * Each octet must be 0-255 with no leading zeros.
+ */
+const isValidIpv4 = (ip: string): boolean => {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return false;
+  return parts.every((part) => {
+    // Must be numeric with no leading zeros (except "0" itself)
+    if (!/^\d+$/.test(part)) return false;
+    const num = parseInt(part, 10);
+    if (num < 0 || num > 255) return false;
+    // Check for leading zeros (e.g., "01" or "001")
+    if (part.length > 1 && part.startsWith("0")) return false;
+    return true;
+  });
+};
+
+/**
+ * Result of capturing pre-VPN routing information.
+ */
+export interface PreVpnRouting {
+  gateway: string | undefined;
+  iface: string | undefined;
+}
+
+/**
  * Extracts the hostname from an RPC URL.
  * Handles http://, https://, and URLs with ports and paths.
  */
@@ -34,14 +60,13 @@ const resolveHost = async (hostname: string): Promise<string | undefined> => {
     // Use getent which is available on most Linux systems
     const { stdout } = await execFileAsync("getent", ["ahosts", hostname]);
     // getent ahosts returns lines like "1.2.3.4 STREAM hostname"
-    // We want the first IPv4 address
+    // We want the first valid IPv4 address
     const lines = stdout.trim().split("\n");
     for (const line of lines) {
       const parts = line.trim().split(/\s+/);
       if (parts.length >= 1) {
         const ip = parts[0];
-        // Check if it's an IPv4 address (simple check)
-        if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) {
+        if (isValidIpv4(ip)) {
           return ip;
         }
       }
@@ -65,8 +90,13 @@ const getDefaultGateway = async (): Promise<string | undefined> => {
       "default",
     ]);
     // Output looks like: "default via 172.17.0.1 dev eth0"
-    const match = stdout.match(/via\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
-    return match?.[1];
+    // Extract the IP after "via" and validate it
+    const match = stdout.match(/via\s+(\S+)/);
+    const ip = match?.[1];
+    if (ip && isValidIpv4(ip)) {
+      return ip;
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -201,11 +231,10 @@ export async function setupRpcVpnBypass(
     return false;
   }
 
-  // Check if it's already an IP address
-  const isIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+  // Check if it's already a valid IP address
   let rpcIp: string;
 
-  if (isIp) {
+  if (isValidIpv4(hostname)) {
     rpcIp = hostname;
   } else {
     // Resolve hostname to IP
@@ -241,10 +270,7 @@ export async function setupRpcVpnBypass(
  *
  * @returns Object with gateway and interface, or undefined values if capture fails
  */
-export async function capturePreVpnRouting(): Promise<{
-  gateway: string | undefined;
-  iface: string | undefined;
-}> {
+export async function capturePreVpnRouting(): Promise<PreVpnRouting> {
   const gateway = await getDefaultGateway();
   const iface = await getDefaultInterface();
   return { gateway, iface };
