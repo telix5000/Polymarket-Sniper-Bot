@@ -1,26 +1,478 @@
 /**
- * Entry Point - Switches between V1 (old) and V2 (new simple)
+ * Polymarket Trading Bot V2
+ * Clean, self-contained implementation
  *
- * ENV:
- *   USE_V2=true  - Use new simple system
- *   USE_V2=false - Use old system (default)
+ * REQUIRED:
+ *   PRIVATE_KEY - Wallet private key (0x...)
+ *   RPC_URL     - Polygon RPC endpoint
+ *
+ * OPTIONAL:
+ *   STRATEGY_PRESET      - conservative | balanced | aggressive
+ *   LIVE_TRADING         - "I_UNDERSTAND_THE_RISKS" to enable
+ *   TARGET_ADDRESSES     - Comma-separated addresses to copy
+ *   MAX_POSITION_USD     - Max USD per position
+ *   TELEGRAM_BOT_TOKEN   - Telegram alerts
+ *   TELEGRAM_CHAT_ID     - Telegram chat
+ *   INTERVAL_MS          - Cycle interval (default: 5000)
  */
 
-// Load environment variables from .env file
 import "dotenv/config";
+import type { ClobClient } from "@polymarket/clob-client";
+import type { Wallet } from "ethers";
 
-async function main() {
-  const useV2 = process.env.USE_V2?.toLowerCase() === "true";
+import {
+  // Types
+  type Position,
+  type PresetConfig,
+  type OrderResult,
+  type Logger,
+  // Auth
+  createClobClient,
+  isLiveTradingEnabled,
+  // Config
+  loadPreset,
+  getMaxPositionUsd,
+  TIMING,
+  ORDER,
+  // Data
+  getPositions,
+  invalidatePositions,
+  getUsdcBalance,
+  getPolBalance,
+  // Trading
+  postOrder,
+  // Copy trading
+  getTargetAddresses,
+  fetchRecentTrades,
+  // Notifications
+  initTelegram,
+  sendTelegram,
+  // Redemption
+  redeemAll,
+  // VPN
+  startWireguard,
+  startOpenvpn,
+  setupRpcBypass,
+} from "./lib";
 
-  if (useV2) {
-    console.log("🚀 Starting V2 (simple) system...\n");
-    const { startV2 } = await import("./v2");
-    await startV2();
-  } else {
-    console.log("🚀 Starting V1 (legacy) system...\n");
-    // Import and run the old main
-    await import("./app/main");
+// ============ STATE ============
+
+interface State {
+  client?: ClobClient;
+  wallet?: Wallet;
+  address: string;
+  config: PresetConfig;
+  presetName: string;
+  maxPositionUsd: number;
+  liveTrading: boolean;
+  targets: string[];
+  // Tracking
+  cycleCount: number;
+  startTime: number;
+  startBalance: number;
+  tradesExecuted: number;
+  // Memory
+  stackedTokens: Set<string>;
+  hedgedTokens: Set<string>;
+  // Timing
+  lastRedeem: number;
+  lastSummary: number;
+}
+
+const state: State = {
+  address: "",
+  config: {} as PresetConfig,
+  presetName: "balanced",
+  maxPositionUsd: 25,
+  liveTrading: false,
+  targets: [],
+  cycleCount: 0,
+  startTime: Date.now(),
+  startBalance: 0,
+  tradesExecuted: 0,
+  stackedTokens: new Set(),
+  hedgedTokens: new Set(),
+  lastRedeem: 0,
+  lastSummary: 0,
+};
+
+// ============ LOGGER ============
+
+const logger: Logger = {
+  info: (msg) => console.log(`[${time()}] ${msg}`),
+  warn: (msg) => console.log(`[${time()}] ⚠️ ${msg}`),
+  error: (msg) => console.log(`[${time()}] ❌ ${msg}`),
+};
+
+function time(): string {
+  return new Date().toISOString().substring(11, 19);
+}
+
+function $(n: number): string {
+  return `$${n.toFixed(2)}`;
+}
+
+// ============ TRADING ============
+
+async function buy(
+  tokenId: string,
+  outcome: "YES" | "NO",
+  sizeUsd: number,
+  reason: string,
+  marketId?: string,
+): Promise<boolean> {
+  if (!state.client) return false;
+
+  const size = Math.min(sizeUsd, state.maxPositionUsd);
+
+  if (!state.liveTrading) {
+    logger.info(`🔸 [SIM] BUY ${outcome} ${$(size)} | ${reason}`);
+    await sendTelegram("[SIM] BUY", `${reason}\n${outcome} ${$(size)}`);
+    return true;
   }
+
+  const result = await postOrder({
+    client: state.client,
+    tokenId,
+    outcome,
+    side: "BUY",
+    sizeUsd: size,
+    marketId,
+    logger,
+  });
+
+  if (result.success) {
+    logger.info(`✅ BUY ${outcome} ${$(result.filledUsd ?? size)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢ | ${reason}`);
+    await sendTelegram("BUY", `${reason}\n${outcome} ${$(result.filledUsd ?? size)}`);
+    state.tradesExecuted++;
+    invalidatePositions();
+    return true;
+  }
+
+  if (result.reason !== "SIMULATED") {
+    logger.warn(`BUY failed: ${result.reason} | ${reason}`);
+  }
+  return false;
+}
+
+async function sell(
+  tokenId: string,
+  outcome: "YES" | "NO",
+  sizeUsd: number,
+  reason: string,
+): Promise<boolean> {
+  if (!state.client) return false;
+
+  if (!state.liveTrading) {
+    logger.info(`🔸 [SIM] SELL ${outcome} ${$(sizeUsd)} | ${reason}`);
+    await sendTelegram("[SIM] SELL", `${reason}\n${outcome} ${$(sizeUsd)}`);
+    return true;
+  }
+
+  const result = await postOrder({
+    client: state.client,
+    tokenId,
+    outcome,
+    side: "SELL",
+    sizeUsd,
+    skipDuplicateCheck: true,
+    logger,
+  });
+
+  if (result.success) {
+    logger.info(`✅ SELL ${outcome} ${$(result.filledUsd ?? sizeUsd)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢ | ${reason}`);
+    await sendTelegram("SELL", `${reason}\n${outcome} ${$(result.filledUsd ?? sizeUsd)}`);
+    state.tradesExecuted++;
+    invalidatePositions();
+    return true;
+  }
+
+  if (result.reason !== "SIMULATED") {
+    logger.warn(`SELL failed: ${result.reason} | ${reason}`);
+  }
+  return false;
+}
+
+// ============ STRATEGIES ============
+
+async function runAutoSell(positions: Position[]): Promise<void> {
+  const cfg = state.config.autoSell;
+  if (!cfg.enabled) return;
+
+  for (const p of positions) {
+    if (p.curPrice >= cfg.threshold) {
+      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `AutoSell (${(p.curPrice * 100).toFixed(0)}¢)`);
+    }
+  }
+}
+
+async function runHedge(positions: Position[]): Promise<void> {
+  const cfg = state.config.hedge;
+  if (!cfg.enabled) return;
+
+  for (const p of positions) {
+    if (state.hedgedTokens.has(p.tokenId)) continue;
+    if (p.pnlPct >= 0 || Math.abs(p.pnlPct) < cfg.triggerPct) continue;
+
+    const opposite = p.outcome === "YES" ? "NO" : "YES";
+    const maxHedge = cfg.allowExceedMax ? cfg.absoluteMaxUsd : cfg.maxUsd;
+    const hedgeSize = Math.min(maxHedge, p.value * 0.5);
+
+    const success = await buy(
+      p.tokenId,
+      opposite,
+      hedgeSize,
+      `Hedge (${p.pnlPct.toFixed(1)}%)`,
+      p.marketId,
+    );
+
+    if (success) state.hedgedTokens.add(p.tokenId);
+  }
+}
+
+async function runStopLoss(positions: Position[]): Promise<void> {
+  const cfg = state.config.stopLoss;
+  if (!cfg.enabled || state.config.hedge.enabled) return;
+
+  for (const p of positions) {
+    if (p.pnlPct < 0 && Math.abs(p.pnlPct) >= cfg.maxLossPct) {
+      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `StopLoss (${p.pnlPct.toFixed(1)}%)`);
+    }
+  }
+}
+
+async function runScalp(positions: Position[]): Promise<void> {
+  const cfg = state.config.scalp;
+  if (!cfg.enabled) return;
+
+  for (const p of positions) {
+    if (
+      p.pnlPct >= cfg.minProfitPct &&
+      p.gainCents >= cfg.minGainCents &&
+      p.pnlUsd >= cfg.minProfitUsd
+    ) {
+      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `Scalp (+${p.pnlPct.toFixed(1)}%)`);
+    }
+  }
+}
+
+async function runStack(positions: Position[]): Promise<void> {
+  const cfg = state.config.stack;
+  if (!cfg.enabled) return;
+
+  for (const p of positions) {
+    if (state.stackedTokens.has(p.tokenId)) continue;
+    if (p.gainCents < cfg.minGainCents || p.curPrice > cfg.maxPrice) continue;
+    if (p.curPrice < ORDER.GLOBAL_MIN_BUY_PRICE) continue;
+
+    const success = await buy(
+      p.tokenId,
+      p.outcome as "YES" | "NO",
+      cfg.maxUsd,
+      `Stack (+${p.gainCents.toFixed(0)}¢)`,
+      p.marketId,
+    );
+
+    if (success) state.stackedTokens.add(p.tokenId);
+  }
+}
+
+async function runEndgame(positions: Position[]): Promise<void> {
+  const cfg = state.config.endgame;
+  if (!cfg.enabled) return;
+
+  for (const p of positions) {
+    if (p.curPrice < cfg.minPrice || p.curPrice > cfg.maxPrice) continue;
+    if (p.pnlPct <= 0) continue;
+
+    await buy(
+      p.tokenId,
+      p.outcome as "YES" | "NO",
+      cfg.maxUsd,
+      `Endgame (${(p.curPrice * 100).toFixed(0)}¢)`,
+      p.marketId,
+    );
+  }
+}
+
+async function runCopyTrading(): Promise<void> {
+  if (state.targets.length === 0) return;
+
+  const trades = await fetchRecentTrades(state.targets);
+  const cfg = state.config.copy;
+
+  for (const t of trades) {
+    if (t.side !== "BUY") continue;
+    if (t.price < cfg.minBuyPrice) continue;
+
+    const size = Math.min(
+      Math.max(t.sizeUsd * cfg.multiplier, cfg.minUsd),
+      cfg.maxUsd,
+      state.maxPositionUsd,
+    );
+
+    if (size < cfg.minUsd) continue;
+
+    await buy(
+      t.tokenId,
+      t.outcome as "YES" | "NO",
+      size,
+      `Copy (${t.trader.slice(0, 8)}...)`,
+      t.marketId,
+    );
+  }
+}
+
+async function runRedeem(): Promise<void> {
+  const cfg = state.config.redeem;
+  if (!cfg.enabled || !state.wallet) return;
+
+  const now = Date.now();
+  if (now - state.lastRedeem < cfg.intervalMin * 60 * 1000) return;
+
+  state.lastRedeem = now;
+  const count = await redeemAll(state.wallet, state.address, cfg.minPositionUsd, logger);
+
+  if (count > 0) {
+    logger.info(`Redeemed ${count} positions`);
+    await sendTelegram("Redeem", `Redeemed ${count} positions`);
+    invalidatePositions();
+  }
+}
+
+// ============ MAIN CYCLE ============
+
+async function runCycle(): Promise<void> {
+  state.cycleCount++;
+
+  const positions = await getPositions(state.address);
+
+  // Strategies in priority order
+  await runCopyTrading();
+  await runAutoSell(positions);
+  await runHedge(positions);
+  await runStopLoss(positions);
+  await runScalp(positions);
+  await runStack(positions);
+  await runEndgame(positions);
+  await runRedeem();
+}
+
+// ============ SUMMARY ============
+
+async function printSummary(): Promise<void> {
+  const positions = await getPositions(state.address, true);
+  const balance = state.wallet ? await getUsdcBalance(state.wallet) : 0;
+
+  const totalValue = positions.reduce((s, p) => s + p.value, 0);
+  const totalPnl = positions.reduce((s, p) => s + p.pnlUsd, 0);
+  const equity = balance + totalValue;
+  const sessionPnl = equity - state.startBalance;
+
+  const summary = [
+    `💰 Balance: ${$(balance)}`,
+    `📊 Positions: ${positions.length} (${$(totalValue)})`,
+    `📈 Unrealized: ${totalPnl >= 0 ? "+" : ""}${$(totalPnl)}`,
+    `📊 Session: ${sessionPnl >= 0 ? "+" : ""}${$(sessionPnl)}`,
+    `🔄 Trades: ${state.tradesExecuted}`,
+  ].join("\n");
+
+  logger.info(`\n=== Summary ===\n${summary}\n===============`);
+  await sendTelegram("📊 Summary", summary);
+}
+
+// ============ STARTUP ============
+
+async function main(): Promise<void> {
+  console.log("\n=== Polymarket Trading Bot V2 ===\n");
+
+  // Load config
+  const { name, config } = loadPreset();
+  state.presetName = name;
+  state.config = config;
+  state.maxPositionUsd = getMaxPositionUsd(config);
+  state.liveTrading = isLiveTradingEnabled();
+
+  logger.info(`Preset: ${name}`);
+  logger.info(`Max Position: ${$(state.maxPositionUsd)}`);
+  logger.info(`Live Trading: ${state.liveTrading ? "ENABLED" : "DISABLED"}`);
+
+  // Telegram
+  initTelegram();
+
+  // VPN
+  const rpcUrl = process.env.RPC_URL ?? "";
+  const ovpn = await startOpenvpn(logger);
+  if (!ovpn) await startWireguard(logger);
+  await setupRpcBypass(rpcUrl, logger);
+
+  // Auth
+  logger.info("Authenticating...");
+  const auth = await createClobClient(
+    process.env.PRIVATE_KEY ?? "",
+    rpcUrl,
+    logger,
+  );
+
+  if (!auth.success || !auth.client || !auth.wallet) {
+    logger.error(`Auth failed: ${auth.error}`);
+    process.exit(1);
+  }
+
+  state.client = auth.client;
+  state.wallet = auth.wallet;
+  state.address = auth.address ?? "";
+
+  logger.info(`Wallet: ${state.address.slice(0, 10)}...`);
+
+  // Balances
+  const usdc = await getUsdcBalance(state.wallet);
+  const pol = await getPolBalance(state.wallet);
+  logger.info(`USDC: ${$(usdc)}`);
+  logger.info(`POL: ${pol.toFixed(4)}`);
+  state.startBalance = usdc;
+
+  // Targets
+  state.targets = await getTargetAddresses();
+  logger.info(`Copy targets: ${state.targets.length}`);
+
+  // Startup notification
+  await sendTelegram("🚀 Bot Started", [
+    `Preset: ${name}`,
+    `Wallet: ${state.address.slice(0, 10)}...`,
+    `Balance: ${$(usdc)}`,
+    `Live: ${state.liveTrading ? "YES" : "NO"}`,
+  ].join("\n"));
+
+  // Main loop
+  const interval = parseInt(process.env.INTERVAL_MS ?? String(TIMING.CYCLE_MS), 10);
+  logger.info(`\nStarting (${interval}ms interval)...\n`);
+
+  const loop = async () => {
+    try {
+      await runCycle();
+
+      // Periodic summary
+      const now = Date.now();
+      if (now - state.lastSummary > TIMING.SUMMARY_INTERVAL_MS) {
+        state.lastSummary = now;
+        await printSummary();
+      }
+    } catch (err) {
+      logger.error(`Cycle error: ${err}`);
+    }
+  };
+
+  await loop();
+  setInterval(loop, interval);
+
+  // Shutdown
+  process.on("SIGINT", async () => {
+    logger.info("\nShutting down...");
+    await printSummary();
+    await sendTelegram("🛑 Bot Stopped", "Graceful shutdown");
+    process.exit(0);
+  });
 }
 
 main().catch((err) => {

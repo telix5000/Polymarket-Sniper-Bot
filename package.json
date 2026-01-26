@@ -24,7 +24,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/start.js",
-    "dev": "ts-node src/app/main.ts",
+    "dev": "npx ts-node src/start.ts",
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
     "format": "prettier --write .",
@@ -54,10 +54,7 @@
     "wallet:check": "ts-node scripts/check_wallet_status.ts",
     "wallet:detect": "ts-node scripts/detect_wallet_type.ts",
     "onchain:status": "[ -f dist/cli/onchain-status.command.js ] && node dist/cli/onchain-status.command.js || ts-node src/cli/onchain-status.command.ts",
-    "print-targets": "ts-node scripts/printTargets.ts",
-    "start:v2": "USE_V2=true node dist/start.js",
-    "start:v1": "USE_V2=false node dist/start.js",
-    "dev:v2": "USE_V2=true npx ts-node src/start.ts"
+    "print-targets": "ts-node scripts/printTargets.ts"
   },
   "keywords": [
     "polymarket",
