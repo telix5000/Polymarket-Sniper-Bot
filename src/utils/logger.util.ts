@@ -1,14 +1,17 @@
 /**
  * Simple Console Logger
+ *
+ * This module re-uses the shared Logger interface from src/lib/types.ts
+ * to avoid duplication and divergence.
  */
 
-export interface Logger {
-  info(msg: string): void;
-  warn(msg: string): void;
-  error(msg: string): void;
-  debug?(msg: string): void;
-}
+import type { Logger } from "../lib/types";
 
+export type { Logger };
+
+/**
+ * Console-based implementation of the shared Logger interface.
+ */
 export class ConsoleLogger implements Logger {
   info(msg: string): void {
     console.log(msg);

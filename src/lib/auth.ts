@@ -19,6 +19,11 @@ export interface AuthResult {
   error?: string;
 }
 
+// Private key with 0x prefix should be exactly 66 chars (2 for '0x' + 64 hex chars)
+const PRIVATE_KEY_LENGTH_WITH_PREFIX = 66;
+// Regex to validate hex private key format
+const PRIVATE_KEY_HEX_REGEX = /^0x[0-9a-fA-F]{64}$/;
+
 /**
  * Create authenticated CLOB client
  *
@@ -34,16 +39,18 @@ export async function createClobClient(
   rpcUrl: string,
   logger?: Logger,
 ): Promise<AuthResult> {
-  // Private key with 0x prefix should be 66 chars (2 for '0x' + 64 hex chars)
-  const PRIVATE_KEY_LENGTH_WITH_PREFIX = 66;
-
   try {
     // Normalize private key
     const normalizedKey = privateKey?.startsWith("0x")
       ? privateKey
       : `0x${privateKey}`;
 
-    if (!normalizedKey || normalizedKey.length < PRIVATE_KEY_LENGTH_WITH_PREFIX) {
+    // Validate private key format: exactly 66 chars and valid hex
+    if (
+      !normalizedKey ||
+      normalizedKey.length !== PRIVATE_KEY_LENGTH_WITH_PREFIX ||
+      !PRIVATE_KEY_HEX_REGEX.test(normalizedKey)
+    ) {
       return { success: false, error: "PRIVATE_KEY is invalid or missing" };
     }
     if (!rpcUrl) {
@@ -55,26 +62,35 @@ export async function createClobClient(
     const address = wallet.address;
 
     // Read signature type from env - default to 0 (EOA)
+    // Handle NaN by falling back to 0
     const signatureTypeStr =
       process.env.POLYMARKET_SIGNATURE_TYPE ?? process.env.CLOB_SIGNATURE_TYPE;
-    const signatureType = signatureTypeStr ? parseInt(signatureTypeStr, 10) : 0;
+    const signatureType = signatureTypeStr
+      ? parseInt(signatureTypeStr, 10) || 0
+      : 0;
 
-    // Read funder/proxy address - only used if signature type > 0
-    const funderAddress =
+    // Read funder/proxy address - normalize to lowercase
+    const funderAddressRaw =
       process.env.POLYMARKET_PROXY_ADDRESS ?? process.env.CLOB_FUNDER_ADDRESS;
+    const funderAddress = funderAddressRaw?.toLowerCase();
+
+    // Determine effective signature type:
+    // If proxy mode requested but no funder address, fall back to EOA mode
+    const effectiveSignatureType =
+      signatureType > 0 && funderAddress ? signatureType : 0;
 
     // Effective address for trading/balance checks
     const effectiveAddress =
-      signatureType > 0 && funderAddress ? funderAddress : address;
+      effectiveSignatureType > 0 && funderAddress ? funderAddress : address;
 
     logger?.info?.(
-      `Authenticating wallet ${address.slice(0, 10)}... (signatureType=${signatureType}${signatureType > 0 ? `, funder=${funderAddress?.slice(0, 10)}...` : " EOA mode"})`,
+      `Authenticating wallet ${address.slice(0, 10)}... (signatureType=${effectiveSignatureType}${effectiveSignatureType > 0 ? `, funder=${funderAddress?.slice(0, 10)}...` : " EOA mode"})`,
     );
 
-    // Warn if proxy mode without funder
+    // Warn if proxy mode was requested but no funder - falling back to EOA
     if (signatureType > 0 && !funderAddress) {
       logger?.warn?.(
-        `signatureType=${signatureType} but no POLYMARKET_PROXY_ADDRESS set. Using EOA address.`,
+        `signatureType=${signatureType} but no POLYMARKET_PROXY_ADDRESS set. Falling back to EOA mode (signatureType=0).`,
       );
     }
 
@@ -84,8 +100,8 @@ export async function createClobClient(
       POLYGON.CHAIN_ID,
       wallet as any,
       undefined, // No creds yet
-      signatureType,
-      signatureType > 0 ? funderAddress : undefined,
+      effectiveSignatureType,
+      effectiveSignatureType > 0 ? funderAddress : undefined,
     );
 
     // Derive API credentials
@@ -103,18 +119,21 @@ export async function createClobClient(
       POLYGON.CHAIN_ID,
       wallet as any,
       creds, // Pass the derived credentials
-      signatureType,
-      signatureType > 0 ? funderAddress : undefined,
+      effectiveSignatureType,
+      effectiveSignatureType > 0 ? funderAddress : undefined,
     );
 
     logger?.info?.("Authentication successful");
+
+    // Return effectiveAddress as the primary address for balance/position lookups
+    const normalizedEffectiveAddress = effectiveAddress.toLowerCase();
 
     return {
       success: true,
       client,
       wallet,
-      address: address.toLowerCase(),
-      effectiveAddress: effectiveAddress.toLowerCase(),
+      address: normalizedEffectiveAddress,
+      effectiveAddress: normalizedEffectiveAddress,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

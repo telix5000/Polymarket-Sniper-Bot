@@ -19,17 +19,11 @@
 
 import { JsonRpcProvider, Wallet } from "ethers";
 import { ClobClient } from "@polymarket/clob-client";
+import type { Logger } from "../lib/types";
 
 const CLOB_HOST = "https://clob.polymarket.com";
 const POLYGON_CHAIN_ID = 137;
 const DEFAULT_RPC_URL = "https://polygon-rpc.com";
-
-export interface Logger {
-  info(msg: string): void;
-  warn(msg: string): void;
-  error(msg: string): void;
-  debug?(msg: string): void;
-}
 
 export interface ApiKeyCreds {
   key: string;
@@ -269,9 +263,12 @@ export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
   }
 
   // Read signature type - default to 0 (EOA)
+  // Handle NaN by falling back to 0
   const signatureTypeStr =
     process.env.POLYMARKET_SIGNATURE_TYPE ?? process.env.CLOB_SIGNATURE_TYPE;
-  const signatureType = signatureTypeStr ? parseInt(signatureTypeStr, 10) : 0;
+  const signatureType = signatureTypeStr
+    ? parseInt(signatureTypeStr, 10) || 0
+    : 0;
 
   // Read funder/proxy address - only used if signature type > 0
   const funderAddress =
