@@ -1441,7 +1441,9 @@ export class HedgingStrategy {
         outcome: orderOutcome,
         side: "BUY",
         sizeUsd: buyUsd,
-        maxAcceptablePrice: askPrice * 1.02, // Allow 2% slippage
+        // Use buySlippagePct to compute maxAcceptablePrice from FRESH orderbook data.
+        // This ensures we don't overpay based on stale cached askPrice in hot markets.
+        buySlippagePct: 2, // Allow 2% slippage above fresh best ask
         logger: this.logger,
         skipDuplicatePrevention: true, // Hedge up is intentional
         skipMinBuyPriceCheck: true, // High prices are what we want here
@@ -1786,7 +1788,9 @@ export class HedgingStrategy {
         outcome: orderOutcome,
         side: "BUY",
         sizeUsd: hedgeUsd,
-        maxAcceptablePrice: oppositePrice * 1.02,
+        // Use buySlippagePct to compute maxAcceptablePrice from FRESH orderbook data.
+        // This ensures we don't overpay based on stale cached oppositePrice in hot markets.
+        buySlippagePct: 2, // Allow 2% slippage above fresh best ask
         logger: this.logger,
         skipDuplicatePrevention: true, // Hedges are intentional
         skipMinBuyPriceCheck: true, // Allow buying low-priced hedges

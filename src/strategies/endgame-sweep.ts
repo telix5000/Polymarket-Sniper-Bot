@@ -327,7 +327,9 @@ export class EndgameSweepStrategy {
         outcome: market.side,
         side: "BUY",
         sizeUsd,
-        maxAcceptablePrice: market.price * 1.02,
+        // Use buySlippagePct to compute maxAcceptablePrice from FRESH orderbook data.
+        // This ensures we don't overpay based on stale cached prices in hot markets.
+        buySlippagePct: 2, // Allow 2% slippage above fresh best ask
         logger: this.logger,
       });
 

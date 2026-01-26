@@ -74,6 +74,7 @@ import {
 } from "../utils/log-deduper.util";
 import { notifyScalp } from "../services/trade-notification.service";
 import { DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
+import { fetchOrderbookWithFallback } from "../utils/fast-orderbook.util";
 
 /**
  * Scalp Take-Profit Configuration
@@ -209,6 +210,21 @@ export interface ScalpTradeConfig {
    * Default: 15 seconds
    */
   profitRetrySec: number;
+
+  /**
+   * Retry cadence in seconds for urgent exits (BREAKEVEN, FORCE stages, or losing positions).
+   * Much faster than profitRetrySec to ensure quick exits in falling markets.
+   * Default: 3 seconds (5x faster than profit stage)
+   */
+  urgentRetrySec: number;
+
+  /**
+   * Whether to fetch fresh orderbook data before each exit attempt.
+   * When true, fetches real-time orderbook instead of relying on cached position data.
+   * This ensures decisions are based on current market conditions, not stale prices.
+   * Default: true (recommended for accurate exit pricing)
+   */
+  useFreshOrderbook: boolean;
 
   /**
    * Minimum order size in USD
@@ -685,6 +701,8 @@ export const DEFAULT_SCALP_TRADE_CONFIG: ScalpTradeConfig = {
   // Exit ladder configuration
   exitWindowSec: 120, // 2 minute exit window
   profitRetrySec: 15, // Retry every 15 seconds during PROFIT stage
+  urgentRetrySec: 3, // Retry every 3 seconds for urgent exits (BREAKEVEN/FORCE/losing)
+  useFreshOrderbook: true, // Fetch fresh orderbook before each exit attempt (critical for accurate pricing)
   minOrderUsd: 5, // Minimum order size (positions below this are DUST)
   // Legacy position handling (safer default)
   legacyPositionMode: "allow_profitable_only", // Only exit profitable positions with trusted P&L
@@ -2360,11 +2378,75 @@ export class ScalpTradeStrategy {
       this.executionCircuitBreaker.delete(plan.tokenId);
     }
 
-    // At this point, currentBidPrice is guaranteed to exist and be > 0
-    // because validateOrderbookQuality() would have returned NO_EXECUTION_PRICE if not
-    const bestBidCents = position.currentBidPrice! * 100;
-    const bestBidDollars = position.currentBidPrice!;
-    const bestAskDollars = position.currentAskPrice ?? null;
+    // === FRESH ORDERBOOK FETCH (Critical for accurate exit pricing) ===
+    // When useFreshOrderbook is enabled, fetch real-time orderbook data instead of
+    // relying on cached position tracker data (which can be 5+ seconds stale).
+    // This is critical for:
+    // 1. Accurate limit price calculation
+    // 2. Detecting when market has moved favorably
+    // 3. Avoiding "Sale blocked" errors from stale price-based decisions
+    let bestBidCents: number;
+    let bestBidDollars: number;
+    let bestAskDollars: number | null;
+
+    if (this.config.useFreshOrderbook) {
+      try {
+        // Use fast orderbook reader (bypasses VPN for speed) with fallback to VPN client
+        const { orderbook: freshOrderbook, source, latencyMs } = await fetchOrderbookWithFallback(
+          plan.tokenId,
+          () => this.client.getOrderBook(plan.tokenId),
+          this.logger,
+        );
+        const priceExtraction = extractOrderbookPrices(freshOrderbook);
+
+        if (priceExtraction.bestBid === null || priceExtraction.bestBid <= 0) {
+          // No bid available from fresh fetch
+          plan.blockedReason = "NO_BID";
+          plan.blockedAtMs = now;
+          if (this.logDeduper.shouldLog(`ScalpExit:FRESH_NO_BID:${plan.tokenId}`, 10_000)) {
+            this.logger.warn(
+              `[ProfitTaker] FRESH_ORDERBOOK: No bids for tokenId=${plan.tokenId.slice(0, 12)}... ` +
+                `(cached bid was ${position.currentBidPrice !== undefined ? (position.currentBidPrice * 100).toFixed(1) + "¢" : "undefined"}) ` +
+                `source=${source} latency=${latencyMs}ms`,
+            );
+          }
+          return { filled: false, reason: "NO_BID", shouldContinue: true };
+        }
+
+        bestBidDollars = priceExtraction.bestBid;
+        bestBidCents = bestBidDollars * 100;
+        bestAskDollars = priceExtraction.bestAsk;
+
+        // Log if fresh price differs significantly from cached (helps diagnose staleness)
+        const cachedBid = position.currentBidPrice ?? 0;
+        const priceDiffPct = cachedBid > 0 ? Math.abs((bestBidDollars - cachedBid) / cachedBid) * 100 : 0;
+        if (priceDiffPct > 5 && this.logDeduper.shouldLog(`ScalpExit:PRICE_DRIFT:${plan.tokenId}`, 30_000)) {
+          this.logger.info(
+            `[ProfitTaker] FRESH_ORDERBOOK: tokenId=${plan.tokenId.slice(0, 12)}... ` +
+              `freshBid=${bestBidCents.toFixed(1)}¢ cachedBid=${(cachedBid * 100).toFixed(1)}¢ ` +
+              `drift=${priceDiffPct.toFixed(1)}% source=${source} latency=${latencyMs}ms`,
+          );
+        }
+      } catch (orderbookErr) {
+        // Fresh orderbook fetch failed - fall back to cached data
+        const errMsg = orderbookErr instanceof Error ? orderbookErr.message : String(orderbookErr);
+        if (this.logDeduper.shouldLog(`ScalpExit:ORDERBOOK_FETCH_FAILED:${plan.tokenId}`, 30_000)) {
+          this.logger.warn(
+            `[ProfitTaker] FRESH_ORDERBOOK fetch failed for tokenId=${plan.tokenId.slice(0, 12)}...: ${errMsg}. ` +
+              `Falling back to cached data (${(position.currentBidPrice ?? 0) * 100}¢)`,
+          );
+        }
+        // Fall back to cached position data
+        bestBidDollars = position.currentBidPrice!;
+        bestBidCents = bestBidDollars * 100;
+        bestAskDollars = position.currentAskPrice ?? null;
+      }
+    } else {
+      // Use cached position data (legacy behavior)
+      bestBidDollars = position.currentBidPrice!;
+      bestBidCents = bestBidDollars * 100;
+      bestAskDollars = position.currentAskPrice ?? null;
+    }
 
     // Calculate target and minimum acceptable prices for illiquid check
     const targetPriceDollars = plan.targetPriceCents / 100;
@@ -2479,9 +2561,14 @@ export class ScalpTradeStrategy {
     );
 
     // Check retry cadence
+    // Use faster retry for urgent situations (BREAKEVEN, FORCE stages, or losing positions)
+    const isUrgent = plan.stage === "BREAKEVEN" || plan.stage === "FORCE" || 
+      (bestBidCents < plan.avgEntryCents); // Position is currently at a loss
+    const retryCadenceSec = isUrgent ? this.config.urgentRetrySec : this.config.profitRetrySec;
+    
     const timeSinceLastAttempt = now - plan.lastAttemptAtMs;
     if (
-      timeSinceLastAttempt < this.config.profitRetrySec * 1000 &&
+      timeSinceLastAttempt < retryCadenceSec * 1000 &&
       plan.attempts > 0
     ) {
       return { filled: false, reason: "RETRY_COOLDOWN", shouldContinue: true };

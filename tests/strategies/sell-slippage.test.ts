@@ -288,7 +288,7 @@ describe("Falling Knife Slippage Scenarios", () => {
   });
 });
 
-describe("sellSlippagePct vs minAcceptablePrice (Jan 2025 fix)", () => {
+describe("sellSlippagePct vs minAcceptablePrice (fresh orderbook fix)", () => {
   /**
    * These tests document the fix for the "Sale blocked: best bid is X but minimum acceptable is Y" errors.
    *
