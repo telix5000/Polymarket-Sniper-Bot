@@ -2525,6 +2525,14 @@ export class HedgingStrategy {
 
   /**
    * Get strategy stats
+   *
+   * @returns Object with hedging statistics:
+   * - enabled: Whether hedging is enabled
+   * - hedgedCount: Number of positions currently marked as hedged (in-memory tracking)
+   * - failedLiquidationCooldownCount: Number of positions in failed liquidation cooldown
+   * - pairedHedgeCount: Number of paired hedge relationships (original + hedge position pairs)
+   * - marketsHedgedThisCycle: Number of unique markets that have been hedged in the current cycle
+   * - maxHedgesPerMarketPerCycle: Configured limit for hedges per market per cycle (anti-stacking)
    */
   getStats(): {
     enabled: boolean;
