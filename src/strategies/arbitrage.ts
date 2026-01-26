@@ -347,8 +347,23 @@ export class ArbitrageStrategy {
             `size=$${opportunity.sizeUsd.toFixed(2)} edge=${opportunity.edgeBps.toFixed(1)}bps`,
         );
 
-        // Record with risk manager
-        await this.riskManager!.onTradeSuccess(opportunity, now);
+        // Record with risk manager (handles both sync and async implementations)
+        const riskResult = this.riskManager!.onTradeSuccess(opportunity, now);
+        if (riskResult instanceof Promise) {
+          await riskResult;
+        }
+
+        // Record trade for adaptive learning
+        this.learner!.recordTrade({
+          marketId: opportunity.marketId,
+          timestamp: now,
+          entryPrice: opportunity.yesAsk, // Use yes ask as entry
+          sizeUsd: opportunity.sizeUsd,
+          edgeBps: opportunity.edgeBps,
+          spreadBps: opportunity.spreadBps ?? 100,
+          liquidityUsd: opportunity.liquidityUsd,
+          outcome: "pending", // Will be updated when trade resolves
+        });
 
         return true;
       }
