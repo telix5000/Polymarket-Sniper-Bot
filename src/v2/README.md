@@ -81,7 +81,7 @@ INITIAL_INVESTMENT_USD=200 npm run start:v2
 
 This will show in summaries:
 - **Overall P&L**: +$25.00 (+12.5%) - gain/loss vs your initial investment
-- Calculated as: (current balance + holdings value - initial investment)
+- Calculated as: dollar P&L = (current balance + holdings value - initial investment); return % = (current balance + holdings value - initial investment) / initial investment * 100
 
 ---
 

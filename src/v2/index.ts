@@ -970,7 +970,8 @@ async function fetchRedeemable(wallet: string): Promise<RedeemablePosition[]> {
       const cid = p.conditionId;
       if (!cid) continue;
       const size = Number(p.size) || 0;
-      const price = Number(p.curPrice || p.currentPrice) || 0;
+      const priceSource = p.curPrice ?? p.currentPrice;
+      const price = priceSource == null ? 0 : (Number(priceSource) || 0);
       const value = size * price;
       byCondition.set(cid, (byCondition.get(cid) || 0) + value);
     }
