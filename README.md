@@ -514,9 +514,9 @@ No complex internal logic or cross-strategy dependencies. What you set is what i
 
 If you're in a geo-blocked region, you'll need a VPN to access Polymarket APIs. The bot supports both WireGuard and OpenVPN.
 
-### ⚠️ CRITICAL: WireGuard DNS Issue in Docker
+### ⚠️ CRITICAL: WireGuard DNS Issue in Docker (Alpine Linux)
 
-**DO NOT SET `WIREGUARD_DNS` when running in Docker containers.** This causes WireGuard to fail with:
+**DO NOT SET `WIREGUARD_DNS` when running in Alpine Linux Docker containers** (the default for this bot). This causes WireGuard to fail with:
 ```
 resolvconf: could not detect a useable init system
 resolvconf: signature mismatch: /etc/resolv.conf
