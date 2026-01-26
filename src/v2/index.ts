@@ -17,7 +17,7 @@
  *   COPY_MAX_USD         - Max trade size (default: 100)
  *
  * RISK MANAGEMENT (⚠️ Important for API limits):
- *   MAX_OPEN_POSITIONS   - Max concurrent positions (default: 1000, provides 500 normal + 500 hedge slots)
+ *   MAX_OPEN_POSITIONS   - Max concurrent positions (default: 1000, auto-scales to 90% normal + 10% hedge slots)
  *                          ⚠️ Higher values = more API calls. If hitting rate limits, reduce to 50-100.
  *                          Recommended: 50-100 for free API tiers, 500-1000 for high-volume trading.
  *   HEDGE_BUFFER         - Reserve this many position slots for protective hedges
