@@ -7,8 +7,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY patches ./patches
 
-# Install all dependencies (including devDependencies for TypeScript build)
-RUN npm ci --prefer-offline --no-audit --no-fund
+# Install all dependencies (including devDependencies for TypeScript build).
+# Fall back to npm install when package-lock is missing or out of sync.
+RUN npm ci --prefer-offline --no-audit --no-fund || npm install --no-audit --no-fund
 
 # Stage 2: Build TypeScript
 FROM ${NODE_IMAGE} AS builder
