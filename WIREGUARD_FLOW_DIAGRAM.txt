@@ -1,0 +1,187 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                      WIREGUARD VPN FAILURE FLOW DIAGRAM                      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ START: User starts container with WireGuard credentials in ENV             │
+└────────────┬────────────────────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ src/start.ts:696 → startWireguard(logger)                                  │
+└────────────┬────────────────────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ src/lib/vpn.ts:259 → Check for existing config or generate from env        │
+│                                                                             │
+│  ✓ WIREGUARD_ENABLED=true                                                  │
+│  ✓ WIREGUARD_PRIVATE_KEY=xxxxx                                             │
+│  ✓ WIREGUARD_ADDRESS=10.151.22.111/32                                      │
+│  ✓ WIREGUARD_DNS=1.1.1.1  ← ⚠️  THIS IS THE PROBLEM                       │
+│  ✓ WIREGUARD_PEER_PUBLIC_KEY=xxxxx                                         │
+│  ✓ WIREGUARD_PEER_ENDPOINT=vpn.example.com:51820                           │
+│  ✓ WIREGUARD_ALLOWED_IPS=0.0.0.0/0                                         │
+└────────────┬────────────────────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ src/lib/vpn.ts:220-232 → generateWireguardConfig()                         │
+│                                                                             │
+│  Generates config:                                                          │
+│    [Interface]                                                              │
+│    PrivateKey = xxxxx                                                       │
+│    Address = 10.151.22.111/32                                               │
+│    MTU = 1320                                                               │
+│    DNS = 1.1.1.1  ← ⚠️  THIS LINE TRIGGERS resolvconf                      │
+│                                                                             │
+│    [Peer]                                                                   │
+│    PublicKey = xxxxx                                                        │
+│    Endpoint = vpn.example.com:51820                                         │
+│    AllowedIPs = 0.0.0.0/0                                                   │
+│                                                                             │
+│  Writes to: /etc/wireguard/wg0.conf                                         │
+└────────────┬────────────────────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ src/lib/vpn.ts:346 → execSync(`wg-quick up /etc/wireguard/wg0.conf`)       │
+└────────────┬────────────────────────────────────────────────────────────────┘
+             │
+             ▼
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                    wg-quick EXECUTION SEQUENCE                              ║
+╚═════════════════════════════════════════════════════════════════════════════╝
+
+ Step 1: ip link add dev wg0 type wireguard               ✓ SUCCESS
+         ↓
+ Step 2: wg setconf wg0 /dev/fd/63                        ✓ SUCCESS
+         ↓
+ Step 3: ip -4 address add 10.151.22.111/32 dev wg0      ✓ SUCCESS
+         ↓
+ Step 4: ip -6 address add fd7d:...:35b4/128 dev wg0     ✓ SUCCESS
+         ↓
+ Step 5: ip link set mtu 1320 up dev wg0                  ✓ SUCCESS
+         │                                                 Interface is UP!
+         ↓
+ Step 6: resolvconf -a wg0 -m 0 -x                        ✗ FAILED!
+         │                                                 ┌──────────────────┐
+         │                                                 │ resolvconf tries │
+         │                                                 │ to find init     │
+         │                                                 │ system:          │
+         │                                                 │ - systemd? NO    │
+         │                                                 │ - OpenRC? NO     │
+         │                                                 │ - sysvinit? NO   │
+         │                                                 └──────────────────┘
+         │
+         │  ERROR: "could not detect a useable init system"
+         │  ERROR: "signature mismatch: /etc/resolv.conf"
+         │         (Docker manages resolv.conf, not resolvconf)
+         │
+         ↓
+ Step 7: ip link delete dev wg0                           ✓ SUCCESS
+         │                                                 wg-quick cleanup!
+         ↓                                                 Interface torn down
+    ┌────────┐
+    │  FAIL  │
+    └────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ src/lib/vpn.ts:351-354 → catch block executes                              │
+│                                                                             │
+│  logger.warn(`WireGuard failed: Command failed: wg-quick up ...`)          │
+│  return false                                                               │
+└────────────┬────────────────────────────────────────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RESULT: Bot starts WITHOUT VPN                                             │
+│                                                                             │
+│  ⚠️  API calls to Polymarket may be geo-blocked                            │
+│  ⚠️  Auth/orders will fail if region is restricted                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                           ROOT CAUSE CHAIN                                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  Alpine Container       →    No Init System    →    resolvconf fails
+  (node:20-alpine)             (systemd/OpenRC)       (can't manage DNS)
+         │                            │                        │
+         │                            │                        │
+         └────────────────────────────┴────────────────────────┘
+                                      │
+                                      ▼
+                          Docker manages /etc/resolv.conf
+                          (not compatible with resolvconf)
+                                      │
+                                      ▼
+                           wg-quick expects resolvconf
+                           to succeed when DNS is set
+                                      │
+                                      ▼
+                              ┌───────────────┐
+                              │ FAILURE MODE  │
+                              └───────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                              FIX OPTIONS                                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Option 1: REMOVE DNS FROM CONFIG (RECOMMENDED)                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Before:                           After:                                  │
+│   ┌──────────────────┐              ┌──────────────────┐                   │
+│   │ [Interface]      │              │ [Interface]      │                   │
+│   │ PrivateKey = ... │              │ PrivateKey = ... │                   │
+│   │ Address = ...    │              │ Address = ...    │                   │
+│   │ DNS = 1.1.1.1    │  ────────>   │ # DNS = 1.1.1.1  │ (commented out)  │
+│   │                  │              │                  │                   │
+│   │ [Peer]           │              │ [Peer]           │                   │
+│   │ ...              │              │ ...              │                   │
+│   └──────────────────┘              └──────────────────┘                   │
+│                                                                              │
+│   Result: wg-quick never calls resolvconf → interface stays up              │
+│   DNS: Container uses Docker's default DNS (usually sufficient)             │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Option 2: CODE FIX (SKIP DNS IN CONTAINERS)                                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   File: src/lib/vpn.ts, Line 225                                            │
+│                                                                              │
+│   const isContainer = existsSync("/.dockerenv");                            │
+│   if (dns && !isContainer) {                                                │
+│     config += `DNS = ${dns}\n`;                                             │
+│   }                                                                          │
+│                                                                              │
+│   Result: Automatic skip in containers, works in bare metal                 │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         VERIFICATION STEPS                                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+ 1. Remove DNS from config
+    └─> Unset WIREGUARD_DNS env var OR remove DNS line from config file
+
+ 2. Restart container
+    └─> docker-compose restart
+
+ 3. Check logs for success
+    └─> Should see: "WireGuard connected" (no teardown)
+
+ 4. Verify interface is up
+    └─> docker exec -it <container> wg show
+    └─> Should show: interface wg0, peer, endpoint, latest handshake
+
+ 5. Test API connectivity
+    └─> Check if bot can authenticate and fetch markets
