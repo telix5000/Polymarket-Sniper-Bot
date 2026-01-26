@@ -235,11 +235,11 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           retryCount++;
           // Check for Cloudflare block in response
           const errorMsg = response.errorMsg || response.error || "Unknown error";
-          const statusCode = extractStatusCode(response); // Extract once for both branches
 
           if (isCloudflareBlock(errorMsg) || isCloudflareBlock(response)) {
+            const statusCode = extractStatusCode(response);
             const rayId = extractCloudflareRayId(errorMsg) ?? extractCloudflareRayId(response);
-            const bodyLength = typeof errorMsg === "string" ? errorMsg.length : ESTIMATED_OBJECT_BODY_LENGTH;
+            const bodyLength = typeof errorMsg === "string" ? Buffer.byteLength(errorMsg, 'utf8') : ESTIMATED_OBJECT_BODY_LENGTH;
 
             logger?.error?.(
               `CLOB Order blocked by Cloudflare (403)${rayId ? ` - Ray ID: ${rayId}` : ""} | ` +
@@ -249,6 +249,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
             return { success: false, reason: "CLOUDFLARE_BLOCKED" };
           }
           // Log detailed diagnostics for other failures
+          const statusCode = extractStatusCode(response);
           logger?.warn?.(
             `Order attempt failed [status=${statusCode}]: ${formatErrorForLog(errorMsg)}`,
           );
@@ -260,7 +261,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           const rayId = extractCloudflareRayId(err);
           const statusCode = extractStatusCode(err);
           const errorStr = err instanceof Error ? err.message : String(err);
-          const bodyLength = errorStr.length;
+          const bodyLength = Buffer.byteLength(errorStr, 'utf8');
           const { cfRay, cfCacheStatus } = extractCloudflareHeaders(err);
 
           logger?.error?.(

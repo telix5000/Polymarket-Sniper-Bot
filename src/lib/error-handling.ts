@@ -266,12 +266,12 @@ export function extractCloudflareRayId(error: unknown): string | null {
   // - <strong class="font-semibold">abc123</strong>
   // - <strong>abc123</strong>
   // - Ray ID: abc123
-  // - "ray_id":"abc123"
+  // - "ray_id":"abc123" or "ray-id":"abc123"
   const rayIdPatterns = [
     /Ray ID:\s*<strong[^>]*>([^<]+)<\/strong>/i,
     /Ray ID:\s*<[^>]*>([^<]+)/i,
     /Ray ID:\s*([a-f0-9]+)/i,
-    /"ray[_-]?id"\s*:\s*"([^"]+)"/i,
+    /"ray[_-]id"\s*:\s*"([^"]+)"/i,
   ];
 
   for (const pattern of rayIdPatterns) {
