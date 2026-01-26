@@ -1279,6 +1279,8 @@ export function parseCliOverrides(argv: string[]): Record<string, string> {
 export type StrategyConfig = {
   presetName: string;
   enabled: boolean;
+  collateralTokenAddress: string;
+  collateralTokenDecimals: number;
   arbEnabled: boolean;
   monitorEnabled: boolean;
   quickFlipEnabled: boolean;
@@ -1692,6 +1694,10 @@ export function loadStrategyConfig(
   const config: StrategyConfig = {
     presetName,
     enabled: preset.STRATEGY_ENABLED ?? false,
+    collateralTokenAddress:
+      readEnv("COLLATERAL_TOKEN_ADDRESS", overrides) || POLYGON_USDC_ADDRESS,
+    collateralTokenDecimals:
+      parseNumber(readEnv("COLLATERAL_TOKEN_DECIMALS", overrides) ?? "") ?? 6,
     arbEnabled: preset.ARB_ENABLED ?? false,
     monitorEnabled: preset.MONITOR_ENABLED ?? false,
     quickFlipEnabled: preset.QUICK_FLIP_ENABLED ?? false,
