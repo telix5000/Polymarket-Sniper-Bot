@@ -1389,6 +1389,18 @@ WIREGUARD_FORCE_RESTART=false
 > Docker: WireGuard requires privileged mode **and** `NET_ADMIN` + `/dev/net/tun` access (see `docker-compose.yml`). Device access must be granted at runtime; it cannot be baked into the image.
 > Ensure `ip6tables-restore` is available in the container if you use IPv6 addresses/allowed IPs; otherwise remove IPv6 entries.
 
+### VPN RPC Bypass (optional)
+
+By default, **RPC traffic bypasses the VPN tunnel** for better speed. VPN latency can bottleneck what would otherwise be much faster RPC responses. The VPN is still used for all other traffic (Polymarket API, geoblocking, etc.).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VPN_BYPASS_RPC` | `true` | Route RPC traffic outside VPN for speed |
+
+Set `VPN_BYPASS_RPC=false` to route RPC through the VPN if:
+- Your RPC provider has geographic restrictions
+- You need additional privacy for RPC calls
+
 ### Presets
 
 Defaults: `ARB_PRESET=safe_small` and `MONITOR_PRESET=balanced`.

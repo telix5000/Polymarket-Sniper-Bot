@@ -741,6 +741,19 @@ TELEGRAM_PNL_INTERVAL_MINUTES=60
 | `WIREGUARD_PERSISTENT_KEEPALIVE` | Keepalive interval | - |
 | `WIREGUARD_FORCE_RESTART` | Force restart on start | `false` |
 
+### VPN RPC Bypass
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VPN_BYPASS_RPC` | Route RPC traffic outside VPN tunnel for speed | `true` |
+
+By default, RPC traffic is routed **outside** the VPN tunnel for better speed. VPN latency can bottleneck what would otherwise be much faster RPC responses. The VPN is still used for all other traffic (Polymarket API, geoblocking, etc.).
+
+Set `VPN_BYPASS_RPC=false` to route RPC traffic through the VPN if:
+- Your RPC provider has geographic restrictions
+- You need additional privacy for RPC calls
+- You're experiencing issues with the bypass
+
 > **Note**: OpenVPN and WireGuard are mutually exclusive. If both enabled, OpenVPN takes priority.
 
 ---
