@@ -448,8 +448,8 @@ describe("TelegramService Class", () => {
 
       const [, options] = mockFetch.mock.calls[0].arguments;
       const body = JSON.parse(options.body);
-      // Note: The message contains "P&amp;L Update" (HTML-escaped ampersand)
-      assert.ok(body.text.includes("P&amp;L Update"), "Message should contain P&L Update");
+      // Note: The message title now says "Portfolio Status" (HTML-escaped ampersand in P&L Summary section)
+      assert.ok(body.text.includes("Portfolio Status"), "Message should contain Portfolio Status");
       assert.ok(body.text.includes("$145.00"), "Message should contain net P&L value");
     } finally {
       // Always stop to clean up the timer

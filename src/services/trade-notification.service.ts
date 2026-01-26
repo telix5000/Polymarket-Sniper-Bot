@@ -163,6 +163,10 @@ function toPnLSnapshot(summary: LedgerSummary): PnLSnapshot {
     initialInvestment: summary.initialInvestment,
     overallReturnPct: summary.overallReturnPct,
     overallGainLoss: summary.overallGainLoss,
+    // Include position counts if available
+    activePositionCount: summary.activePositionCount,
+    profitablePositionCount: summary.profitablePositionCount,
+    losingPositionCount: summary.losingPositionCount,
   };
 }
 
