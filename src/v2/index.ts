@@ -494,7 +494,7 @@ async function maybeSendSummary() {
  * Check if we can place an order based on risk limits
  * Returns { allowed: boolean, reason?: string }
  */
-function checkRiskLimits(cfg: Config): { allowed: boolean; reason?: string } {
+function checkRiskLimits(cfg: Config, skipPositionCap = false): { allowed: boolean; reason?: string } {
   if (state.riskHalted) {
     return { allowed: false, reason: "Risk halted - limits exceeded" };
   }
@@ -538,9 +538,12 @@ function checkRiskLimits(cfg: Config): { allowed: boolean; reason?: string } {
   // Check max open positions (leave buffer for hedges)
   // Normal trades blocked when positions >= (max - hedgeBuffer)
   // Hedges can still execute up to the absolute max
-  const effectiveMax = cfg.risk.maxOpenPositions - cfg.risk.hedgeBuffer;
-  if (state.positions.length >= effectiveMax) {
-    return { allowed: false, reason: `Position cap: ${state.positions.length} >= ${effectiveMax} (${cfg.risk.hedgeBuffer} slots reserved for hedges)` };
+  // SELL orders skip this check since they reduce positions, not increase them
+  if (!skipPositionCap) {
+    const effectiveMax = cfg.risk.maxOpenPositions - cfg.risk.hedgeBuffer;
+    if (state.positions.length >= effectiveMax) {
+      return { allowed: false, reason: `Position cap: ${state.positions.length} >= ${effectiveMax} (${cfg.risk.hedgeBuffer} slots reserved for hedges)` };
+    }
   }
   
   return { allowed: true };
@@ -1503,8 +1506,9 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
     state.zeroPriceTokens.delete(tokenId);
   }
   
-  // Risk check (SELL orders are always allowed for protective exits, but still rate limited)
-  const riskCheck = checkRiskLimits(cfg);
+  // Risk check (SELL orders skip position cap check since they reduce positions, not increase them)
+  // SELL orders are always allowed for protective exits, but still rate limited
+  const riskCheck = checkRiskLimits(cfg, true); // skipPositionCap=true for SELL orders
   if (!riskCheck.allowed && !reason.includes("StopLoss") && !reason.includes("AutoSell") && !reason.includes("ForceLiq")) {
     log(`⚠️ SELL blocked | ${riskCheck.reason}`);
     return false;
