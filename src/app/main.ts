@@ -64,23 +64,16 @@ async function main(): Promise<void> {
   // This fetches top traders from Polymarket leaderboard dynamically
   await populateTargetAddressesFromLeaderboard(logger);
 
-  // Load unified STRATEGY_PRESET configuration
-  // This controls which strategies/components are enabled
+  // Load unified STRATEGY_PRESET configuration (defaults to "balanced" if not set)
   const strategyConfig = loadStrategyConfig(cliOverrides);
 
   // Determine what runs based on strategyConfig
-  // If no strategyConfig is set, both arb and monitor default to enabled
-  const arbEnabled = strategyConfig?.arbEnabled ?? true;
-  const monitorEnabled = strategyConfig?.monitorEnabled ?? true;
+  const arbEnabled = strategyConfig.arbEnabled;
+  const monitorEnabled = strategyConfig.monitorEnabled;
 
   // Log startup mode
-  if (strategyConfig) {
-    logger.info(`🚀 Starting Polymarket (preset: ${strategyConfig.presetName})`);
-    logger.info(`📊 Components: orchestrator=${strategyConfig.enabled ? "ON" : "OFF"}, arb=${arbEnabled ? "ON" : "OFF"}, monitor=${monitorEnabled ? "ON" : "OFF"}`);
-  } else {
-    logger.info(`🚀 Starting Polymarket with default config`);
-    logger.info(`📊 Components: arb=${arbEnabled ? "ON" : "OFF"}, monitor=${monitorEnabled ? "ON" : "OFF"}`);
-  }
+  logger.info(`🚀 Starting Polymarket (preset: ${strategyConfig.presetName})`);
+  logger.info(`📊 Components: orchestrator=${strategyConfig.enabled ? "ON" : "OFF"}, arb=${arbEnabled ? "ON" : "OFF"}, monitor=${monitorEnabled ? "ON" : "OFF"}`);
 
   // Run authentication and preflight ONCE at top level before starting any engines
   logger.info("🔐 Authenticating with Polymarket...");
@@ -117,9 +110,9 @@ async function main(): Promise<void> {
     collateralTokenDecimals: env.collateralTokenDecimals,
   });
 
-  // Start unified strategy orchestrator if STRATEGY_PRESET is configured
+  // Start unified strategy orchestrator if enabled in config
   // Uses reliable strategies for reliable, easy-to-debug trading
-  if (strategyConfig && strategyConfig.enabled && !tradingReady.detectOnly) {
+  if (strategyConfig.enabled && !tradingReady.detectOnly) {
     logger.info(
       `🎯 Starting strategy orchestrator (preset: ${strategyConfig.presetName})`,
     );
@@ -268,6 +261,12 @@ async function main(): Promise<void> {
       // This helps users verify Telegram is working and understand what to expect
       void telegramService
         .sendStartupNotification({
+          // Core modules status
+          presetName: strategyConfig.presetName,
+          orchestrator: strategyConfig.enabled,
+          arb: arbEnabled,
+          monitor: monitorEnabled,
+          // Individual strategies
           endgameSweep: strategyConfig.endgameSweepEnabled,
           positionStacking: strategyConfig.positionStackingEnabled,
           // sellEarly removed - consolidated into autoSell
@@ -307,7 +306,7 @@ async function main(): Promise<void> {
         `[Orchestrator] Could not set session balance: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-  } else if (strategyConfig && !strategyConfig.enabled) {
+  } else if (!strategyConfig.enabled) {
     logger.info(
       `[Strategy] Preset=${strategyConfig.presetName} disabled; using individual config flags.`,
     );
@@ -414,7 +413,13 @@ async function main(): Promise<void> {
         // Send startup notification for mempool/copy trading mode
         void telegramService
           .sendStartupNotification({
-            frontrun: !mempoolEnv.detectOnly, // Copy trading enabled if not in detect-only mode
+            // Core modules status (mempool-only mode)
+            presetName: strategyConfig.presetName,
+            orchestrator: false, // Not running in mempool-only mode
+            arb: arbEnabled,
+            monitor: monitorEnabled,
+            // Copy trading enabled if not in detect-only mode
+            frontrun: !mempoolEnv.detectOnly,
             // Other strategies are only available when orchestrator is also running
             endgameSweep: false,
             positionStacking: false,

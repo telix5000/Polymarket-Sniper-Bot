@@ -1615,27 +1615,26 @@ export type StrategyConfig = {
 
 /**
  * Load unified strategy configuration from STRATEGY_PRESET
- * Falls back to individual ARB_PRESET and MONITOR_PRESET if not set
+ * Defaults to "balanced" preset when STRATEGY_PRESET is not set,
+ * which enables orchestrator and core strategies.
  * Supports LIVE_TRADING as alias for ARB_LIVE_TRADING
  */
 export function loadStrategyConfig(
   overrides?: Record<string, string>,
-): StrategyConfig | null {
+): StrategyConfig {
   const strategyPresetName = readEnv("STRATEGY_PRESET", overrides);
 
-  // If no STRATEGY_PRESET is set, return null (use individual presets)
-  if (!strategyPresetName) {
-    return null;
-  }
+  // If no STRATEGY_PRESET is set, default to "balanced" preset which enables orchestrator and core strategies
+  const effectivePresetName = strategyPresetName || "balanced";
 
   // Validate preset name
-  if (!(strategyPresetName in STRATEGY_PRESETS)) {
+  if (!(effectivePresetName in STRATEGY_PRESETS)) {
     throw new Error(
-      `Invalid STRATEGY_PRESET="${strategyPresetName}". Valid values: ${Object.keys(STRATEGY_PRESETS).join(", ")}`,
+      `Invalid STRATEGY_PRESET="${effectivePresetName}". Valid values: ${Object.keys(STRATEGY_PRESETS).join(", ")}`,
     );
   }
 
-  const presetName = strategyPresetName as StrategyPresetName;
+  const presetName = effectivePresetName as StrategyPresetName;
   const preset = STRATEGY_PRESETS[presetName];
 
   // Support LIVE_TRADING as alias for ARB_LIVE_TRADING

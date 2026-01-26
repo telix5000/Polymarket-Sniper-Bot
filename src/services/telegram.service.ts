@@ -130,6 +130,12 @@ export interface PnLSnapshot {
  * Strategy status for startup notification
  */
 export interface StartupStrategyStatus {
+  // Core modules (required - always show status)
+  presetName?: string;
+  orchestrator: boolean;
+  arb: boolean;
+  monitor: boolean;
+  // Strategies
   endgameSweep?: boolean;
   positionStacking?: boolean;
   // sellEarly removed - consolidated into autoSell
@@ -465,6 +471,19 @@ export class TelegramService {
     if (!this.config.enabled) return false;
 
     let message = `🚀 <b>${this.escapeHtml(this.config.notificationName)} - Bot Started</b>\n\n`;
+
+    // Show preset name if provided
+    if (enabledStrategies.presetName) {
+      message += `⚙️ <b>Preset:</b> ${this.escapeHtml(enabledStrategies.presetName)}\n\n`;
+    }
+
+    // Core modules section
+    message += `🔧 <b>Core Modules:</b>\n`;
+    message += enabledStrategies.orchestrator ? `✅ Orchestrator\n` : `❌ Orchestrator\n`;
+    message += enabledStrategies.arb ? `✅ Arbitrage\n` : `❌ Arbitrage\n`;
+    message += enabledStrategies.monitor ? `✅ Monitor (Copy Trading)\n` : `❌ Monitor\n`;
+    message += `\n`;
+
     message += `📊 <b>Enabled Strategies:</b>\n`;
 
     // Core trading strategies

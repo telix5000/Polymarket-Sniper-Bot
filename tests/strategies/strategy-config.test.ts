@@ -21,6 +21,25 @@ afterEach(() => {
   resetEnv();
 });
 
+test("loadStrategyConfig defaults to balanced preset when STRATEGY_PRESET is not set", () => {
+  resetEnv();
+  // Set only the required env vars, without STRATEGY_PRESET
+  Object.assign(process.env, baseEnv);
+  // Explicitly ensure STRATEGY_PRESET is not set
+  delete process.env.STRATEGY_PRESET;
+
+  const config = loadStrategyConfig();
+  
+  // Should default to "balanced" preset
+  assert.equal(config.presetName, "balanced");
+  // Balanced preset has STRATEGY_ENABLED: true (orchestrator enabled)
+  assert.equal(config.enabled, true);
+  // Balanced preset has ARB_ENABLED: true
+  assert.equal(config.arbEnabled, true);
+  // Balanced preset has MONITOR_ENABLED: true
+  assert.equal(config.monitorEnabled, true);
+});
+
 test("STRATEGY_PRESET=aggressive uses preset MAX_POSITION_USD when no env override", () => {
   resetEnv();
   Object.assign(process.env, baseEnv, {
