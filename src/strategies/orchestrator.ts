@@ -732,6 +732,8 @@ export class Orchestrator {
       if (snapshot) {
         let holdingsValue = 0;
         let unrealizedPnl = 0;
+        let profitableCount = 0;
+        let losingCount = 0;
         // Combine active and redeemable positions for complete P&L picture
         const allPositions = [
           ...snapshot.activePositions,
@@ -746,6 +748,14 @@ export class Orchestrator {
           // pnlUsd is always calculated from (currentPrice - entryPrice) * size
           if (typeof pos.pnlUsd === "number") {
             unrealizedPnl += pos.pnlUsd;
+            // Count profitable vs losing positions
+            // Breakeven positions (pnlUsd === 0) are intentionally not counted in either category
+            // This is common shortly after buying before prices move significantly
+            if (pos.pnlUsd > 0) {
+              profitableCount++;
+            } else if (pos.pnlUsd < 0) {
+              losingCount++;
+            }
           }
         }
 
@@ -755,6 +765,11 @@ export class Orchestrator {
         // Recalculate net P&L: realized (from ledger) + unrealized (from positions)
         summary.netPnl = summary.totalRealizedPnl + unrealizedPnl;
         summary.holdingsValue = holdingsValue;
+
+        // Add position counts for portfolio status
+        summary.activePositionCount = snapshot.activePositions.length;
+        summary.profitablePositionCount = profitableCount;
+        summary.losingPositionCount = losingCount;
 
         // Add USDC balance and total value if wallet balance fetcher is available
         // Only set totalValue when we have a valid snapshot to avoid incorrect calculations
