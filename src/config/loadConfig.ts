@@ -1623,7 +1623,7 @@ export function loadStrategyConfig(
 ): StrategyConfig {
   const strategyPresetName = readEnv("STRATEGY_PRESET", overrides);
 
-  // If no STRATEGY_PRESET is set, default to "balanced" so orchestrator always starts
+  // If no STRATEGY_PRESET is set, default to "balanced" preset which enables orchestrator and core strategies
   const effectivePresetName = strategyPresetName || "balanced";
 
   // Validate preset name

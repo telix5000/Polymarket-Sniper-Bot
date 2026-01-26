@@ -64,9 +64,7 @@ async function main(): Promise<void> {
   // This fetches top traders from Polymarket leaderboard dynamically
   await populateTargetAddressesFromLeaderboard(logger);
 
-  // Load unified STRATEGY_PRESET configuration
-  // This controls which strategies/components are enabled
-  // Defaults to "balanced" preset if STRATEGY_PRESET is not set
+  // Load unified STRATEGY_PRESET configuration (defaults to "balanced" if not set)
   const strategyConfig = loadStrategyConfig(cliOverrides);
 
   // Determine what runs based on strategyConfig
