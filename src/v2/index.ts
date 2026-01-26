@@ -790,7 +790,7 @@ async function maybeSendSummary() {
 
   ledger.lastSummary = Date.now();
   const summary = getLedgerSummary();
-  log(summary.replace(/<[^>]*>/g, "")); // Log without HTML tags
+  log(stripHtmlForLogging(summary));
 
   if (state.telegram) {
     await axios
@@ -1485,7 +1485,7 @@ async function alertTrade(
     msg = `${side} ${icon} | <b>${escapedStrategy}</b>\n${escapedOutcome} ${$(sizeUsd)} | ${escapeHtml(errorMsg || "Failed")}`;
   }
 
-  log(`📢 ${side} ${icon} | ${strategy} | ${outcome} ${$(sizeUsd)}${priceStr}${balanceStr}${pnlStr.replace("&amp;", "&")}`);
+  log(`📢 ${side} ${icon} | ${strategy} | ${outcome} ${$(sizeUsd)}${priceStr}${balanceStr}${stripHtmlForLogging(pnlStr)}`);
 
   if (state.telegram) {
     await axios
@@ -1525,6 +1525,18 @@ function escapeHtml(text: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+/**
+ * Strip HTML tags and decode HTML entities for console logging
+ * Inverse of escapeHtml() - converts HTML-formatted text to plain text
+ */
+function stripHtmlForLogging(text: string): string {
+  return text
+    .replace(/<[^>]*>/g, "") // Remove HTML tags
+    .replace(/&amp;/g, "&") // Decode &amp;
+    .replace(/&lt;/g, "<") // Decode &lt;
+    .replace(/&gt;/g, ">"); // Decode &gt;
 }
 
 /** Format USD amount as $1.23 */
