@@ -16,6 +16,20 @@
  *   MIN_TRADE_SIZE_USD or COPY_MIN_USD  - Min trade size (default: 5)
  *   COPY_MAX_USD         - Max trade size (default: 100)
  * 
+ * RISK MANAGEMENT (⚠️ Important for API limits):
+ *   MAX_OPEN_POSITIONS   - Max concurrent positions (default: 10-30 based on preset)
+ *                          ⚠️ More positions = more API calls. Keep low to avoid throttling.
+ *                          Recommended: 10-20 for free API tiers, 30-50 for paid.
+ *   HEDGE_BUFFER         - Reserve this many position slots for protective hedges (default: 2-5)
+ *                          ⚠️ IMPORTANT: Normal trades stop at (MAX_OPEN_POSITIONS - HEDGE_BUFFER)
+ *                          so you can ALWAYS hedge when losing. Don't set to 0!
+ *   SCALE_DOWN_THRESHOLD - Start scaling bets when positions >= this % of effective max (default: 0.7 = 70%)
+ *   SCALE_DOWN_MIN_PCT   - Minimum bet scale at max positions (default: 0.25 = 25% of normal)
+ *   MAX_DRAWDOWN_PCT     - Stop trading if session drawdown exceeds this (default: 15-30%)
+ *   MAX_DAILY_LOSS_USD   - Stop trading if daily loss exceeds this (default: $50-200)
+ *   ORDER_COOLDOWN_MS    - Min time between orders (default: 500-2000ms)
+ *   MAX_ORDERS_PER_HOUR  - Rate limit orders per hour (default: 100-500)
+ * 
  * LIVE TRADING:
  *   LIVE_TRADING=I_UNDERSTAND_THE_RISKS  (or ARB_LIVE_TRADING)
  * 
@@ -23,6 +37,7 @@
  *   INTERVAL_MS or FETCH_INTERVAL - Cycle interval (default: 5000ms)
  *   TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID - Alerts (or TELEGRAM_TOKEN/TELEGRAM_CHAT)
  *   VPN_BYPASS_RPC       - Route RPC outside VPN (default: true)
+ *   REDEEM_INTERVAL_MIN  - How often to check for redeemable positions (default: 10-15 min)
  * 
  * See README.md for full ENV reference with V1 compatibility aliases.
  */
@@ -130,9 +145,14 @@ interface Config {
   risk: {
     maxDrawdownPct: number;        // Max session drawdown before stopping
     maxDailyLossUsd: number;       // Max daily loss before stopping
-    maxOpenPositions: number;      // Max concurrent positions
+    maxOpenPositions: number;      // Max concurrent positions (⚠️ more = more API calls)
     orderCooldownMs: number;       // Min time between orders
     maxOrdersPerHour: number;      // Rate limit
+    // Bet scaling when approaching position cap
+    scaleDownThreshold: number;    // Start scaling when positions >= this % of max (default: 70%)
+    scaleDownMinPct: number;       // Minimum scale factor (default: 25% = 0.25x base size)
+    // Hedge buffer - ALWAYS reserve slots for protective hedges
+    hedgeBuffer: number;           // Reserve this many position slots for hedges (default: 3)
   };
   maxPositionUsd: number;
   reservePct: number;
@@ -182,7 +202,7 @@ const PRESETS: Record<Preset, Config> = {
     copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 50, maxUsd: 50, minBuyPrice: 0.50 },
     arbitrage: { enabled: true, maxUsd: 15, minEdgeBps: 300, minBuyPrice: 0.05 },
     sellSignal: { enabled: true, minLossPctToAct: 15, profitThresholdToSkip: 20, severeLossPct: 40, cooldownMs: 60000 },
-    risk: { maxDrawdownPct: 15, maxDailyLossUsd: 50, maxOpenPositions: 10, orderCooldownMs: 2000, maxOrdersPerHour: 100 },
+    risk: { maxDrawdownPct: 15, maxDailyLossUsd: 50, maxOpenPositions: 10, orderCooldownMs: 2000, maxOrdersPerHour: 100, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 2 },
     maxPositionUsd: 15,
     reservePct: 25,
   },
@@ -211,7 +231,7 @@ const PRESETS: Record<Preset, Config> = {
     copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 1, maxUsd: 100, minBuyPrice: 0.50 },
     arbitrage: { enabled: true, maxUsd: 25, minEdgeBps: 200, minBuyPrice: 0.05 },
     sellSignal: { enabled: true, minLossPctToAct: 15, profitThresholdToSkip: 20, severeLossPct: 40, cooldownMs: 60000 },
-    risk: { maxDrawdownPct: 20, maxDailyLossUsd: 100, maxOpenPositions: 20, orderCooldownMs: 1000, maxOrdersPerHour: 200 },
+    risk: { maxDrawdownPct: 20, maxDailyLossUsd: 100, maxOpenPositions: 20, orderCooldownMs: 1000, maxOrdersPerHour: 200, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 3 },
     maxPositionUsd: 25,
     reservePct: 20,
   },
@@ -240,7 +260,7 @@ const PRESETS: Record<Preset, Config> = {
     copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 5, maxUsd: 200, minBuyPrice: 0.50 },
     arbitrage: { enabled: true, maxUsd: 100, minEdgeBps: 200, minBuyPrice: 0.05 },
     sellSignal: { enabled: true, minLossPctToAct: 10, profitThresholdToSkip: 25, severeLossPct: 35, cooldownMs: 30000 },
-    risk: { maxDrawdownPct: 30, maxDailyLossUsd: 200, maxOpenPositions: 30, orderCooldownMs: 500, maxOrdersPerHour: 500 },
+    risk: { maxDrawdownPct: 30, maxDailyLossUsd: 200, maxOpenPositions: 30, orderCooldownMs: 500, maxOrdersPerHour: 500, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 5 },
     maxPositionUsd: 100,
     reservePct: 15,
   },
@@ -420,9 +440,12 @@ function checkRiskLimits(cfg: Config): { allowed: boolean; reason?: string } {
     return { allowed: false, reason: `Cooldown: ${cfg.risk.orderCooldownMs - (now - state.lastOrderTime)}ms remaining` };
   }
   
-  // Check max open positions
-  if (state.positions.length >= cfg.risk.maxOpenPositions) {
-    return { allowed: false, reason: `Max positions: ${state.positions.length} >= ${cfg.risk.maxOpenPositions}` };
+  // Check max open positions (leave buffer for hedges)
+  // Normal trades blocked when positions >= (max - hedgeBuffer)
+  // Hedges can still execute up to the absolute max
+  const effectiveMax = cfg.risk.maxOpenPositions - cfg.risk.hedgeBuffer;
+  if (state.positions.length >= effectiveMax) {
+    return { allowed: false, reason: `Position cap: ${state.positions.length} >= ${effectiveMax} (${cfg.risk.hedgeBuffer} slots reserved for hedges)` };
   }
   
   return { allowed: true };
@@ -432,6 +455,69 @@ function checkRiskLimits(cfg: Config): { allowed: boolean; reason?: string } {
 function recordOrderPlaced() {
   state.lastOrderTime = Date.now();
   state.ordersThisHour++;
+}
+
+/**
+ * Calculate bet scale factor based on current position count
+ * 
+ * As positions approach the cap, scale down bet sizes to:
+ * 1. Reduce API calls (smaller bets = less risk of rejection)
+ * 2. Conserve capital for protective trades
+ * 3. Prevent over-concentration
+ * 
+ * ⚠️ HEDGE BUFFER: Normal trades use effectiveMax = maxOpenPositions - hedgeBuffer
+ * This reserves slots for protective hedges even when scaling kicks in.
+ * 
+ * Example with maxOpenPositions=20, hedgeBuffer=3, scaleDownThreshold=0.7, scaleDownMinPct=0.25:
+ * - effectiveMax = 17 (20 - 3 hedge slots)
+ * - 12 positions (70% of 17) → scale = 1.0 (full size)
+ * - 15 positions (88% of 17) → scale = 0.5 (interpolated)
+ * - 17 positions (100% of 17) → scale = 0.25 (minimum), normal trades blocked
+ * - 18-20 positions → ONLY hedges allowed (using reserved buffer)
+ */
+function getBetScaleFactor(cfg: Config): number {
+  const currentCount = state.positions.length;
+  // Use effective max (minus hedge buffer) for scaling calculation
+  const effectiveMax = cfg.risk.maxOpenPositions - cfg.risk.hedgeBuffer;
+  const thresholdPct = cfg.risk.scaleDownThreshold;
+  const minScale = cfg.risk.scaleDownMinPct;
+  
+  const currentPct = currentCount / effectiveMax;
+  
+  // Below threshold: full size
+  if (currentPct <= thresholdPct) {
+    return 1.0;
+  }
+  
+  // At or above effective max: minimum size
+  if (currentPct >= 1.0) {
+    return minScale;
+  }
+  
+  // Interpolate between threshold and effective max
+  // Linear interpolation: scale decreases from 1.0 to minScale as position count goes from threshold to max
+  const rangeAboveThreshold = 1.0 - thresholdPct;
+  const pctIntoRange = (currentPct - thresholdPct) / rangeAboveThreshold;
+  const scale = 1.0 - (1.0 - minScale) * pctIntoRange;
+  
+  return Math.max(minScale, scale);
+}
+
+/**
+ * Apply bet scaling to a USD amount
+ * Logs when scaling is applied for transparency
+ */
+function scaleBetSize(baseUsd: number, cfg: Config, reason: string): number {
+  const scaleFactor = getBetScaleFactor(cfg);
+  const effectiveMax = cfg.risk.maxOpenPositions - cfg.risk.hedgeBuffer;
+  
+  if (scaleFactor < 1.0) {
+    const scaledUsd = baseUsd * scaleFactor;
+    log(`📉 Bet scaled | ${reason} | ${$(baseUsd)} → ${$(scaledUsd)} (${(scaleFactor * 100).toFixed(0)}% @ ${state.positions.length}/${effectiveMax} positions, ${cfg.risk.hedgeBuffer} hedge slots reserved)`);
+    return Math.max(1, scaledUsd); // Minimum $1
+  }
+  
+  return baseUsd;
 }
 
 /** Get position hold time in seconds */
@@ -1025,9 +1111,17 @@ async function copyTrades(cfg: Config) {
         continue;
       }
       
-      log(`👀 Copy | ${addr.slice(0,8)}... | ${signal.outcome} ${$(copyUsd)} @ ${$price(signal.price)}`);
+      // Apply bet scaling when approaching position cap
+      const scaledCopyUsd = scaleBetSize(copyUsd, cfg, "Copy");
+      if (scaledCopyUsd < cfg.copy.minUsd) {
+        log(`⏸️ Copy skipped | Scaled ${$(scaledCopyUsd)} < min ${$(cfg.copy.minUsd)}`);
+        state.copied.add(signal.txHash);
+        continue;
+      }
+      
+      log(`👀 Copy | ${addr.slice(0,8)}... | ${signal.outcome} ${$(scaledCopyUsd)} @ ${$price(signal.price)}`);
       // Copy trades respect reserves (normal trade)
-      await executeBuy(signal.tokenId, signal.conditionId, signal.outcome, copyUsd, "Copy", cfg, false, signal.price);
+      await executeBuy(signal.tokenId, signal.conditionId, signal.outcome, scaledCopyUsd, "Copy", cfg, false, signal.price);
       state.copied.add(signal.txHash);
     }
     state.copyLastCheck.set(addr, now);
@@ -1169,11 +1263,14 @@ async function arbitrage(cfg: Config) {
       
       if (total < 0.98 && total > 0.5) {
         const profitPct = (1 - total) * 100;
+        // Apply bet scaling when approaching position cap
+        const scaledArbUsd = scaleBetSize(cfg.arbitrage.maxUsd / 2, cfg, "Arb");
+        if (scaledArbUsd < 1) continue; // Skip if too small
+        
         log(`💎 Arb | YES ${$price(yesPrice)} + NO ${$price(noPrice)} = ${profitPct.toFixed(1)}% profit`);
-        const arbUsd = cfg.arbitrage.maxUsd / 2;
         // Arbitrage respects reserves (normal trade)
-        await executeBuy(yes.token_id, cid, "YES", arbUsd, "Arb", cfg, false, yesPrice);
-        await executeBuy(no.token_id, cid, "NO", arbUsd, "Arb", cfg, false, noPrice);
+        await executeBuy(yes.token_id, cid, "YES", scaledArbUsd, "Arb", cfg, false, yesPrice);
+        await executeBuy(no.token_id, cid, "NO", scaledArbUsd, "Arb", cfg, false, noPrice);
       }
     } catch { /* skip */ }
   }
@@ -1273,9 +1370,13 @@ async function cycle(walletAddr: string, cfg: Config) {
     // This doubles down on winners approaching $1
     if (cfg.hedge.hedgeUpEnabled && p.pnlPct > 0 && p.curPrice >= cfg.hedge.hedgeUpPriceThreshold && p.curPrice <= cfg.hedge.hedgeUpMaxPrice) {
       if (!state.stacked.has(p.tokenId)) { // Don't hedge-up if already stacked
-        if (await executeBuy(p.tokenId, p.conditionId, p.outcome, cfg.hedge.hedgeUpMaxUsd, `HedgeUp (${$price(p.curPrice)})`, cfg, false, p.curPrice)) {
-          state.stacked.add(p.tokenId); // Mark as stacked to prevent repeat
-          cycleActed.add(p.tokenId);
+        // Apply bet scaling (hedge-up is a normal BUY, not protective)
+        const scaledHedgeUpAmt = scaleBetSize(cfg.hedge.hedgeUpMaxUsd, cfg, "HedgeUp");
+        if (scaledHedgeUpAmt >= 5) {
+          if (await executeBuy(p.tokenId, p.conditionId, p.outcome, scaledHedgeUpAmt, `HedgeUp (${$price(p.curPrice)})`, cfg, false, p.curPrice)) {
+            state.stacked.add(p.tokenId); // Mark as stacked to prevent repeat
+            cycleActed.add(p.tokenId);
+          }
         }
         continue;
       }
@@ -1392,10 +1493,11 @@ async function cycle(walletAddr: string, cfg: Config) {
         state.stacked.add(p.tokenId);
         continue;
       }
-      // Limit stack size to not exceed max position
-      const maxStackSize = Math.min(cfg.stack.maxUsd, cfg.maxPositionUsd - currentPositionValue);
-      if (maxStackSize >= 5) {
-        if (await executeBuy(p.tokenId, p.conditionId, p.outcome, maxStackSize, `Stack (${pct(p.pnlPct)})`, cfg, false, p.curPrice)) {
+      // Limit stack size to not exceed max position, then apply bet scaling
+      const baseStackSize = Math.min(cfg.stack.maxUsd, cfg.maxPositionUsd - currentPositionValue);
+      const scaledStackSize = scaleBetSize(baseStackSize, cfg, "Stack");
+      if (scaledStackSize >= 5) {
+        if (await executeBuy(p.tokenId, p.conditionId, p.outcome, scaledStackSize, `Stack (${pct(p.pnlPct)})`, cfg, false, p.curPrice)) {
           state.stacked.add(p.tokenId);
           cycleActed.add(p.tokenId);
         }
@@ -1406,9 +1508,10 @@ async function cycle(walletAddr: string, cfg: Config) {
     // 7. ENDGAME: High confidence - ride to finish
     if (cfg.endgame.enabled && p.curPrice >= cfg.endgame.minPrice && p.curPrice <= cfg.endgame.maxPrice) {
       if (p.value < cfg.endgame.maxUsd * 2) {
-        const addAmt = Math.min(cfg.endgame.maxUsd, cfg.endgame.maxUsd * 2 - p.value);
-        if (addAmt >= 5) {
-          await executeBuy(p.tokenId, p.conditionId, p.outcome, addAmt, "Endgame", cfg, false, p.curPrice);
+        const baseAddAmt = Math.min(cfg.endgame.maxUsd, cfg.endgame.maxUsd * 2 - p.value);
+        const scaledAddAmt = scaleBetSize(baseAddAmt, cfg, "Endgame");
+        if (scaledAddAmt >= 5) {
+          await executeBuy(p.tokenId, p.conditionId, p.outcome, scaledAddAmt, "Endgame", cfg, false, p.curPrice);
           cycleActed.add(p.tokenId);
         }
       }
@@ -1555,6 +1658,19 @@ export function loadConfig() {
   if (envNum("SELL_SIGNAL_SEVERE_PCT") !== undefined) cfg.sellSignal.severeLossPct = envNum("SELL_SIGNAL_SEVERE_PCT")!;
   if (envNum("SELL_SIGNAL_SEVERE_LOSS_PCT") !== undefined) cfg.sellSignal.severeLossPct = envNum("SELL_SIGNAL_SEVERE_LOSS_PCT")!;
   if (envNum("SELL_SIGNAL_COOLDOWN_MS") !== undefined) cfg.sellSignal.cooldownMs = envNum("SELL_SIGNAL_COOLDOWN_MS")!;
+  
+  // ========== RISK MANAGEMENT ==========
+  // Control position limits, drawdown, and bet scaling
+  if (envNum("MAX_DRAWDOWN_PCT") !== undefined) cfg.risk.maxDrawdownPct = envNum("MAX_DRAWDOWN_PCT")!;
+  if (envNum("MAX_DAILY_LOSS_USD") !== undefined) cfg.risk.maxDailyLossUsd = envNum("MAX_DAILY_LOSS_USD")!;
+  if (envNum("MAX_OPEN_POSITIONS") !== undefined) cfg.risk.maxOpenPositions = envNum("MAX_OPEN_POSITIONS")!;
+  if (envNum("ORDER_COOLDOWN_MS") !== undefined) cfg.risk.orderCooldownMs = envNum("ORDER_COOLDOWN_MS")!;
+  if (envNum("MAX_ORDERS_PER_HOUR") !== undefined) cfg.risk.maxOrdersPerHour = envNum("MAX_ORDERS_PER_HOUR")!;
+  // Bet scaling when approaching position cap
+  // SCALE_DOWN_THRESHOLD: Start scaling when positions >= this % of max (default: 70%)
+  // SCALE_DOWN_MIN_PCT: Minimum scale factor (default: 25% = 0.25x base size)
+  if (envNum("SCALE_DOWN_THRESHOLD") !== undefined) cfg.risk.scaleDownThreshold = envNum("SCALE_DOWN_THRESHOLD")!;
+  if (envNum("SCALE_DOWN_MIN_PCT") !== undefined) cfg.risk.scaleDownMinPct = envNum("SCALE_DOWN_MIN_PCT")!;
   
   // ========== ARBITRAGE ==========
   // V1: ARB_ENABLED, ARB_DRY_RUN, ARB_MIN_EDGE_BPS, ARB_MIN_BUY_PRICE
