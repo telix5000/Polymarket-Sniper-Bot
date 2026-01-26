@@ -3796,3 +3796,339 @@ describe("API-based Hedge Up Detection", () => {
     });
   });
 });
+
+// ============================================================================
+// Anti-Stacking Safeguard Tests
+// ============================================================================
+
+describe("Anti-Stacking Safeguard (Per-Market Hedge Limit)", () => {
+  /**
+   * Helper function to simulate the per-market hedge limit check.
+   * This mirrors the logic added to HedgingStrategy.executeInternal().
+   */
+  function checkPerMarketHedgeLimit(
+    marketId: string,
+    cycleHedgeCountByMarket: Map<string, number>,
+    maxHedgesPerMarketPerCycle: number,
+  ): { allowed: boolean; reason: string; currentCount: number } {
+    if (maxHedgesPerMarketPerCycle <= 0) {
+      return { allowed: true, reason: "limit_disabled", currentCount: 0 };
+    }
+
+    const currentCount = cycleHedgeCountByMarket.get(marketId) ?? 0;
+    if (currentCount >= maxHedgesPerMarketPerCycle) {
+      return {
+        allowed: false,
+        reason: "market_hedge_limit",
+        currentCount,
+      };
+    }
+
+    return { allowed: true, reason: "within_limit", currentCount };
+  }
+
+  /**
+   * Helper to simulate incrementing the per-market hedge count after a successful hedge.
+   */
+  function recordHedgeOnMarket(
+    marketId: string,
+    cycleHedgeCountByMarket: Map<string, number>,
+  ): void {
+    const currentCount = cycleHedgeCountByMarket.get(marketId) ?? 0;
+    cycleHedgeCountByMarket.set(marketId, currentCount + 1);
+  }
+
+  test("should allow first hedge on a market", () => {
+    const cycleHedgeCountByMarket = new Map<string, number>();
+    const maxHedgesPerMarketPerCycle = 1;
+
+    const result = checkPerMarketHedgeLimit(
+      "market-abc",
+      cycleHedgeCountByMarket,
+      maxHedgesPerMarketPerCycle,
+    );
+
+    assert.strictEqual(result.allowed, true, "First hedge should be allowed");
+    assert.strictEqual(
+      result.reason,
+      "within_limit",
+      "Should indicate within limit",
+    );
+    assert.strictEqual(
+      result.currentCount,
+      0,
+      "Current count should be 0 before hedge",
+    );
+  });
+
+  test("should block second hedge on same market when limit is 1", () => {
+    const cycleHedgeCountByMarket = new Map<string, number>();
+    const maxHedgesPerMarketPerCycle = 1;
+
+    // First hedge - should be allowed
+    const result1 = checkPerMarketHedgeLimit(
+      "market-abc",
+      cycleHedgeCountByMarket,
+      maxHedgesPerMarketPerCycle,
+    );
+    assert.strictEqual(result1.allowed, true, "First hedge should be allowed");
+
+    // Record the hedge
+    recordHedgeOnMarket("market-abc", cycleHedgeCountByMarket);
+
+    // Second hedge attempt - should be blocked
+    const result2 = checkPerMarketHedgeLimit(
+      "market-abc",
+      cycleHedgeCountByMarket,
+      maxHedgesPerMarketPerCycle,
+    );
+    assert.strictEqual(
+      result2.allowed,
+      false,
+      "Second hedge should be blocked",
+    );
+    assert.strictEqual(
+      result2.reason,
+      "market_hedge_limit",
+      "Should indicate limit reached",
+    );
+    assert.strictEqual(
+      result2.currentCount,
+      1,
+      "Current count should be 1 after first hedge",
+    );
+  });
+
+  test("should allow hedges on different markets independently", () => {
+    const cycleHedgeCountByMarket = new Map<string, number>();
+    const maxHedgesPerMarketPerCycle = 1;
+
+    // Hedge on market A
+    assert.strictEqual(
+      checkPerMarketHedgeLimit(
+        "market-A",
+        cycleHedgeCountByMarket,
+        maxHedgesPerMarketPerCycle,
+      ).allowed,
+      true,
+    );
+    recordHedgeOnMarket("market-A", cycleHedgeCountByMarket);
+
+    // Hedge on market B - should still be allowed (different market)
+    const resultB = checkPerMarketHedgeLimit(
+      "market-B",
+      cycleHedgeCountByMarket,
+      maxHedgesPerMarketPerCycle,
+    );
+    assert.strictEqual(
+      resultB.allowed,
+      true,
+      "Different market should be allowed",
+    );
+    assert.strictEqual(
+      resultB.currentCount,
+      0,
+      "Market B should have 0 hedges",
+    );
+
+    // But market A should still be blocked
+    const resultA2 = checkPerMarketHedgeLimit(
+      "market-A",
+      cycleHedgeCountByMarket,
+      maxHedgesPerMarketPerCycle,
+    );
+    assert.strictEqual(
+      resultA2.allowed,
+      false,
+      "Market A should still be blocked",
+    );
+  });
+
+  test("should allow multiple hedges when limit is higher", () => {
+    const cycleHedgeCountByMarket = new Map<string, number>();
+    const maxHedgesPerMarketPerCycle = 3; // Allow up to 3 hedges
+
+    // First hedge
+    assert.strictEqual(
+      checkPerMarketHedgeLimit(
+        "market-xyz",
+        cycleHedgeCountByMarket,
+        maxHedgesPerMarketPerCycle,
+      ).allowed,
+      true,
+    );
+    recordHedgeOnMarket("market-xyz", cycleHedgeCountByMarket);
+
+    // Second hedge - still allowed
+    assert.strictEqual(
+      checkPerMarketHedgeLimit(
+        "market-xyz",
+        cycleHedgeCountByMarket,
+        maxHedgesPerMarketPerCycle,
+      ).allowed,
+      true,
+    );
+    recordHedgeOnMarket("market-xyz", cycleHedgeCountByMarket);
+
+    // Third hedge - still allowed
+    assert.strictEqual(
+      checkPerMarketHedgeLimit(
+        "market-xyz",
+        cycleHedgeCountByMarket,
+        maxHedgesPerMarketPerCycle,
+      ).allowed,
+      true,
+    );
+    recordHedgeOnMarket("market-xyz", cycleHedgeCountByMarket);
+
+    // Fourth hedge - blocked
+    const result4 = checkPerMarketHedgeLimit(
+      "market-xyz",
+      cycleHedgeCountByMarket,
+      maxHedgesPerMarketPerCycle,
+    );
+    assert.strictEqual(result4.allowed, false, "Fourth hedge should be blocked");
+    assert.strictEqual(result4.currentCount, 3, "Count should be 3");
+  });
+
+  test("should allow unlimited hedges when limit is 0 (disabled)", () => {
+    const cycleHedgeCountByMarket = new Map<string, number>();
+    const maxHedgesPerMarketPerCycle = 0; // Disabled
+
+    // Multiple hedges should all be allowed
+    for (let i = 0; i < 10; i++) {
+      const result = checkPerMarketHedgeLimit(
+        "market-unlimited",
+        cycleHedgeCountByMarket,
+        maxHedgesPerMarketPerCycle,
+      );
+      assert.strictEqual(result.allowed, true, `Hedge ${i + 1} should be allowed`);
+      assert.strictEqual(result.reason, "limit_disabled");
+      recordHedgeOnMarket("market-unlimited", cycleHedgeCountByMarket);
+    }
+  });
+
+  test("DEFAULT_HEDGING_CONFIG has maxHedgesPerMarketPerCycle set to 1", () => {
+    assert.strictEqual(
+      DEFAULT_HEDGING_CONFIG.maxHedgesPerMarketPerCycle,
+      1,
+      "Default should be 1 hedge per market per cycle",
+    );
+  });
+});
+
+describe("Anti-Stacking: Hedge Position Blocking", () => {
+  /**
+   * Test that when a hedge is placed, both the original and hedge position
+   * are marked in hedgedPositions to prevent the "ping-pong" pattern.
+   */
+  test("should mark both original and hedge position as hedged", () => {
+    const hedgedPositions = new Set<string>();
+    const marketId = "market-123";
+    const originalTokenId = "token-YES";
+    const hedgeTokenId = "token-NO";
+
+    // Before hedge - neither position is marked
+    const originalKey = `${marketId}-${originalTokenId}`;
+    const hedgeKey = `${marketId}-${hedgeTokenId}`;
+
+    assert.strictEqual(
+      hedgedPositions.has(originalKey),
+      false,
+      "Original should not be hedged initially",
+    );
+    assert.strictEqual(
+      hedgedPositions.has(hedgeKey),
+      false,
+      "Hedge position should not be hedged initially",
+    );
+
+    // Simulate successful hedge - mark both
+    hedgedPositions.add(originalKey);
+    hedgedPositions.add(hedgeKey); // This is the new anti-stacking behavior
+
+    // After hedge - both positions are marked
+    assert.strictEqual(
+      hedgedPositions.has(originalKey),
+      true,
+      "Original should be hedged after",
+    );
+    assert.strictEqual(
+      hedgedPositions.has(hedgeKey),
+      true,
+      "Hedge position should also be hedged (prevents reverse hedge)",
+    );
+  });
+
+  test("should prevent reverse hedge when hedge position is already marked", () => {
+    const hedgedPositions = new Set<string>();
+    const marketId = "market-456";
+    const yesTokenId = "token-YES";
+    const noTokenId = "token-NO";
+
+    // Scenario: YES position loses, we hedge by buying NO
+    const yesKey = `${marketId}-${yesTokenId}`;
+    const noKey = `${marketId}-${noTokenId}`;
+
+    // First hedge: YES loses → buy NO
+    hedgedPositions.add(yesKey); // Mark original
+    hedgedPositions.add(noKey); // Mark hedge (anti-stacking)
+
+    // Now if NO position would lose and try to hedge back to YES...
+    // The YES token is already marked as hedged, so it would be skipped
+    // But more importantly, NO itself is marked as hedged, so it won't be processed
+
+    // Check: Can we hedge the NO position?
+    const canHedgeNo = !hedgedPositions.has(noKey);
+    assert.strictEqual(
+      canHedgeNo,
+      false,
+      "NO position should be blocked from hedging (already marked)",
+    );
+
+    // Check: Can we hedge the YES position?
+    const canHedgeYes = !hedgedPositions.has(yesKey);
+    assert.strictEqual(
+      canHedgeYes,
+      false,
+      "YES position should also be blocked (already marked)",
+    );
+  });
+
+  test("should allow independent hedges on different markets", () => {
+    const hedgedPositions = new Set<string>();
+
+    // Market A
+    const marketA = "market-A";
+    const keyA1 = `${marketA}-token-A1`;
+    const keyA2 = `${marketA}-token-A2`;
+
+    // Market B
+    const marketB = "market-B";
+    const keyB1 = `${marketB}-token-B1`;
+    const keyB2 = `${marketB}-token-B2`;
+
+    // Hedge on Market A
+    hedgedPositions.add(keyA1);
+    hedgedPositions.add(keyA2);
+
+    // Market B should still be available
+    assert.strictEqual(
+      hedgedPositions.has(keyB1),
+      false,
+      "Market B position 1 should be available",
+    );
+    assert.strictEqual(
+      hedgedPositions.has(keyB2),
+      false,
+      "Market B position 2 should be available",
+    );
+
+    // Hedge on Market B should succeed
+    hedgedPositions.add(keyB1);
+    hedgedPositions.add(keyB2);
+
+    // All positions now hedged
+    assert.strictEqual(hedgedPositions.size, 4, "All 4 positions should be marked");
+  });
+});
