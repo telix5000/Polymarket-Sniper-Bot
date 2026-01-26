@@ -626,7 +626,7 @@ const HEDGE_BUFFER_MIN_SLOTS = 3; // Minimum hedge buffer slots to ensure basic 
 // Telegram rate limiting configuration (addresses 429 errors)
 // Telegram limits: ~30 messages/second to same chat, but better to be conservative
 const TELEGRAM_MIN_INTERVAL_MS = 50; // Minimum 50ms between messages (20 msg/sec max)
-const TELEGRAM_MAX_RETRIES = 3; // Max retry attempts for failed messages
+const TELEGRAM_MAX_RETRY_ATTEMPTS = 3; // Max retry attempts after initial send failure (total attempts = 1 + this)
 const TELEGRAM_RETRY_BASE_DELAY_MS = 1000; // Initial retry delay (doubles with each retry)
 const TELEGRAM_QUEUE_MAX_SIZE = 100; // Max queued messages (drop oldest if exceeded)
 
@@ -1462,8 +1462,11 @@ function queueTelegramMessage(text: string): void {
   
   // Drop oldest messages if queue is full
   if (telegramQueue.length >= TELEGRAM_QUEUE_MAX_SIZE) {
-    telegramQueue.shift();
-    log(`⚠️ Telegram queue full, dropped oldest message`);
+    const dropped = telegramQueue.shift();
+    if (dropped) {
+      const ageSeconds = ((Date.now() - dropped.timestamp) / 1000).toFixed(1);
+      log(`⚠️ Telegram queue full, dropped oldest message (queued for ${ageSeconds}s)`);
+    }
   }
   
   telegramQueue.push({
@@ -1488,6 +1491,13 @@ async function processTelegramQueue(): Promise<void> {
   
   try {
     while (telegramQueue.length > 0) {
+      // Defensive check: ensure telegram config still exists
+      if (!state.telegram) {
+        log(`⚠️ Telegram config removed, clearing queue`);
+        telegramQueue.length = 0;
+        break;
+      }
+      
       const msg = telegramQueue[0]!; // Safe: loop condition ensures queue is non-empty
       
       // Rate limiting: wait until minimum interval has passed
@@ -1499,7 +1509,7 @@ async function processTelegramQueue(): Promise<void> {
       }
       
       try {
-        const response = await axios.post(
+        await axios.post(
           `https://api.telegram.org/bot${state.telegram.token}/sendMessage`,
           {
             chat_id: state.telegram.chatId,
@@ -1525,11 +1535,11 @@ async function processTelegramQueue(): Promise<void> {
           
           msg.retryCount++;
           
-          if (msg.retryCount >= TELEGRAM_MAX_RETRIES) {
-            log(`⚠️ Telegram: Dropping message after ${TELEGRAM_MAX_RETRIES} retries (429 rate limit)`);
+          if (msg.retryCount >= TELEGRAM_MAX_RETRY_ATTEMPTS) {
+            log(`⚠️ Telegram: Dropping message after ${TELEGRAM_MAX_RETRY_ATTEMPTS} retry attempts (429 rate limit)`);
             telegramQueue.shift();
           } else {
-            log(`⚠️ Telegram: Rate limited, retry ${msg.retryCount}/${TELEGRAM_MAX_RETRIES} in ${Math.round(backoffDelay/1000)}s`);
+            log(`⚠️ Telegram: Rate limited, retry ${msg.retryCount}/${TELEGRAM_MAX_RETRY_ATTEMPTS} in ${Math.round(backoffDelay/1000)}s`);
             await new Promise(resolve => setTimeout(resolve, backoffDelay));
           }
         } else {
