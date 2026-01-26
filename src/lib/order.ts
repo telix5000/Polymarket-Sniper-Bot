@@ -14,6 +14,7 @@ import { OrderType, Side } from "@polymarket/clob-client";
 import { ORDER } from "./constants";
 import type { OrderSide, OrderOutcome, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
+import { isCloudflareBlock, formatErrorForLog } from "./error-handling";
 
 // In-flight tracking to prevent duplicate orders
 const inFlight = new Map<string, number>();
@@ -223,11 +224,26 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           retryCount = 0; // Reset retry count on success
         } else {
           retryCount++;
-          logger?.warn?.(`Order attempt failed: ${response.errorMsg || "Unknown error"}`);
+          // Check for Cloudflare block in response
+          const errorMsg = response.errorMsg || response.error || "Unknown error";
+          if (isCloudflareBlock(errorMsg) || isCloudflareBlock(response)) {
+            logger?.error?.(
+              `Order blocked by Cloudflare (403). Your IP may be geo-blocked. Consider using a VPN.`,
+            );
+            return { success: false, reason: "CLOUDFLARE_BLOCKED" };
+          }
+          logger?.warn?.(`Order attempt failed: ${formatErrorForLog(errorMsg)}`);
         }
       } catch (err) {
         retryCount++;
-        const msg = err instanceof Error ? err.message : String(err);
+        // Check for Cloudflare block in error
+        if (isCloudflareBlock(err)) {
+          logger?.error?.(
+            `Order blocked by Cloudflare (403). Your IP may be geo-blocked. Consider using a VPN.`,
+          );
+          return { success: false, reason: "CLOUDFLARE_BLOCKED" };
+        }
+        const msg = formatErrorForLog(err);
         logger?.warn?.(`Order execution error: ${msg}`);
         if (retryCount >= ORDER.MAX_RETRIES) {
           return { success: false, reason: msg };
@@ -246,13 +262,17 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     logger?.debug?.(`Order rejected: NO_FILLS after ${ORDER.MAX_RETRIES} retries for ${tokenId.slice(0, 8)}...`);
     return { success: false, reason: "NO_FILLS" };
   } catch (err) {
+    // Check for Cloudflare block
+    if (isCloudflareBlock(err)) {
+      return { success: false, reason: "CLOUDFLARE_BLOCKED" };
+    }
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("No orderbook") || msg.includes("404") || msg.includes("closed") || msg.includes("resolved")) {
       logger?.debug?.(`Order rejected: MARKET_CLOSED (error: ${msg.slice(0, 50)})`);
       return { success: false, reason: "MARKET_CLOSED" };
     }
     logger?.debug?.(`Order rejected: ${msg.slice(0, 100)}`);
-    return { success: false, reason: msg };
+    return { success: false, reason: formatErrorForLog(msg) };
   }
 }
 

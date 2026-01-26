@@ -20,3 +20,4 @@ export * from "./scavenger-config";
 export * from "./scavenger-detection";
 export * from "./scavenger";
 export * from "./ethers-compat";
+export * from "./error-handling";
