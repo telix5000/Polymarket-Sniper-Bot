@@ -706,7 +706,7 @@ function getLedgerSummary(): string {
   const totalValue = state.balance + holdingsValue;
 
   const lines = [
-    `📊 *Session Summary*`,
+    `📊 <b>Session Summary</b>`,
     `Trades: ${totalTrades} (${ledger.buyCount} buys, ${ledger.sellCount} sells)`,
     `Bought: ${$(ledger.totalBuys)}`,
     `Sold: ${$(ledger.totalSells)}`,
@@ -722,7 +722,7 @@ function getLedgerSummary(): string {
     const overallReturnPct = (overallGainLoss / state.initialInvestment) * 100;
     const sign = overallGainLoss >= 0 ? "+" : "";
     lines.push(
-      `📈 *Overall P&L*: ${sign}${$(overallGainLoss)} (${sign}${overallReturnPct.toFixed(1)}%)`,
+      `📈 <b>Overall P&amp;L</b>: ${sign}${$(overallGainLoss)} (${sign}${overallReturnPct.toFixed(1)}%)`,
     );
   }
 
@@ -736,14 +736,14 @@ async function maybeSendSummary() {
 
   ledger.lastSummary = Date.now();
   const summary = getLedgerSummary();
-  log(summary.replace(/\*/g, "")); // Log without markdown
+  log(summary.replace(/<[^>]*>/g, "")); // Log without HTML tags
 
   if (state.telegram) {
     await axios
       .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
         chat_id: state.telegram.chatId,
         text: summary,
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         disable_notification: state.telegram.silent,
       })
       .catch(() => {});
@@ -1304,17 +1304,18 @@ function log(msg: string) {
 /**
  * Send clean alerts for Telegram
  * Format: ACTION | RESULT | DETAILS
+ * Uses HTML parse mode for reliable message delivery
  */
 async function alert(action: string, details: string, success = true) {
   const icon = success ? "✅" : "❌";
-  const line = `${action} ${icon} | ${details}`;
-  log(`📢 ${line}`);
+  const line = `${escapeHtml(action)} ${icon} | ${escapeHtml(details)}`;
+  log(`📢 ${action} ${icon} | ${details}`);
   if (state.telegram) {
     await axios
       .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
         chat_id: state.telegram.chatId,
         text: line,
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         disable_notification: state.telegram.silent,
       })
       .catch((e) => log(`⚠️ Telegram error: ${e.message}`));
@@ -1323,6 +1324,7 @@ async function alert(action: string, details: string, success = true) {
 
 /**
  * Rich trade alert with full context (V1 feature)
+ * Uses HTML parse mode for reliable message delivery
  */
 async function alertTrade(
   side: "BUY" | "SELL",
@@ -1338,24 +1340,26 @@ async function alertTrade(
   const balanceStr = state.balance > 0 ? ` | Bal: ${$(state.balance)}` : "";
   const pnlStr =
     state.sessionStartBalance > 0
-      ? ` | P&L: ${$(state.balance - state.sessionStartBalance)}`
+      ? ` | P&amp;L: ${$(state.balance - state.sessionStartBalance)}`
       : "";
 
   let msg: string;
+  const escapedStrategy = escapeHtml(strategy);
+  const escapedOutcome = escapeHtml(outcome);
   if (success) {
-    msg = `${side} ${icon} | *${strategy}*\n${outcome} ${$(sizeUsd)}${priceStr}${balanceStr}${pnlStr}`;
+    msg = `${side} ${icon} | <b>${escapedStrategy}</b>\n${escapedOutcome} ${$(sizeUsd)}${priceStr}${balanceStr}${pnlStr}`;
   } else {
-    msg = `${side} ${icon} | *${strategy}*\n${outcome} ${$(sizeUsd)} | ${errorMsg || "Failed"}`;
+    msg = `${side} ${icon} | <b>${escapedStrategy}</b>\n${escapedOutcome} ${$(sizeUsd)} | ${escapeHtml(errorMsg || "Failed")}`;
   }
 
-  log(`📢 ${msg.replace(/\n/g, " | ").replace(/\*/g, "")}`);
+  log(`📢 ${side} ${icon} | ${strategy} | ${outcome} ${$(sizeUsd)}${priceStr}${balanceStr}${pnlStr.replace("&amp;", "&")}`);
 
   if (state.telegram) {
     await axios
       .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
         chat_id: state.telegram.chatId,
         text: msg,
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         disable_notification: state.telegram.silent,
       })
       .catch((e) => log(`⚠️ Telegram error: ${e.message}`));
@@ -1369,8 +1373,8 @@ async function alertStatus(msg: string) {
     await axios
       .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
         chat_id: state.telegram.chatId,
-        text: `🤖 ${msg}`,
-        parse_mode: "Markdown",
+        text: `🤖 ${escapeHtml(msg)}`,
+        parse_mode: "HTML",
         disable_notification: state.telegram.silent,
       })
       .catch((e) => log(`⚠️ Telegram error: ${e.message}`));
@@ -1378,6 +1382,17 @@ async function alertStatus(msg: string) {
 }
 
 // ============ FORMATTING ============
+
+/**
+ * Escape HTML entities for Telegram message (HTML parse mode)
+ * Required to prevent message parsing failures when content contains <, >, or &
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 
 /** Format USD amount as $1.23 */
 function $(amount: number): string {
