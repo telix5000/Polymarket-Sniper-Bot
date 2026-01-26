@@ -14,7 +14,7 @@ import {
   DEFAULT_SCAVENGER_CONFIG,
   loadScavengerConfig,
   type ScavengerConfig,
-} from "../../src/lib/scavenger-config";
+} from "../../src/lib/scavenger";
 
 describe("V2 Scavenger Configuration", () => {
   describe("Default Configuration", () => {

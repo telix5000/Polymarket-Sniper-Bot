@@ -15,8 +15,5 @@ export * from "./redeem";
 export * from "./copy";
 export * from "./vpn";
 export * from "./pol-reserve";
-export * from "./trading-mode";
-export * from "./scavenger-config";
-export * from "./scavenger-detection";
 export * from "./scavenger";
 export * from "./ethers-compat";
