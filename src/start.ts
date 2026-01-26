@@ -545,16 +545,6 @@ async function main(): Promise<void> {
   state.wallet = auth.wallet;
   state.address = auth.address ?? "";
 
-  // Log address details for debugging address mismatch issues
-  const signerAddr = auth.wallet.address;
-  const effectiveAddr = auth.effectiveAddress ?? auth.address ?? "";
-  logger.info(`Signer: ${signerAddr.slice(0, 10)}...`);
-  logger.info(`Effective (trading/balance): ${effectiveAddr.slice(0, 10)}...`);
-
-  if (signerAddr.toLowerCase() !== effectiveAddr.toLowerCase()) {
-    logger.warn(`⚠️ Using proxy/funder mode: signer differs from trading address`);
-    logger.warn(`Ensure API credentials were derived with matching signature type configuration`);
-  }
   // === AUTH DIAGNOSTICS ===
   const signerAddress = state.wallet.address;
   const effectiveAddress = state.address;

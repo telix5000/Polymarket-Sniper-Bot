@@ -45,12 +45,12 @@ const effectiveAddress = effectiveSignatureType > 0 && funderAddress ? funderAdd
 
 | Operation | Address Used | Code Location |
 |-----------|--------------|---------------|
-| Balance checks (USDC) | `state.address` (effectiveAddress) | `start.ts:474` |
-| Balance checks (POL) | `state.address` (effectiveAddress) | `start.ts:475` |
-| Position queries | `state.address` (effectiveAddress) | `start.ts:390` via `getPositions()` |
-| Order placement | `ClobClient` (uses signatureType + funder internally) | `order.ts:193-200` |
-| Redeem positions | `address` parameter + `wallet` for signing | `redeem.ts:79-96` |
-| Logs | `state.address` (effectiveAddress) | `start.ts:471` |
+| Balance checks (USDC) | `state.address` (effectiveAddress) | `main()` in `start.ts` via `getUsdcBalance()` |
+| Balance checks (POL) | `state.address` (effectiveAddress) | `main()` in `start.ts` via `getPolBalance()` |
+| Position queries | `state.address` (effectiveAddress) | `runCycle()` in `start.ts` via `getPositions()` |
+| Order placement | `ClobClient` (uses signatureType + funder internally) | `postOrder()` in `order.ts` |
+| Redeem positions | `address` parameter + `wallet` for signing | `redeemAll()` in `redeem.ts` |
+| Logs | `state.address` (effectiveAddress) | Auth Diagnostics section in `start.ts` |
 
 #### Critical Insight: Address Mismatch Scenario
 
@@ -99,11 +99,11 @@ Where `auth.address` comes from `createClobClient()` and is the **effective trad
 
 | Location | Usage | Code |
 |----------|-------|------|
-| `start.ts:390` | Get positions | `getPositions(state.address)` |
-| `start.ts:407-408` | Print summary | `getPositions(state.address, true)`, `getUsdcBalance(state.wallet, state.address)` |
-| `start.ts:346` | Redeem | `redeemAll(state.wallet, state.address, ...)` |
-| `start.ts:365-367` | POL reserve | `getPolBalance(state.wallet, state.address)`, `getUsdcBalance(state.wallet, state.address)` |
-| `start.ts:471,487,489` | Logs | Display address in logs |
+| `runCycle()` | Get positions | `getPositions(state.address)` |
+| `printSummary()` | Print summary | `getPositions(state.address, true)`, `getUsdcBalance(state.wallet, state.address)` |
+| `runRedeem()` | Redeem | `redeemAll(state.wallet, state.address, ...)` |
+| `runPolReserveCheck()` | POL reserve | `getPolBalance(state.wallet, state.address)`, `getUsdcBalance(state.wallet, state.address)` |
+| Auth Diagnostics | Logs | Display address in logs |
 
 ### Potential Mismatch Issues
 
@@ -175,20 +175,20 @@ When `LIVE_TRADING` is not set to `"I_UNDERSTAND_THE_RISKS"`:
 | Reason | Condition | Log Behavior | Line |
 |--------|-----------|--------------|------|
 | `SIMULATED` | `!isLiveTradingEnabled()` | `[SIM] {side} {sizeUsd} USD - live trading disabled` | 51-54 |
-| `ORDER_TOO_SMALL` | `sizeUsd < ORDER.MIN_ORDER_USD` (0.01) | No explicit log | 57-59 |
-| `IN_FLIGHT` | Same token order within `COOLDOWN_MS` (1000ms) | No explicit log | 66-69 |
-| `MARKET_COOLDOWN` | Same market order within `MARKET_COOLDOWN_MS` (5000ms) | No explicit log | 73-76 |
-| `MARKET_NOT_FOUND` | Market doesn't exist (if marketId provided) | No explicit log | 88-89 |
-| `MARKET_CLOSED` | Orderbook fetch returns 404 or "No orderbook exists" | No explicit log | 101-105 |
-| `NO_ORDERBOOK` | `orderBook` is null/undefined | No explicit log | 108-110 |
-| `NO_ASKS` | No asks in orderbook (for BUY) | No explicit log | 115-117 |
-| `NO_BIDS` | No bids in orderbook (for SELL) | No explicit log | 115-117 |
-| `ZERO_PRICE` | `bestPrice <= ORDER.MIN_TRADEABLE_PRICE` (0.001) | No explicit log | 122-124 |
-| `LOSER_POSITION` | BUY at price < `GLOBAL_MIN_BUY_PRICE` (0.10) | No explicit log | 127-129 |
-| `PRICE_TOO_HIGH` | BUY price > `maxAcceptablePrice` | No explicit log | 132-135 |
-| `PRICE_TOO_LOW` | SELL price < `maxAcceptablePrice` | No explicit log | 136-138 |
-| `NO_FILLS` | Order executed but no fills after retries | No explicit log | 234 |
-| `MARKET_CLOSED` (catch) | Error contains "closed", "resolved", "404", "No orderbook" | No explicit log | 236-240 |
+| `ORDER_TOO_SMALL` | `sizeUsd < ORDER.MIN_ORDER_USD` (0.01) | Debug-level log | 57-59 |
+| `IN_FLIGHT` | Same token order within `COOLDOWN_MS` (1000ms) | Debug-level log | 68-70 |
+| `MARKET_COOLDOWN` | Same market order within `MARKET_COOLDOWN_MS` (5000ms) | Debug-level log | 76-78 |
+| `MARKET_NOT_FOUND` | Market doesn't exist (if marketId provided) | Debug-level log | 91-93 |
+| `MARKET_CLOSED` | Orderbook fetch returns 404 or "No orderbook exists" | Debug-level log | 106-108 |
+| `NO_ORDERBOOK` | `orderBook` is null/undefined | Debug-level log | 113-115 |
+| `NO_ASKS` | No asks in orderbook (for BUY) | Debug-level log | 120-124 |
+| `NO_BIDS` | No bids in orderbook (for SELL) | Debug-level log | 120-124 |
+| `ZERO_PRICE` | `bestPrice <= ORDER.MIN_TRADEABLE_PRICE` (0.001) | Debug-level log | 130-132 |
+| `LOSER_POSITION` | BUY at price < `GLOBAL_MIN_BUY_PRICE` (0.10) | Debug-level log | 136-138 |
+| `PRICE_TOO_HIGH` | BUY price > `maxAcceptablePrice` | Debug-level log | 143-145 |
+| `PRICE_TOO_LOW` | SELL price < `maxAcceptablePrice` | Debug-level log | 147-149 |
+| `NO_FILLS` | Order executed but no fills after retries | Debug-level log | 245-247 |
+| `MARKET_CLOSED` (catch) | Error contains "closed", "resolved", "404", "No orderbook" | Debug-level log | 250-252 |
 | Custom error message | Any other exception | `warn: Order execution error: {msg}` | 216-223 |
 
 ### How Rejections Appear in Logs
