@@ -186,6 +186,23 @@ export interface HedgingConfig {
    * Set to 0 to disable hedge exit monitoring.
    */
   hedgeExitThreshold: number;
+
+  // === ANTI-STACKING / BACK-AND-FORTH HEDGE PROTECTION ===
+
+  /**
+   * Maximum number of hedge operations allowed per market per cycle (default: 1)
+   *
+   * CRITICAL SAFEGUARD: Prevents the "ping-pong" hedge pattern where:
+   * 1. Position A loses → hedge by buying opposite (position B)
+   * 2. Position B loses → hedge by buying opposite (back to A!)
+   * 3. This repeats, costing money with no protective benefit
+   *
+   * With maxHedgesPerMarketPerCycle=1, once ANY hedge is placed on a market,
+   * no more hedges can be placed on that market in the same cycle.
+   *
+   * Set to 0 to disable per-market limit (not recommended).
+   */
+  maxHedgesPerMarketPerCycle: number;
 }
 
 export const DEFAULT_HEDGING_CONFIG: HedgingConfig = {
@@ -213,6 +230,8 @@ export const DEFAULT_HEDGING_CONFIG: HedgingConfig = {
   hedgeUpAnytime: false, // Default: only hedge up near close (safer - more certainty of outcome)
   // Hedge exit monitoring
   hedgeExitThreshold: 0.25, // Exit losing side when it drops below 25¢ (guaranteed loss)
+  // Anti-stacking protection
+  maxHedgesPerMarketPerCycle: 1, // Only allow 1 hedge per market per cycle (prevents ping-pong)
 };
 
 /**
@@ -325,6 +344,14 @@ export class HedgingStrategy {
   // Track failed liquidation attempts with cooldown to prevent repeated retries
   // Key: position key (marketId-tokenId), Value: timestamp when cooldown expires
   private failedLiquidationCooldowns: Map<string, number> = new Map();
+
+  // === PER-CYCLE MARKET HEDGE TRACKING (Anti-stacking safeguard) ===
+  // Key: marketId, Value: count of hedges placed on this market in current cycle
+  // Reset at the start of each execute() cycle
+  // Prevents back-and-forth "ping-pong" hedging where:
+  // - Position A loses → hedge buys opposite (B)
+  // - Position B loses → hedge would buy back A (blocked by this safeguard)
+  private cycleHedgeCountByMarket: Map<string, number> = new Map();
 
   // === LOG DEDUPLICATION ===
   // Prevents per-position skip log spam by tracking state changes
@@ -536,6 +563,11 @@ export class HedgingStrategy {
     // This ensures multiple hedges in the same cycle don't exceed reserves
     this.initCycleHedgeBudget();
 
+    // === RESET PER-CYCLE MARKET HEDGE TRACKING (Anti-stacking safeguard) ===
+    // Clear the per-market hedge count at the start of each cycle
+    // This allows hedging new markets while preventing back-and-forth on same market
+    this.cycleHedgeCountByMarket.clear();
+
     const positions = this.positionTracker.getPositions();
     let actionsCount = 0;
     const now = Date.now();
@@ -718,6 +750,25 @@ export class HedgingStrategy {
         // Clean up expired cooldown entries (for current position)
         if (cooldownUntil && now >= cooldownUntil) {
           this.failedLiquidationCooldowns.delete(key);
+        }
+
+        // === ANTI-STACKING SAFEGUARD: Per-market hedge limit ===
+        // Prevents back-and-forth "ping-pong" hedging pattern:
+        // Position A loses → hedge buys B → B loses → hedge would buy A again (BLOCKED)
+        // This is critical because repeated hedging wastes money without protective benefit
+        if (this.config.maxHedgesPerMarketPerCycle > 0) {
+          const marketHedgeCount =
+            this.cycleHedgeCountByMarket.get(position.marketId) ?? 0;
+          if (marketHedgeCount >= this.config.maxHedgesPerMarketPerCycle) {
+            if (isCatastrophicLossPosition) {
+              this.logger.warn(
+                `[Hedging] 🛑 ANTI-STACKING: Skipping hedge for ${position.side ?? "?"} ${tokenIdShort}... ` +
+                  `(market ${position.marketId.slice(0, 8)}... already hedged ${marketHedgeCount}x this cycle, limit=${this.config.maxHedgesPerMarketPerCycle})`,
+              );
+            }
+            skipAggregator.add(tokenIdShort, "market_hedge_limit");
+            continue;
+          }
         }
 
         // === ORDERBOOK QUALITY ASSESSMENT (Jan 2025 Fix) ===
@@ -1108,6 +1159,28 @@ export class HedgingStrategy {
           if (hedgeResult.success) {
             actionsCount++;
             this.hedgedPositions.add(key);
+
+            // === ANTI-STACKING SAFEGUARD: Mark hedge position + increment market count ===
+            // CRITICAL: Also add the HEDGE POSITION to hedgedPositions
+            // This prevents the hedge position from triggering a reverse hedge:
+            // - Without this: Original loses → hedge buys opposite → opposite loses → hedges back!
+            // - With this: The opposite (hedge) position is pre-marked as "hedged", blocking the loop
+            if (hedgeResult.hedgeTokenId) {
+              const hedgeKey = `${position.marketId}-${hedgeResult.hedgeTokenId}`;
+              this.hedgedPositions.add(hedgeKey);
+              this.logger.info(
+                `[Hedging] 🛡️ ANTI-STACKING: Marked hedge position ${hedgeResult.hedgeTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}... as hedged to prevent reverse hedge`,
+              );
+
+              // Increment per-market hedge count
+              const currentCount =
+                this.cycleHedgeCountByMarket.get(position.marketId) ?? 0;
+              this.cycleHedgeCountByMarket.set(
+                position.marketId,
+                currentCount + 1,
+              );
+            }
+
             // Track paired hedge for exit monitoring
             if (hedgeResult.hedgeTokenId) {
               this.pairedHedges.set(key, {
@@ -1155,6 +1228,21 @@ export class HedgingStrategy {
               `[Hedging] 🛑 Partial hedge fill ($${hedgeResult.filledAmountUsd.toFixed(2)}) - marking position as hedged to prevent exceeding ABSOLUTE_MAX`,
             );
             this.hedgedPositions.add(key);
+
+            // === ANTI-STACKING SAFEGUARD: Also mark hedge position for partial fills ===
+            if (hedgeResult.hedgeTokenId) {
+              const hedgeKey = `${position.marketId}-${hedgeResult.hedgeTokenId}`;
+              this.hedgedPositions.add(hedgeKey);
+
+              // Increment per-market hedge count
+              const currentCount =
+                this.cycleHedgeCountByMarket.get(position.marketId) ?? 0;
+              this.cycleHedgeCountByMarket.set(
+                position.marketId,
+                currentCount + 1,
+              );
+            }
+
             // Track paired hedge even for partial fills
             if (hedgeResult.hedgeTokenId) {
               this.pairedHedges.set(key, {
@@ -1294,6 +1382,20 @@ export class HedgingStrategy {
                 actionsCount++;
                 this.hedgedPositions.add(key);
 
+                // === ANTI-STACKING SAFEGUARD: Mark hedge position from retry ===
+                if (retryResult.hedgeTokenId) {
+                  const hedgeKey = `${position.marketId}-${retryResult.hedgeTokenId}`;
+                  this.hedgedPositions.add(hedgeKey);
+
+                  // Increment per-market hedge count
+                  const currentCount =
+                    this.cycleHedgeCountByMarket.get(position.marketId) ?? 0;
+                  this.cycleHedgeCountByMarket.set(
+                    position.marketId,
+                    currentCount + 1,
+                  );
+                }
+
                 // For near-resolution, also sell the original after successful hedge
                 if (isNearResolutionHedge) {
                   this.logger.info(
@@ -1314,6 +1416,21 @@ export class HedgingStrategy {
                   `[Hedging] 🛑 Retry partial fill ($${retryResult.filledAmountUsd.toFixed(2)}) - marking position as hedged`,
                 );
                 this.hedgedPositions.add(key);
+
+                // === ANTI-STACKING SAFEGUARD: Mark hedge position from retry partial fill ===
+                if (retryResult.hedgeTokenId) {
+                  const hedgeKey = `${position.marketId}-${retryResult.hedgeTokenId}`;
+                  this.hedgedPositions.add(hedgeKey);
+
+                  // Increment per-market hedge count
+                  const currentCount =
+                    this.cycleHedgeCountByMarket.get(position.marketId) ?? 0;
+                  this.cycleHedgeCountByMarket.set(
+                    position.marketId,
+                    currentCount + 1,
+                  );
+                }
+
                 actionsCount++;
                 continue;
               }
@@ -1422,6 +1539,8 @@ export class HedgingStrategy {
       const nearResolutionCount = skipAggregator.getCount("near_resolution");
       const untrustedPnlCount = skipAggregator.getCount("untrusted_pnl");
       const cooldownCount = skipAggregator.getCount("cooldown");
+      const marketHedgeLimitCount =
+        skipAggregator.getCount("market_hedge_limit");
 
       this.logger.info(
         `[Hedging] 📊 CYCLE SUMMARY (cycle=${this.cycleCount}): actions=${actionsCount}, ` +
@@ -1430,7 +1549,7 @@ export class HedgingStrategy {
           `(allowExceed=${this.config.allowExceedMax}, absoluteMax=$${this.config.absoluteMaxUsd}) | ` +
           `Skips: already_hedged=${alreadyHedgedCount}, not_tradable=${notTradableCount}, ` +
           `loss_below_trigger=${lossBelowTriggerCount}, near_resolution=${nearResolutionCount}, ` +
-          `pnl_untrusted=${untrustedPnlCount}, cooldown=${cooldownCount}`,
+          `pnl_untrusted=${untrustedPnlCount}, cooldown=${cooldownCount}, market_hedge_limit=${marketHedgeLimitCount}`,
       );
     }
 
@@ -2406,16 +2525,30 @@ export class HedgingStrategy {
 
   /**
    * Get strategy stats
+   *
+   * @returns Object with hedging statistics:
+   * - enabled: Whether hedging is enabled
+   * - hedgedCount: Number of positions currently marked as hedged (in-memory tracking)
+   * - failedLiquidationCooldownCount: Number of positions in failed liquidation cooldown
+   * - pairedHedgeCount: Number of paired hedge relationships (original + hedge position pairs)
+   * - marketsHedgedThisCycle: Number of unique markets that have been hedged in the current cycle
+   * - maxHedgesPerMarketPerCycle: Configured limit for hedges per market per cycle (anti-stacking)
    */
   getStats(): {
     enabled: boolean;
     hedgedCount: number;
     failedLiquidationCooldownCount: number;
+    pairedHedgeCount: number;
+    marketsHedgedThisCycle: number;
+    maxHedgesPerMarketPerCycle: number;
   } {
     return {
       enabled: this.config.enabled,
       hedgedCount: this.hedgedPositions.size,
       failedLiquidationCooldownCount: this.failedLiquidationCooldowns.size,
+      pairedHedgeCount: this.pairedHedges.size,
+      marketsHedgedThisCycle: this.cycleHedgeCountByMarket.size,
+      maxHedgesPerMarketPerCycle: this.config.maxHedgesPerMarketPerCycle,
     };
   }
 
