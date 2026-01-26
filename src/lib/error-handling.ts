@@ -25,29 +25,148 @@ export interface ParsedError {
 }
 
 /**
+ * Internal set of keys that may contain sensitive information and should be redacted.
+ * Keys are compared case-insensitively.
+ */
+const SENSITIVE_KEYS = new Set<string>([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+  "api-key",
+  "apikey",
+  "access_token",
+  "refresh_token",
+  "id_token",
+  "token",
+  "secret",
+  "client_secret",
+  "password",
+  "passwd",
+  "signature",
+  "x-signature",
+  "poly_signature",
+  "poly_api_key",
+  "poly_passphrase",
+  "private-key",
+]);
+
+/**
+ * Safely convert an unknown error to a string, handling circular refs and Error instances.
+ * Never throws.
+ */
+function safeErrorToString(error: unknown): string {
+  if (!error) return "";
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    // Circular reference or other JSON.stringify failure
+    return String(error);
+  }
+}
+
+/**
+ * Recursively redacts values of known sensitive keys in an arbitrary data structure.
+ */
+function redactSensitiveData(
+  value: unknown,
+  seen: WeakSet<object> = new WeakSet(),
+): unknown {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  const obj = value as Record<string, unknown>;
+
+  if (seen.has(obj)) {
+    return "[Circular]";
+  }
+  seen.add(obj);
+
+  if (Array.isArray(obj)) {
+    return obj.map((item) => redactSensitiveData(item, seen));
+  }
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(obj)) {
+    const lowerKey = key.toLowerCase();
+    const isExplicitSensitive = SENSITIVE_KEYS.has(lowerKey);
+    const isHeuristicallySensitive =
+      lowerKey.includes("token") ||
+      lowerKey.includes("key") ||
+      lowerKey.includes("secret") ||
+      lowerKey.includes("pass") ||
+      lowerKey.includes("auth") ||
+      lowerKey.includes("signature");
+
+    if (isExplicitSensitive || isHeuristicallySensitive) {
+      redacted[key] = "[REDACTED]";
+    } else {
+      redacted[key] = redactSensitiveData(val, seen);
+    }
+  }
+
+  return redacted;
+}
+
+/**
+ * Redact obvious credentials in plain text strings (best-effort).
+ */
+function redactSensitiveInString(message: string): string {
+  let result = message;
+
+  // Patterns like "Authorization: Bearer abc123", "api_key=abc123", "token: abc123"
+  const patterns: RegExp[] = [
+    /(Authorization)\s*:\s*([^\r\n]+)/gi,
+    /(Proxy-Authorization)\s*:\s*([^\r\n]+)/gi,
+    /\b(api[-_\s]*key)\s*[:=]\s*([^\s&"']+)/gi,
+    /\b(token|access_token|refresh_token)\s*[:=]\s*([^\s&"']+)/gi,
+    /\b(password|passwd)\s*[:=]\s*([^\s&"']+)/gi,
+    /\b(POLY_SIGNATURE)\s*[:=]\s*([^\s&"']+)/gi,
+    /\b(POLY_API_KEY)\s*[:=]\s*([^\s&"']+)/gi,
+    /\b(POLY_PASSPHRASE)\s*[:=]\s*([^\s&"']+)/gi,
+    /"(signature)"\s*:\s*"([^"]+)"/gi,
+  ];
+
+  for (const pattern of patterns) {
+    result = result.replace(pattern, (_match, p1) => `${p1}: [REDACTED]`);
+  }
+
+  return result;
+}
+
+/**
  * Check if an error response indicates a Cloudflare block
  */
 export function isCloudflareBlock(error: unknown): boolean {
   if (!error) return false;
 
-  const errorStr = typeof error === "string" ? error : JSON.stringify(error);
+  const errorStr = safeErrorToString(error);
 
   // Common Cloudflare block indicators
   const cloudflareIndicators = [
-    "Sorry, you have been blocked",
-    "Attention Required! | Cloudflare",
+    "sorry, you have been blocked",
+    "attention required! | cloudflare",
     "cloudflare",
     "cf-error",
     "cf-wrapper",
-    "You are unable to access",
-    "Ray ID:",
+    "you are unable to access",
+    "ray id:",
   ];
 
   const lowerErrorStr = errorStr.toLowerCase();
-  return cloudflareIndicators.some(
-    (indicator) =>
-      lowerErrorStr.includes(indicator.toLowerCase()) ||
-      errorStr.includes(indicator),
+  return cloudflareIndicators.some((indicator) =>
+    lowerErrorStr.includes(indicator),
   );
 }
 
@@ -57,7 +176,7 @@ export function isCloudflareBlock(error: unknown): boolean {
 export function isRateLimited(error: unknown): boolean {
   if (!error) return false;
 
-  const errorStr = typeof error === "string" ? error : JSON.stringify(error);
+  const errorStr = safeErrorToString(error);
   const lowerErrorStr = errorStr.toLowerCase();
 
   return (
@@ -91,7 +210,7 @@ export function parseError(error: unknown): ParsedError {
   }
 
   // Check for common auth errors
-  const errorStr = typeof error === "string" ? error : JSON.stringify(error);
+  const errorStr = safeErrorToString(error);
   if (
     errorStr.includes("401") ||
     errorStr.includes("Unauthorized") ||
@@ -140,7 +259,19 @@ export function parseError(error: unknown): ParsedError {
 export function formatErrorForLog(error: unknown, maxLength = 500): string {
   if (!error) return "Unknown error";
 
-  let errorStr = typeof error === "string" ? error : JSON.stringify(error);
+  let errorStr: string;
+
+  if (typeof error === "string") {
+    errorStr = redactSensitiveInString(error);
+  } else {
+    try {
+      const redacted = redactSensitiveData(error);
+      errorStr = JSON.stringify(redacted);
+    } catch {
+      // Fallback to best-effort string conversion if JSON serialization fails
+      errorStr = redactSensitiveInString(String(error));
+    }
+  }
 
   // If it's a Cloudflare block, provide a clean message instead of the HTML
   if (isCloudflareBlock(errorStr)) {

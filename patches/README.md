@@ -24,14 +24,14 @@ createOrDeriveApiKey(nonce) {
 }
 ```
 
-**Patched Code**:
+**Patched Code** (conceptual async/await form):
 ```javascript
-createOrDeriveApiKey(nonce) {
+async createOrDeriveApiKey(nonce) {
     // Patched: Try deriveApiKey first (for existing keys)
     // then fall back to createApiKey (for new wallets)
     // This avoids noisy 400 errors when key already exists
     try {
-        const derived = yield this.deriveApiKey(nonce);
+        const derived = await this.deriveApiKey(nonce);
         if (derived && derived.key) {
             return derived;
         }
@@ -41,6 +41,8 @@ createOrDeriveApiKey(nonce) {
     return this.createApiKey(nonce);
 }
 ```
+
+**Note**: The actual patch modifies the transpiled `__awaiter(function* () { ... })` code in `dist/client.js`, but the logic is equivalent to the async/await form shown above.
 
 **Result**: Existing wallets derive their API keys silently without 400 errors being logged. New wallets still get keys created correctly.
 

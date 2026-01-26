@@ -90,12 +90,17 @@ export async function capturePreVpnRouting(
 ): Promise<PreVpnRouting> {
   try {
     // Get both gateway and interface in a single command for efficiency
-    const routeInfo = execSync(
+    const rawRouteInfo = execSync(
       "ip route | grep default | awk '{print $3 \" \" $5}'",
       { encoding: "utf8" },
     ).trim();
 
-    const [gateway, iface] = routeInfo.split(" ");
+    // Select a single default route deterministically and split on whitespace
+    const firstLine =
+      rawRouteInfo.split("\n").find((line) => line.trim().length > 0) ?? "";
+    const parts = firstLine.trim().split(/\s+/);
+    const gateway = parts[0] ?? "";
+    const iface = parts[1] ?? "";
 
     // Validate the output before storing
     if (gateway && iface && isValidIp(gateway) && isValidIface(iface)) {
@@ -198,10 +203,12 @@ function addBypassRoute(
   }
 
   try {
-    // Get host IP - hostname is validated above
-    const ip = execSync(`getent hosts ${hostname} | awk '{print $1}'`, {
-      encoding: "utf8",
-    }).trim();
+    // Get host IPv4 address - hostname is validated above
+    // Use ahostsv4 to deterministically get first IPv4 address
+    const ip = execSync(
+      `getent ahostsv4 ${hostname} | awk 'NR==1 {print $1; exit}'`,
+      { encoding: "utf8" },
+    ).trim();
 
     // Validate the resolved IP
     if (!ip || !isValidIp(ip)) {

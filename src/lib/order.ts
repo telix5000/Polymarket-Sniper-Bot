@@ -271,9 +271,8 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       logger?.debug?.(`Order rejected: MARKET_CLOSED (error: ${msg.slice(0, 50)})`);
       return { success: false, reason: "MARKET_CLOSED" };
     }
-    return { success: false, reason: formatErrorForLog(msg) };
     logger?.debug?.(`Order rejected: ${msg.slice(0, 100)}`);
-    return { success: false, reason: msg };
+    return { success: false, reason: formatErrorForLog(msg) };
   }
 }
 

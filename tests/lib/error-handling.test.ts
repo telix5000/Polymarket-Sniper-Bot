@@ -50,6 +50,18 @@ describe("Error Handling Utilities", () => {
       assert.strictEqual(isCloudflareBlock(null), false);
       assert.strictEqual(isCloudflareBlock(undefined), false);
     });
+
+    it("should handle Error instances", () => {
+      const err = new Error("Sorry, you have been blocked");
+      assert.strictEqual(isCloudflareBlock(err), true);
+    });
+
+    it("should handle circular references without throwing", () => {
+      const circular: Record<string, unknown> = { msg: "cloudflare" };
+      circular.self = circular;
+      // Should not throw - may return false due to String() fallback
+      assert.doesNotThrow(() => isCloudflareBlock(circular));
+    });
   });
 
   describe("isRateLimited", () => {
@@ -94,6 +106,12 @@ describe("Error Handling Utilities", () => {
       assert.strictEqual(result.code, ErrorCode.NETWORK_ERROR);
       assert.strictEqual(result.recoverable, true);
     });
+
+    it("should handle Error instances", () => {
+      const err = new Error("Rate limit exceeded");
+      const result = parseError(err);
+      assert.strictEqual(result.code, ErrorCode.RATE_LIMITED);
+    });
   });
 
   describe("formatErrorForLog", () => {
@@ -128,6 +146,45 @@ describe("Error Handling Utilities", () => {
     it("should handle null/undefined gracefully", () => {
       assert.strictEqual(formatErrorForLog(null), "Unknown error");
       assert.strictEqual(formatErrorForLog(undefined), "Unknown error");
+    });
+
+    it("should redact sensitive data from objects", () => {
+      const errorWithSecrets = {
+        message: "Request failed",
+        headers: {
+          Authorization: "Bearer secret123",
+          POLY_API_KEY: "key456",
+          "Content-Type": "application/json",
+        },
+        config: {
+          password: "mypassword",
+          token: "sometoken",
+        },
+      };
+
+      const result = formatErrorForLog(errorWithSecrets);
+      assert.ok(!result.includes("secret123"), "Should redact Bearer token");
+      assert.ok(!result.includes("key456"), "Should redact POLY_API_KEY");
+      assert.ok(!result.includes("mypassword"), "Should redact password");
+      assert.ok(!result.includes("sometoken"), "Should redact token");
+      assert.ok(result.includes("[REDACTED]"), "Should show redacted placeholder");
+      assert.ok(result.includes("application/json"), "Should keep non-sensitive data");
+    });
+
+    it("should redact sensitive data from strings", () => {
+      const errorWithSecrets = 'Authorization: Bearer abc123, api_key=xyz789';
+      const result = formatErrorForLog(errorWithSecrets);
+      assert.ok(!result.includes("abc123"), "Should redact Bearer token");
+      assert.ok(!result.includes("xyz789"), "Should redact api_key");
+      assert.ok(result.includes("[REDACTED]"), "Should show redacted placeholder");
+    });
+
+    it("should handle circular references gracefully", () => {
+      const circular: Record<string, unknown> = { msg: "error" };
+      circular.self = circular;
+      // Should not throw
+      const result = formatErrorForLog(circular);
+      assert.ok(result.includes("[Circular]"), "Should handle circular refs");
     });
   });
 });
