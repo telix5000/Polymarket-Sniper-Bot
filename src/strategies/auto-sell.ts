@@ -773,38 +773,33 @@ export class AutoSellStrategy {
   }
 
   /**
-   * Sell a position using postOrder utility
+   * Execute a sell order using postOrder utility
    * 
-   * METHODOLOGY NOTE:
-   * Uses the SAME sell approach as Hedging and Stop-Loss strategies:
+   * This is the SINGLE sell method for AutoSell strategy, following the same
+   * methodology as Hedging and Stop-Loss strategies:
    * - postOrder() handles orderbook validation internally (single source of truth)
    * - Uses position's price data from PositionTracker (Data API validated)
    * - FOK (Fill-or-Kill) order type for immediate execution
-   * - FALLING_KNIFE_SLIPPAGE_PCT (25%) slippage tolerance for reliability
    * - skipMinOrderSizeCheck: true (same as Hedging)
    * 
-   * This ensures consistent sell behavior across all strategies and relies on
-   * the CLOB API for the actual transaction execution - same as BUY methodology.
-   * 
-   * @param marketId - The market ID
-   * @param tokenId - The token ID
-   * @param size - Number of shares to sell
-   * @param currentBidPrice - Current bid price from PositionTracker (currentBidPrice ?? currentPrice fallback)
+   * @param position - The position to sell
+   * @param slippagePct - Slippage tolerance percentage (e.g., FALLING_KNIFE_SLIPPAGE_PCT or STALE_SELL_SLIPPAGE_PCT)
+   * @param strategyLabel - Label for notifications (e.g., "AutoSell" or "AutoSell (Stale)")
    * @returns true if order was submitted successfully, false if skipped/no liquidity
    */
-  private async sellPosition(
-    marketId: string,
-    tokenId: string,
-    size: number,
-    currentBidPrice: number,
+  private async executeSell(
+    position: Position,
+    slippagePct: number,
+    strategyLabel: string,
   ): Promise<boolean> {
     try {
       // Import postOrder utility
       const { postOrder } = await import("../utils/post-order.util");
 
-      // Calculate sell value using position's current bid price from PositionTracker
-      // Similar to how Hedging calculates sizeUsd (position.size * position.currentPrice)
-      const sizeUsd = size * currentBidPrice;
+      // Use currentBidPrice from PositionTracker (same methodology as Hedging)
+      // If not available, fall back to currentPrice
+      const bidPrice = position.currentBidPrice ?? position.currentPrice;
+      const sizeUsd = position.size * bidPrice;
 
       // Log info for small positions but allow selling them to liquidate
       const minOrderUsd = this.config.minOrderUsd;
@@ -817,49 +812,49 @@ export class AutoSellStrategy {
       // Extract wallet if available
       const wallet = (this.client as { wallet?: Wallet }).wallet;
 
-      // Calculate expected loss per share
-      const lossPerShare = 1.0 - currentBidPrice;
-      const totalLoss = lossPerShare * size;
-
       this.logger.info(
-        `[AutoSell] Executing sell: ${size.toFixed(2)} shares at ~${(currentBidPrice * 100).toFixed(1)}¢ (loss: $${totalLoss.toFixed(2)})`,
+        `[AutoSell] Executing ${strategyLabel} sell: ${position.size.toFixed(2)} shares at ~${(bidPrice * 100).toFixed(1)}¢`,
       );
 
       // Execute sell order using SAME methodology as Hedging:
       // - Let postOrder() handle orderbook validation internally (single source of truth)
-      // - Use FALLING_KNIFE_SLIPPAGE_PCT (25%) for reliability - same as Hedging/Stop-Loss
       // - skipMinOrderSizeCheck: true - same as Hedging
       // - skipDuplicatePrevention: true - required for exits
       const result = await postOrder({
         client: this.client,
         wallet,
-        marketId,
-        tokenId,
+        marketId: position.marketId,
+        tokenId: position.tokenId,
         outcome: "YES", // Direction doesn't matter for sells
         side: "SELL",
         sizeUsd,
-        // Use falling knife slippage (25%) - SAME as Hedging and Stop-Loss
-        minAcceptablePrice: calculateMinAcceptablePrice(currentBidPrice, FALLING_KNIFE_SLIPPAGE_PCT),
+        minAcceptablePrice: calculateMinAcceptablePrice(bidPrice, slippagePct),
         logger: this.logger,
         skipDuplicatePrevention: true, // Required for exits
         skipMinOrderSizeCheck: true, // SAME as Hedging - allow selling small positions
       });
 
       if (result.status === "submitted") {
-        const freedCapital = size * currentBidPrice;
+        const freedCapital = position.size * bidPrice;
         this.logger.info(
-          `[AutoSell] ✓ Sold ${size.toFixed(2)} shares, freed $${freedCapital.toFixed(2)} capital`,
+          `[AutoSell] ✓ ${strategyLabel} sold ${position.size.toFixed(2)} shares, freed $${freedCapital.toFixed(2)} capital`,
         );
 
-        // Send telegram notification for auto-sell
+        // Send telegram notification
+        const tradePnl = position.entryPrice > 0 
+          ? (bidPrice - position.entryPrice) * position.size 
+          : undefined;
         void notifySell(
-          marketId,
-          tokenId,
-          size,
-          currentBidPrice,
+          position.marketId,
+          position.tokenId,
+          position.size,
+          bidPrice,
           sizeUsd,
           {
-            strategy: "AutoSell",
+            strategy: strategyLabel,
+            entryPrice: position.entryPrice > 0 ? position.entryPrice : undefined,
+            pnl: tradePnl,
+            outcome: position.side,
           },
         ).catch(() => {
           // Ignore notification errors
@@ -868,16 +863,27 @@ export class AutoSellStrategy {
         return true;
       } else if (result.status === "skipped") {
         this.logger.warn(
-          `[AutoSell] Sell order skipped: ${result.reason ?? "unknown reason"}`,
+          `[AutoSell] ${strategyLabel} sell skipped: ${result.reason ?? "unknown reason"}`,
         );
         return false;
       } else if (result.reason === "FOK_ORDER_KILLED") {
-        // FOK order was submitted but killed (no fill) - market has insufficient liquidity
         this.logger.warn(
-          `[AutoSell] ⚠️ Sell order not filled (FOK killed): ${size.toFixed(2)} shares at ~${(currentBidPrice * 100).toFixed(1)}¢ - market has insufficient liquidity`,
+          `[AutoSell] ⚠️ ${strategyLabel} sell not filled (FOK killed) - market has insufficient liquidity`,
         );
         return false;
       } else {
+        this.logger.error(
+          `[AutoSell] ${strategyLabel} sell failed: ${result.reason ?? "unknown reason"}`,
+        );
+        throw new Error(`${strategyLabel} sell failed: ${result.reason ?? "unknown"}`);
+      }
+    } catch (err) {
+      this.logger.error(
+        `[AutoSell] Failed to execute ${strategyLabel} sell: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw err;
+    }
+  }
         this.logger.error(
           `[AutoSell] Sell order failed: ${result.reason ?? "unknown reason"}`,
         );
