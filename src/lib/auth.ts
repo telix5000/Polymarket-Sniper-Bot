@@ -34,13 +34,16 @@ export async function createClobClient(
   rpcUrl: string,
   logger?: Logger,
 ): Promise<AuthResult> {
+  // Private key with 0x prefix should be 66 chars (2 for '0x' + 64 hex chars)
+  const PRIVATE_KEY_LENGTH_WITH_PREFIX = 66;
+
   try {
     // Normalize private key
     const normalizedKey = privateKey?.startsWith("0x")
       ? privateKey
       : `0x${privateKey}`;
 
-    if (!normalizedKey || normalizedKey.length < 66) {
+    if (!normalizedKey || normalizedKey.length < PRIVATE_KEY_LENGTH_WITH_PREFIX) {
       return { success: false, error: "PRIVATE_KEY is invalid or missing" };
     }
     if (!rpcUrl) {

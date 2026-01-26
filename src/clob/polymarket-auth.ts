@@ -301,10 +301,14 @@ export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
 
   const rpcUrl = process.env.RPC_URL;
 
+  // Only pass funderAddress for non-EOA modes (signatureType > 0)
+  // This ensures EOA mode uses the signer address directly
+  const effectiveFunderAddress = signatureType > 0 ? funderAddress : undefined;
+
   return new PolymarketAuth({
     privateKey,
     signatureType,
-    funderAddress: signatureType > 0 ? funderAddress : undefined, // Only use funder for non-EOA modes
+    funderAddress: effectiveFunderAddress,
     apiKey,
     apiSecret,
     passphrase,
