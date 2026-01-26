@@ -1962,8 +1962,7 @@ export class ScalpTradeStrategy {
   /**
    * Sell a position to take profit
    *
-   * CRITICAL FIX: Sell sizing uses position notional (sharesHeld * limitPrice),
-   * NOT profitUsd which causes SKIP_MIN_ORDER_SIZE errors.
+   * Sell sizing uses position notional (sharesHeld * limitPrice).
    *
    * @param position The position to sell
    * @param limitPriceCents Optional limit price in cents (defaults to currentBidPrice * 100)
@@ -1985,8 +1984,7 @@ export class ScalpTradeStrategy {
         (position.currentBidPrice ?? position.currentPrice) * 100;
       const effectiveLimitPrice = effectiveLimitCents / 100;
 
-      // CRITICAL: Compute notional as sharesHeld * limitPrice (what we'll receive)
-      // NOT profitUsd which would cause SKIP_MIN_ORDER_SIZE
+      // Compute notional as sharesHeld * limitPrice (what we'll receive)
       const notionalUsd = position.size * effectiveLimitPrice;
 
       // Preflight check: is notional >= minOrderUsd?
@@ -2051,14 +2049,6 @@ export class ScalpTradeStrategy {
         });
 
         return true;
-      }
-
-      // Check for SKIP_MIN_ORDER_SIZE despite our preflight
-      if (result.reason === "SKIP_MIN_ORDER_SIZE") {
-        this.logger.error(
-          `[ProfitTaker] BUG: SKIP_MIN_ORDER_SIZE despite notional=$${notionalUsd.toFixed(2)} >= min=$${this.config.minOrderUsd}. ` +
-            `shares=${position.size.toFixed(4)} limit=${effectiveLimitCents.toFixed(1)}¢ tokenId=${position.tokenId.slice(0, 12)}...`,
-        );
       }
 
       this.logger.warn(

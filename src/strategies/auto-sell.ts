@@ -733,7 +733,6 @@ export class AutoSellStrategy {
    * - Uses position's currentBidPrice/currentPrice (no manual orderbook fetch)
    * - postOrder() handles orderbook validation internally (single source of truth)
    * - Uses FALLING_KNIFE_SLIPPAGE_PCT (25%) for reliable fills
-   * - Uses skipMinOrderSizeCheck: true to allow liquidating small positions
    *
    * @param position - The position to sell
    * @param strategyLabel - Label for logging (e.g., "AutoSell", "AutoSell (Stale)")
@@ -780,7 +779,6 @@ export class AutoSellStrategy {
         sellSlippagePct: FALLING_KNIFE_SLIPPAGE_PCT,
         logger: this.logger,
         skipDuplicatePrevention: true, // Required for exits
-        skipMinOrderSizeCheck: true, // Allow selling small positions - same as hedging
       });
 
       if (result.status === "submitted") {

@@ -177,14 +177,12 @@ describe("Sell Sizing - Position Notional NOT Profit", () => {
     assert.ok(notionalUsd >= minOrderUsd, "Should be tradeable");
   });
 
-  test("Never use profitUsd as sizeUsd (would cause SKIP_MIN_ORDER_SIZE)", () => {
+  test("Use notional (shares * price), not profit, as sizeUsd", () => {
     // Example: position with $0.50 profit but $10 notional
-    // If we used profitUsd ($0.50) as sizeUsd, it would fail minOrderUsd check
     // Correct behavior: use notional ($10) as sizeUsd
     const sharesHeld = 20;
     const currentPriceCents = 55.0; // 55¢
     const entryPriceCents = 50.0; // 50¢
-    const minOrderUsd = 5;
 
     const profitUsd =
       sharesHeld * (currentPriceCents / 100) -
@@ -194,11 +192,8 @@ describe("Sell Sizing - Position Notional NOT Profit", () => {
     assert.equal(profitUsd, 1.0); // Only $1 profit
     assert.equal(notionalUsd, 11.0); // But $11 notional
 
-    // Using profitUsd would fail:
-    assert.ok(profitUsd < minOrderUsd, "profitUsd fails minOrder check");
-
-    // Using notionalUsd passes:
-    assert.ok(notionalUsd >= minOrderUsd, "notionalUsd passes minOrder check");
+    // Notional is the correct value to use for sizeUsd
+    assert.ok(notionalUsd > profitUsd, "notionalUsd should be used, not profitUsd");
   });
 });
 
