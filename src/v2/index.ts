@@ -1970,10 +1970,13 @@ async function executeSell(
     state.zeroPriceTokens.delete(tokenId);
   }
   
-  // Risk check: regular SELL orders skip position cap but respect other limits;
-  // protective exits (StopLoss/AutoSell/ForceLiq) bypass all risk checks (including rate limits)
+  // Risk check: SELL orders NEVER blocked by position cap (they reduce positions)
+  // Protective exits (StopLoss/AutoSell/ForceLiq/DisputeExit) bypass ALL risk checks
   const riskCheck = checkRiskLimits(cfg, true); // skipPositionCap=true for SELL orders
-  if (!riskCheck.allowed && !reason.includes("StopLoss") && !reason.includes("AutoSell") && !reason.includes("ForceLiq")) {
+  const isProtectiveExit = reason.includes("StopLoss") || reason.includes("AutoSell") || reason.includes("ForceLiq") || reason.includes("DisputeExit");
+  // Also ignore position cap failures for ALL SELL orders (defensive check)
+  const isPositionCapFailure = riskCheck.reason?.includes("Position cap");
+  if (!riskCheck.allowed && !isProtectiveExit && !isPositionCapFailure) {
     log(`⚠️ SELL blocked | ${riskCheck.reason}`);
     return false;
   }
@@ -2141,6 +2144,13 @@ async function executeBuy(
   const riskCheck = checkRiskLimits(cfg);
   if (!riskCheck.allowed && !isProtectiveHedge) {
     log(`⚠️ BUY blocked | ${riskCheck.reason}`);
+    return false;
+  }
+  
+  // Hard cap: even protective hedges cannot exceed maxOpenPositions
+  // This ensures position count never goes unbounded
+  if (state.positions.length >= cfg.risk.maxOpenPositions) {
+    log(`⚠️ BUY blocked | Hard position cap: ${state.positions.length} >= ${cfg.risk.maxOpenPositions} (absolute max)`);
     return false;
   }
 
