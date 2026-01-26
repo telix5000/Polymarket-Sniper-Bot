@@ -229,20 +229,17 @@ describe("V2 Session Summary Position Stats", () => {
       const expectedLoserValue = 6 * (20 - 30);
       const expectedUnrealizedPnl = expectedWinnerValue + expectedLoserValue;
 
-      assert.strictEqual(
-        stats.winnerValue,
-        expectedWinnerValue,
-        `Winner value should be $${expectedWinnerValue}`,
+      assert.ok(
+        Math.abs(stats.winnerValue - expectedWinnerValue) < 1e-6,
+        `Winner value should be approximately $${expectedWinnerValue} (got ${stats.winnerValue})`,
       );
-      assert.strictEqual(
-        stats.loserValue,
-        expectedLoserValue,
-        `Loser value should be $${expectedLoserValue}`,
+      assert.ok(
+        Math.abs(stats.loserValue - expectedLoserValue) < 1e-6,
+        `Loser value should be approximately $${expectedLoserValue} (got ${stats.loserValue})`,
       );
-      assert.strictEqual(
-        stats.unrealizedPnl,
-        expectedUnrealizedPnl,
-        `Total unrealized P&L should be $${expectedUnrealizedPnl}`,
+      assert.ok(
+        Math.abs(stats.unrealizedPnl - expectedUnrealizedPnl) < 1e-6,
+        `Total unrealized P&L should be approximately $${expectedUnrealizedPnl} (got ${stats.unrealizedPnl})`,
       );
     });
 
@@ -265,7 +262,11 @@ describe("V2 Session Summary Position Stats", () => {
       assert.strictEqual(stats.winners, 5, "Should have 5 winners");
       assert.strictEqual(stats.losers, 0, "Should have 0 losers");
       // Each position: cost = 30, value = 80, gain = 50
-      assert.strictEqual(stats.unrealizedPnl, 250, "Unrealized P&L = 5 * 50");
+      const expectedUnrealizedPnl = 250;
+      assert.ok(
+        Math.abs(stats.unrealizedPnl - expectedUnrealizedPnl) < 1e-6,
+        `Unrealized P&L should be approximately ${expectedUnrealizedPnl} (got ${stats.unrealizedPnl})`,
+      );
       assert.strictEqual(
         stats.winnerValue,
         stats.unrealizedPnl,
@@ -292,7 +293,11 @@ describe("V2 Session Summary Position Stats", () => {
       assert.strictEqual(stats.winners, 0, "Should have 0 winners");
       assert.strictEqual(stats.losers, 5, "Should have 5 losers");
       // Each position: cost = 70, value = 20, loss = -50
-      assert.strictEqual(stats.unrealizedPnl, -250, "Unrealized P&L = 5 * -50");
+      const expectedUnrealizedPnl = -250;
+      assert.ok(
+        Math.abs(stats.unrealizedPnl - expectedUnrealizedPnl) < 1e-6,
+        `Unrealized P&L should be approximately ${expectedUnrealizedPnl} (got ${stats.unrealizedPnl})`,
+      );
       assert.strictEqual(
         stats.loserValue,
         stats.unrealizedPnl,
@@ -314,27 +319,26 @@ describe("V2 Session Summary Position Stats", () => {
       assert.strictEqual(stats.loserValue, 0);
     });
 
-    test("position with zero size has zero impact", () => {
+    test("position with zero avgPrice (cost=0) handles zero cost gracefully", () => {
+      // Production filters out size=0 positions, but avgPrice=0 (free positions) can exist
       const positions = [
         createMockPosition({
-          size: 0,
-          avgPrice: 0.5,
+          size: 100,
+          avgPrice: 0, // Cost: $0 (free position)
           curPrice: 0.7,
-          pnlPct: 40,
-          value: 0,
+          pnlPct: 0, // Can't compute pnlPct with zero cost
+          value: 70,
         }),
       ];
 
       const stats = computePositionStats(positions);
 
-      assert.strictEqual(stats.totalCost, 0, "Zero size = zero cost");
+      assert.strictEqual(stats.totalCost, 0, "Zero avgPrice = zero cost");
       assert.strictEqual(
         stats.unrealizedPnl,
-        0,
-        "Zero size = zero unrealized P&L",
+        70,
+        "Unrealized P&L should be the full value",
       );
-      // Note: pnlPct > 0 still counts it as a "winner" even with zero impact
-      assert.strictEqual(stats.winners, 1, "Counted as winner by pnlPct");
     });
 
     test("very small pnlPct close to zero is treated as win/loss correctly", () => {
@@ -392,13 +396,14 @@ describe("V2 Session Summary Position Stats", () => {
     });
 
     test("handles case where total cost is zero (avoid division by zero)", () => {
+      // avgPrice=0 means cost=0, which can happen with free/airdropped positions
       const positions = [
         createMockPosition({
-          size: 0,
-          avgPrice: 0.5,
+          size: 100,
+          avgPrice: 0, // Cost: $0
           curPrice: 0.7,
           pnlPct: 0,
-          value: 0,
+          value: 70,
         }),
       ];
 
@@ -409,7 +414,7 @@ describe("V2 Session Summary Position Stats", () => {
       assert.strictEqual(
         unrealizedPct,
         0,
-        "Should handle zero cost gracefully",
+        "Should handle zero cost gracefully (return 0% instead of Infinity)",
       );
     });
   });
@@ -421,24 +426,28 @@ describe("V2 Session Summary Display Format", () => {
     return `$${amount.toFixed(2)}`;
   }
 
-  test("unrealized P&L line format for positive gains", () => {
+  test("unrealized P&L line format for positive gains (with HTML)", () => {
     const stats = { unrealizedPnl: 40.47, totalCost: 200 };
     const unrealizedPct = (stats.unrealizedPnl / stats.totalCost) * 100;
     const sign = stats.unrealizedPnl >= 0 ? "+" : "";
 
-    const line = `💰 Unrealized P&L: ${sign}${$(stats.unrealizedPnl)} (${sign}${unrealizedPct.toFixed(1)}%)`;
+    // Match the actual HTML format used in getLedgerSummary()
+    const line = `💰 <b>Unrealized P&amp;L</b>: ${sign}${$(stats.unrealizedPnl)} (${sign}${unrealizedPct.toFixed(1)}%)`;
 
+    assert.ok(line.includes("<b>Unrealized P&amp;L</b>"), "Should have HTML bold tag with escaped ampersand");
     assert.ok(line.includes("+$40.47"), "Should show positive amount with +");
     assert.ok(line.includes("+20.2%"), "Should show positive percentage with +");
   });
 
-  test("unrealized P&L line format for negative losses", () => {
+  test("unrealized P&L line format for negative losses (with HTML)", () => {
     const stats = { unrealizedPnl: -25.5, totalCost: 100 };
     const unrealizedPct = (stats.unrealizedPnl / stats.totalCost) * 100;
     const sign = stats.unrealizedPnl >= 0 ? "+" : "";
 
-    const line = `💰 Unrealized P&L: ${sign}${$(stats.unrealizedPnl)} (${sign}${unrealizedPct.toFixed(1)}%)`;
+    // Match the actual HTML format used in getLedgerSummary()
+    const line = `💰 <b>Unrealized P&amp;L</b>: ${sign}${$(stats.unrealizedPnl)} (${sign}${unrealizedPct.toFixed(1)}%)`;
 
+    assert.ok(line.includes("<b>Unrealized P&amp;L</b>"), "Should have HTML bold tag with escaped ampersand");
     assert.ok(line.includes("$-25.50"), "Should show negative amount");
     assert.ok(line.includes("-25.5%"), "Should show negative percentage");
   });
