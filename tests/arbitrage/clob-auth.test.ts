@@ -144,3 +144,127 @@ test("postOrder re-applies API creds and retries once on auth failure", async ()
   assert.equal(postAttempts, 2);
   assert.equal(setCalls.length, 2);
 });
+
+test("postOrder returns skipped with NO_LIQUIDITY when orderbook has no bids for SELL", async () => {
+  const previousLiveTrading = process.env.ARB_LIVE_TRADING;
+  process.env.ARB_LIVE_TRADING = "I_UNDERSTAND_THE_RISKS";
+
+  // Orderbook with asks but NO bids - simulates illiquid market for SELL
+  const emptyBidsOrderBook = {
+    asks: [{ price: "0.50", size: "100" }],
+    bids: [], // No bids available
+  };
+
+  const client = {
+    getOrderBook: async () => emptyBidsOrderBook,
+    getBalanceAllowance: async () => ({ balance: "100", allowance: "100" }),
+    createMarketOrder: async () => ({ signed: true }),
+    postOrder: async () => {
+      throw new Error("postOrder should not be called when no liquidity");
+    },
+  } as unknown as ClobClient;
+
+  Object.defineProperty(client, "creds", {
+    set: () => {
+      // no-op
+    },
+  });
+
+  await initializeApiCreds(client, {
+    key: "key",
+    secret: "secret",
+    passphrase: "pass",
+  });
+
+  try {
+    const result = await postOrder({
+      client,
+      tokenId: "token-no-liquidity",
+      outcome: "YES",
+      side: "SELL",
+      sizeUsd: 10,
+      minAcceptablePrice: 0.4,
+      logger: {
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+        debug: () => undefined,
+      },
+      orderConfig: {
+        minOrderUsd: 0,
+        orderSubmitMinIntervalMs: 0,
+        orderSubmitMaxPerHour: 1000,
+        orderSubmitMarketCooldownSeconds: 0,
+        cloudflareCooldownSeconds: 0,
+      },
+    });
+
+    // Should return skipped result, NOT throw
+    assert.equal(result.status, "skipped");
+    assert.equal(result.reason, "NO_LIQUIDITY");
+  } finally {
+    process.env.ARB_LIVE_TRADING = previousLiveTrading;
+  }
+});
+
+test("postOrder returns skipped with NO_LIQUIDITY when orderbook has no asks for BUY", async () => {
+  const previousLiveTrading = process.env.ARB_LIVE_TRADING;
+  process.env.ARB_LIVE_TRADING = "I_UNDERSTAND_THE_RISKS";
+
+  // Orderbook with bids but NO asks - simulates illiquid market for BUY
+  const emptyAsksOrderBook = {
+    asks: [], // No asks available
+    bids: [{ price: "0.50", size: "100" }],
+  };
+
+  const client = {
+    getOrderBook: async () => emptyAsksOrderBook,
+    getBalanceAllowance: async () => ({ balance: "100", allowance: "100" }),
+    createMarketOrder: async () => ({ signed: true }),
+    postOrder: async () => {
+      throw new Error("postOrder should not be called when no liquidity");
+    },
+  } as unknown as ClobClient;
+
+  Object.defineProperty(client, "creds", {
+    set: () => {
+      // no-op
+    },
+  });
+
+  await initializeApiCreds(client, {
+    key: "key",
+    secret: "secret",
+    passphrase: "pass",
+  });
+
+  try {
+    const result = await postOrder({
+      client,
+      tokenId: "token-no-liquidity-buy",
+      outcome: "YES",
+      side: "BUY",
+      sizeUsd: 10,
+      maxAcceptablePrice: 0.6,
+      logger: {
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+        debug: () => undefined,
+      },
+      orderConfig: {
+        minOrderUsd: 0,
+        orderSubmitMinIntervalMs: 0,
+        orderSubmitMaxPerHour: 1000,
+        orderSubmitMarketCooldownSeconds: 0,
+        cloudflareCooldownSeconds: 0,
+      },
+    });
+
+    // Should return skipped result, NOT throw
+    assert.equal(result.status, "skipped");
+    assert.equal(result.reason, "NO_LIQUIDITY");
+  } finally {
+    process.env.ARB_LIVE_TRADING = previousLiveTrading;
+  }
+});
