@@ -2378,28 +2378,17 @@ export class ScalpTradeStrategy {
       this.executionCircuitBreaker.delete(plan.tokenId);
     }
 
-    // === SMART FRESH ORDERBOOK FETCH ===
-    // OPTIMIZATION: Only fetch fresh data when it matters:
-    // - LOSING positions: Hit API directly - every second counts in a falling knife
-    // - URGENT stages (BREAKEVEN/FORCE): Need real-time data for quick exit
-    // - WINNING positions in PROFIT stage: Use cached data - who cares if it's a few seconds stale
+    // === ALWAYS USE FRESH ORDERBOOK DATA ===
+    // Polymarket /book endpoint: 1,500 requests per 10 seconds (150/sec) - MASSIVE headroom
+    // With this much capacity, caching stale data costs us money. Fresh data = better decisions.
     //
-    // This saves API calls on healthy positions while ensuring we have
-    // real-time data when we're bleeding money.
+    // The rate limiter in fast-orderbook.util.ts ensures we stay under the limit.
+    // No need for complex "cache for winners, fresh for losers" logic.
     let bestBidCents: number;
     let bestBidDollars: number;
     let bestAskDollars: number | null;
 
-    // Determine if we need fresh data based on position health
-    const cachedBidCents = (position.currentBidPrice ?? 0) * 100;
-    const isLosing = cachedBidCents < plan.avgEntryCents; // Currently at a loss
-    const isUrgentStage = plan.stage === "BREAKEVEN" || plan.stage === "FORCE";
-    const isFallingKnife = cachedBidCents < plan.avgEntryCents * 0.9; // Down 10%+ from entry
-    
-    // Fresh data needed for: losing positions, urgent stages, or falling knife
-    const needsFreshData = this.config.useFreshOrderbook && (isLosing || isUrgentStage || isFallingKnife);
-
-    if (needsFreshData) {
+    if (this.config.useFreshOrderbook) {
       try {
         // Use fast orderbook reader (bypasses VPN for speed) with fallback to VPN client
         const { orderbook: freshOrderbook, source, latencyMs } = await fetchOrderbookWithFallback(
@@ -2416,8 +2405,7 @@ export class ScalpTradeStrategy {
           if (this.logDeduper.shouldLog(`ScalpExit:FRESH_NO_BID:${plan.tokenId}`, 10_000)) {
             this.logger.warn(
               `[ProfitTaker] FRESH_ORDERBOOK: No bids for tokenId=${plan.tokenId.slice(0, 12)}... ` +
-                `(cached bid was ${position.currentBidPrice !== undefined ? (position.currentBidPrice * 100).toFixed(1) + "¢" : "undefined"}) ` +
-                `source=${source} latency=${latencyMs}ms reason=${isLosing ? "LOSING" : isUrgentStage ? "URGENT" : "FALLING_KNIFE"}`,
+                `source=${source} latency=${latencyMs}ms`,
             );
           }
           return { filled: false, reason: "NO_BID", shouldContinue: true };
@@ -2427,13 +2415,13 @@ export class ScalpTradeStrategy {
         bestBidCents = bestBidDollars * 100;
         bestAskDollars = priceExtraction.bestAsk;
 
-        // Log if fresh price differs significantly from cached (helps diagnose staleness)
+        // Log significant price drift for diagnostics
         const cachedBid = position.currentBidPrice ?? 0;
         const priceDiffPct = cachedBid > 0 ? Math.abs((bestBidDollars - cachedBid) / cachedBid) * 100 : 0;
         if (priceDiffPct > 5 && this.logDeduper.shouldLog(`ScalpExit:PRICE_DRIFT:${plan.tokenId}`, 30_000)) {
           this.logger.info(
-            `[ProfitTaker] FRESH_ORDERBOOK: tokenId=${plan.tokenId.slice(0, 12)}... ` +
-              `freshBid=${bestBidCents.toFixed(1)}¢ cachedBid=${(cachedBid * 100).toFixed(1)}¢ ` +
+            `[ProfitTaker] PRICE_DRIFT: tokenId=${plan.tokenId.slice(0, 12)}... ` +
+              `fresh=${bestBidCents.toFixed(1)}¢ cached=${(cachedBid * 100).toFixed(1)}¢ ` +
               `drift=${priceDiffPct.toFixed(1)}% source=${source} latency=${latencyMs}ms`,
           );
         }
@@ -2442,33 +2430,18 @@ export class ScalpTradeStrategy {
         const errMsg = orderbookErr instanceof Error ? orderbookErr.message : String(orderbookErr);
         if (this.logDeduper.shouldLog(`ScalpExit:ORDERBOOK_FETCH_FAILED:${plan.tokenId}`, 30_000)) {
           this.logger.warn(
-            `[ProfitTaker] FRESH_ORDERBOOK fetch failed for tokenId=${plan.tokenId.slice(0, 12)}...: ${errMsg}. ` +
-              `Falling back to cached data (${(position.currentBidPrice ?? 0) * 100}¢)`,
+            `[ProfitTaker] FRESH_ORDERBOOK fetch failed: ${errMsg}. Using cached data.`,
           );
         }
-        // Fall back to cached position data
         bestBidDollars = position.currentBidPrice!;
         bestBidCents = bestBidDollars * 100;
         bestAskDollars = position.currentAskPrice ?? null;
       }
     } else {
-      // WINNING POSITION - use cached data (save API calls, avoid throttling)
-      // Who cares if data is a few seconds stale when we're making money?
-      // This lets us have our cake and eat it too:
-      // - Fresh data for losers (where every second counts)
-      // - Cached data for winners (saves API calls, prevents throttling)
+      // useFreshOrderbook disabled - use cached position data
       bestBidDollars = position.currentBidPrice!;
       bestBidCents = bestBidDollars * 100;
       bestAskDollars = position.currentAskPrice ?? null;
-      
-      // Occasional debug log to show we're being smart about API usage
-      if (this.logDeduper.shouldLog(`ScalpExit:CACHE_HIT:${plan.tokenId}`, 60_000)) {
-        this.logger.debug(
-          `[ProfitTaker] USING_CACHE: tokenId=${plan.tokenId.slice(0, 12)}... ` +
-            `stage=${plan.stage} bid=${bestBidCents.toFixed(1)}¢ entry=${plan.avgEntryCents.toFixed(1)}¢ ` +
-            `(position profitable, saving API calls)`,
-        );
-      }
     }
 
     // Calculate target and minimum acceptable prices for illiquid check
@@ -2584,10 +2557,10 @@ export class ScalpTradeStrategy {
     );
 
     // Check retry cadence
-    // Use faster retry for urgent situations (BREAKEVEN, FORCE stages, or losing positions)
-    const isUrgent = plan.stage === "BREAKEVEN" || plan.stage === "FORCE" || 
-      (bestBidCents < plan.avgEntryCents); // Position is currently at a loss
-    const retryCadenceSec = isUrgent ? this.config.urgentRetrySec : this.config.profitRetrySec;
+    // Use faster retry (3s) for urgent stages, normal (15s) for PROFIT stage
+    // With fresh API data on every call, we don't need complex loss-based logic
+    const isUrgentStage = plan.stage === "BREAKEVEN" || plan.stage === "FORCE";
+    const retryCadenceSec = isUrgentStage ? this.config.urgentRetrySec : this.config.profitRetrySec;
     
     const timeSinceLastAttempt = now - plan.lastAttemptAtMs;
     if (

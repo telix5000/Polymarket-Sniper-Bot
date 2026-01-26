@@ -763,7 +763,12 @@ export class PositionTracker {
       fetchedAt: number; // Unix timestamp ms
     }
   > = new Map();
-  private static readonly ORDERBOOK_CACHE_TTL_MS = 2000; // 2 seconds for active trading
+  // Position tracker orderbook cache TTL - used for P&L display, not trading decisions.
+  // Since trading now fetches fresh data at execution time (see fast-orderbook.util.ts),
+  // this can be longer to reduce API calls. 30 seconds is good for display purposes.
+  // Configurable via POSITION_TRACKER_ORDERBOOK_CACHE_MS env var.
+  private static readonly ORDERBOOK_CACHE_TTL_MS = 
+    parseInt(process.env.POSITION_TRACKER_ORDERBOOK_CACHE_MS ?? "30000", 10); // 30 seconds default
   private static readonly POSITION_BALANCE_CACHE_TTL_MS = 5000; // 5 seconds for position balances
   private static readonly MAX_ORDERBOOK_CACHE_SIZE = 500;
 

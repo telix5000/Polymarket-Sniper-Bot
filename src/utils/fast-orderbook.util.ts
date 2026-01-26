@@ -11,6 +11,13 @@
  * This module provides a fast, unauthenticated HTTP client that fetches
  * orderbook data DIRECTLY (bypassing VPN) for maximum speed.
  *
+ * RATE LIMITS:
+ * Polymarket /book endpoint: 1,500 requests per 10 seconds (150/sec)
+ * We use a token bucket rate limiter with conservative defaults:
+ * - Default: 100 req/sec (leaves 50/sec headroom for other operations)
+ * - Burst capacity: 50 requests (handle short spikes)
+ * - Auto-recovery: If we detect throttling (429/503), back off automatically
+ *
  * SECURITY:
  * - Read-only operations don't require authentication
  * - No credentials are sent through the direct connection
@@ -27,6 +34,105 @@ import { POLYMARKET_API } from "../constants/polymarket.constants";
 
 // Read-only CLOB API endpoints (no auth required)
 const CLOB_HOST = POLYMARKET_API.BASE_URL;
+
+// === TOKEN BUCKET RATE LIMITER ===
+// Polymarket /book: 1,500 req/10s = 150/sec
+// We use 100/sec to leave headroom, with burst capacity for spikes
+interface RateLimiterState {
+  tokens: number;
+  lastRefill: number;
+  maxTokens: number;       // Burst capacity
+  refillRate: number;      // Tokens per second
+  backoffUntil: number;    // If throttled, when to resume
+  backoffMultiplier: number; // Exponential backoff
+}
+
+const rateLimiter: RateLimiterState = {
+  tokens: 50,              // Start with burst capacity
+  lastRefill: Date.now(),
+  maxTokens: 50,           // Allow bursts of 50 requests
+  refillRate: 100,         // 100 tokens/sec (well under 150 limit)
+  backoffUntil: 0,
+  backoffMultiplier: 1,
+};
+
+/**
+ * Initialize rate limiter with custom settings
+ * Call on startup to override defaults
+ * 
+ * @param refillRate - Tokens per second (default: 100, max safe: 140)
+ * @param burstCapacity - Max burst size (default: 50)
+ */
+export const initRateLimiter = (refillRate: number, burstCapacity: number = 50): void => {
+  rateLimiter.refillRate = Math.min(refillRate, 140); // Never exceed 140/sec
+  rateLimiter.maxTokens = burstCapacity;
+  rateLimiter.tokens = burstCapacity;
+  rateLimiter.lastRefill = Date.now();
+  rateLimiter.backoffUntil = 0;
+  rateLimiter.backoffMultiplier = 1;
+};
+
+/**
+ * Try to acquire a token for making a request
+ * Returns true if allowed, false if rate limited
+ */
+const tryAcquireToken = (): boolean => {
+  const now = Date.now();
+  
+  // Check if we're in backoff mode (hit rate limit previously)
+  if (now < rateLimiter.backoffUntil) {
+    return false;
+  }
+  
+  // Refill tokens based on time elapsed
+  const elapsed = (now - rateLimiter.lastRefill) / 1000;
+  const newTokens = elapsed * rateLimiter.refillRate;
+  rateLimiter.tokens = Math.min(rateLimiter.maxTokens, rateLimiter.tokens + newTokens);
+  rateLimiter.lastRefill = now;
+  
+  // Try to acquire a token
+  if (rateLimiter.tokens >= 1) {
+    rateLimiter.tokens -= 1;
+    return true;
+  }
+  
+  return false;
+};
+
+/**
+ * Called when we detect rate limiting (429/503 response)
+ * Triggers exponential backoff
+ */
+const onRateLimited = (): void => {
+  const backoffMs = 1000 * rateLimiter.backoffMultiplier; // Start at 1 sec
+  rateLimiter.backoffUntil = Date.now() + backoffMs;
+  rateLimiter.backoffMultiplier = Math.min(rateLimiter.backoffMultiplier * 2, 30); // Max 30 sec
+  rateLimiter.tokens = 0; // Drain tokens
+};
+
+/**
+ * Called on successful request - reset backoff multiplier
+ */
+const onSuccess = (): void => {
+  rateLimiter.backoffMultiplier = 1;
+};
+
+/**
+ * Get current rate limiter status for diagnostics
+ */
+export const getRateLimiterStatus = (): {
+  tokens: number;
+  maxTokens: number;
+  refillRate: number;
+  inBackoff: boolean;
+  backoffRemainingMs: number;
+} => ({
+  tokens: Math.floor(rateLimiter.tokens),
+  maxTokens: rateLimiter.maxTokens,
+  refillRate: rateLimiter.refillRate,
+  inBackoff: Date.now() < rateLimiter.backoffUntil,
+  backoffRemainingMs: Math.max(0, rateLimiter.backoffUntil - Date.now()),
+});
 
 /**
  * Configuration for fast orderbook reads
@@ -57,11 +163,23 @@ const parseBool = (raw: string | undefined, defaultValue: boolean): boolean => {
  * Environment variables:
  * - CLOB_BYPASS_VPN_FOR_READS: Enable direct (non-VPN) orderbook fetches (default: true)
  * - CLOB_READ_TIMEOUT_MS: Timeout for direct orderbook fetches in milliseconds (default: 5000)
+ * - CLOB_MAX_REQUESTS_PER_SEC: Rate limit for orderbook fetches (default: 100, max: 140)
  */
-export const getFastOrderbookConfig = (): FastOrderbookConfig => ({
-  enabled: parseBool(readEnv("CLOB_BYPASS_VPN_FOR_READS"), true),
-  timeoutMs: parseInt(readEnv("CLOB_READ_TIMEOUT_MS") ?? "5000", 10),
-});
+export const getFastOrderbookConfig = (): FastOrderbookConfig => {
+  // Initialize rate limiter from env if set
+  const envMaxReq = readEnv("CLOB_MAX_REQUESTS_PER_SEC");
+  if (envMaxReq) {
+    const parsed = parseInt(envMaxReq, 10);
+    if (!isNaN(parsed) && parsed > 0 && parsed <= 140) {
+      rateLimiter.refillRate = parsed;
+    }
+  }
+  
+  return {
+    enabled: parseBool(readEnv("CLOB_BYPASS_VPN_FOR_READS"), true),
+    timeoutMs: parseInt(readEnv("CLOB_READ_TIMEOUT_MS") ?? "5000", 10),
+  };
+};
 
 /**
  * Extracted orderbook prices with safety checks
@@ -112,6 +230,16 @@ export async function fetchOrderbookDirect(
     };
   }
 
+  // Check rate limit before making request
+  if (!tryAcquireToken()) {
+    return {
+      success: false,
+      latencyMs: 0,
+      source: "vpn_fallback",
+      error: "Rate limited - falling back to VPN client",
+    };
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), cfg.timeoutMs);
 
@@ -127,6 +255,17 @@ export async function fetchOrderbookDirect(
       signal: controller.signal,
     });
 
+    // Handle rate limiting responses (429) and server overload (503)
+    if (response.status === 429 || response.status === 503) {
+      onRateLimited();
+      return {
+        success: false,
+        latencyMs: Date.now() - startMs,
+        source: "vpn_fallback",
+        error: `Rate limited (${response.status}) - backing off`,
+      };
+    }
+
     if (!response.ok) {
       return {
         success: false,
@@ -138,6 +277,9 @@ export async function fetchOrderbookDirect(
 
     const orderbook = (await response.json()) as OrderBookSummary;
     const latencyMs = Date.now() - startMs;
+
+    // Success - reset backoff
+    onSuccess();
 
     // Extract prices for convenience
     const prices = extractPrices(orderbook);
