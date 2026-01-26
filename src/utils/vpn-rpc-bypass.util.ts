@@ -77,11 +77,7 @@ const resolveHost = async (hostname: string): Promise<string | undefined> => {
 const getDefaultGateway = async (): Promise<string | undefined> => {
   try {
     // Get the default route's gateway
-    const { stdout } = await execFileAsync("ip", [
-      "route",
-      "show",
-      "default",
-    ]);
+    const { stdout } = await execFileAsync("ip", ["route", "show", "default"]);
     // Output looks like: "default via 172.17.0.1 dev eth0"
     // Extract the IP after "via" and validate it
     const match = stdout.match(/via\s+(\S+)/);
@@ -100,11 +96,7 @@ const getDefaultGateway = async (): Promise<string | undefined> => {
  */
 const getDefaultInterface = async (): Promise<string | undefined> => {
   try {
-    const { stdout } = await execFileAsync("ip", [
-      "route",
-      "show",
-      "default",
-    ]);
+    const { stdout } = await execFileAsync("ip", ["route", "show", "default"]);
     // Output looks like: "default via 172.17.0.1 dev eth0"
     const match = stdout.match(/dev\s+(\S+)/);
     return match?.[1];

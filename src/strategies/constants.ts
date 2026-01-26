@@ -26,7 +26,8 @@ const parsePositionTrackerRefreshMs = (): number => {
   }
   return 5000; // Default: 5 seconds
 };
-export const POSITION_TRACKER_REFRESH_INTERVAL_MS = parsePositionTrackerRefreshMs();
+export const POSITION_TRACKER_REFRESH_INTERVAL_MS =
+  parsePositionTrackerRefreshMs();
 
 /**
  * Orchestrator constants
@@ -46,7 +47,8 @@ const parseStrategyExecutionIntervalMs = (): number => {
   }
   return 2000; // Default: 2 seconds
 };
-export const STRATEGY_EXECUTION_INTERVAL_MS = parseStrategyExecutionIntervalMs();
+export const STRATEGY_EXECUTION_INTERVAL_MS =
+  parseStrategyExecutionIntervalMs();
 
 /**
  * Auto-Redeem check interval

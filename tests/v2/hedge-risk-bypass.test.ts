@@ -26,7 +26,7 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
       assert.strictEqual(
         isProtectiveHedge("Hedge (-25%)"),
         true,
-        "Hedge with loss percentage should be protective"
+        "Hedge with loss percentage should be protective",
       );
     });
 
@@ -34,7 +34,7 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
       assert.strictEqual(
         isProtectiveHedge("EmergencyHedge (-35%)"),
         true,
-        "EmergencyHedge should be protective"
+        "EmergencyHedge should be protective",
       );
     });
 
@@ -42,7 +42,7 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
       assert.strictEqual(
         isProtectiveHedge("SellSignal Hedge (-20%)"),
         true,
-        "SellSignal Hedge should be protective"
+        "SellSignal Hedge should be protective",
       );
     });
   });
@@ -52,7 +52,7 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
       assert.strictEqual(
         isProtectiveHedge("HedgeUp (0.85)"),
         false,
-        "HedgeUp is speculative doubling down, NOT protective"
+        "HedgeUp is speculative doubling down, NOT protective",
       );
     });
 
@@ -60,7 +60,7 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
       assert.strictEqual(
         isProtectiveHedge("HedgeUp (0.90)"),
         false,
-        "HedgeUp at 90¢ should NOT bypass risk checks"
+        "HedgeUp at 90¢ should NOT bypass risk checks",
       );
     });
   });
@@ -70,7 +70,7 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
       assert.strictEqual(
         isProtectiveHedge("Copy"),
         false,
-        "Copy trades should respect risk limits"
+        "Copy trades should respect risk limits",
       );
     });
 
@@ -78,7 +78,7 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
       assert.strictEqual(
         isProtectiveHedge("Arb"),
         false,
-        "Arbitrage trades should respect risk limits"
+        "Arbitrage trades should respect risk limits",
       );
     });
 
@@ -86,7 +86,7 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
       assert.strictEqual(
         isProtectiveHedge("Stack (+15%)"),
         false,
-        "Stack trades should respect risk limits"
+        "Stack trades should respect risk limits",
       );
     });
 
@@ -94,14 +94,18 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
       assert.strictEqual(
         isProtectiveHedge("Endgame"),
         false,
-        "Endgame trades should respect risk limits"
+        "Endgame trades should respect risk limits",
       );
     });
   });
 
   describe("Edge Cases", () => {
     test("Empty reason should NOT bypass risk checks", () => {
-      assert.strictEqual(isProtectiveHedge(""), false, "Empty reason should not bypass");
+      assert.strictEqual(
+        isProtectiveHedge(""),
+        false,
+        "Empty reason should not bypass",
+      );
     });
 
     test("'Hedge' without parentheses should NOT bypass (incomplete format)", () => {
@@ -109,7 +113,7 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
       assert.strictEqual(
         isProtectiveHedge("Hedge"),
         false,
-        "Incomplete 'Hedge' without loss % should not bypass"
+        "Incomplete 'Hedge' without loss % should not bypass",
       );
     });
 
@@ -117,7 +121,7 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
       assert.strictEqual(
         isProtectiveHedge("HedgeUpSomething"),
         false,
-        "Any HedgeUp variant should not bypass"
+        "Any HedgeUp variant should not bypass",
       );
     });
   });
@@ -135,14 +139,18 @@ describe("V2 HedgeUp Risk Bypass Fix", () => {
 describe("V2 No-Hedge Window with Real Market Close Time", () => {
   // Constant mirroring V2's ASSUMED_MARKET_DURATION_HOURS
   const ASSUMED_MARKET_DURATION_HOURS = 24;
-  
+
   // Helper function that mirrors the V2 no-hedge window logic
   function computeNoHedgeWindow(
     marketEndTime: number | undefined,
     now: number,
     holdTimeSeconds: number,
-    noHedgeWindowMinutes: number
-  ): { inNoHedgeWindow: boolean; minutesToClose?: number; usedFallback: boolean } {
+    noHedgeWindowMinutes: number,
+  ): {
+    inNoHedgeWindow: boolean;
+    minutesToClose?: number;
+    usedFallback: boolean;
+  } {
     let inNoHedgeWindow = false;
     let minutesToClose: number | undefined;
     let usedFallback = false;
@@ -156,7 +164,9 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
     // Fallback: If no market close time, use hold-time-based heuristic
     if (minutesToClose === undefined) {
       const holdMinutesForHedge = holdTimeSeconds / 60;
-      inNoHedgeWindow = holdMinutesForHedge >= ASSUMED_MARKET_DURATION_HOURS * 60 - noHedgeWindowMinutes;
+      inNoHedgeWindow =
+        holdMinutesForHedge >=
+        ASSUMED_MARKET_DURATION_HOURS * 60 - noHedgeWindowMinutes;
       usedFallback = true;
     }
 
@@ -169,11 +179,27 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
       const marketEndTime = now + 2 * 60 * 1000; // 2 minutes from now
       const noHedgeWindowMinutes = 5;
 
-      const result = computeNoHedgeWindow(marketEndTime, now, 0, noHedgeWindowMinutes);
+      const result = computeNoHedgeWindow(
+        marketEndTime,
+        now,
+        0,
+        noHedgeWindowMinutes,
+      );
 
-      assert.strictEqual(result.inNoHedgeWindow, true, "Should be in no-hedge window");
-      assert.strictEqual(result.usedFallback, false, "Should use real market time");
-      assert.ok(result.minutesToClose !== undefined && result.minutesToClose < 3, "Minutes to close should be ~2");
+      assert.strictEqual(
+        result.inNoHedgeWindow,
+        true,
+        "Should be in no-hedge window",
+      );
+      assert.strictEqual(
+        result.usedFallback,
+        false,
+        "Should use real market time",
+      );
+      assert.ok(
+        result.minutesToClose !== undefined && result.minutesToClose < 3,
+        "Minutes to close should be ~2",
+      );
     });
 
     test("30 minutes to close should NOT trigger no-hedge window (5 min window)", () => {
@@ -181,10 +207,23 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
       const marketEndTime = now + 30 * 60 * 1000; // 30 minutes from now
       const noHedgeWindowMinutes = 5;
 
-      const result = computeNoHedgeWindow(marketEndTime, now, 0, noHedgeWindowMinutes);
+      const result = computeNoHedgeWindow(
+        marketEndTime,
+        now,
+        0,
+        noHedgeWindowMinutes,
+      );
 
-      assert.strictEqual(result.inNoHedgeWindow, false, "Should NOT be in no-hedge window");
-      assert.strictEqual(result.usedFallback, false, "Should use real market time");
+      assert.strictEqual(
+        result.inNoHedgeWindow,
+        false,
+        "Should NOT be in no-hedge window",
+      );
+      assert.strictEqual(
+        result.usedFallback,
+        false,
+        "Should use real market time",
+      );
     });
 
     test("Exactly at the window boundary should trigger no-hedge window", () => {
@@ -192,9 +231,18 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
       const marketEndTime = now + 5 * 60 * 1000; // Exactly 5 minutes from now
       const noHedgeWindowMinutes = 5;
 
-      const result = computeNoHedgeWindow(marketEndTime, now, 0, noHedgeWindowMinutes);
+      const result = computeNoHedgeWindow(
+        marketEndTime,
+        now,
+        0,
+        noHedgeWindowMinutes,
+      );
 
-      assert.strictEqual(result.inNoHedgeWindow, true, "Should be in no-hedge window at boundary");
+      assert.strictEqual(
+        result.inNoHedgeWindow,
+        true,
+        "Should be in no-hedge window at boundary",
+      );
     });
 
     test("Market closing exactly now (marketEndTime == now) should use real time, not fallback", () => {
@@ -202,11 +250,28 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
       const marketEndTime = now; // Closing exactly now
       const noHedgeWindowMinutes = 5;
 
-      const result = computeNoHedgeWindow(marketEndTime, now, 0, noHedgeWindowMinutes);
+      const result = computeNoHedgeWindow(
+        marketEndTime,
+        now,
+        0,
+        noHedgeWindowMinutes,
+      );
 
-      assert.strictEqual(result.usedFallback, false, "Should use real market time when market closing now");
-      assert.strictEqual(result.minutesToClose, 0, "Minutes to close should be 0");
-      assert.strictEqual(result.inNoHedgeWindow, true, "Should be in no-hedge window when market is closing");
+      assert.strictEqual(
+        result.usedFallback,
+        false,
+        "Should use real market time when market closing now",
+      );
+      assert.strictEqual(
+        result.minutesToClose,
+        0,
+        "Minutes to close should be 0",
+      );
+      assert.strictEqual(
+        result.inNoHedgeWindow,
+        true,
+        "Should be in no-hedge window when market is closing",
+      );
     });
   });
 
@@ -216,10 +281,19 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
       const holdTimeSeconds = 100; // Short hold time
       const noHedgeWindowMinutes = 5;
 
-      const result = computeNoHedgeWindow(undefined, now, holdTimeSeconds, noHedgeWindowMinutes);
+      const result = computeNoHedgeWindow(
+        undefined,
+        now,
+        holdTimeSeconds,
+        noHedgeWindowMinutes,
+      );
 
       assert.strictEqual(result.usedFallback, true, "Should use fallback");
-      assert.strictEqual(result.minutesToClose, undefined, "minutesToClose should be undefined");
+      assert.strictEqual(
+        result.minutesToClose,
+        undefined,
+        "minutesToClose should be undefined",
+      );
     });
 
     test("Should use fallback when marketEndTime is in the past", () => {
@@ -227,9 +301,18 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
       const marketEndTime = now - 1000; // In the past
       const noHedgeWindowMinutes = 5;
 
-      const result = computeNoHedgeWindow(marketEndTime, now, 0, noHedgeWindowMinutes);
+      const result = computeNoHedgeWindow(
+        marketEndTime,
+        now,
+        0,
+        noHedgeWindowMinutes,
+      );
 
-      assert.strictEqual(result.usedFallback, true, "Should use fallback for past market time");
+      assert.strictEqual(
+        result.usedFallback,
+        true,
+        "Should use fallback for past market time",
+      );
     });
 
     test("Long hold time (23h 58min) should trigger no-hedge window via fallback", () => {
@@ -237,9 +320,18 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
       const holdTimeSeconds = (ASSUMED_MARKET_DURATION_HOURS * 60 - 2) * 60; // 23h 58min in seconds
       const noHedgeWindowMinutes = 5;
 
-      const result = computeNoHedgeWindow(undefined, now, holdTimeSeconds, noHedgeWindowMinutes);
+      const result = computeNoHedgeWindow(
+        undefined,
+        now,
+        holdTimeSeconds,
+        noHedgeWindowMinutes,
+      );
 
-      assert.strictEqual(result.inNoHedgeWindow, true, "Should be in no-hedge window via fallback");
+      assert.strictEqual(
+        result.inNoHedgeWindow,
+        true,
+        "Should be in no-hedge window via fallback",
+      );
       assert.strictEqual(result.usedFallback, true, "Should use fallback");
     });
   });

@@ -32,7 +32,11 @@ import {
   acquireHedgeLock,
   releaseHedgeLock,
 } from "../utils/funds-allowance.util";
-import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR, FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
+import {
+  POLYMARKET_TAKER_FEE_BPS,
+  BASIS_POINTS_DIVISOR,
+  FALLING_KNIFE_SLIPPAGE_PCT,
+} from "./constants";
 
 /**
  * Hedging Direction - determines when hedging is active
@@ -118,12 +122,12 @@ export interface HedgingConfig {
 
   /**
    * Minutes before market close for near-resolution hedging behavior (default: 3)
-   * 
+   *
    * Inside this window:
    * - Significant losses (>= triggerLossPct): HEDGE by buying inverse, then sell original
    *   This is actually the BEST time to hedge since outcome is nearly certain.
    * - Small losses (< triggerLossPct): Skip hedging (not worth the complexity)
-   * 
+   *
    * The inverse purchase locks in recovery value, then selling the original
    * completes the hedge by salvaging whatever the losing position is still worth.
    */
@@ -246,7 +250,7 @@ const MARKET_RESOLVED_THRESHOLD = 0.95;
  * Threshold for determining hedge is too expensive (normal hedging).
  * When the opposite side price >= this threshold but < MARKET_RESOLVED_THRESHOLD,
  * hedging is skipped but liquidation may still be attempted.
- * 
+ *
  * At 90¢, you pay 90¢ to get $1 = only 10¢ profit potential per share.
  * Transaction fees and slippage make this marginal.
  */
@@ -256,7 +260,7 @@ const HEDGE_TOO_EXPENSIVE_THRESHOLD = 0.9;
  * Higher threshold for near-resolution hedging.
  * When close to market resolution, we're more willing to pay a premium
  * to lock in recovery value (cap losses rather than seek profit).
- * 
+ *
  * At 93¢, you pay 93¢ to guarantee $1 from one side = 7¢ minimum recovery.
  * This is still worth it to prevent total loss on the losing side.
  */
@@ -293,7 +297,7 @@ export class HedgingStrategy {
 
   // Track what we've already hedged to avoid double-hedging
   private hedgedPositions: Set<string> = new Set();
-  
+
   // Track hedge details for diagnostic logging (separate from hedgedPositions to avoid breaking changes)
   // Key: position key (marketId-tokenId), Value: HedgeInfo
   private hedgeInfoMap: Map<string, HedgeInfo> = new Map();
@@ -302,7 +306,10 @@ export class HedgingStrategy {
   // Track relationships between original positions and their hedge positions
   // Key: original position key (marketId-tokenId), Value: { marketId, hedgeTokenId, originalTokenId }
   // Used for monitoring both sides and determining when to exit the losing side
-  private pairedHedges: Map<string, { marketId: string; hedgeTokenId: string; originalTokenId: string }> = new Map();
+  private pairedHedges: Map<
+    string,
+    { marketId: string; hedgeTokenId: string; originalTokenId: string }
+  > = new Map();
 
   // Track positions that have been exited via hedge exit monitoring
   private hedgeExitedPositions: Set<string> = new Set();
@@ -363,7 +370,7 @@ export class HedgingStrategy {
   /**
    * Initialize the per-cycle hedge budget from the current reserve plan.
    * Called at the start of executeInternal() to set the budget for this cycle.
-   * 
+   *
    * RESERVE BEHAVIOR: Hedging uses full available cash (even reserves) because:
    * - Hedging DOWN protects against losses (defensive)
    * - Hedging UP capitalizes on high-probability wins (opportunistic)
@@ -387,7 +394,7 @@ export class HedgingStrategy {
     // The rationale: hedging is a high-value operation - missing a hedge opportunity can be
     // more costly than temporarily depleting reserves.
     this.cycleHedgeBudgetRemaining = plan.availableCash;
-    
+
     // Log when we're using reserves for hedging
     if (plan.mode === "RISK_OFF") {
       this.logger.info(
@@ -403,13 +410,16 @@ export class HedgingStrategy {
    */
   private deductFromCycleHedgeBudget(amountUsd: number): void {
     if (this.cycleHedgeBudgetRemaining !== null && amountUsd > 0) {
-      this.cycleHedgeBudgetRemaining = Math.max(0, this.cycleHedgeBudgetRemaining - amountUsd);
+      this.cycleHedgeBudgetRemaining = Math.max(
+        0,
+        this.cycleHedgeBudgetRemaining - amountUsd,
+      );
     }
   }
 
   /**
    * Apply budget-aware sizing to a computed hedge/buy amount.
-   * 
+   *
    * CRITICAL: Hedging is NEVER blocked by RISK_OFF mode or reserve shortfall. Hedging has its own rules
    * and is a high-priority risk management operation that must be allowed to proceed.
    * It only skips when there's literally zero cash available. The minimum hedge amount check
@@ -422,7 +432,9 @@ export class HedgingStrategy {
   private applyReserveAwareSizing(
     computedUsd: number,
     operationLabel: string,
-  ): { skip: true; reason: string } | { skip: false; cappedUsd: number; isPartial: boolean } {
+  ):
+    | { skip: true; reason: string }
+    | { skip: false; cappedUsd: number; isPartial: boolean } {
     // If no budget tracking, use full computed amount
     if (this.cycleHedgeBudgetRemaining === null) {
       return { skip: false, cappedUsd: computedUsd, isPartial: false };
@@ -467,7 +479,9 @@ export class HedgingStrategy {
 
     if (!this.config.enabled) {
       if (this.logDeduper.shouldLog("Hedging:disabled_warning", 300_000)) {
-        this.logger.warn("[Hedging] ⚠️ Strategy is DISABLED - check HEDGING_ENABLED env var");
+        this.logger.warn(
+          "[Hedging] ⚠️ Strategy is DISABLED - check HEDGING_ENABLED env var",
+        );
       }
       return 0;
     }
@@ -505,14 +519,14 @@ export class HedgingStrategy {
     // === CRITICAL DIAGNOSTIC: Show all positions being analyzed ===
     // Log every 30 seconds to show what positions hedging sees
     if (this.logDeduper.shouldLog("Hedging:positions_overview", 30_000)) {
-      const losing = positions.filter(p => p.pnlPct < 0);
-      const winning = positions.filter(p => p.pnlPct > 0);
+      const losing = positions.filter((p) => p.pnlPct < 0);
+      const winning = positions.filter((p) => p.pnlPct > 0);
       this.logger.info(
         `[Hedging] 📋 POSITIONS OVERVIEW (cycle=${this.cycleCount}): ` +
           `total=${positions.length}, losing=${losing.length}, winning=${winning.length}, ` +
           `budget=$${this.cycleHedgeBudgetRemaining?.toFixed(2) ?? "null"}`,
       );
-      
+
       // Show ALL losing positions regardless of threshold
       if (losing.length > 0) {
         for (const pos of losing) {
@@ -530,18 +544,28 @@ export class HedgingStrategy {
     // === DIAGNOSTIC: Log ALL positions that SHOULD trigger hedging ===
     // This helps diagnose why hedging might not be acting on losses
     const hedgeCandidates = positions.filter(
-      (p) => p.pnlPct < 0 && Math.abs(p.pnlPct) >= this.config.triggerLossPct
+      (p) => p.pnlPct < 0 && Math.abs(p.pnlPct) >= this.config.triggerLossPct,
     );
-    
+
     if (hedgeCandidates.length > 0) {
       // Rate limit this log to once per 30 seconds for better visibility
       const logKey = `diagnostic_hedge_candidates:${hedgeCandidates.length}`;
       if (this.logDeduper.shouldLog(logKey, 30_000)) {
         // Categorize positions by loss severity
-        const catastrophic = hedgeCandidates.filter(p => Math.abs(p.pnlPct) >= this.config.forceLiquidationPct);
-        const significant = hedgeCandidates.filter(p => Math.abs(p.pnlPct) >= this.config.emergencyLossPct && Math.abs(p.pnlPct) < this.config.forceLiquidationPct);
-        const moderate = hedgeCandidates.filter(p => Math.abs(p.pnlPct) >= this.config.triggerLossPct && Math.abs(p.pnlPct) < this.config.emergencyLossPct);
-        
+        const catastrophic = hedgeCandidates.filter(
+          (p) => Math.abs(p.pnlPct) >= this.config.forceLiquidationPct,
+        );
+        const significant = hedgeCandidates.filter(
+          (p) =>
+            Math.abs(p.pnlPct) >= this.config.emergencyLossPct &&
+            Math.abs(p.pnlPct) < this.config.forceLiquidationPct,
+        );
+        const moderate = hedgeCandidates.filter(
+          (p) =>
+            Math.abs(p.pnlPct) >= this.config.triggerLossPct &&
+            Math.abs(p.pnlPct) < this.config.emergencyLossPct,
+        );
+
         this.logger.info(
           `[Hedging] 🔍 HEDGE CANDIDATES: ${hedgeCandidates.length} position(s) at >=${this.config.triggerLossPct}% loss ` +
             `[catastrophic(>=${this.config.forceLiquidationPct}%)=${catastrophic.length}, ` +
@@ -550,15 +574,17 @@ export class HedgingStrategy {
             `| Direction=${this.config.direction}, Budget=$${this.cycleHedgeBudgetRemaining?.toFixed(2) ?? "null"}, ` +
             `AlreadyHedged=${this.hedgedPositions.size}, Cooldowns=${this.failedLiquidationCooldowns.size}`,
         );
-        
+
         // Log each candidate with details for visibility
         for (const pos of hedgeCandidates) {
           // Use position.timeHeldSec from actual trade history, not in-memory map
           const timeHeldSec = pos.timeHeldSec ?? 0;
           const key = `${pos.marketId}-${pos.tokenId}`;
           const alreadyHedged = this.hedgedPositions.has(key);
-          const inCooldown = this.failedLiquidationCooldowns.has(key) && now < (this.failedLiquidationCooldowns.get(key) ?? 0);
-          
+          const inCooldown =
+            this.failedLiquidationCooldowns.has(key) &&
+            now < (this.failedLiquidationCooldowns.get(key) ?? 0);
+
           this.logger.info(
             `[Hedging] 📊 Candidate: ${pos.side ?? "?"} ${pos.tokenId.slice(0, 12)}... ` +
               `loss=${Math.abs(pos.pnlPct).toFixed(1)}% ($${Math.abs(pos.pnlUsd).toFixed(2)}), ` +
@@ -572,9 +598,11 @@ export class HedgingStrategy {
       // Log when there are no hedge candidates (once per minute)
       const noHedgeKey = "diagnostic_no_hedge_candidates";
       if (this.logDeduper.shouldLog(noHedgeKey, 60_000)) {
-        const losingPositions = positions.filter(p => p.pnlPct < 0);
+        const losingPositions = positions.filter((p) => p.pnlPct < 0);
         if (losingPositions.length > 0) {
-          const maxLoss = Math.max(...losingPositions.map(p => Math.abs(p.pnlPct)));
+          const maxLoss = Math.max(
+            ...losingPositions.map((p) => Math.abs(p.pnlPct)),
+          );
           this.logger.info(
             `[Hedging] 📋 No hedge candidates: ${losingPositions.length} losing position(s), ` +
               `max loss=${maxLoss.toFixed(1)}% (trigger=${this.config.triggerLossPct}%)`,
@@ -622,7 +650,8 @@ export class HedgingStrategy {
         const tokenIdShort = position.tokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH);
 
         // Helper to detect catastrophic losses for enhanced logging
-        const isCatastrophicLossPosition = position.pnlPct < 0 && 
+        const isCatastrophicLossPosition =
+          position.pnlPct < 0 &&
           Math.abs(position.pnlPct) >= this.config.forceLiquidationPct;
 
         // Skip if already hedged - now includes detailed hedge info when available
@@ -630,7 +659,9 @@ export class HedgingStrategy {
           const existingHedgeInfo = this.hedgeInfoMap.get(key);
           if (isCatastrophicLossPosition) {
             if (existingHedgeInfo) {
-              const hedgeAge = Math.round((now - existingHedgeInfo.hedgedAtMs) / 1000);
+              const hedgeAge = Math.round(
+                (now - existingHedgeInfo.hedgedAtMs) / 1000,
+              );
               this.logger.info(
                 `[Hedging] 📋 Catastrophic loss position already hedged: ${position.side ?? "?"} ${tokenIdShort}... ` +
                   `at ${position.pnlPct.toFixed(1)}% | hedgeKey=${key.slice(0, 20)}..., ` +
@@ -647,674 +678,704 @@ export class HedgingStrategy {
           continue;
         }
 
-      // Skip if in failed liquidation cooldown (prevents repeated attempts)
-      const cooldownUntil = this.failedLiquidationCooldowns.get(key);
-      if (cooldownUntil && now < cooldownUntil) {
-        if (isCatastrophicLossPosition) {
-          const remainingSec = Math.ceil((cooldownUntil - now) / 1000);
-          this.logger.warn(
-            `[Hedging] ⏳ Catastrophic loss position in cooldown: ${position.side ?? "?"} ${tokenIdShort}... at ${position.pnlPct.toFixed(1)}% (${remainingSec}s remaining)`,
-          );
-        }
-        skipAggregator.add(tokenIdShort, "cooldown");
-        continue;
-      }
-      // Clean up expired cooldown entries (for current position)
-      if (cooldownUntil && now >= cooldownUntil) {
-        this.failedLiquidationCooldowns.delete(key);
-      }
-
-      // === ORDERBOOK QUALITY ASSESSMENT (Jan 2025 Fix) ===
-      // Check if orderbook prices can be trusted before making P&L-based decisions.
-      // This prevents "catastrophic loss" false positives when orderbook is broken.
-      //
-      // CRITICAL: If orderbook is INVALID_BOOK or NO_BOOK, we should use
-      // Data-API price (dataApiCurPrice) instead of orderbook-derived P&L.
-      // The position.pnlTrusted flag already handles NO_BOOK cases, but we add
-      // explicit orderbook quality checking for additional safety.
-      //
-      // EXCEPTION: For CATASTROPHIC losses with TRUSTED P&L, we still proceed.
-      // The P&L source (Data-API) is reliable even if the orderbook is stale.
-      const orderbookQuality = assessOrderbookQuality(
-        position.currentBidPrice,
-        position.currentAskPrice,
-        position.dataApiCurPrice,
-      );
-
-      if (orderbookQuality.quality === "INVALID_BOOK") {
-        // Check for catastrophic loss exception
-        const isActualLoss = position.pnlPct < 0;
-        const lossPctMagnitude = Math.abs(position.pnlPct);
-        const isCatastrophicLossWithTrustedPnl = 
-          isActualLoss && 
-          lossPctMagnitude >= this.config.forceLiquidationPct && 
-          position.pnlTrusted;
-
-        if (isCatastrophicLossWithTrustedPnl) {
-          // CATASTROPHIC LOSS with trusted P&L - PROCEED despite invalid orderbook
-          // The P&L is calculated from Data-API which is reliable
-          this.logger.warn(
-            `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}%) with invalid orderbook ` +
-              `(${orderbookQuality.reason}) but TRUSTED P&L - PROCEEDING with hedge/liquidation. ` +
-              `Position: ${position.side} ${tokenIdShort}...`,
-          );
-          // Fall through to continue processing
-        } else {
-          // Orderbook is broken/stale - do not trust P&L derived from it
-          // Skip hedge/liquidation to avoid acting on bad data
-          const previousReason = this.lastSkipReasonByTokenId.get(key);
-          if (previousReason !== "invalid_book") {
+        // Skip if in failed liquidation cooldown (prevents repeated attempts)
+        const cooldownUntil = this.failedLiquidationCooldowns.get(key);
+        if (cooldownUntil && now < cooldownUntil) {
+          if (isCatastrophicLossPosition) {
+            const remainingSec = Math.ceil((cooldownUntil - now) / 1000);
             this.logger.warn(
-              `[Hedging] ⚠️ Invalid orderbook for ${position.side} ${tokenIdShort}... (${orderbookQuality.reason}), skipping to avoid false catastrophic loss`,
-            );
-            this.lastSkipReasonByTokenId.set(key, "invalid_book");
-          }
-          skipAggregator.add(tokenIdShort, "invalid_book");
-          continue;
-        }
-      }
-
-      // === CRITICAL: P&L TRUST CHECK ===
-      // For normal losses, skip positions with untrusted P&L to avoid selling winners.
-      // EXCEPTION: For CATASTROPHIC losses (>= forceLiquidationPct), allow action even with
-      // untrusted P&L because the risk of inaction is greater than the risk of acting on
-      // imperfect data. A 50% loss is a 50% loss regardless of P&L source precision.
-      if (!position.pnlTrusted) {
-        // Only consider catastrophic loss exception when pnlPct is actually negative
-        const isActualLoss = position.pnlPct < 0;
-        const lossPctMagnitude = Math.abs(position.pnlPct);
-        const isCatastrophicLoss = isActualLoss && lossPctMagnitude >= this.config.forceLiquidationPct;
-        
-        if (isCatastrophicLoss) {
-          // CATASTROPHIC LOSS with untrusted P&L - ALLOW hedging/liquidation with warning
-          // The risk of doing nothing is greater than the risk of acting on imperfect data
-          this.logger.warn(
-            `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}% >= ${this.config.forceLiquidationPct}%) with untrusted P&L ` +
-            `(${position.pnlUntrustedReason ?? "unknown reason"}) - PROCEEDING WITH HEDGE/LIQUIDATION despite data uncertainty`,
-          );
-          // Fall through to continue processing - don't skip
-        } else if (isActualLoss && lossPctMagnitude >= this.config.triggerLossPct) {
-          // Significant loss but not catastrophic - log warning but still skip
-          this.logger.warn(
-            `[Hedging] ⚠️ Skip hedge (UNTRUSTED_PNL): ${position.side} ${tokenIdShort}... at ${lossPctMagnitude.toFixed(1)}% loss has untrusted P&L (${position.pnlUntrustedReason ?? "unknown reason"}) - CANNOT HEDGE until P&L is trusted`,
-          );
-          skipAggregator.add(tokenIdShort, "untrusted_pnl");
-          continue;
-        } else {
-          this.logger.debug(
-            `[Hedging] 📋 Skip hedge (UNTRUSTED_PNL): ${position.side} position has untrusted P&L (${position.pnlUntrustedReason ?? "unknown reason"})`,
-          );
-          skipAggregator.add(tokenIdShort, "untrusted_pnl");
-          continue;
-        }
-      }
-
-      // === EXECUTION STATUS CHECK (Jan 2025 - Handle NOT_TRADABLE_ON_CLOB) ===
-      // If position has executionStatus set to NOT_TRADABLE_ON_CLOB, skip hedging.
-      // This handles orderbook 404, empty book, and other CLOB unavailability scenarios.
-      // 
-      // CRITICAL FIX (Jan 2025): For CATASTROPHIC losses, allow liquidation attempt even
-      // when NOT_TRADABLE. The sellPosition method will use Data API price as fallback.
-      // It's better to attempt a sell than do nothing on a 50%+ loss.
-      if (
-        position.executionStatus === "NOT_TRADABLE_ON_CLOB" ||
-        position.executionStatus === "EXECUTION_BLOCKED"
-      ) {
-        const pnlPct = position.pnlPct;
-        const lossPctMagnitude = Math.abs(pnlPct);
-        const isActualLoss = pnlPct < 0;
-        const isCatastrophicLoss = isActualLoss && lossPctMagnitude >= this.config.forceLiquidationPct;
-        
-        if (isCatastrophicLoss) {
-          // CATASTROPHIC LOSS on NOT_TRADABLE position (trusted or untrusted P&L)
-          // Attempt liquidation using Data API price as fallback
-          // NOTE: Consistent with lines 619-626 which allow action on catastrophic losses
-          // even with untrusted P&L - the risk of inaction is greater than the risk of acting
-          
-          // Calculate expected liquidation value for diagnostic logging
-          // Units: size (shares) * currentPrice (0-1 scale USD) = value in USD
-          const positionValueUsd = position.size * position.currentPrice;
-          const maxHedgeCap = this.config.allowExceedMax 
-            ? this.config.absoluteMaxUsd 
-            : this.config.maxHedgeUsd;
-          
-          this.logger.warn(
-            `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}%) on NOT_TRADABLE position ${position.side} ${tokenIdShort}... ` +
-              `- ATTEMPTING EMERGENCY LIQUIDATION | ` +
-              `positionValue=$${positionValueUsd.toFixed(2)}, ` +
-              `maxHedgeCap=$${maxHedgeCap.toFixed(2)} (allowExceed=${this.config.allowExceedMax}, absoluteMax=$${this.config.absoluteMaxUsd}), ` +
-              `budget=$${this.cycleHedgeBudgetRemaining?.toFixed(2) ?? "null"}, ` +
-              `dataApiPrice=${(position.currentPrice * 100).toFixed(1)}¢` +
-              `${!position.pnlTrusted ? ` (untrusted P&L: ${position.pnlUntrustedReason ?? "unknown"})` : ""}`,
-          );
-          
-          // Skip hedging (can't buy opposite side without orderbook), but try to sell
-          const key = `${position.marketId}-${position.tokenId}`;
-          
-          // Check cooldown
-          const cooldownExpiry = this.failedLiquidationCooldowns.get(key);
-          if (cooldownExpiry && now < cooldownExpiry) {
-            this.logger.debug(
-              `[Hedging] ⏳ Liquidation cooldown active for ${key} (expires in ${Math.ceil((cooldownExpiry - now) / 1000)}s)`,
-            );
-            skipAggregator.add(tokenIdShort, "cooldown");
-            continue;
-          }
-          
-          const sold = await this.sellPosition(position);
-          if (sold) {
-            actionsCount++;
-            // Store hedge info for diagnostic logging (estimate - actual proceeds may differ slightly)
-            this.hedgedPositions.add(key);
-            this.hedgeInfoMap.set(key, {
-              hedgedAtMs: now,
-              hedgeSizeUsd: positionValueUsd,
-              wasLiquidation: true,
-              pnlPctAtHedge: position.pnlPct,
-            });
-            this.logger.info(
-              `[Hedging] ✅ Emergency liquidation succeeded for NOT_TRADABLE position ${position.side} ${tokenIdShort}... ` +
-                `(~$${positionValueUsd.toFixed(2)} recovered)`,
-            );
-          } else {
-            this.failedLiquidationCooldowns.set(key, now + FAILED_LIQUIDATION_COOLDOWN_MS);
-            this.logger.warn(
-              `[Hedging] ⏳ Emergency liquidation failed - position on cooldown for 5 minutes: ${key}`,
+              `[Hedging] ⏳ Catastrophic loss position in cooldown: ${position.side ?? "?"} ${tokenIdShort}... at ${position.pnlPct.toFixed(1)}% (${remainingSec}s remaining)`,
             );
           }
+          skipAggregator.add(tokenIdShort, "cooldown");
           continue;
         }
-        
-        // Log at warn level for significant actual losses (pnlPct must be negative)
-        if (isActualLoss && lossPctMagnitude >= this.config.triggerLossPct) {
-          this.logger.warn(
-            `[Hedging] ⚠️ Skip hedge (NOT_TRADABLE): ${position.side} ${tokenIdShort}... at ${lossPctMagnitude.toFixed(1)}% loss - position not tradable on CLOB (status=${position.executionStatus})`,
-          );
-        }
-        skipAggregator.add(tokenIdShort, "not_tradable");
-        continue;
-      }
-
-      // Skip if not losing enough
-      if (position.pnlPct > -this.config.triggerLossPct) {
-        skipAggregator.add(tokenIdShort, "loss_below_trigger");
-        continue;
-      }
-
-      // Skip if entry price too high (not risky tier)
-      if (position.entryPrice >= this.config.maxEntryPrice) {
-        skipAggregator.add(tokenIdShort, "entry_price_high");
-        continue;
-      }
-
-      // Skip if no side defined (can't hedge without knowing the outcome)
-      const side = position.side?.toUpperCase();
-      if (!side || side.trim() === "") {
-        skipAggregator.add(tokenIdShort, "no_side");
-        continue;
-      }
-
-      // Skip resolved positions - log state change only
-      if (position.redeemable) {
-        const previousReason = this.lastSkipReasonByTokenId.get(key);
-        if (previousReason !== "redeemable") {
-          // State changed to redeemable - this is noteworthy
-          this.logger.info(
-            `[Hedging] 🔄 Position became redeemable: ${position.side} ${tokenIdShort}... (routing to AutoRedeem)`,
-          );
-          this.lastSkipReasonByTokenId.set(key, "redeemable");
-        }
-        skipAggregator.add(tokenIdShort, "redeemable");
-        continue;
-      }
-
-      // === NEAR-RESOLUTION GATING (Jan 2025 Fix) ===
-      // CRITICAL: Skip positions that are near-resolution winners.
-      // These positions are almost certainly going to resolve to $1.00.
-      // Hedging/liquidating them would be selling winners at a discount.
-      //
-      // nearResolutionCandidate is computed by PositionTracker using:
-      // - currentPrice >= 99.5¢ (NEAR_RESOLUTION_THRESHOLD_DOLLARS)
-      // - currentPrice >= 50¢ (safety guard prevents false positives from broken orderbook)
-      // - redeemable === false
-      if (position.nearResolutionCandidate) {
-        const previousReason = this.lastSkipReasonByTokenId.get(key);
-        if (previousReason !== "near_resolution") {
-          // State changed to near-resolution - log once per TTL
-          this.logger.info(
-            `[Hedging] 🎯 Near-resolution position (${formatCents(position.currentPrice)}), skipping hedge/liquidation: ${position.side} ${tokenIdShort}...`,
-          );
-          this.lastSkipReasonByTokenId.set(key, "near_resolution");
-        }
-        skipAggregator.add(tokenIdShort, "near_resolution");
-        continue;
-      }
-
-      // CRITICAL: Check minimum hold time before ANY action (hedge or sell)
-      // This prevents immediate sell/hedge after buying due to bid-ask spread
-      //
-      // HOLD TIME BYPASS: ALL positions at or beyond the trigger threshold (triggerLossPct, default 20%)
-      // bypass the hold time check entirely. This is intentional behavior, not an exception.
-      //
-      // WHY: By the time we reach this code, line 788 has already filtered out positions below
-      // the trigger threshold. So ALL hedge candidates here will bypass hold time.
-      //
-      // RATIONALE: The hold time was meant to prevent selling due to temporary bid-ask spread,
-      // but a 20%+ loss is NOT a temporary spread issue - it's a real loss that needs immediate action.
-      // Waiting 2 minutes while the loss grows worse is counterproductive.
-      const lossPct = Math.abs(position.pnlPct);
-      const shouldBypassHoldTime = position.pnlPct < 0 && lossPct >= this.config.triggerLossPct;
-      
-      // === USE ACTUAL ACQUISITION TIME FROM POSITION DATA ===
-      // CRITICAL FIX: Use position.firstAcquiredAt (from trade history API) instead of
-      // the in-memory positionEntryTimes map. The position object has the REAL acquisition
-      // timestamp that survives container restarts.
-      //
-      // The old code used getPositionEntryTime() which:
-      // 1. Uses an in-memory map that resets on restart
-      // 2. Falls back to "first seen" time if historical loading fails
-      // 3. Could cause hedging to skip positions because it thinks they're "new"
-      //
-      // The position.firstAcquiredAt comes from actual BUY trade history on-chain.
-      const entryTime = position.firstAcquiredAt;
-      const timeHeldSec = position.timeHeldSec;
-      
-      if (!entryTime) {
-        if (shouldBypassHoldTime) {
-          // Loss at trigger threshold with no entry time - ACT ANYWAY
-          // The Data API price is telling us we're losing - don't wait for entry time verification
-          this.logger.warn(
-            `[Hedging] 🚨 LOSS (${lossPct.toFixed(1)}% >= ${this.config.triggerLossPct}%) with no entry time - PROCEEDING ANYWAY (Data API is source of truth)`,
-          );
-          // Fall through to continue processing
-        } else {
-          // Normal loss without entry time - be conservative and skip
-          skipAggregator.add(tokenIdShort, "no_entry_time");
-          continue;
-        }
-      }
-
-      // Check hold time (but bypass for losses at trigger threshold that need immediate action)
-      // Use position.timeHeldSec which is pre-computed from actual trade history
-      if (timeHeldSec !== undefined && !shouldBypassHoldTime) {
-        if (timeHeldSec < this.config.minHoldSeconds) {
-          skipAggregator.add(tokenIdShort, "hold_time_short");
-          continue;
-        }
-      }
-
-      // === NEAR-CLOSE HEDGING BEHAVIOR ===
-      // Near market close, hedging (buying the inverse) is actually MORE valuable, not less.
-      // When a market is about to resolve, one outcome WILL pay $1. If you're losing on one side,
-      // buying the other side guarantees you recover value from one of them.
-      //
-      // EXAMPLE: You hold YES at 20¢ (down from 60¢). Market closes in 2 minutes. NO is at 80¢.
-      // - If you do NOTHING: You might lose 100% if YES loses
-      // - If you BUY NO at 80¢: You're guaranteed $1 from one side, capping your loss
-      //
-      // The "no-hedge window" was originally meant to avoid dumb hedges, but it was actually
-      // BLOCKING the smartest hedge - buying inverse near resolution when losing.
-      //
-      // NEW LOGIC (Jan 2025):
-      // - Near resolution with significant loss: PRIORITIZE buying the inverse (hedge)
-      // - After buying inverse, ALSO SELL the original losing position to recover remaining value
-      // - Near-close threshold checks still apply for small losses (avoid overtrading)
-      let isNearResolutionHedge = false;
-      if (position.marketEndTime && position.marketEndTime > now) {
-        const minutesToClose = (position.marketEndTime - now) / (60 * 1000);
-
-        // Inside no-hedge window (last 2-3 minutes):
-        // For significant losses, try to BUY THE INVERSE to lock in whatever value remains
-        // This is the BEST time to hedge - the outcome is nearly certain
-        if (minutesToClose <= this.config.noHedgeWindowMinutes) {
-          if (lossPct >= this.config.triggerLossPct) {
-            // Significant loss near resolution - buying inverse is critical
-            isNearResolutionHedge = true;
-            this.logger.info(
-              `[Hedging] 🎯 NEAR-RESOLUTION HEDGE: ${minutesToClose.toFixed(1)}min to close, loss ${lossPct.toFixed(1)}% - ` +
-                `Will BUY INVERSE then SELL original to lock in remaining value`,
-            );
-            // Fall through to the main hedging logic below - don't skip!
-            // The hedge will try to buy the opposite side
-          } else {
-            // Small loss near close - not worth the complexity
-            skipAggregator.add(tokenIdShort, "no_hedge_window_small_loss");
-            continue;
-          }
-        }
-        // Inside near-close window (default: last 30 minutes): apply stricter thresholds
-        // Only hedge if it's a BIG adverse move (≥12¢) OR a BIG loss (≥30%)
-        else if (minutesToClose <= this.config.nearCloseWindowMinutes) {
-          const priceDropCents =
-            (position.entryPrice - position.currentPrice) * 100;
-          const meetsDropThreshold =
-            priceDropCents >= this.config.nearClosePriceDropCents;
-          const meetsLossThreshold = lossPct >= this.config.nearCloseLossPct;
-
-          if (!meetsDropThreshold && !meetsLossThreshold) {
-            // Use aggregator for near-close threshold skips
-            skipAggregator.add(tokenIdShort, "near_close_threshold");
-            continue;
-          }
-
-          this.logger.info(
-            `[Hedging] 📍 Near-close hedge triggered: ${minutesToClose.toFixed(1)}min to close, ` +
-              `loss=${lossPct.toFixed(1)}%${meetsLossThreshold ? " ✓" : ""}, ` +
-              `drop=${priceDropCents.toFixed(1)}¢${meetsDropThreshold ? " ✓" : ""}`,
-          );
-        }
-      }
-
-      // ALWAYS try to hedge FIRST, even for significant losses
-      // Only liquidate as a last resort if hedge fails
-      // 
-      // Compute isCatastrophicLoss for the liquidation decision (uses forceLiquidationPct = 50%)
-      // This is separate from shouldBypassHoldTime (triggerLossPct = 20%) used for hold time bypass
-      const isCatastrophicLoss = position.pnlPct < 0 && lossPct >= this.config.forceLiquidationPct;
-
-      // === HEDGE OPERATION LOCK ===
-      // Acquire a lock on this market to prevent incoming BUY orders during the hedge operation.
-      // This is critical because:
-      // 1. When hedging, we may need to SELL a position then BUY the inverse
-      // 2. If a copy-trade BUY comes in between, it could consume funds meant for the hedge
-      // 3. This prevents conflicts and ensures the hedge operation completes atomically
-      const lockAcquired = acquireHedgeLock(position.marketId, "HEDGE_DOWN");
-      if (!lockAcquired) {
-        this.logger.warn(
-          `[Hedging] ⚠️ Could not acquire hedge lock for ${position.marketId.slice(0, 8)}... - another operation in progress`,
-        );
-        skipAggregator.add(tokenIdShort, "hedge_lock_unavailable");
-        continue;
-      }
-
-      try {
-        // Try to hedge
-        const lossLabel = isCatastrophicLoss ? " (catastrophic)" : "";
-        this.logger.info(
-          `[Hedging] 🎯 Position losing ${lossPct.toFixed(1)}%${lossLabel}${isNearResolutionHedge ? " (near-resolution)" : ""} - attempting hedge FIRST`,
-        );
-
-        const hedgeResult = await this.executeHedge(position, lossPct, isNearResolutionHedge);
-        if (hedgeResult.success) {
-          actionsCount++;
-          this.hedgedPositions.add(key);
-          // Track paired hedge for exit monitoring
-          if (hedgeResult.hedgeTokenId) {
-            this.pairedHedges.set(key, {
-              marketId: position.marketId,
-              hedgeTokenId: hedgeResult.hedgeTokenId,
-              originalTokenId: position.tokenId,
-            });
-            this.logger.debug(
-              `[Hedging] 📊 Tracking paired hedge: original=${position.tokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}... hedge=${hedgeResult.hedgeTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}...`,
-            );
-          }
-
-          // === NEAR-RESOLUTION: ALSO SELL THE ORIGINAL LOSING POSITION ===
-          // After successfully buying the inverse near resolution, immediately sell
-          // the original losing position to recover whatever value it still has.
-          // This completes the hedge: BUY inverse + SELL original = locked in recovery
-          if (isNearResolutionHedge) {
-            this.logger.info(
-              `[Hedging] 💰 NEAR-RESOLUTION: Now selling original losing position to complete hedge`,
-            );
-            const soldOriginal = await this.sellPosition(position);
-            if (soldOriginal) {
-              actionsCount++;
-              // Mark the original as exited in hedge tracking
-              this.hedgeExitedPositions.add(key);
-              this.logger.info(
-                `[Hedging] ✅ NEAR-RESOLUTION HEDGE COMPLETE: Bought inverse + sold original ${position.side} ${tokenIdShort}...`,
-              );
-            } else {
-              this.logger.warn(
-                `[Hedging] ⚠️ Failed to sell original position after hedge - will retry via hedge exit monitoring`,
-              );
-            }
-          }
-          continue;
+        // Clean up expired cooldown entries (for current position)
+        if (cooldownUntil && now >= cooldownUntil) {
+          this.failedLiquidationCooldowns.delete(key);
         }
 
-        // === PARTIAL FILL PROTECTION ===
-        // If money was spent on a partial fill, mark position as hedged to prevent
-        // re-hedging and exceeding HEDGING_ABSOLUTE_MAX_USD.
-        // This is critical: without this check, partial fills could trigger repeated
-        // hedge attempts, each spending money until the total far exceeds the limit.
-        if (hedgeResult.filledAmountUsd) {
-          this.logger.warn(
-            `[Hedging] 🛑 Partial hedge fill ($${hedgeResult.filledAmountUsd.toFixed(2)}) - marking position as hedged to prevent exceeding ABSOLUTE_MAX`,
-          );
-          this.hedgedPositions.add(key);
-          // Track paired hedge even for partial fills
-          if (hedgeResult.hedgeTokenId) {
-            this.pairedHedges.set(key, {
-              marketId: position.marketId,
-              hedgeTokenId: hedgeResult.hedgeTokenId,
-              originalTokenId: position.tokenId,
-            });
-          }
-          
-          // For partial fills near resolution, still try to sell the original
-          if (isNearResolutionHedge) {
-            this.logger.info(
-              `[Hedging] 💰 NEAR-RESOLUTION (partial): Attempting to sell original losing position`,
-            );
-            const soldOriginal = await this.sellPosition(position);
-            if (soldOriginal) {
-              actionsCount++;
-              this.hedgeExitedPositions.add(key);
-            }
-          }
-          actionsCount++;
-          continue;
-        }
-
-        // If market is essentially resolved (opposite side >= 95¢), skip liquidation
-        // The position should be redeemed, not sold at a loss
-        if (hedgeResult.reason === "MARKET_RESOLVED") {
-          this.logger.info(
-            `[Hedging] 📋 Position marked as resolved - skipping liquidation, awaiting redemption: ${key}`,
-          );
-          // Add to hedged positions to prevent future attempts (will be redeemed instead)
-          this.hedgedPositions.add(key);
-          continue;
-        }
-
-        // === REASON-AWARE HEDGE FALLBACK ===
-        // When hedge fails due to insufficient funds or no cash available, try to free funds
-        // by selling profitable positions (lowest profit first), then retry the hedge.
-        // Keep selling positions until we have enough funds for the hedge.
+        // === ORDERBOOK QUALITY ASSESSMENT (Jan 2025 Fix) ===
+        // Check if orderbook prices can be trusted before making P&L-based decisions.
+        // This prevents "catastrophic loss" false positives when orderbook is broken.
         //
-        // IMPORTANT: This fund-freeing logic is ONLY for HEDGING DOWN (protecting losses).
-        // HEDGE UP (buying more of winning positions) should NOT sell other positions.
-        if (hedgeResult.reason === "INSUFFICIENT_BALANCE_OR_ALLOWANCE" || hedgeResult.reason === "NO_CASH_AVAILABLE") {
-          // Calculate how much we need for the hedge
-          // Use absoluteMaxUsd as the target since that's the max we'd spend on a hedge
-          const targetHedgeAmount = this.config.allowExceedMax 
-            ? this.config.absoluteMaxUsd 
-            : this.config.maxHedgeUsd;
-          
-          this.logger.info(
-            `[Hedging] 💰 Hedge failed (insufficient funds) - need ~$${targetHedgeAmount.toFixed(2)} for hedge, attempting to free funds by selling profitable positions`,
-          );
+        // CRITICAL: If orderbook is INVALID_BOOK or NO_BOOK, we should use
+        // Data-API price (dataApiCurPrice) instead of orderbook-derived P&L.
+        // The position.pnlTrusted flag already handles NO_BOOK cases, but we add
+        // explicit orderbook quality checking for additional safety.
+        //
+        // EXCEPTION: For CATASTROPHIC losses with TRUSTED P&L, we still proceed.
+        // The P&L source (Data-API) is reliable even if the orderbook is stale.
+        const orderbookQuality = assessOrderbookQuality(
+          position.currentBidPrice,
+          position.currentAskPrice,
+          position.dataApiCurPrice,
+        );
 
-          // Get profitable positions sorted by lowest profit first (sell smallest winners first)
-          const profitCandidates =
-            this.positionTracker.getProfitLiquidationCandidates(
-              0, // Any profit
-              this.config.minHoldSeconds,
-            );
+        if (orderbookQuality.quality === "INVALID_BOOK") {
+          // Check for catastrophic loss exception
+          const isActualLoss = position.pnlPct < 0;
+          const lossPctMagnitude = Math.abs(position.pnlPct);
+          const isCatastrophicLossWithTrustedPnl =
+            isActualLoss &&
+            lossPctMagnitude >= this.config.forceLiquidationPct &&
+            position.pnlTrusted;
 
-          // Filter out positions we've already hedged
-          const sellableProfits = profitCandidates.filter((p) => {
-            const k = `${p.marketId}-${p.tokenId}`;
-            return !this.hedgedPositions.has(k);
-          });
-
-          let totalFreedFunds = 0;
-          let positionsSold = 0;
-          
-          // Keep selling lowest-profit positions until we have enough funds
-          for (const profitToSell of sellableProfits) {
-            // Check if we've freed enough funds already
-            if (totalFreedFunds >= targetHedgeAmount) {
-              this.logger.info(
-                `[Hedging] 💰 Freed enough funds ($${totalFreedFunds.toFixed(2)} >= $${targetHedgeAmount.toFixed(2)}) after selling ${positionsSold} position(s)`,
-              );
-              break;
-            }
-
-            this.logger.info(
-              `[Hedging] 🔄 Selling profitable position #${positionsSold + 1} to free funds: ${profitToSell.side} +${profitToSell.pnlPct.toFixed(1)}% ($${(profitToSell.size * profitToSell.currentPrice).toFixed(2)})`,
-            );
-
-            const soldProfit = await this.sellPosition(profitToSell);
-            if (soldProfit) {
-              positionsSold++;
-              actionsCount++;
-              // Mark as hedged to prevent future attempts on this position
-              this.hedgedPositions.add(
-                `${profitToSell.marketId}-${profitToSell.tokenId}`,
-              );
-              // Update cycle budget with freed funds so retry can use them
-              // Account for transaction fees (taker fee on sell)
-              const grossValue = profitToSell.size * profitToSell.currentPrice;
-              const feeAmount = grossValue * (POLYMARKET_TAKER_FEE_BPS / BASIS_POINTS_DIVISOR);
-              const freedValue = grossValue - feeAmount;
-              totalFreedFunds += freedValue;
-              
-              if (this.cycleHedgeBudgetRemaining !== null) {
-                this.cycleHedgeBudgetRemaining += freedValue;
-              }
-              
-              this.logger.info(
-                `[Hedging] 💰 Freed $${freedValue.toFixed(2)} (gross $${grossValue.toFixed(2)} - fees $${feeAmount.toFixed(4)}) - total freed: $${totalFreedFunds.toFixed(2)}`,
-              );
-            } else {
-              this.logger.warn(
-                `[Hedging] ⚠️ Failed to sell profitable position for fund release - trying next`,
-              );
-            }
-          }
-
-          if (positionsSold === 0) {
-            this.logger.debug(
-              `[Hedging] 📋 No profitable positions available to sell for fund release`,
-            );
-          }
-
-          // Retry hedge if we freed some funds
-          if (totalFreedFunds > 0) {
-            this.logger.info(
-              `[Hedging] 🔄 Retrying hedge after freeing $${totalFreedFunds.toFixed(2)} from ${positionsSold} position(s)...`,
-            );
-
-            const retryResult = await this.executeHedge(position, lossPct, isNearResolutionHedge);
-            if (retryResult.success) {
-              actionsCount++;
-              this.hedgedPositions.add(key);
-              
-              // For near-resolution, also sell the original after successful hedge
-              if (isNearResolutionHedge) {
-                this.logger.info(
-                  `[Hedging] 💰 NEAR-RESOLUTION: Now selling original losing position to complete hedge`,
-                );
-                const soldOriginal = await this.sellPosition(position);
-                if (soldOriginal) {
-                  actionsCount++;
-                  this.hedgeExitedPositions.add(key);
-                }
-              }
-              continue;
-            }
-
-            // Check for partial fill on retry - still mark as hedged to prevent exceeding limit
-            if (retryResult.filledAmountUsd) {
-              this.logger.warn(
-                `[Hedging] 🛑 Retry partial fill ($${retryResult.filledAmountUsd.toFixed(2)}) - marking position as hedged`,
-              );
-              this.hedgedPositions.add(key);
-              actionsCount++;
-              continue;
-            }
-
+          if (isCatastrophicLossWithTrustedPnl) {
+            // CATASTROPHIC LOSS with trusted P&L - PROCEED despite invalid orderbook
+            // The P&L is calculated from Data-API which is reliable
             this.logger.warn(
-              `[Hedging] ⚠️ Hedge retry failed (${retryResult.reason}) - will sell losing position as last resort`,
+              `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}%) with invalid orderbook ` +
+                `(${orderbookQuality.reason}) but TRUSTED P&L - PROCEEDING with hedge/liquidation. ` +
+                `Position: ${position.side} ${tokenIdShort}...`,
             );
+            // Fall through to continue processing
+          } else {
+            // Orderbook is broken/stale - do not trust P&L derived from it
+            // Skip hedge/liquidation to avoid acting on bad data
+            const previousReason = this.lastSkipReasonByTokenId.get(key);
+            if (previousReason !== "invalid_book") {
+              this.logger.warn(
+                `[Hedging] ⚠️ Invalid orderbook for ${position.side} ${tokenIdShort}... (${orderbookQuality.reason}), skipping to avoid false catastrophic loss`,
+              );
+              this.lastSkipReasonByTokenId.set(key, "invalid_book");
+            }
+            skipAggregator.add(tokenIdShort, "invalid_book");
+            continue;
           }
-
-          // Fall through to selling the losing position as last resort
         }
 
-        // Log specific hedge failure reasons for visibility
+        // === CRITICAL: P&L TRUST CHECK ===
+        // For normal losses, skip positions with untrusted P&L to avoid selling winners.
+        // EXCEPTION: For CATASTROPHIC losses (>= forceLiquidationPct), allow action even with
+        // untrusted P&L because the risk of inaction is greater than the risk of acting on
+        // imperfect data. A 50% loss is a 50% loss regardless of P&L source precision.
+        if (!position.pnlTrusted) {
+          // Only consider catastrophic loss exception when pnlPct is actually negative
+          const isActualLoss = position.pnlPct < 0;
+          const lossPctMagnitude = Math.abs(position.pnlPct);
+          const isCatastrophicLoss =
+            isActualLoss && lossPctMagnitude >= this.config.forceLiquidationPct;
+
+          if (isCatastrophicLoss) {
+            // CATASTROPHIC LOSS with untrusted P&L - ALLOW hedging/liquidation with warning
+            // The risk of doing nothing is greater than the risk of acting on imperfect data
+            this.logger.warn(
+              `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}% >= ${this.config.forceLiquidationPct}%) with untrusted P&L ` +
+                `(${position.pnlUntrustedReason ?? "unknown reason"}) - PROCEEDING WITH HEDGE/LIQUIDATION despite data uncertainty`,
+            );
+            // Fall through to continue processing - don't skip
+          } else if (
+            isActualLoss &&
+            lossPctMagnitude >= this.config.triggerLossPct
+          ) {
+            // Significant loss but not catastrophic - log warning but still skip
+            this.logger.warn(
+              `[Hedging] ⚠️ Skip hedge (UNTRUSTED_PNL): ${position.side} ${tokenIdShort}... at ${lossPctMagnitude.toFixed(1)}% loss has untrusted P&L (${position.pnlUntrustedReason ?? "unknown reason"}) - CANNOT HEDGE until P&L is trusted`,
+            );
+            skipAggregator.add(tokenIdShort, "untrusted_pnl");
+            continue;
+          } else {
+            this.logger.debug(
+              `[Hedging] 📋 Skip hedge (UNTRUSTED_PNL): ${position.side} position has untrusted P&L (${position.pnlUntrustedReason ?? "unknown reason"})`,
+            );
+            skipAggregator.add(tokenIdShort, "untrusted_pnl");
+            continue;
+          }
+        }
+
+        // === EXECUTION STATUS CHECK (Jan 2025 - Handle NOT_TRADABLE_ON_CLOB) ===
+        // If position has executionStatus set to NOT_TRADABLE_ON_CLOB, skip hedging.
+        // This handles orderbook 404, empty book, and other CLOB unavailability scenarios.
+        //
+        // CRITICAL FIX (Jan 2025): For CATASTROPHIC losses, allow liquidation attempt even
+        // when NOT_TRADABLE. The sellPosition method will use Data API price as fallback.
+        // It's better to attempt a sell than do nothing on a 50%+ loss.
         if (
-          hedgeResult.reason === "TOO_EXPENSIVE" ||
-          hedgeResult.reason === "NO_OPPOSITE_TOKEN" ||
-          hedgeResult.reason === "NO_LIQUIDITY"
+          position.executionStatus === "NOT_TRADABLE_ON_CLOB" ||
+          position.executionStatus === "EXECUTION_BLOCKED"
         ) {
-          this.logger.info(
-            `[Hedging] 📋 Hedge skip reason: ${hedgeResult.reason}`,
-          );
+          const pnlPct = position.pnlPct;
+          const lossPctMagnitude = Math.abs(pnlPct);
+          const isActualLoss = pnlPct < 0;
+          const isCatastrophicLoss =
+            isActualLoss && lossPctMagnitude >= this.config.forceLiquidationPct;
+
+          if (isCatastrophicLoss) {
+            // CATASTROPHIC LOSS on NOT_TRADABLE position (trusted or untrusted P&L)
+            // Attempt liquidation using Data API price as fallback
+            // NOTE: Consistent with lines 619-626 which allow action on catastrophic losses
+            // even with untrusted P&L - the risk of inaction is greater than the risk of acting
+
+            // Calculate expected liquidation value for diagnostic logging
+            // Units: size (shares) * currentPrice (0-1 scale USD) = value in USD
+            const positionValueUsd = position.size * position.currentPrice;
+            const maxHedgeCap = this.config.allowExceedMax
+              ? this.config.absoluteMaxUsd
+              : this.config.maxHedgeUsd;
+
+            this.logger.warn(
+              `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}%) on NOT_TRADABLE position ${position.side} ${tokenIdShort}... ` +
+                `- ATTEMPTING EMERGENCY LIQUIDATION | ` +
+                `positionValue=$${positionValueUsd.toFixed(2)}, ` +
+                `maxHedgeCap=$${maxHedgeCap.toFixed(2)} (allowExceed=${this.config.allowExceedMax}, absoluteMax=$${this.config.absoluteMaxUsd}), ` +
+                `budget=$${this.cycleHedgeBudgetRemaining?.toFixed(2) ?? "null"}, ` +
+                `dataApiPrice=${(position.currentPrice * 100).toFixed(1)}¢` +
+                `${!position.pnlTrusted ? ` (untrusted P&L: ${position.pnlUntrustedReason ?? "unknown"})` : ""}`,
+            );
+
+            // Skip hedging (can't buy opposite side without orderbook), but try to sell
+            const key = `${position.marketId}-${position.tokenId}`;
+
+            // Check cooldown
+            const cooldownExpiry = this.failedLiquidationCooldowns.get(key);
+            if (cooldownExpiry && now < cooldownExpiry) {
+              this.logger.debug(
+                `[Hedging] ⏳ Liquidation cooldown active for ${key} (expires in ${Math.ceil((cooldownExpiry - now) / 1000)}s)`,
+              );
+              skipAggregator.add(tokenIdShort, "cooldown");
+              continue;
+            }
+
+            const sold = await this.sellPosition(position);
+            if (sold) {
+              actionsCount++;
+              // Store hedge info for diagnostic logging (estimate - actual proceeds may differ slightly)
+              this.hedgedPositions.add(key);
+              this.hedgeInfoMap.set(key, {
+                hedgedAtMs: now,
+                hedgeSizeUsd: positionValueUsd,
+                wasLiquidation: true,
+                pnlPctAtHedge: position.pnlPct,
+              });
+              this.logger.info(
+                `[Hedging] ✅ Emergency liquidation succeeded for NOT_TRADABLE position ${position.side} ${tokenIdShort}... ` +
+                  `(~$${positionValueUsd.toFixed(2)} recovered)`,
+              );
+            } else {
+              this.failedLiquidationCooldowns.set(
+                key,
+                now + FAILED_LIQUIDATION_COOLDOWN_MS,
+              );
+              this.logger.warn(
+                `[Hedging] ⏳ Emergency liquidation failed - position on cooldown for 5 minutes: ${key}`,
+              );
+            }
+            continue;
+          }
+
+          // Log at warn level for significant actual losses (pnlPct must be negative)
+          if (isActualLoss && lossPctMagnitude >= this.config.triggerLossPct) {
+            this.logger.warn(
+              `[Hedging] ⚠️ Skip hedge (NOT_TRADABLE): ${position.side} ${tokenIdShort}... at ${lossPctMagnitude.toFixed(1)}% loss - position not tradable on CLOB (status=${position.executionStatus})`,
+            );
+          }
+          skipAggregator.add(tokenIdShort, "not_tradable");
+          continue;
         }
 
-        // === NEAR-RESOLUTION: SELL LOSING POSITION EVEN IF HEDGE FAILED ===
-        // If we're near resolution and couldn't buy the inverse (e.g., too expensive at 93¢+),
-        // we should STILL sell the original position to recover whatever value it has.
-        // Don't wait for it to go to $0 and redeem nothing!
+        // Skip if not losing enough
+        if (position.pnlPct > -this.config.triggerLossPct) {
+          skipAggregator.add(tokenIdShort, "loss_below_trigger");
+          continue;
+        }
+
+        // Skip if entry price too high (not risky tier)
+        if (position.entryPrice >= this.config.maxEntryPrice) {
+          skipAggregator.add(tokenIdShort, "entry_price_high");
+          continue;
+        }
+
+        // Skip if no side defined (can't hedge without knowing the outcome)
+        const side = position.side?.toUpperCase();
+        if (!side || side.trim() === "") {
+          skipAggregator.add(tokenIdShort, "no_side");
+          continue;
+        }
+
+        // Skip resolved positions - log state change only
+        if (position.redeemable) {
+          const previousReason = this.lastSkipReasonByTokenId.get(key);
+          if (previousReason !== "redeemable") {
+            // State changed to redeemable - this is noteworthy
+            this.logger.info(
+              `[Hedging] 🔄 Position became redeemable: ${position.side} ${tokenIdShort}... (routing to AutoRedeem)`,
+            );
+            this.lastSkipReasonByTokenId.set(key, "redeemable");
+          }
+          skipAggregator.add(tokenIdShort, "redeemable");
+          continue;
+        }
+
+        // === NEAR-RESOLUTION GATING (Jan 2025 Fix) ===
+        // CRITICAL: Skip positions that are near-resolution winners.
+        // These positions are almost certainly going to resolve to $1.00.
+        // Hedging/liquidating them would be selling winners at a discount.
         //
-        // EXCEPTION: If market is essentially resolved (95¢+), await redemption instead.
-        if (isNearResolutionHedge && hedgeResult.reason !== "MARKET_RESOLVED") {
+        // nearResolutionCandidate is computed by PositionTracker using:
+        // - currentPrice >= 99.5¢ (NEAR_RESOLUTION_THRESHOLD_DOLLARS)
+        // - currentPrice >= 50¢ (safety guard prevents false positives from broken orderbook)
+        // - redeemable === false
+        if (position.nearResolutionCandidate) {
+          const previousReason = this.lastSkipReasonByTokenId.get(key);
+          if (previousReason !== "near_resolution") {
+            // State changed to near-resolution - log once per TTL
+            this.logger.info(
+              `[Hedging] 🎯 Near-resolution position (${formatCents(position.currentPrice)}), skipping hedge/liquidation: ${position.side} ${tokenIdShort}...`,
+            );
+            this.lastSkipReasonByTokenId.set(key, "near_resolution");
+          }
+          skipAggregator.add(tokenIdShort, "near_resolution");
+          continue;
+        }
+
+        // CRITICAL: Check minimum hold time before ANY action (hedge or sell)
+        // This prevents immediate sell/hedge after buying due to bid-ask spread
+        //
+        // HOLD TIME BYPASS: ALL positions at or beyond the trigger threshold (triggerLossPct, default 20%)
+        // bypass the hold time check entirely. This is intentional behavior, not an exception.
+        //
+        // WHY: By the time we reach this code, line 788 has already filtered out positions below
+        // the trigger threshold. So ALL hedge candidates here will bypass hold time.
+        //
+        // RATIONALE: The hold time was meant to prevent selling due to temporary bid-ask spread,
+        // but a 20%+ loss is NOT a temporary spread issue - it's a real loss that needs immediate action.
+        // Waiting 2 minutes while the loss grows worse is counterproductive.
+        const lossPct = Math.abs(position.pnlPct);
+        const shouldBypassHoldTime =
+          position.pnlPct < 0 && lossPct >= this.config.triggerLossPct;
+
+        // === USE ACTUAL ACQUISITION TIME FROM POSITION DATA ===
+        // CRITICAL FIX: Use position.firstAcquiredAt (from trade history API) instead of
+        // the in-memory positionEntryTimes map. The position object has the REAL acquisition
+        // timestamp that survives container restarts.
+        //
+        // The old code used getPositionEntryTime() which:
+        // 1. Uses an in-memory map that resets on restart
+        // 2. Falls back to "first seen" time if historical loading fails
+        // 3. Could cause hedging to skip positions because it thinks they're "new"
+        //
+        // The position.firstAcquiredAt comes from actual BUY trade history on-chain.
+        const entryTime = position.firstAcquiredAt;
+        const timeHeldSec = position.timeHeldSec;
+
+        if (!entryTime) {
+          if (shouldBypassHoldTime) {
+            // Loss at trigger threshold with no entry time - ACT ANYWAY
+            // The Data API price is telling us we're losing - don't wait for entry time verification
+            this.logger.warn(
+              `[Hedging] 🚨 LOSS (${lossPct.toFixed(1)}% >= ${this.config.triggerLossPct}%) with no entry time - PROCEEDING ANYWAY (Data API is source of truth)`,
+            );
+            // Fall through to continue processing
+          } else {
+            // Normal loss without entry time - be conservative and skip
+            skipAggregator.add(tokenIdShort, "no_entry_time");
+            continue;
+          }
+        }
+
+        // Check hold time (but bypass for losses at trigger threshold that need immediate action)
+        // Use position.timeHeldSec which is pre-computed from actual trade history
+        if (timeHeldSec !== undefined && !shouldBypassHoldTime) {
+          if (timeHeldSec < this.config.minHoldSeconds) {
+            skipAggregator.add(tokenIdShort, "hold_time_short");
+            continue;
+          }
+        }
+
+        // === NEAR-CLOSE HEDGING BEHAVIOR ===
+        // Near market close, hedging (buying the inverse) is actually MORE valuable, not less.
+        // When a market is about to resolve, one outcome WILL pay $1. If you're losing on one side,
+        // buying the other side guarantees you recover value from one of them.
+        //
+        // EXAMPLE: You hold YES at 20¢ (down from 60¢). Market closes in 2 minutes. NO is at 80¢.
+        // - If you do NOTHING: You might lose 100% if YES loses
+        // - If you BUY NO at 80¢: You're guaranteed $1 from one side, capping your loss
+        //
+        // The "no-hedge window" was originally meant to avoid dumb hedges, but it was actually
+        // BLOCKING the smartest hedge - buying inverse near resolution when losing.
+        //
+        // NEW LOGIC (Jan 2025):
+        // - Near resolution with significant loss: PRIORITIZE buying the inverse (hedge)
+        // - After buying inverse, ALSO SELL the original losing position to recover remaining value
+        // - Near-close threshold checks still apply for small losses (avoid overtrading)
+        let isNearResolutionHedge = false;
+        if (position.marketEndTime && position.marketEndTime > now) {
+          const minutesToClose = (position.marketEndTime - now) / (60 * 1000);
+
+          // Inside no-hedge window (last 2-3 minutes):
+          // For significant losses, try to BUY THE INVERSE to lock in whatever value remains
+          // This is the BEST time to hedge - the outcome is nearly certain
+          if (minutesToClose <= this.config.noHedgeWindowMinutes) {
+            if (lossPct >= this.config.triggerLossPct) {
+              // Significant loss near resolution - buying inverse is critical
+              isNearResolutionHedge = true;
+              this.logger.info(
+                `[Hedging] 🎯 NEAR-RESOLUTION HEDGE: ${minutesToClose.toFixed(1)}min to close, loss ${lossPct.toFixed(1)}% - ` +
+                  `Will BUY INVERSE then SELL original to lock in remaining value`,
+              );
+              // Fall through to the main hedging logic below - don't skip!
+              // The hedge will try to buy the opposite side
+            } else {
+              // Small loss near close - not worth the complexity
+              skipAggregator.add(tokenIdShort, "no_hedge_window_small_loss");
+              continue;
+            }
+          }
+          // Inside near-close window (default: last 30 minutes): apply stricter thresholds
+          // Only hedge if it's a BIG adverse move (≥12¢) OR a BIG loss (≥30%)
+          else if (minutesToClose <= this.config.nearCloseWindowMinutes) {
+            const priceDropCents =
+              (position.entryPrice - position.currentPrice) * 100;
+            const meetsDropThreshold =
+              priceDropCents >= this.config.nearClosePriceDropCents;
+            const meetsLossThreshold = lossPct >= this.config.nearCloseLossPct;
+
+            if (!meetsDropThreshold && !meetsLossThreshold) {
+              // Use aggregator for near-close threshold skips
+              skipAggregator.add(tokenIdShort, "near_close_threshold");
+              continue;
+            }
+
+            this.logger.info(
+              `[Hedging] 📍 Near-close hedge triggered: ${minutesToClose.toFixed(1)}min to close, ` +
+                `loss=${lossPct.toFixed(1)}%${meetsLossThreshold ? " ✓" : ""}, ` +
+                `drop=${priceDropCents.toFixed(1)}¢${meetsDropThreshold ? " ✓" : ""}`,
+            );
+          }
+        }
+
+        // ALWAYS try to hedge FIRST, even for significant losses
+        // Only liquidate as a last resort if hedge fails
+        //
+        // Compute isCatastrophicLoss for the liquidation decision (uses forceLiquidationPct = 50%)
+        // This is separate from shouldBypassHoldTime (triggerLossPct = 20%) used for hold time bypass
+        const isCatastrophicLoss =
+          position.pnlPct < 0 && lossPct >= this.config.forceLiquidationPct;
+
+        // === HEDGE OPERATION LOCK ===
+        // Acquire a lock on this market to prevent incoming BUY orders during the hedge operation.
+        // This is critical because:
+        // 1. When hedging, we may need to SELL a position then BUY the inverse
+        // 2. If a copy-trade BUY comes in between, it could consume funds meant for the hedge
+        // 3. This prevents conflicts and ensures the hedge operation completes atomically
+        const lockAcquired = acquireHedgeLock(position.marketId, "HEDGE_DOWN");
+        if (!lockAcquired) {
           this.logger.warn(
-            `[Hedging] 🚨 NEAR-RESOLUTION: Hedge failed (${hedgeResult.reason}) - SELLING losing position to salvage remaining value`,
+            `[Hedging] ⚠️ Could not acquire hedge lock for ${position.marketId.slice(0, 8)}... - another operation in progress`,
+          );
+          skipAggregator.add(tokenIdShort, "hedge_lock_unavailable");
+          continue;
+        }
+
+        try {
+          // Try to hedge
+          const lossLabel = isCatastrophicLoss ? " (catastrophic)" : "";
+          this.logger.info(
+            `[Hedging] 🎯 Position losing ${lossPct.toFixed(1)}%${lossLabel}${isNearResolutionHedge ? " (near-resolution)" : ""} - attempting hedge FIRST`,
+          );
+
+          const hedgeResult = await this.executeHedge(
+            position,
+            lossPct,
+            isNearResolutionHedge,
+          );
+          if (hedgeResult.success) {
+            actionsCount++;
+            this.hedgedPositions.add(key);
+            // Track paired hedge for exit monitoring
+            if (hedgeResult.hedgeTokenId) {
+              this.pairedHedges.set(key, {
+                marketId: position.marketId,
+                hedgeTokenId: hedgeResult.hedgeTokenId,
+                originalTokenId: position.tokenId,
+              });
+              this.logger.debug(
+                `[Hedging] 📊 Tracking paired hedge: original=${position.tokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}... hedge=${hedgeResult.hedgeTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH)}...`,
+              );
+            }
+
+            // === NEAR-RESOLUTION: ALSO SELL THE ORIGINAL LOSING POSITION ===
+            // After successfully buying the inverse near resolution, immediately sell
+            // the original losing position to recover whatever value it still has.
+            // This completes the hedge: BUY inverse + SELL original = locked in recovery
+            if (isNearResolutionHedge) {
+              this.logger.info(
+                `[Hedging] 💰 NEAR-RESOLUTION: Now selling original losing position to complete hedge`,
+              );
+              const soldOriginal = await this.sellPosition(position);
+              if (soldOriginal) {
+                actionsCount++;
+                // Mark the original as exited in hedge tracking
+                this.hedgeExitedPositions.add(key);
+                this.logger.info(
+                  `[Hedging] ✅ NEAR-RESOLUTION HEDGE COMPLETE: Bought inverse + sold original ${position.side} ${tokenIdShort}...`,
+                );
+              } else {
+                this.logger.warn(
+                  `[Hedging] ⚠️ Failed to sell original position after hedge - will retry via hedge exit monitoring`,
+                );
+              }
+            }
+            continue;
+          }
+
+          // === PARTIAL FILL PROTECTION ===
+          // If money was spent on a partial fill, mark position as hedged to prevent
+          // re-hedging and exceeding HEDGING_ABSOLUTE_MAX_USD.
+          // This is critical: without this check, partial fills could trigger repeated
+          // hedge attempts, each spending money until the total far exceeds the limit.
+          if (hedgeResult.filledAmountUsd) {
+            this.logger.warn(
+              `[Hedging] 🛑 Partial hedge fill ($${hedgeResult.filledAmountUsd.toFixed(2)}) - marking position as hedged to prevent exceeding ABSOLUTE_MAX`,
+            );
+            this.hedgedPositions.add(key);
+            // Track paired hedge even for partial fills
+            if (hedgeResult.hedgeTokenId) {
+              this.pairedHedges.set(key, {
+                marketId: position.marketId,
+                hedgeTokenId: hedgeResult.hedgeTokenId,
+                originalTokenId: position.tokenId,
+              });
+            }
+
+            // For partial fills near resolution, still try to sell the original
+            if (isNearResolutionHedge) {
+              this.logger.info(
+                `[Hedging] 💰 NEAR-RESOLUTION (partial): Attempting to sell original losing position`,
+              );
+              const soldOriginal = await this.sellPosition(position);
+              if (soldOriginal) {
+                actionsCount++;
+                this.hedgeExitedPositions.add(key);
+              }
+            }
+            actionsCount++;
+            continue;
+          }
+
+          // If market is essentially resolved (opposite side >= 95¢), skip liquidation
+          // The position should be redeemed, not sold at a loss
+          if (hedgeResult.reason === "MARKET_RESOLVED") {
+            this.logger.info(
+              `[Hedging] 📋 Position marked as resolved - skipping liquidation, awaiting redemption: ${key}`,
+            );
+            // Add to hedged positions to prevent future attempts (will be redeemed instead)
+            this.hedgedPositions.add(key);
+            continue;
+          }
+
+          // === REASON-AWARE HEDGE FALLBACK ===
+          // When hedge fails due to insufficient funds or no cash available, try to free funds
+          // by selling profitable positions (lowest profit first), then retry the hedge.
+          // Keep selling positions until we have enough funds for the hedge.
+          //
+          // IMPORTANT: This fund-freeing logic is ONLY for HEDGING DOWN (protecting losses).
+          // HEDGE UP (buying more of winning positions) should NOT sell other positions.
+          if (
+            hedgeResult.reason === "INSUFFICIENT_BALANCE_OR_ALLOWANCE" ||
+            hedgeResult.reason === "NO_CASH_AVAILABLE"
+          ) {
+            // Calculate how much we need for the hedge
+            // Use absoluteMaxUsd as the target since that's the max we'd spend on a hedge
+            const targetHedgeAmount = this.config.allowExceedMax
+              ? this.config.absoluteMaxUsd
+              : this.config.maxHedgeUsd;
+
+            this.logger.info(
+              `[Hedging] 💰 Hedge failed (insufficient funds) - need ~$${targetHedgeAmount.toFixed(2)} for hedge, attempting to free funds by selling profitable positions`,
+            );
+
+            // Get profitable positions sorted by lowest profit first (sell smallest winners first)
+            const profitCandidates =
+              this.positionTracker.getProfitLiquidationCandidates(
+                0, // Any profit
+                this.config.minHoldSeconds,
+              );
+
+            // Filter out positions we've already hedged
+            const sellableProfits = profitCandidates.filter((p) => {
+              const k = `${p.marketId}-${p.tokenId}`;
+              return !this.hedgedPositions.has(k);
+            });
+
+            let totalFreedFunds = 0;
+            let positionsSold = 0;
+
+            // Keep selling lowest-profit positions until we have enough funds
+            for (const profitToSell of sellableProfits) {
+              // Check if we've freed enough funds already
+              if (totalFreedFunds >= targetHedgeAmount) {
+                this.logger.info(
+                  `[Hedging] 💰 Freed enough funds ($${totalFreedFunds.toFixed(2)} >= $${targetHedgeAmount.toFixed(2)}) after selling ${positionsSold} position(s)`,
+                );
+                break;
+              }
+
+              this.logger.info(
+                `[Hedging] 🔄 Selling profitable position #${positionsSold + 1} to free funds: ${profitToSell.side} +${profitToSell.pnlPct.toFixed(1)}% ($${(profitToSell.size * profitToSell.currentPrice).toFixed(2)})`,
+              );
+
+              const soldProfit = await this.sellPosition(profitToSell);
+              if (soldProfit) {
+                positionsSold++;
+                actionsCount++;
+                // Mark as hedged to prevent future attempts on this position
+                this.hedgedPositions.add(
+                  `${profitToSell.marketId}-${profitToSell.tokenId}`,
+                );
+                // Update cycle budget with freed funds so retry can use them
+                // Account for transaction fees (taker fee on sell)
+                const grossValue =
+                  profitToSell.size * profitToSell.currentPrice;
+                const feeAmount =
+                  grossValue *
+                  (POLYMARKET_TAKER_FEE_BPS / BASIS_POINTS_DIVISOR);
+                const freedValue = grossValue - feeAmount;
+                totalFreedFunds += freedValue;
+
+                if (this.cycleHedgeBudgetRemaining !== null) {
+                  this.cycleHedgeBudgetRemaining += freedValue;
+                }
+
+                this.logger.info(
+                  `[Hedging] 💰 Freed $${freedValue.toFixed(2)} (gross $${grossValue.toFixed(2)} - fees $${feeAmount.toFixed(4)}) - total freed: $${totalFreedFunds.toFixed(2)}`,
+                );
+              } else {
+                this.logger.warn(
+                  `[Hedging] ⚠️ Failed to sell profitable position for fund release - trying next`,
+                );
+              }
+            }
+
+            if (positionsSold === 0) {
+              this.logger.debug(
+                `[Hedging] 📋 No profitable positions available to sell for fund release`,
+              );
+            }
+
+            // Retry hedge if we freed some funds
+            if (totalFreedFunds > 0) {
+              this.logger.info(
+                `[Hedging] 🔄 Retrying hedge after freeing $${totalFreedFunds.toFixed(2)} from ${positionsSold} position(s)...`,
+              );
+
+              const retryResult = await this.executeHedge(
+                position,
+                lossPct,
+                isNearResolutionHedge,
+              );
+              if (retryResult.success) {
+                actionsCount++;
+                this.hedgedPositions.add(key);
+
+                // For near-resolution, also sell the original after successful hedge
+                if (isNearResolutionHedge) {
+                  this.logger.info(
+                    `[Hedging] 💰 NEAR-RESOLUTION: Now selling original losing position to complete hedge`,
+                  );
+                  const soldOriginal = await this.sellPosition(position);
+                  if (soldOriginal) {
+                    actionsCount++;
+                    this.hedgeExitedPositions.add(key);
+                  }
+                }
+                continue;
+              }
+
+              // Check for partial fill on retry - still mark as hedged to prevent exceeding limit
+              if (retryResult.filledAmountUsd) {
+                this.logger.warn(
+                  `[Hedging] 🛑 Retry partial fill ($${retryResult.filledAmountUsd.toFixed(2)}) - marking position as hedged`,
+                );
+                this.hedgedPositions.add(key);
+                actionsCount++;
+                continue;
+              }
+
+              this.logger.warn(
+                `[Hedging] ⚠️ Hedge retry failed (${retryResult.reason}) - will sell losing position as last resort`,
+              );
+            }
+
+            // Fall through to selling the losing position as last resort
+          }
+
+          // Log specific hedge failure reasons for visibility
+          if (
+            hedgeResult.reason === "TOO_EXPENSIVE" ||
+            hedgeResult.reason === "NO_OPPOSITE_TOKEN" ||
+            hedgeResult.reason === "NO_LIQUIDITY"
+          ) {
+            this.logger.info(
+              `[Hedging] 📋 Hedge skip reason: ${hedgeResult.reason}`,
+            );
+          }
+
+          // === NEAR-RESOLUTION: SELL LOSING POSITION EVEN IF HEDGE FAILED ===
+          // If we're near resolution and couldn't buy the inverse (e.g., too expensive at 93¢+),
+          // we should STILL sell the original position to recover whatever value it has.
+          // Don't wait for it to go to $0 and redeem nothing!
+          //
+          // EXCEPTION: If market is essentially resolved (95¢+), await redemption instead.
+          if (
+            isNearResolutionHedge &&
+            hedgeResult.reason !== "MARKET_RESOLVED"
+          ) {
+            this.logger.warn(
+              `[Hedging] 🚨 NEAR-RESOLUTION: Hedge failed (${hedgeResult.reason}) - SELLING losing position to salvage remaining value`,
+            );
+            const sold = await this.sellPosition(position);
+            if (sold) {
+              actionsCount++;
+              this.hedgedPositions.add(key);
+              this.logger.info(
+                `[Hedging] ✅ NEAR-RESOLUTION: Sold losing ${position.side} ${tokenIdShort}... to recover value`,
+              );
+            } else {
+              this.failedLiquidationCooldowns.set(
+                key,
+                now + FAILED_LIQUIDATION_COOLDOWN_MS,
+              );
+              this.logger.warn(
+                `[Hedging] ⏳ Near-resolution sell failed - position on cooldown: ${key}`,
+              );
+            }
+            continue;
+          }
+
+          // Hedge failed - only liquidate if loss is catastrophic (>= forceLiquidationPct)
+          // For smaller losses, wait and try again later (market conditions may improve)
+          if (!isCatastrophicLoss) {
+            this.logger.info(
+              `[Hedging] 📋 Hedge failed (${hedgeResult.reason}) but loss ${lossPct.toFixed(1)}% < ${this.config.forceLiquidationPct}% threshold - waiting for better conditions`,
+            );
+            continue;
+          }
+
+          // Catastrophic loss AND hedge failed - liquidate to stop bleeding
+          this.logger.warn(
+            `[Hedging] 🚨 Hedge failed (${hedgeResult.reason}) AND loss ${lossPct.toFixed(1)}% >= ${this.config.forceLiquidationPct}% - LIQUIDATING as last resort`,
           );
           const sold = await this.sellPosition(position);
           if (sold) {
             actionsCount++;
             this.hedgedPositions.add(key);
-            this.logger.info(
-              `[Hedging] ✅ NEAR-RESOLUTION: Sold losing ${position.side} ${tokenIdShort}... to recover value`,
-            );
           } else {
-            this.failedLiquidationCooldowns.set(key, now + FAILED_LIQUIDATION_COOLDOWN_MS);
+            // Both hedge and sell failed - add to cooldown to prevent repeated attempts
+            this.failedLiquidationCooldowns.set(
+              key,
+              now + FAILED_LIQUIDATION_COOLDOWN_MS,
+            );
             this.logger.warn(
-              `[Hedging] ⏳ Near-resolution sell failed - position on cooldown: ${key}`,
+              `[Hedging] ⏳ Hedge and liquidation both failed - position on cooldown for 5 minutes: ${key}`,
             );
           }
-          continue;
+        } finally {
+          // Always release the hedge lock when done
+          releaseHedgeLock(position.marketId);
         }
-
-        // Hedge failed - only liquidate if loss is catastrophic (>= forceLiquidationPct)
-        // For smaller losses, wait and try again later (market conditions may improve)
-        if (!isCatastrophicLoss) {
-          this.logger.info(
-            `[Hedging] 📋 Hedge failed (${hedgeResult.reason}) but loss ${lossPct.toFixed(1)}% < ${this.config.forceLiquidationPct}% threshold - waiting for better conditions`,
-          );
-          continue;
-        }
-
-        // Catastrophic loss AND hedge failed - liquidate to stop bleeding
-        this.logger.warn(
-          `[Hedging] 🚨 Hedge failed (${hedgeResult.reason}) AND loss ${lossPct.toFixed(1)}% >= ${this.config.forceLiquidationPct}% - LIQUIDATING as last resort`,
-        );
-        const sold = await this.sellPosition(position);
-        if (sold) {
-          actionsCount++;
-          this.hedgedPositions.add(key);
-        } else {
-          // Both hedge and sell failed - add to cooldown to prevent repeated attempts
-          this.failedLiquidationCooldowns.set(
-            key,
-            now + FAILED_LIQUIDATION_COOLDOWN_MS,
-          );
-          this.logger.warn(
-            `[Hedging] ⏳ Hedge and liquidation both failed - position on cooldown for 5 minutes: ${key}`,
-          );
-        }
-      } finally {
-        // Always release the hedge lock when done
-        releaseHedgeLock(position.marketId);
       }
-    }
     }
 
     // === PHASE 3: HEDGE EXIT MONITORING ===
@@ -1331,11 +1392,12 @@ export class HedgingStrategy {
     if (this.logDeduper.shouldLog("Hedging:cycle_summary", 30_000)) {
       const alreadyHedgedCount = skipAggregator.getCount("already_hedged");
       const notTradableCount = skipAggregator.getCount("not_tradable");
-      const lossBelowTriggerCount = skipAggregator.getCount("loss_below_trigger");
+      const lossBelowTriggerCount =
+        skipAggregator.getCount("loss_below_trigger");
       const nearResolutionCount = skipAggregator.getCount("near_resolution");
       const untrustedPnlCount = skipAggregator.getCount("untrusted_pnl");
       const cooldownCount = skipAggregator.getCount("cooldown");
-      
+
       this.logger.info(
         `[Hedging] 📊 CYCLE SUMMARY (cycle=${this.cycleCount}): actions=${actionsCount}, ` +
           `budget=$${this.cycleHedgeBudgetRemaining?.toFixed(2) ?? "null"}, ` +
@@ -1355,14 +1417,14 @@ export class HedgingStrategy {
         const summary = skipAggregator.getSummary();
         // Check for critical skip reasons that need visibility
         // Use specific patterns to avoid false positives (e.g., matching 'reserve' in unrelated text)
-        const hasCriticalSkips = 
-          summary.includes("NO_CASH_AVAILABLE") || 
+        const hasCriticalSkips =
+          summary.includes("NO_CASH_AVAILABLE") ||
           summary.includes("untrusted_pnl") ||
           summary.includes("not_tradable") ||
           summary.includes("cooldown") ||
           summary.includes("hedge_lock_unavailable") ||
           summary.includes("invalid_book");
-        
+
         if (hasCriticalSkips) {
           this.logger.warn(
             `[Hedging] ⚠️ Skipped ${skipAggregator.getTotalCount()} positions: ${summary} (cycle=${this.cycleCount})`,
@@ -1397,7 +1459,10 @@ export class HedgingStrategy {
   private async tryHedgeUp(
     position: Position,
     now: number,
-  ): Promise<{ action: "bought" | "skipped" | "not_applicable"; reason: string }> {
+  ): Promise<{
+    action: "bought" | "skipped" | "not_applicable";
+    reason: string;
+  }> {
     const tokenIdShort = position.tokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH);
 
     // === BASIC QUALIFICATION CHECKS ===
@@ -1479,9 +1544,10 @@ export class HedgingStrategy {
 
     // === EXECUTE HEDGE UP ===
     // Compute time to close for logging (may be undefined if no marketEndTime)
-    const timeToCloseStr = position.marketEndTime && position.marketEndTime > now
-      ? `${((position.marketEndTime - now) / (60 * 1000)).toFixed(1)}min to close`
-      : "no close time";
+    const timeToCloseStr =
+      position.marketEndTime && position.marketEndTime > now
+        ? `${((position.marketEndTime - now) / (60 * 1000)).toFixed(1)}min to close`
+        : "no close time";
     this.logger.info(
       `[Hedging] 📈 HEDGE UP candidate: ${position.side} ${tokenIdShort}... ` +
         `at ${formatCents(position.currentPrice)}, ${timeToCloseStr}`,
@@ -1545,21 +1611,21 @@ export class HedgingStrategy {
 
     // === HEDGE UP SIZING ===
     // CRITICAL: Hedge up should use FULL available wallet balance, ignoring reserves.
-    // This is an opportunistic move on a high-probability winning position - we want to 
+    // This is an opportunistic move on a high-probability winning position - we want to
     // maximize our gains. Reserves are for protecting against losses, not limiting wins.
     //
     // When HEDGING_ALLOW_EXCEED_MAX=true: Use absoluteMaxUsd (from HEDGING_ABSOLUTE_MAX_USD)
     // or full available cash, whichever is smaller.
     // When false: Use hedgeUpMaxUsd / maxHedgeUsd as the cap.
     let buyUsd: number;
-    
+
     // Determine target size based on allowExceedMax setting
     const targetBuySize = this.config.allowExceedMax
-      // allowExceedMax: use absoluteMaxUsd as max
-      ? this.config.absoluteMaxUsd
-      // default: respect both hedgeUpMaxUsd and maxHedgeUsd
-      : Math.min(this.config.hedgeUpMaxUsd, this.config.maxHedgeUsd);
-    
+      ? // allowExceedMax: use absoluteMaxUsd as max
+        this.config.absoluteMaxUsd
+      : // default: respect both hedgeUpMaxUsd and maxHedgeUsd
+        Math.min(this.config.hedgeUpMaxUsd, this.config.maxHedgeUsd);
+
     if (this.cycleHedgeBudgetRemaining !== null) {
       // HEDGE UP: Use FULL available cash (no reserve constraint)
       // Take the smaller of target size and available cash
@@ -1606,7 +1672,9 @@ export class HedgingStrategy {
 
     try {
       // Normalize the outcome for the order API
-      const orderOutcome = this.normalizeOutcomeForOrder(position.side ?? "YES");
+      const orderOutcome = this.normalizeOutcomeForOrder(
+        position.side ?? "YES",
+      );
 
       const result = await postOrder({
         client: this.client,
@@ -1673,7 +1741,10 @@ export class HedgingStrategy {
       const hedgeKey = `${marketId}-${hedgeTokenId}`;
 
       // Skip if either position has already been exited
-      if (this.hedgeExitedPositions.has(originalKey) || this.hedgeExitedPositions.has(hedgeKey)) {
+      if (
+        this.hedgeExitedPositions.has(originalKey) ||
+        this.hedgeExitedPositions.has(hedgeKey)
+      ) {
         continue;
       }
 
@@ -1691,7 +1762,10 @@ export class HedgingStrategy {
       }
 
       // Check original position for exit (if still held)
-      if (originalPosition && originalPosition.currentPrice < this.config.hedgeExitThreshold) {
+      if (
+        originalPosition &&
+        originalPosition.currentPrice < this.config.hedgeExitThreshold
+      ) {
         const tokenIdShort = originalTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH);
         this.logger.warn(
           `[Hedging] 🔻 HEDGE EXIT: Original ${originalPosition.side} ${tokenIdShort}... at ` +
@@ -1722,7 +1796,10 @@ export class HedgingStrategy {
       }
 
       // Check hedge position for exit (if still held)
-      if (hedgePosition && hedgePosition.currentPrice < this.config.hedgeExitThreshold) {
+      if (
+        hedgePosition &&
+        hedgePosition.currentPrice < this.config.hedgeExitThreshold
+      ) {
         const tokenIdShort = hedgeTokenId.slice(0, TOKEN_ID_DISPLAY_LENGTH);
         this.logger.warn(
           `[Hedging] 🔻 HEDGE EXIT: Hedge ${hedgePosition.side} ${tokenIdShort}... at ` +
@@ -1776,7 +1853,12 @@ export class HedgingStrategy {
     position: Position,
     lossPct?: number,
     isNearResolution?: boolean,
-  ): Promise<{ success: boolean; reason?: string; filledAmountUsd?: number; hedgeTokenId?: string }> {
+  ): Promise<{
+    success: boolean;
+    reason?: string;
+    filledAmountUsd?: number;
+    hedgeTokenId?: string;
+  }> {
     const currentSide = position.side?.toUpperCase();
 
     // Get the opposite token (works for any binary market)
@@ -1828,11 +1910,13 @@ export class HedgingStrategy {
     // For near-resolution hedges, allow hedging at exactly the threshold (93¢)
     // since the goal is loss-capping, not profit. Normal hedges use >= for 90¢.
     const isTooExpensive = isNearResolution
-      ? oppositePrice > priceThreshold  // Allow exactly 93¢ for near-resolution
+      ? oppositePrice > priceThreshold // Allow exactly 93¢ for near-resolution
       : oppositePrice >= priceThreshold; // Block at 90¢+ for normal hedges
-    
+
     if (isTooExpensive) {
-      const thresholdLabel = isNearResolution ? "near-resolution max" : "normal max";
+      const thresholdLabel = isNearResolution
+        ? "near-resolution max"
+        : "normal max";
       const comparisonOp = isNearResolution ? ">" : ">=";
       this.logger.warn(
         `[Hedging] ${oppositeSide} at ${(oppositePrice * 100).toFixed(0)}¢ ${comparisonOp} ${(priceThreshold * 100).toFixed(0)}¢ (${thresholdLabel}) - too expensive to hedge`,
@@ -1853,9 +1937,10 @@ export class HedgingStrategy {
     // for single large orders instead of being limited by maxHedgeUsd (MAX_POSITION_USD).
     // When HEDGING_ALLOW_EXCEED_MAX=false: Use maxHedgeUsd as the cap, also considering
     // profitableHedgeUsd for non-emergency hedges to avoid over-hedging.
-    const isEmergencyHedge = lossPct !== undefined && lossPct >= this.config.emergencyLossPct;
+    const isEmergencyHedge =
+      lossPct !== undefined && lossPct >= this.config.emergencyLossPct;
     let hedgeUsd: number;
-    
+
     // Determine target hedge size based on allowExceedMax setting
     let targetHedgeSize: number;
     let limitLabel: string; // Track which limit was applied for logging
@@ -1878,7 +1963,7 @@ export class HedgingStrategy {
         limitLabel = "maxHedge";
       }
     }
-    
+
     if (this.cycleHedgeBudgetRemaining !== null) {
       // Use the smaller of target size and available cash
       hedgeUsd = Math.min(targetHedgeSize, this.cycleHedgeBudgetRemaining);
@@ -1910,7 +1995,10 @@ export class HedgingStrategy {
     // === BUDGET-AWARE SIZING ===
     // Apply sizing using per-cycle hedge budget (available cash)
     const operationLabel = isEmergencyHedge ? "EMERGENCY HEDGE" : "HEDGE";
-    const reserveSizing = this.applyReserveAwareSizing(hedgeUsd, operationLabel);
+    const reserveSizing = this.applyReserveAwareSizing(
+      hedgeUsd,
+      operationLabel,
+    );
     if (reserveSizing.skip) {
       return { success: false, reason: reserveSizing.reason };
     }
@@ -2104,7 +2192,8 @@ export class HedgingStrategy {
         this.logger.info(`[Hedging] ✅ Position sold`);
 
         // Calculate P&L for the trade
-        const tradePnl = (position.currentPrice - position.entryPrice) * position.size;
+        const tradePnl =
+          (position.currentPrice - position.entryPrice) * position.size;
 
         // Determine if this is a hedge exit or regular sell
         // Check if the position's tokenId was tracked as a hedge

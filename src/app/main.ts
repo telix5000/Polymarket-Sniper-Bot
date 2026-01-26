@@ -73,7 +73,9 @@ async function main(): Promise<void> {
 
   // Log startup mode
   logger.info(`🚀 Starting Polymarket (preset: ${strategyConfig.presetName})`);
-  logger.info(`📊 Components: orchestrator=${strategyConfig.enabled ? "ON" : "OFF"}, arb=${arbEnabled ? "ON" : "OFF"}, monitor=${monitorEnabled ? "ON" : "OFF"}`);
+  logger.info(
+    `📊 Components: orchestrator=${strategyConfig.enabled ? "ON" : "OFF"}, arb=${arbEnabled ? "ON" : "OFF"}, monitor=${monitorEnabled ? "ON" : "OFF"}`,
+  );
 
   // Run authentication and preflight ONCE at top level before starting any engines
   logger.info("🔐 Authenticating with Polymarket...");
@@ -166,10 +168,8 @@ async function main(): Promise<void> {
         forceLiquidationPct: strategyConfig.hedgingForceLiquidationLossPct,
         emergencyLossPct: strategyConfig.hedgingEmergencyLossPct,
         // Near-close hedging behavior
-        nearCloseWindowMinutes:
-          strategyConfig.hedgingNearCloseWindowMinutes,
-        nearClosePriceDropCents:
-          strategyConfig.hedgingNearClosePriceDropCents,
+        nearCloseWindowMinutes: strategyConfig.hedgingNearCloseWindowMinutes,
+        nearClosePriceDropCents: strategyConfig.hedgingNearClosePriceDropCents,
         nearCloseLossPct: strategyConfig.hedgingNearCloseLossPct,
         noHedgeWindowMinutes: strategyConfig.hedgingNoHedgeWindowMinutes,
         // Hedging direction and "hedge up" settings
@@ -221,9 +221,12 @@ async function main(): Promise<void> {
         quickWinMaxHoldMinutes: strategyConfig.autoSellQuickWinMaxHoldMinutes,
         quickWinProfitPct: strategyConfig.autoSellQuickWinProfitPct,
         oversizedExitEnabled: strategyConfig.autoSellOversizedExitEnabled,
-        oversizedExitThresholdUsd: strategyConfig.autoSellOversizedExitThresholdUsd,
-        oversizedExitHoursBeforeEvent: strategyConfig.autoSellOversizedExitHoursBeforeEvent,
-        oversizedExitBreakevenTolerancePct: strategyConfig.autoSellOversizedExitBreakevenTolerancePct,
+        oversizedExitThresholdUsd:
+          strategyConfig.autoSellOversizedExitThresholdUsd,
+        oversizedExitHoursBeforeEvent:
+          strategyConfig.autoSellOversizedExitHoursBeforeEvent,
+        oversizedExitBreakevenTolerancePct:
+          strategyConfig.autoSellOversizedExitBreakevenTolerancePct,
       },
       // Pass position stacking config for doubling down on winners
       positionStackingConfig: {
@@ -485,7 +488,9 @@ async function main(): Promise<void> {
           return false;
         },
       });
-      logger.info("📊 Sell signal monitor initialized - watching for tracked trader SELL signals");
+      logger.info(
+        "📊 Sell signal monitor initialized - watching for tracked trader SELL signals",
+      );
     }
 
     const monitor = new MempoolMonitorService({

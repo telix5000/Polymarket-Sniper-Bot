@@ -56,7 +56,8 @@ describe("validatePriceProtection", () => {
       );
       // Plain English message should mention sale being blocked and the price difference
       assert.ok(
-        result.error.includes("Sale blocked") || result.error.includes("blocked"),
+        result.error.includes("Sale blocked") ||
+          result.error.includes("blocked"),
         `Error should mention sale being blocked: ${result.error}`,
       );
       assert.ok(
@@ -383,7 +384,10 @@ describe("validatePriceProtection", () => {
 
       assert.equal(resultSell.valid, false);
       // Plain English message should mention no buyers or bids
-      assert.ok(resultSell.error?.includes("no buyers") || resultSell.error?.includes("no bids"));
+      assert.ok(
+        resultSell.error?.includes("no buyers") ||
+          resultSell.error?.includes("no bids"),
+      );
 
       const resultBuy = validatePriceProtection({
         side: "BUY",

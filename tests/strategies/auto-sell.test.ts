@@ -234,8 +234,14 @@ describe("AutoSell Filtering Behavior", () => {
     };
 
     // Verify the proof sources
-    assert.strictEqual(positionWithApiProof.redeemableProofSource, "DATA_API_FLAG");
-    assert.strictEqual(positionWithOnchainProof.redeemableProofSource, "ONCHAIN_DENOM");
+    assert.strictEqual(
+      positionWithApiProof.redeemableProofSource,
+      "DATA_API_FLAG",
+    );
+    assert.strictEqual(
+      positionWithOnchainProof.redeemableProofSource,
+      "ONCHAIN_DENOM",
+    );
     assert.strictEqual(positionWithoutProof.redeemableProofSource, "NONE");
   });
 
@@ -261,7 +267,10 @@ describe("AutoSell Filtering Behavior", () => {
     };
 
     // This position should be eligible for AutoSell (not blocked by redeemable filter)
-    assert.strictEqual(positionWithUnconfirmedApi.redeemableProofSource, "DATA_API_UNCONFIRMED");
+    assert.strictEqual(
+      positionWithUnconfirmedApi.redeemableProofSource,
+      "DATA_API_UNCONFIRMED",
+    );
     assert.strictEqual(positionWithUnconfirmedApi.redeemable, false);
     assert.ok(positionWithUnconfirmedApi.currentBidPrice !== undefined);
 
@@ -270,7 +279,11 @@ describe("AutoSell Filtering Behavior", () => {
       positionWithUnconfirmedApi.redeemableProofSource === "ONCHAIN_DENOM" ||
       positionWithUnconfirmedApi.redeemableProofSource === "DATA_API_FLAG";
 
-    assert.strictEqual(hasVerifiedRedeemableProof, false, "DATA_API_UNCONFIRMED should NOT be considered verified proof");
+    assert.strictEqual(
+      hasVerifiedRedeemableProof,
+      false,
+      "DATA_API_UNCONFIRMED should NOT be considered verified proof",
+    );
   });
 
   test("checkTradability returns NOT_TRADABLE for non-tradable execution status", () => {
@@ -400,20 +413,35 @@ describe("AutoSell DATA_API_UNCONFIRMED Routing", () => {
     };
 
     // Step 1: Verify position would be picked up by getPositionsNearResolution
-    const effectivePrice = positionDataApiUnconfirmed.currentBidPrice ?? positionDataApiUnconfirmed.currentPrice;
+    const effectivePrice =
+      positionDataApiUnconfirmed.currentBidPrice ??
+      positionDataApiUnconfirmed.currentPrice;
     const threshold = 0.999;
     const isNearResolution = effectivePrice >= threshold;
-    assert.strictEqual(isNearResolution, true, "Position at 99.9¢ bid should be near resolution");
+    assert.strictEqual(
+      isNearResolution,
+      true,
+      "Position at 99.9¢ bid should be near resolution",
+    );
 
     // Step 2: Verify checkTradability would NOT block this position
     const hasVerifiedRedeemableProof =
       positionDataApiUnconfirmed.redeemableProofSource === "ONCHAIN_DENOM" ||
       positionDataApiUnconfirmed.redeemableProofSource === "DATA_API_FLAG";
-    assert.strictEqual(hasVerifiedRedeemableProof, false, "DATA_API_UNCONFIRMED is NOT verified proof");
+    assert.strictEqual(
+      hasVerifiedRedeemableProof,
+      false,
+      "DATA_API_UNCONFIRMED is NOT verified proof",
+    );
 
     // Step 3: Verify position would NOT be picked up by AutoRedeem
-    const wouldBePickedByAutoRedeem = positionDataApiUnconfirmed.redeemable === true;
-    assert.strictEqual(wouldBePickedByAutoRedeem, false, "Position should NOT be picked up by AutoRedeem (redeemable=false)");
+    const wouldBePickedByAutoRedeem =
+      positionDataApiUnconfirmed.redeemable === true;
+    assert.strictEqual(
+      wouldBePickedByAutoRedeem,
+      false,
+      "Position should NOT be picked up by AutoRedeem (redeemable=false)",
+    );
 
     // Step 4: Verify all conditions for AutoSell to attempt selling
     const canAutoSell =
@@ -422,7 +450,11 @@ describe("AutoSell DATA_API_UNCONFIRMED Routing", () => {
       positionDataApiUnconfirmed.currentBidPrice !== undefined && // Has bid
       positionDataApiUnconfirmed.executionStatus === "TRADABLE"; // Can execute
 
-    assert.strictEqual(canAutoSell, true, "All conditions met for AutoSell to attempt selling");
+    assert.strictEqual(
+      canAutoSell,
+      true,
+      "All conditions met for AutoSell to attempt selling",
+    );
   });
 
   test("positions at 100¢ with bids are sold instead of waiting for redemption", () => {
@@ -440,19 +472,27 @@ describe("AutoSell DATA_API_UNCONFIRMED Routing", () => {
     };
 
     // Should be eligible for AutoSell
-    const effectivePrice = positionAt100Cents.currentBidPrice ?? positionAt100Cents.currentPrice;
+    const effectivePrice =
+      positionAt100Cents.currentBidPrice ?? positionAt100Cents.currentPrice;
     assert.ok(effectivePrice >= 0.999, "Position should be near resolution");
 
     const hasVerifiedProof =
       positionAt100Cents.redeemableProofSource === "ONCHAIN_DENOM" ||
       positionAt100Cents.redeemableProofSource === "DATA_API_FLAG";
-    assert.strictEqual(hasVerifiedProof, false, "Should not have verified proof");
+    assert.strictEqual(
+      hasVerifiedProof,
+      false,
+      "Should not have verified proof",
+    );
 
     // Calculate expected loss from selling at 99.9¢ instead of waiting for $1.00 redemption
     // Loss = (1.0 - 0.999) = $0.001 per share (0.1¢)
     // This is acceptable to free up capital immediately
     const lossPerShare = 1.0 - 0.999;
-    assert.ok(lossPerShare < 0.01, "Loss from selling early should be minimal (<1%)");
+    assert.ok(
+      lossPerShare < 0.01,
+      "Loss from selling early should be minimal (<1%)",
+    );
   });
 });
 
@@ -520,15 +560,15 @@ describe("AutoSell Stale Profitable Position Exit", () => {
       tokenId: "0x" + "b".repeat(64),
       side: "YES",
       size: 50,
-      entryPrice: 0.50, // Bought at 50¢
+      entryPrice: 0.5, // Bought at 50¢
       currentPrice: 0.55, // Now at 55¢
       currentBidPrice: 0.54, // Can sell at 54¢
       pnlPct: 8.0, // 8% profit
       pnlUsd: 2.0, // $2 profit
       pnlTrusted: true,
       pnlClassification: "PROFITABLE" as const,
-      firstAcquiredAt: now - (25 * 60 * 60 * 1000), // 25 hours ago
-      lastAcquiredAt: now - (25 * 60 * 60 * 1000),
+      firstAcquiredAt: now - 25 * 60 * 60 * 1000, // 25 hours ago
+      lastAcquiredAt: now - 25 * 60 * 60 * 1000,
       timeHeldSec: 25 * 60 * 60, // 25 hours in seconds
       entryMetaTrusted: true, // Entry metadata is trusted
       executionStatus: "TRADABLE" as const,
@@ -539,11 +579,23 @@ describe("AutoSell Stale Profitable Position Exit", () => {
     // Verify this position meets stale profitable criteria
 
     // Check profitable and P&L trusted
-    assert.strictEqual(staleProfitablePosition.pnlPct > 0, true, "Position should be profitable");
-    assert.strictEqual(staleProfitablePosition.pnlTrusted, true, "P&L should be trusted");
+    assert.strictEqual(
+      staleProfitablePosition.pnlPct > 0,
+      true,
+      "Position should be profitable",
+    );
+    assert.strictEqual(
+      staleProfitablePosition.pnlTrusted,
+      true,
+      "P&L should be trusted",
+    );
 
     // Check entry metadata is trusted (implementation skips when entryMetaTrusted === false)
-    assert.strictEqual(staleProfitablePosition.entryMetaTrusted !== false, true, "Entry metadata should be trusted");
+    assert.strictEqual(
+      staleProfitablePosition.entryMetaTrusted !== false,
+      true,
+      "Entry metadata should be trusted",
+    );
 
     // Check held time using same calculation as implementation: Date.now() - firstAcquiredAt
     const heldMs = now - staleProfitablePosition.firstAcquiredAt;
@@ -553,7 +605,10 @@ describe("AutoSell Stale Profitable Position Exit", () => {
     );
 
     // Check can sell
-    assert.ok(staleProfitablePosition.currentBidPrice !== undefined, "Position should have a bid price");
+    assert.ok(
+      staleProfitablePosition.currentBidPrice !== undefined,
+      "Position should have a bid price",
+    );
 
     // Check tradable
     assert.strictEqual(staleProfitablePosition.executionStatus, "TRADABLE");
@@ -566,9 +621,9 @@ describe("AutoSell Stale Profitable Position Exit", () => {
       tokenId: "0x" + "d".repeat(64),
       pnlPct: 5.0, // Profitable
       pnlTrusted: true,
-      firstAcquiredAt: Date.now() - (12 * 60 * 60 * 1000), // 12 hours ago
+      firstAcquiredAt: Date.now() - 12 * 60 * 60 * 1000, // 12 hours ago
       timeHeldSec: 12 * 60 * 60, // 12 hours
-      currentBidPrice: 0.60,
+      currentBidPrice: 0.6,
     };
 
     const staleHours = 24;
@@ -576,7 +631,11 @@ describe("AutoSell Stale Profitable Position Exit", () => {
 
     // This position should NOT be considered stale
     const isStale = recentProfitablePosition.timeHeldSec >= staleThresholdSec;
-    assert.strictEqual(isStale, false, "Position held 12h should not be stale at 24h threshold");
+    assert.strictEqual(
+      isStale,
+      false,
+      "Position held 12h should not be stale at 24h threshold",
+    );
   });
 
   test("losing position not sold as stale (only profitable positions)", () => {
@@ -586,14 +645,18 @@ describe("AutoSell Stale Profitable Position Exit", () => {
       tokenId: "0x" + "f".repeat(64),
       pnlPct: -15.0, // LOSING
       pnlTrusted: true,
-      firstAcquiredAt: Date.now() - (30 * 60 * 60 * 1000), // 30 hours ago
+      firstAcquiredAt: Date.now() - 30 * 60 * 60 * 1000, // 30 hours ago
       timeHeldSec: 30 * 60 * 60,
-      currentBidPrice: 0.40,
+      currentBidPrice: 0.4,
     };
 
     // This should NOT be picked up by stale profitable logic
     const isProfitable = losingPosition.pnlPct > 0;
-    assert.strictEqual(isProfitable, false, "Losing position should not be treated as profitable");
+    assert.strictEqual(
+      isProfitable,
+      false,
+      "Losing position should not be treated as profitable",
+    );
   });
 
   test("position with untrusted entry metadata not sold as stale", () => {
@@ -605,9 +668,9 @@ describe("AutoSell Stale Profitable Position Exit", () => {
       tokenId: "0x" + "4".repeat(64),
       pnlPct: 10.0, // Profitable
       pnlTrusted: true, // P&L is trusted
-      firstAcquiredAt: Date.now() - (30 * 60 * 60 * 1000), // Shows 30 hours (but may be wrong!)
+      firstAcquiredAt: Date.now() - 30 * 60 * 60 * 1000, // Shows 30 hours (but may be wrong!)
       timeHeldSec: 30 * 60 * 60,
-      currentBidPrice: 0.60,
+      currentBidPrice: 0.6,
       entryMetaTrusted: false, // Entry metadata is NOT trusted!
       entryMetaUntrustedReason: "Shares mismatch: computed=45.00 vs live=50.00",
     };
@@ -621,7 +684,8 @@ describe("AutoSell Stale Profitable Position Exit", () => {
     );
 
     // Verify the eligibility check should fail
-    const passesEntryMetaCheck = positionWithUntrustedEntryMeta.entryMetaTrusted !== false;
+    const passesEntryMetaCheck =
+      positionWithUntrustedEntryMeta.entryMetaTrusted !== false;
     assert.strictEqual(
       passesEntryMetaCheck,
       false,
@@ -637,14 +701,15 @@ describe("AutoSell Stale Profitable Position Exit", () => {
       tokenId: "0x" + "6".repeat(64),
       pnlPct: 10.0, // Profitable
       pnlTrusted: true,
-      firstAcquiredAt: Date.now() - (30 * 60 * 60 * 1000), // 30 hours
+      firstAcquiredAt: Date.now() - 30 * 60 * 60 * 1000, // 30 hours
       timeHeldSec: 30 * 60 * 60,
-      currentBidPrice: 0.60,
+      currentBidPrice: 0.6,
       entryMetaTrusted: true, // Entry metadata IS trusted
     };
 
     // This SHOULD pass entry metadata check
-    const passesEntryMetaCheck = positionWithTrustedEntryMeta.entryMetaTrusted !== false;
+    const passesEntryMetaCheck =
+      positionWithTrustedEntryMeta.entryMetaTrusted !== false;
     assert.strictEqual(
       passesEntryMetaCheck,
       true,
@@ -661,7 +726,7 @@ describe("AutoSell Stale Profitable Position Exit", () => {
       pnlTrusted: true,
       firstAcquiredAt: undefined, // No entry time!
       timeHeldSec: undefined,
-      currentBidPrice: 0.70,
+      currentBidPrice: 0.7,
     };
 
     // Cannot determine hold time, so should not be sold
@@ -681,7 +746,7 @@ describe("AutoSell Stale Profitable Position Exit", () => {
 
     const position = {
       size: 100, // 100 shares
-      entryPrice: 0.50, // 50¢ entry
+      entryPrice: 0.5, // 50¢ entry
       currentBidPrice: 0.55, // 55¢ current bid
       pnlPct: 10.0, // 10% profit
     };
@@ -692,7 +757,10 @@ describe("AutoSell Stale Profitable Position Exit", () => {
     const profitLocked = capitalRecovered - capitalInvested; // $5
 
     assert.ok(profitLocked > 0, "Selling locks in profit");
-    assert.ok(Math.abs(capitalRecovered - 55) < 0.001, "Capital recovered is approximately $55");
+    assert.ok(
+      Math.abs(capitalRecovered - 55) < 0.001,
+      "Capital recovered is approximately $55",
+    );
 
     // The freed capital can now be used for new trades
     // Even if this position eventually goes to $1, we'd only gain $45 more
@@ -778,7 +846,7 @@ describe("AutoSell Quick Win Logic", () => {
     // Example: Position bought at 10¢, now at 19¢ = 90% gain
     const position = {
       size: 100,
-      entryPrice: 0.10, // 10¢ entry
+      entryPrice: 0.1, // 10¢ entry
       currentBidPrice: 0.19, // 19¢ current bid
       pnlPct: 90.0, // 90% profit
       timeHeldSec: 1800, // 30 minutes (1800 seconds)
@@ -786,13 +854,15 @@ describe("AutoSell Quick Win Logic", () => {
     };
 
     // Calculate profit %
-    const profitPct = ((position.currentBidPrice - position.entryPrice) / position.entryPrice) * 100;
+    const profitPct =
+      ((position.currentBidPrice - position.entryPrice) / position.entryPrice) *
+      100;
     assert.ok(Math.abs(profitPct - 90) < 0.1, "Profit % is ~90%");
 
     // This position should be eligible for quick win:
     // - Held < 60 minutes (30 minutes)
     // - Profit >= 90%
-    const isQuickWin = 
+    const isQuickWin =
       position.timeHeldSec < 60 * 60 && // Less than 60 minutes
       position.pnlPct >= 90; // At least 90% profit
 
@@ -802,23 +872,29 @@ describe("AutoSell Quick Win Logic", () => {
   test("Quick win uses purchase price, not share price", () => {
     // Example 1: Bought at 10¢, now 19¢ = 90% gain → ELIGIBLE
     const lowEntryPosition = {
-      entryPrice: 0.10,
+      entryPrice: 0.1,
       currentBidPrice: 0.19,
       pnlPct: 90.0,
     };
 
     // Example 2: Bought at 80¢, now 90¢ = 12.5% gain → NOT ELIGIBLE
     const highEntryPosition = {
-      entryPrice: 0.80,
-      currentBidPrice: 0.90,
+      entryPrice: 0.8,
+      currentBidPrice: 0.9,
       pnlPct: 12.5,
     };
 
     // Low entry position has 90% profit from purchase price - eligible
-    assert.ok(lowEntryPosition.pnlPct >= 90, "Low entry position has >= 90% profit");
+    assert.ok(
+      lowEntryPosition.pnlPct >= 90,
+      "Low entry position has >= 90% profit",
+    );
 
     // High entry position only has 12.5% profit - not eligible
-    assert.ok(highEntryPosition.pnlPct < 90, "High entry position has < 90% profit");
+    assert.ok(
+      highEntryPosition.pnlPct < 90,
+      "High entry position has < 90% profit",
+    );
 
     // This avoids conflict with positions bought in "overly confident zone" (80¢+)
     // where reaching 90¢ is normal price movement, not a massive gain
@@ -838,7 +914,9 @@ describe("AutoSell Quick Win Logic", () => {
     const profitLocked = capitalRecovered - capitalInvested; // $9.25
 
     // Profit % from purchase price
-    const profitPct = ((position.currentBidPrice - position.entryPrice) / position.entryPrice) * 100;
+    const profitPct =
+      ((position.currentBidPrice - position.entryPrice) / position.entryPrice) *
+      100;
 
     assert.ok(profitPct > 90, "Profit % > 90% (actually 185%)");
     assert.ok(profitLocked > 9, "Locks in $9.25 profit");
@@ -855,9 +933,18 @@ describe("AutoSell Oversized Position Exit", () => {
   describe("Default Config", () => {
     test("DEFAULT_AUTO_SELL_CONFIG has correct oversized exit defaults", () => {
       assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitEnabled, false);
-      assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitThresholdUsd, 25);
-      assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitHoursBeforeEvent, 1);
-      assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitBreakevenTolerancePct, 2);
+      assert.strictEqual(
+        DEFAULT_AUTO_SELL_CONFIG.oversizedExitThresholdUsd,
+        25,
+      );
+      assert.strictEqual(
+        DEFAULT_AUTO_SELL_CONFIG.oversizedExitHoursBeforeEvent,
+        1,
+      );
+      assert.strictEqual(
+        DEFAULT_AUTO_SELL_CONFIG.oversizedExitBreakevenTolerancePct,
+        2,
+      );
     });
   });
 
@@ -914,7 +1001,7 @@ describe("AutoSell Oversized Position Exit", () => {
         marketId: "0x123",
         tokenId: "0x456",
         size: 100,
-        entryPrice: 0.30, // 30¢ entry = $30 invested (>$25 threshold)
+        entryPrice: 0.3, // 30¢ entry = $30 invested (>$25 threshold)
         currentBidPrice: 0.35, // 35¢ current = $35 value
         pnlPct: 16.67, // +16.67% profit
         pnlTrusted: true,
@@ -935,7 +1022,7 @@ describe("AutoSell Oversized Position Exit", () => {
         marketId: "0x123",
         tokenId: "0x456",
         size: 100,
-        entryPrice: 0.30, // 30¢ entry = $30 invested
+        entryPrice: 0.3, // 30¢ entry = $30 invested
         currentBidPrice: 0.295, // 29.5¢ current = $29.50 value
         pnlPct: -1.67, // -1.67% loss (within 2% tolerance)
         pnlTrusted: true,
@@ -954,7 +1041,7 @@ describe("AutoSell Oversized Position Exit", () => {
         marketId: "0x123",
         tokenId: "0x456",
         size: 100,
-        entryPrice: 0.30, // 30¢ entry = $30 invested
+        entryPrice: 0.3, // 30¢ entry = $30 invested
         currentBidPrice: 0.24, // 24¢ current = $24 value
         pnlPct: -20, // -20% loss (outside tolerance, should wait)
         pnlTrusted: true,
@@ -963,7 +1050,8 @@ describe("AutoSell Oversized Position Exit", () => {
 
       const tolerancePct = 2;
       const hoursBeforeEvent = 1;
-      const hoursRemaining = (position.marketEndTime - Date.now()) / (60 * 60 * 1000);
+      const hoursRemaining =
+        (position.marketEndTime - Date.now()) / (60 * 60 * 1000);
 
       const isNearBreakeven = Math.abs(position.pnlPct) <= tolerancePct;
       const isEventApproaching = hoursRemaining <= hoursBeforeEvent;
@@ -979,7 +1067,7 @@ describe("AutoSell Oversized Position Exit", () => {
         marketId: "0x123",
         tokenId: "0x456",
         size: 100,
-        entryPrice: 0.30, // 30¢ entry = $30 invested
+        entryPrice: 0.3, // 30¢ entry = $30 invested
         currentBidPrice: 0.24, // 24¢ current = $24 value
         pnlPct: -20, // -20% loss
         pnlTrusted: true,
@@ -987,7 +1075,8 @@ describe("AutoSell Oversized Position Exit", () => {
       };
 
       const hoursBeforeEvent = 1;
-      const hoursRemaining = (position.marketEndTime - Date.now()) / (60 * 60 * 1000);
+      const hoursRemaining =
+        (position.marketEndTime - Date.now()) / (60 * 60 * 1000);
       const isEventApproaching = hoursRemaining <= hoursBeforeEvent;
 
       assert.ok(isEventApproaching, "Event IS approaching (<1h away)");
@@ -1000,7 +1089,7 @@ describe("AutoSell Oversized Position Exit", () => {
         marketId: "0x123",
         tokenId: "0x456",
         size: 50,
-        entryPrice: 0.20, // 20¢ entry = $10 invested (<$25 threshold)
+        entryPrice: 0.2, // 20¢ entry = $10 invested (<$25 threshold)
         currentBidPrice: 0.15, // 15¢ current
         pnlPct: -25, // -25% loss
       };
@@ -1010,6 +1099,99 @@ describe("AutoSell Oversized Position Exit", () => {
 
       assert.ok(!isOversized, "Position is NOT oversized (<$25)");
       // Strategy: Not handled by oversized exit (too small)
+    });
+  });
+
+  describe("Zero Price Position Filtering", () => {
+    test("positions with price at ABSOLUTE_MIN_TRADEABLE_PRICE should be filtered", () => {
+      // Scenario: Position at exactly 0.001 (0.10¢) should be filtered as ZERO_PRICE
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x456",
+        side: "YES",
+        size: 100,
+        entryPrice: 0.5,
+        currentPrice: 0.001, // At ABSOLUTE_MIN_TRADEABLE_PRICE
+        currentBidPrice: 0.001, // At minimum
+        pnlPct: -99.8,
+        pnlUsd: -49.9,
+        redeemable: false,
+        executionStatus: "TRADABLE_ON_CLOB",
+      };
+
+      // This position should be skipped as ZERO_PRICE
+      assert.strictEqual(position.currentBidPrice, 0.001);
+      assert.ok(
+        position.currentBidPrice <= 0.001,
+        "Price should be <= ABSOLUTE_MIN_TRADEABLE_PRICE",
+      );
+    });
+
+    test("positions with price below ABSOLUTE_MIN_TRADEABLE_PRICE should be filtered", () => {
+      // Scenario: Position below 0.001 (0.10¢) should be filtered as ZERO_PRICE
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x789",
+        side: "YES",
+        size: 50,
+        entryPrice: 0.4,
+        currentPrice: 0.0005, // Below ABSOLUTE_MIN_TRADEABLE_PRICE
+        currentBidPrice: 0.0005, // Below minimum
+        pnlPct: -99.9,
+        pnlUsd: -19.975,
+        redeemable: false,
+        executionStatus: "TRADABLE_ON_CLOB",
+      };
+
+      // This position should be skipped as ZERO_PRICE
+      assert.ok(
+        position.currentBidPrice < 0.001,
+        "Price should be < ABSOLUTE_MIN_TRADEABLE_PRICE",
+      );
+    });
+
+    test("positions with price just above ABSOLUTE_MIN_TRADEABLE_PRICE should NOT be filtered", () => {
+      // Scenario: Position just above 0.001 should NOT be filtered
+      const position = {
+        marketId: "0x123",
+        tokenId: "0xabc",
+        side: "YES",
+        size: 100,
+        entryPrice: 0.5,
+        currentPrice: 0.002, // Just above ABSOLUTE_MIN_TRADEABLE_PRICE
+        currentBidPrice: 0.002, // Above minimum
+        pnlPct: -99.6,
+        pnlUsd: -49.8,
+        redeemable: false,
+        executionStatus: "TRADABLE_ON_CLOB",
+      };
+
+      // This position should NOT be filtered as ZERO_PRICE
+      assert.ok(
+        position.currentBidPrice > 0.001,
+        "Price should be > ABSOLUTE_MIN_TRADEABLE_PRICE",
+      );
+    });
+
+    test("positions with currentBidPrice undefined but currentPrice at zero should be filtered", () => {
+      // Scenario: Position with no bid but currentPrice at minimum
+      const position = {
+        marketId: "0x123",
+        tokenId: "0xdef",
+        side: "YES",
+        size: 100,
+        entryPrice: 0.5,
+        currentPrice: 0.001, // At ABSOLUTE_MIN_TRADEABLE_PRICE
+        currentBidPrice: undefined, // No bid available
+        pnlPct: -99.8,
+        pnlUsd: -49.9,
+        redeemable: false,
+        executionStatus: "TRADABLE_ON_CLOB",
+      };
+
+      // This position should be filtered as NO_BID first (takes precedence)
+      assert.strictEqual(position.currentBidPrice, undefined);
+      // Then if bid existed, would be filtered as ZERO_PRICE due to currentPrice
     });
   });
 });

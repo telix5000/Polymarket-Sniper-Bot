@@ -26,7 +26,7 @@ describe("V2 POL Reserve Configuration", () => {
       assert.strictEqual(
         defaultPolReserve.targetPol,
         50,
-        "Default target POL should be 50"
+        "Default target POL should be 50",
       );
     });
 
@@ -34,7 +34,7 @@ describe("V2 POL Reserve Configuration", () => {
       assert.strictEqual(
         defaultPolReserve.minPol,
         10,
-        "Default minimum POL before rebalance should be 10"
+        "Default minimum POL before rebalance should be 10",
       );
     });
 
@@ -42,7 +42,7 @@ describe("V2 POL Reserve Configuration", () => {
       assert.strictEqual(
         defaultPolReserve.maxSwapUsd,
         100,
-        "Default max swap should be 100 USDC"
+        "Default max swap should be 100 USDC",
       );
     });
 
@@ -50,7 +50,7 @@ describe("V2 POL Reserve Configuration", () => {
       assert.strictEqual(
         defaultPolReserve.slippagePct,
         1,
-        "Default slippage should be 1%"
+        "Default slippage should be 1%",
       );
     });
 
@@ -58,7 +58,7 @@ describe("V2 POL Reserve Configuration", () => {
       assert.strictEqual(
         defaultPolReserve.checkIntervalMin,
         5,
-        "Default check interval should be 5 minutes"
+        "Default check interval should be 5 minutes",
       );
     });
   });
@@ -69,7 +69,7 @@ describe("V2 POL Rebalance Logic", () => {
   function shouldRebalance(
     currentPol: number,
     minPol: number,
-    enabled: boolean
+    enabled: boolean,
   ): boolean {
     if (!enabled) return false;
     return currentPol < minPol;
@@ -80,7 +80,7 @@ describe("V2 POL Rebalance Logic", () => {
       assert.strictEqual(
         shouldRebalance(5, 10, true),
         true,
-        "Should rebalance when POL (5) < minPol (10)"
+        "Should rebalance when POL (5) < minPol (10)",
       );
     });
 
@@ -88,7 +88,7 @@ describe("V2 POL Rebalance Logic", () => {
       assert.strictEqual(
         shouldRebalance(10, 10, true),
         false,
-        "Should NOT rebalance when POL (10) = minPol (10)"
+        "Should NOT rebalance when POL (10) = minPol (10)",
       );
     });
 
@@ -96,7 +96,7 @@ describe("V2 POL Rebalance Logic", () => {
       assert.strictEqual(
         shouldRebalance(50, 10, true),
         false,
-        "Should NOT rebalance when POL (50) > minPol (10)"
+        "Should NOT rebalance when POL (50) > minPol (10)",
       );
     });
 
@@ -104,7 +104,7 @@ describe("V2 POL Rebalance Logic", () => {
       assert.strictEqual(
         shouldRebalance(5, 10, false),
         false,
-        "Should NOT rebalance when feature is disabled"
+        "Should NOT rebalance when feature is disabled",
       );
     });
   });
@@ -122,7 +122,7 @@ describe("V2 POL Swap Calculation", () => {
     targetPol: number,
     maxSwapUsd: number,
     availableUsdc: number,
-    estimatedPolPrice: number = POL_PRICE_ESTIMATE_USD
+    estimatedPolPrice: number = POL_PRICE_ESTIMATE_USD,
   ): { usdcToSwap: number; reason: string } {
     const polNeeded = targetPol - currentPol;
     if (polNeeded <= 0) {
@@ -151,7 +151,7 @@ describe("V2 POL Swap Calculation", () => {
       assert.strictEqual(
         result.usdcToSwap,
         67.5,
-        "Should swap $67.50 USDC for 45 POL"
+        "Should swap $67.50 USDC for 45 POL",
       );
       assert.strictEqual(result.reason, "OK");
     });
@@ -162,7 +162,7 @@ describe("V2 POL Swap Calculation", () => {
       assert.strictEqual(
         result.usdcToSwap,
         50,
-        "Should cap at maxSwapUsd ($50)"
+        "Should cap at maxSwapUsd ($50)",
       );
       assert.strictEqual(result.reason, "OK");
     });
@@ -173,7 +173,7 @@ describe("V2 POL Swap Calculation", () => {
       assert.strictEqual(
         result.usdcToSwap,
         27,
-        "Should limit to 90% of available USDC"
+        "Should limit to 90% of available USDC",
       );
       assert.strictEqual(result.reason, "OK");
     });
@@ -187,7 +187,11 @@ describe("V2 POL Swap Calculation", () => {
 
     test("Should return 0 if no swap needed", () => {
       const result = calculateSwapAmount(50, 50, 100, 500);
-      assert.strictEqual(result.usdcToSwap, 0, "Should not swap when at target");
+      assert.strictEqual(
+        result.usdcToSwap,
+        0,
+        "Should not swap when at target",
+      );
       assert.strictEqual(result.reason, "NO_SWAP_NEEDED");
     });
   });
@@ -197,7 +201,7 @@ describe("V2 POL Slippage Protection", () => {
   // Helper function that mirrors the V2 slippage calculation
   function calculateMinOutput(
     expectedOutput: number,
-    slippagePct: number
+    slippagePct: number,
   ): number {
     return expectedOutput * (1 - slippagePct / 100);
   }

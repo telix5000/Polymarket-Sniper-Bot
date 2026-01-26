@@ -147,7 +147,10 @@ export class StopLossStrategy {
    * Used to bypass safety checks like entry time and hold time verification.
    */
   private isCatastrophicLoss(position: Position): boolean {
-    return position.pnlPct < 0 && Math.abs(position.pnlPct) >= this.config.maxStopLossPct;
+    return (
+      position.pnlPct < 0 &&
+      Math.abs(position.pnlPct) >= this.config.maxStopLossPct
+    );
   }
 
   /**
@@ -192,11 +195,14 @@ export class StopLossStrategy {
     // === DIAGNOSTIC: Log high-loss positions before filtering (rate-limited) ===
     // This helps debug why positions aren't being acted upon
     const highLossPositions = activePositions.filter(
-      (p) => p.pnlPct < 0 && Math.abs(p.pnlPct) >= this.config.maxStopLossPct
+      (p) => p.pnlPct < 0 && Math.abs(p.pnlPct) >= this.config.maxStopLossPct,
     );
     // Rate-limit diagnostic logging to once per minute to prevent log spam
     const DIAGNOSTIC_LOG_INTERVAL_MS = 60_000;
-    if (highLossPositions.length > 0 && now - this.lastDiagnosticLogAt >= DIAGNOSTIC_LOG_INTERVAL_MS) {
+    if (
+      highLossPositions.length > 0 &&
+      now - this.lastDiagnosticLogAt >= DIAGNOSTIC_LOG_INTERVAL_MS
+    ) {
       this.lastDiagnosticLogAt = now;
       for (const pos of highLossPositions) {
         const lossPct = Math.abs(pos.pnlPct);
@@ -224,11 +230,11 @@ export class StopLossStrategy {
           const lossPctMagnitude = Math.abs(pos.pnlPct);
           this.logger.warn(
             `[StopLoss] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}% >= ${this.config.maxStopLossPct}%) with untrusted P&L ` +
-            `(${pos.pnlUntrustedReason ?? "unknown reason"}) - PROCEEDING WITH STOP-LOSS despite data uncertainty`,
+              `(${pos.pnlUntrustedReason ?? "unknown reason"}) - PROCEEDING WITH STOP-LOSS despite data uncertainty`,
           );
           return true; // Keep the position for stop-loss processing
         }
-        
+
         this.logger.debug(
           `[StopLoss] 📋 Skip (UNTRUSTED_PNL): ${pos.tokenId.slice(0, 16)}... has untrusted P&L (${pos.pnlUntrustedReason ?? "unknown reason"})`,
         );
@@ -250,7 +256,7 @@ export class StopLossStrategy {
         if (pos.entryPrice >= hedgingThreshold) {
           return true;
         }
-        
+
         // CRITICAL: Also keep positions that Hedging would skip due to NOT_TRADABLE_ON_CLOB
         // These positions can't be hedged (no orderbook), so Stop-Loss must try to sell them.
         // This prevents positions from falling through the cracks when both strategies skip them.
@@ -265,7 +271,7 @@ export class StopLossStrategy {
           );
           return true;
         }
-        
+
         // Defer to Hedging for tradable positions below hedgingThreshold
         return false;
       });
@@ -293,7 +299,7 @@ export class StopLossStrategy {
       if (position.pnlPct <= -stopLossPct) {
         // Use helper method to check for catastrophic loss
         const isCatastrophic = this.isCatastrophicLoss(position);
-        
+
         // === USE ACTUAL ACQUISITION TIME FROM POSITION DATA ===
         // CRITICAL FIX: Use position.firstAcquiredAt (from trade history API) instead of
         // the in-memory positionEntryTimes map. The position object has the REAL acquisition
@@ -400,9 +406,7 @@ export class StopLossStrategy {
     }
 
     if (soldCount > 0) {
-      this.logger.info(
-        `[StopLoss] 💰 Executed ${soldCount} stop-loss sell(s)`,
-      );
+      this.logger.info(`[StopLoss] 💰 Executed ${soldCount} stop-loss sell(s)`);
     }
 
     return soldCount;
@@ -436,7 +440,7 @@ export class StopLossStrategy {
 
   /**
    * Sell a position using postOrder utility
-   * 
+   *
    * CRITICAL FIX (Jan 2025): Now accepts dataApiPrice as fallback when orderbook unavailable.
    * If Data API provided curPrice, we can use that for sell pricing even without an orderbook.
    * This allows stop-loss to work on illiquid positions where the Data API still tracks value.
@@ -485,8 +489,11 @@ export class StopLossStrategy {
         }
       } catch (orderbookErr) {
         // Orderbook fetch failed (404, timeout, etc.) - try Data API fallback
-        const errMsg = orderbookErr instanceof Error ? orderbookErr.message : String(orderbookErr);
-        
+        const errMsg =
+          orderbookErr instanceof Error
+            ? orderbookErr.message
+            : String(orderbookErr);
+
         if (dataApiPrice !== undefined && dataApiPrice > 0) {
           sellPrice = dataApiPrice;
           priceSource = "data_api";
@@ -538,17 +545,10 @@ export class StopLossStrategy {
 
       if (result.status === "submitted") {
         // Send telegram notification for stop-loss trigger
-        void notifyStopLoss(
-          marketId,
-          tokenId,
-          size,
-          sellPrice,
-          sizeUsd,
-          {
-            entryPrice,
-            pnl: pnlUsd,
-          },
-        ).catch(() => {
+        void notifyStopLoss(marketId, tokenId, size, sellPrice, sizeUsd, {
+          entryPrice,
+          pnl: pnlUsd,
+        }).catch(() => {
           // Ignore notification errors - logging is handled by the service
         });
 

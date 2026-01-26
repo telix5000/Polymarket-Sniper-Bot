@@ -5636,7 +5636,7 @@ describe("PositionTracker: Partial Refresh Does Not Overwrite lastGoodSnapshot",
     assert.strictEqual(
       shouldReject,
       true,
-      `Should reject: newRawTotal=${newRawTotal} <= ${lastGoodRawTotal} * ${SUSPICIOUS_SHRINK_THRESHOLD} = ${lastGoodRawTotal * SUSPICIOUS_SHRINK_THRESHOLD}`
+      `Should reject: newRawTotal=${newRawTotal} <= ${lastGoodRawTotal} * ${SUSPICIOUS_SHRINK_THRESHOLD} = ${lastGoodRawTotal * SUSPICIOUS_SHRINK_THRESHOLD}`,
     );
   });
 
@@ -5652,7 +5652,7 @@ describe("PositionTracker: Partial Refresh Does Not Overwrite lastGoodSnapshot",
     assert.strictEqual(
       shouldReject,
       false,
-      "60% drop should NOT be considered suspicious"
+      "60% drop should NOT be considered suspicious",
     );
   });
 
@@ -5671,7 +5671,7 @@ describe("PositionTracker: Partial Refresh Does Not Overwrite lastGoodSnapshot",
     assert.strictEqual(
       isActiveWipeout,
       true,
-      "ACTIVE_WIPEOUT should be detected when lastGood had many active and new has 0"
+      "ACTIVE_WIPEOUT should be detected when lastGood had many active and new has 0",
     );
   });
 
@@ -5689,7 +5689,7 @@ describe("PositionTracker: Partial Refresh Does Not Overwrite lastGoodSnapshot",
     assert.strictEqual(
       isActiveWipeout,
       false,
-      "Small portfolios should NOT trigger ACTIVE_WIPEOUT"
+      "Small portfolios should NOT trigger ACTIVE_WIPEOUT",
     );
   });
 
@@ -5716,12 +5716,12 @@ describe("PositionTracker: Partial Refresh Does Not Overwrite lastGoodSnapshot",
     assert.strictEqual(
       consecutiveFailures,
       MAX_CONSECUTIVE_FAILURES,
-      "Should have accumulated 5 failures"
+      "Should have accumulated 5 failures",
     );
     assert.deepStrictEqual(
       currentSnapshot,
       lastGoodSnapshot,
-      "lastGoodSnapshot should NOT be overwritten during failures"
+      "lastGoodSnapshot should NOT be overwritten during failures",
     );
 
     // After 5 failures, self-heal should trigger
@@ -5729,7 +5729,7 @@ describe("PositionTracker: Partial Refresh Does Not Overwrite lastGoodSnapshot",
     assert.strictEqual(
       shouldSelfHeal,
       true,
-      "Self-heal should trigger after 5 consecutive failures"
+      "Self-heal should trigger after 5 consecutive failures",
     );
   });
 
@@ -5743,7 +5743,7 @@ describe("PositionTracker: Partial Refresh Does Not Overwrite lastGoodSnapshot",
     assert.strictEqual(
       is4xxError,
       true,
-      "HTTP 422 should be recognized as 4xx error"
+      "HTTP 422 should be recognized as 4xx error",
     );
 
     // A partial failure should be marked and NOT replace lastGoodSnapshot
@@ -5751,26 +5751,46 @@ describe("PositionTracker: Partial Refresh Does Not Overwrite lastGoodSnapshot",
     assert.strictEqual(
       isPartialFailure,
       true,
-      "HTTP 422 should mark refresh as PARTIAL_FAILURE"
+      "HTTP 422 should mark refresh as PARTIAL_FAILURE",
     );
   });
 
   test("Snapshot hash should change when positions change", () => {
     // Simple hash function for testing
-    const hashSnapshot = (snapshot: { activeCount: number; rawTotal: number; address: string }): string => {
+    const hashSnapshot = (snapshot: {
+      activeCount: number;
+      rawTotal: number;
+      address: string;
+    }): string => {
       return `${snapshot.activeCount}-${snapshot.rawTotal}-${snapshot.address.slice(0, 10)}`;
     };
 
-    const snapshot1 = { activeCount: 48, rawTotal: 78, address: "0x1234567890" };
-    const snapshot2 = { activeCount: 48, rawTotal: 78, address: "0x1234567890" };
+    const snapshot1 = {
+      activeCount: 48,
+      rawTotal: 78,
+      address: "0x1234567890",
+    };
+    const snapshot2 = {
+      activeCount: 48,
+      rawTotal: 78,
+      address: "0x1234567890",
+    };
     const snapshot3 = { activeCount: 2, rawTotal: 2, address: "0x1234567890" };
 
     const hash1 = hashSnapshot(snapshot1);
     const hash2 = hashSnapshot(snapshot2);
     const hash3 = hashSnapshot(snapshot3);
 
-    assert.strictEqual(hash1, hash2, "Identical snapshots should have same hash");
-    assert.notStrictEqual(hash1, hash3, "Different snapshots should have different hash");
+    assert.strictEqual(
+      hash1,
+      hash2,
+      "Identical snapshots should have same hash",
+    );
+    assert.notStrictEqual(
+      hash1,
+      hash3,
+      "Different snapshots should have different hash",
+    );
   });
 });
 
@@ -5842,7 +5862,11 @@ describe("P&L Consistency Check", () => {
       `Implied P&L should be ~0.0116%, got ${impliedPnlPct.toFixed(6)}%`,
     );
     assert.strictEqual(result.trusted, true, "P&L should be trusted");
-    assert.strictEqual(result.level, "ROUNDING", "Should be classified as rounding noise");
+    assert.strictEqual(
+      result.level,
+      "ROUNDING",
+      "Should be classified as rounding noise",
+    );
     assert.ok(
       result.discrepancy < PNL_ROUNDING_TOLERANCE_PCT,
       "Discrepancy should be below rounding tolerance",
@@ -5865,7 +5889,11 @@ describe("P&L Consistency Check", () => {
       `Implied P&L should be ~8%, got ${impliedPnlPct}`,
     );
     assert.strictEqual(result.trusted, true, "P&L should still be trusted");
-    assert.strictEqual(result.level, "WARNING", "Should be classified as warning level");
+    assert.strictEqual(
+      result.level,
+      "WARNING",
+      "Should be classified as warning level",
+    );
     assert.ok(
       result.discrepancy > PNL_WARNING_THRESHOLD_PCT,
       "Discrepancy should exceed warning threshold",
@@ -5892,7 +5920,11 @@ describe("P&L Consistency Check", () => {
       `Implied P&L should be ~15%, got ${impliedPnlPct}`,
     );
     assert.strictEqual(result.trusted, false, "P&L should NOT be trusted");
-    assert.strictEqual(result.level, "UNTRUSTED", "Should be classified as untrusted");
+    assert.strictEqual(
+      result.level,
+      "UNTRUSTED",
+      "Should be classified as untrusted",
+    );
     assert.ok(
       result.discrepancy > PNL_UNTRUSTED_THRESHOLD_PCT,
       "Discrepancy should exceed untrusted threshold",
@@ -5905,7 +5937,11 @@ describe("P&L Consistency Check", () => {
 
     const impliedPnlPct = computeImpliedPnlPct(entryPrice, currentPrice);
 
-    assert.strictEqual(impliedPnlPct, 0, "Zero entry price should return 0% implied P&L");
+    assert.strictEqual(
+      impliedPnlPct,
+      0,
+      "Zero entry price should return 0% implied P&L",
+    );
   });
 
   test("Negative discrepancy (Data-API higher) should also be detected", () => {

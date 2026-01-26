@@ -45,7 +45,7 @@ import {
   ScalpTradeStrategy,
   type ScalpTradeConfig,
   DEFAULT_SCALP_TRADE_CONFIG,
-} from './scalp-trade';
+} from "./scalp-trade";
 import { AutoRedeemStrategy, type AutoRedeemConfig } from "./auto-redeem";
 import {
   AutoSellStrategy,
@@ -57,10 +57,7 @@ import {
   type OnChainExitConfig,
   DEFAULT_ON_CHAIN_EXIT_CONFIG,
 } from "./on-chain-exit";
-import {
-  StopLossStrategy,
-  type StopLossConfig,
-} from "./stop-loss";
+import { StopLossStrategy, type StopLossConfig } from "./stop-loss";
 import {
   PositionStackingStrategy,
   type PositionStackingConfig,
@@ -335,7 +332,9 @@ export class Orchestrator {
     // Only initialize if config is provided (requires arbConfig with all settings)
     if (config.arbitrageConfig?.enabled && config.arbitrageConfig?.arbConfig) {
       // Cast client to include wallet (required by ArbitrageStrategy)
-      const clientWithWallet = config.client as ClobClient & { wallet: import("ethers").Wallet };
+      const clientWithWallet = config.client as ClobClient & {
+        wallet: import("ethers").Wallet;
+      };
       if (clientWithWallet.wallet) {
         this.arbitrageStrategy = new ArbitrageStrategy({
           client: clientWithWallet,
@@ -801,7 +800,8 @@ export class Orchestrator {
 
     summary.initialInvestment = initialInvestment;
     summary.overallGainLoss = totalValue - initialInvestment;
-    summary.overallReturnPct = (summary.overallGainLoss / initialInvestment) * 100;
+    summary.overallReturnPct =
+      (summary.overallGainLoss / initialInvestment) * 100;
   }
 }
 

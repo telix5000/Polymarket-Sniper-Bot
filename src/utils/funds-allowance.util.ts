@@ -282,7 +282,12 @@ const hedgeOperationLocks = new Map<
 export const isMarketHedgeLocked = (
   marketId: string | undefined,
   nowOverride?: number,
-): { locked: boolean; reason?: string; operationType?: string; remainingMs?: number } => {
+): {
+  locked: boolean;
+  reason?: string;
+  operationType?: string;
+  remainingMs?: number;
+} => {
   if (!marketId) {
     return { locked: false };
   }

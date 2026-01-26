@@ -529,7 +529,10 @@ export class MempoolMonitorService {
             this.processedHashes.add(activity.transactionHash);
             this.lastFetchTime.set(
               targetAddress,
-              Math.max(this.lastFetchTime.get(targetAddress) || 0, activityTime),
+              Math.max(
+                this.lastFetchTime.get(targetAddress) || 0,
+                activityTime,
+              ),
             );
 
             // Fire and forget - don't block the monitoring loop

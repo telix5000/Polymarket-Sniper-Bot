@@ -5,7 +5,10 @@ import {
   PositionStackingStrategy,
   DEFAULT_POSITION_STACKING_CONFIG,
 } from "../../src/strategies/position-stacking";
-import type { Position, PortfolioSnapshot } from "../../src/strategies/position-tracker";
+import type {
+  Position,
+  PortfolioSnapshot,
+} from "../../src/strategies/position-tracker";
 
 // === CONFIGURATION TESTS ===
 
@@ -117,7 +120,7 @@ test("POSITION_STACKING_MAX_CURRENT_PRICE is 0.90 in conservative preset", () =>
   });
 
   const config = loadStrategyConfig();
-  assert.equal(config.positionStackingMaxCurrentPrice, 0.90);
+  assert.equal(config.positionStackingMaxCurrentPrice, 0.9);
 });
 
 test("POSITION_STACKING_MAX_CURRENT_PRICE env variable overrides preset value", () => {
@@ -153,8 +156,8 @@ function createMockPosition(overrides: Partial<Position> = {}): Position {
     marketId: "market123",
     side: "YES",
     size: 100,
-    currentPrice: 0.70,
-    entryPrice: 0.50,
+    currentPrice: 0.7,
+    entryPrice: 0.5,
     avgEntryPriceCents: 50,
     pnlPct: 40,
     pnlUsd: 20,
@@ -194,7 +197,8 @@ test("DEFAULT_POSITION_STACKING_CONFIG has sensible defaults", () => {
 test("PositionStackingStrategy initializes correctly", () => {
   const strategy = new PositionStackingStrategy({
     client: mockClient,
-    logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+    logger:
+      mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
     config: DEFAULT_POSITION_STACKING_CONFIG,
   });
 
@@ -208,7 +212,8 @@ test("PositionStackingStrategy initializes correctly", () => {
 test("PositionStackingStrategy tracks stacked positions", () => {
   const strategy = new PositionStackingStrategy({
     client: mockClient,
-    logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+    logger:
+      mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
     config: DEFAULT_POSITION_STACKING_CONFIG,
   });
 
@@ -220,7 +225,8 @@ test("PositionStackingStrategy tracks stacked positions", () => {
 test("PositionStackingStrategy can be cleared", () => {
   const strategy = new PositionStackingStrategy({
     client: mockClient,
-    logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+    logger:
+      mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
     config: DEFAULT_POSITION_STACKING_CONFIG,
   });
 
@@ -232,7 +238,8 @@ test("PositionStackingStrategy can be cleared", () => {
 test("PositionStackingStrategy returns 0 when disabled", async () => {
   const strategy = new PositionStackingStrategy({
     client: mockClient,
-    logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+    logger:
+      mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
     config: {
       ...DEFAULT_POSITION_STACKING_CONFIG,
       enabled: false,
@@ -246,7 +253,8 @@ test("PositionStackingStrategy returns 0 when disabled", async () => {
 test("PositionStackingStrategy uses available cash even in RISK_OFF mode", async () => {
   const strategy = new PositionStackingStrategy({
     client: mockClient,
-    logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+    logger:
+      mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
     config: DEFAULT_POSITION_STACKING_CONFIG,
   });
 
@@ -272,7 +280,8 @@ test("PositionStackingStrategy uses available cash even in RISK_OFF mode", async
 test("PositionStackingStrategy skips when budget is exhausted", async () => {
   const strategy = new PositionStackingStrategy({
     client: mockClient,
-    logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+    logger:
+      mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
     config: DEFAULT_POSITION_STACKING_CONFIG,
   });
 
@@ -297,7 +306,8 @@ test("PositionStackingStrategy skips when budget is exhausted", async () => {
 test("PositionStackingStrategy executes when RISK_ON mode", async () => {
   const strategy = new PositionStackingStrategy({
     client: mockClient,
-    logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+    logger:
+      mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
     config: DEFAULT_POSITION_STACKING_CONFIG,
   });
 
@@ -335,7 +345,10 @@ describe("Budget-Aware Stacking", () => {
     maxStackUsd: number,
     cycleStackBudgetRemaining: number | null,
     minStackUsd: number = 1,
-  ): { finalSize: number; reason: "full" | "partial" | "skipped" | "no_budget_tracking" } {
+  ): {
+    finalSize: number;
+    reason: "full" | "partial" | "skipped" | "no_budget_tracking";
+  } {
     // If no budget tracking, use full computed size
     if (cycleStackBudgetRemaining === null) {
       return { finalSize: maxStackUsd, reason: "no_budget_tracking" };
@@ -365,7 +378,11 @@ describe("Budget-Aware Stacking", () => {
       // This is the key change - we use full availableCash for stacking opportunities
       const result = computeBudgetAwareSize(25, availableCash);
 
-      assert.strictEqual(result.finalSize, 25, "Should use full maxStackUsd when budget allows");
+      assert.strictEqual(
+        result.finalSize,
+        25,
+        "Should use full maxStackUsd when budget allows",
+      );
       assert.strictEqual(result.reason, "full", "Should indicate full stack");
     });
 
@@ -383,7 +400,11 @@ describe("Budget-Aware Stacking", () => {
       const result = computeBudgetAwareSize(25, null);
 
       assert.strictEqual(result.finalSize, 25, "Should use full maxStackUsd");
-      assert.strictEqual(result.reason, "no_budget_tracking", "Should indicate no budget tracking");
+      assert.strictEqual(
+        result.reason,
+        "no_budget_tracking",
+        "Should indicate no budget tracking",
+      );
     });
   });
 
@@ -394,8 +415,16 @@ describe("Budget-Aware Stacking", () => {
 
       const result = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
 
-      assert.strictEqual(result.finalSize, 15, "Should cap to available budget");
-      assert.strictEqual(result.reason, "partial", "Should indicate partial stack");
+      assert.strictEqual(
+        result.finalSize,
+        15,
+        "Should cap to available budget",
+      );
+      assert.strictEqual(
+        result.reason,
+        "partial",
+        "Should indicate partial stack",
+      );
     });
 
     test("allows partial stack at exact budget amount", () => {
@@ -404,7 +433,11 @@ describe("Budget-Aware Stacking", () => {
 
       const result = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
 
-      assert.strictEqual(result.finalSize, 10, "Should use exact remaining budget");
+      assert.strictEqual(
+        result.finalSize,
+        10,
+        "Should use exact remaining budget",
+      );
       assert.strictEqual(result.reason, "partial", "Should indicate partial");
     });
   });
@@ -415,9 +448,17 @@ describe("Budget-Aware Stacking", () => {
       const budgetRemaining = 0.5; // Below $1 minimum
       const minStackUsd = 1;
 
-      const result = computeBudgetAwareSize(maxStackUsd, budgetRemaining, minStackUsd);
+      const result = computeBudgetAwareSize(
+        maxStackUsd,
+        budgetRemaining,
+        minStackUsd,
+      );
 
-      assert.strictEqual(result.finalSize, 0, "Should skip when budget exhausted");
+      assert.strictEqual(
+        result.finalSize,
+        0,
+        "Should skip when budget exhausted",
+      );
       assert.strictEqual(result.reason, "skipped", "Should indicate skipped");
     });
 
@@ -436,20 +477,32 @@ describe("Budget-Aware Stacking", () => {
 
       // First stack
       const result1 = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
-      assert.strictEqual(result1.finalSize, 25, "First stack should use full $25");
+      assert.strictEqual(
+        result1.finalSize,
+        25,
+        "First stack should use full $25",
+      );
       assert.strictEqual(result1.reason, "full", "First stack should be full");
       budgetRemaining -= result1.finalSize; // Now $25
 
       // Second stack
       const result2 = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
-      assert.strictEqual(result2.finalSize, 25, "Second stack should use full $25");
+      assert.strictEqual(
+        result2.finalSize,
+        25,
+        "Second stack should use full $25",
+      );
       assert.strictEqual(result2.reason, "full", "Second stack should be full");
       budgetRemaining -= result2.finalSize; // Now $0
 
       // Third stack - should be skipped (budget exhausted)
       const result3 = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
       assert.strictEqual(result3.finalSize, 0, "Third stack should be skipped");
-      assert.strictEqual(result3.reason, "skipped", "Third stack should indicate exhausted");
+      assert.strictEqual(
+        result3.reason,
+        "skipped",
+        "Third stack should indicate exhausted",
+      );
     });
 
     test("partial stack when budget partially depleted", () => {
@@ -463,8 +516,16 @@ describe("Budget-Aware Stacking", () => {
 
       // Second stack - partial (only $15 left)
       const result2 = computeBudgetAwareSize(maxStackUsd, budgetRemaining);
-      assert.strictEqual(result2.finalSize, 15, "Second stack should be capped to $15");
-      assert.strictEqual(result2.reason, "partial", "Second stack should be partial");
+      assert.strictEqual(
+        result2.finalSize,
+        15,
+        "Second stack should be capped to $15",
+      );
+      assert.strictEqual(
+        result2.reason,
+        "partial",
+        "Second stack should be partial",
+      );
     });
   });
 });
@@ -475,7 +536,8 @@ describe("Baseline Tracking", () => {
   test("creates baselines for new positions", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: DEFAULT_POSITION_STACKING_CONFIG,
     });
 
@@ -493,12 +555,13 @@ describe("Baseline Tracking", () => {
   test("updates lastUpdatedAtMs for existing positions without changing baseline values", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: DEFAULT_POSITION_STACKING_CONFIG,
     });
 
     // First execution to create baseline
-    const position1 = createMockPosition({ 
+    const position1 = createMockPosition({
       tokenId: "token-baseline-test",
       size: 100,
       dataApiInitialValue: 50,
@@ -506,10 +569,10 @@ describe("Baseline Tracking", () => {
     await strategy.execute(createMockSnapshot([position1]));
 
     // Wait a bit
-    await new Promise(resolve => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 10));
 
     // Second execution with grown position (should update lastUpdatedAtMs but not baseline values)
-    const position2 = createMockPosition({ 
+    const position2 = createMockPosition({
       tokenId: "token-baseline-test",
       size: 110, // Size grew slightly (not enough for 40% threshold)
       dataApiInitialValue: 55,
@@ -524,12 +587,13 @@ describe("Baseline Tracking", () => {
   test("baselines are not removed for active positions even after 2+ hours", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: DEFAULT_POSITION_STACKING_CONFIG,
     });
 
     const position = createMockPosition({ tokenId: "long-running-token" });
-    
+
     // Execute multiple times to simulate multiple cycles
     for (let i = 0; i < 5; i++) {
       await strategy.execute(createMockSnapshot([position]));
@@ -547,7 +611,8 @@ describe("Position Growth Detection", () => {
   test("detects position size growth above threshold", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: {
         ...DEFAULT_POSITION_STACKING_CONFIG,
         sizeGrowthThreshold: 1.4, // 40% growth threshold
@@ -555,7 +620,7 @@ describe("Position Growth Detection", () => {
     });
 
     // First execution to create baseline with initial size
-    const position1 = createMockPosition({ 
+    const position1 = createMockPosition({
       tokenId: "growth-test-token",
       size: 100,
       dataApiInitialValue: 50,
@@ -563,11 +628,11 @@ describe("Position Growth Detection", () => {
     await strategy.execute(createMockSnapshot([position1]));
 
     // Second execution with position that has grown 50% (above 40% threshold)
-    const position2 = createMockPosition({ 
+    const position2 = createMockPosition({
       tokenId: "growth-test-token",
       size: 150, // 50% growth
       dataApiInitialValue: 75,
-      currentPrice: 0.70, // Still in profitable range
+      currentPrice: 0.7, // Still in profitable range
       avgEntryPriceCents: 50,
       pnlPct: 40,
     });
@@ -580,7 +645,8 @@ describe("Position Growth Detection", () => {
   test("does not flag position as stacked if growth is below threshold", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: {
         ...DEFAULT_POSITION_STACKING_CONFIG,
         sizeGrowthThreshold: 1.4, // 40% growth threshold
@@ -588,7 +654,7 @@ describe("Position Growth Detection", () => {
     });
 
     // First execution to create baseline
-    const position1 = createMockPosition({ 
+    const position1 = createMockPosition({
       tokenId: "small-growth-token",
       size: 100,
       dataApiInitialValue: 50,
@@ -596,7 +662,7 @@ describe("Position Growth Detection", () => {
     await strategy.execute(createMockSnapshot([position1]));
 
     // Second execution with position that has grown only 20% (below 40% threshold)
-    const position2 = createMockPosition({ 
+    const position2 = createMockPosition({
       tokenId: "small-growth-token",
       size: 120, // Only 20% growth
       dataApiInitialValue: 60,
@@ -614,7 +680,8 @@ describe("Position Eligibility", () => {
   test("position without entry price is not eligible", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: DEFAULT_POSITION_STACKING_CONFIG,
     });
 
@@ -624,7 +691,7 @@ describe("Position Eligibility", () => {
     });
 
     await strategy.execute(createMockSnapshot([position]));
-    
+
     // Should not be marked as stacked (wasn't eligible)
     assert.equal(strategy.isPositionStacked("no-entry-price"), false);
   });
@@ -632,7 +699,8 @@ describe("Position Eligibility", () => {
   test("position with untrusted PnL is not eligible", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: DEFAULT_POSITION_STACKING_CONFIG,
     });
 
@@ -642,33 +710,35 @@ describe("Position Eligibility", () => {
     });
 
     await strategy.execute(createMockSnapshot([position]));
-    
+
     assert.equal(strategy.isPositionStacked("untrusted-pnl"), false);
   });
 
   test("position in loss is not eligible", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: DEFAULT_POSITION_STACKING_CONFIG,
     });
 
     const position = createMockPosition({
       tokenId: "losing-position",
       pnlPct: -10, // In loss
-      currentPrice: 0.40, // Below entry
+      currentPrice: 0.4, // Below entry
       avgEntryPriceCents: 50,
     });
 
     await strategy.execute(createMockSnapshot([position]));
-    
+
     assert.equal(strategy.isPositionStacked("losing-position"), false);
   });
 
   test("position with gain below threshold is not eligible", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: {
         ...DEFAULT_POSITION_STACKING_CONFIG,
         minGainCents: 20,
@@ -677,20 +747,21 @@ describe("Position Eligibility", () => {
 
     const position = createMockPosition({
       tokenId: "small-gain",
-      currentPrice: 0.60, // Only 10 cents above entry
+      currentPrice: 0.6, // Only 10 cents above entry
       avgEntryPriceCents: 50,
       pnlPct: 20,
     });
 
     await strategy.execute(createMockSnapshot([position]));
-    
+
     assert.equal(strategy.isPositionStacked("small-gain"), false);
   });
 
   test("position near $1 is not eligible (limited upside)", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: {
         ...DEFAULT_POSITION_STACKING_CONFIG,
         maxCurrentPrice: 0.95,
@@ -705,27 +776,28 @@ describe("Position Eligibility", () => {
     });
 
     await strategy.execute(createMockSnapshot([position]));
-    
+
     assert.equal(strategy.isPositionStacked("near-resolution"), false);
   });
 
   test("non-tradable position is not eligible", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: DEFAULT_POSITION_STACKING_CONFIG,
     });
 
     const position = createMockPosition({
       tokenId: "not-tradable",
       executionStatus: "NOT_TRADABLE_ON_CLOB",
-      currentPrice: 0.70,
+      currentPrice: 0.7,
       avgEntryPriceCents: 50,
       pnlPct: 40,
     });
 
     await strategy.execute(createMockSnapshot([position]));
-    
+
     assert.equal(strategy.isPositionStacked("not-tradable"), false);
   });
 });
@@ -736,7 +808,8 @@ describe("Cooldown Behavior", () => {
   test("position enters cooldown after check", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: {
         ...DEFAULT_POSITION_STACKING_CONFIG,
         cooldownMs: 60000, // 60 second cooldown
@@ -765,7 +838,8 @@ describe("Single-Flight Guard", () => {
   test("prevents concurrent execution", async () => {
     const strategy = new PositionStackingStrategy({
       client: mockClient,
-      logger: mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
+      logger:
+        mockLogger as unknown as import("../../src/utils/logger.util").ConsoleLogger,
       config: DEFAULT_POSITION_STACKING_CONFIG,
     });
 

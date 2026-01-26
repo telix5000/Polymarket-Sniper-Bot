@@ -479,9 +479,13 @@ export class TelegramService {
 
     // Core modules section
     message += `🔧 <b>Core Modules:</b>\n`;
-    message += enabledStrategies.orchestrator ? `✅ Orchestrator\n` : `❌ Orchestrator\n`;
+    message += enabledStrategies.orchestrator
+      ? `✅ Orchestrator\n`
+      : `❌ Orchestrator\n`;
     message += enabledStrategies.arb ? `✅ Arbitrage\n` : `❌ Arbitrage\n`;
-    message += enabledStrategies.monitor ? `✅ Monitor (Copy Trading)\n` : `❌ Monitor\n`;
+    message += enabledStrategies.monitor
+      ? `✅ Monitor (Copy Trading)\n`
+      : `❌ Monitor\n`;
     message += `\n`;
 
     message += `📊 <b>Enabled Strategies:</b>\n`;

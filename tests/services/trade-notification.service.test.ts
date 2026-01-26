@@ -47,7 +47,7 @@ describe("Trade Notification Service", () => {
   beforeEach(() => {
     // Reset singleton state before each test
     resetTradeNotificationServiceForTesting();
-    
+
     originalFetch = global.fetch;
     mockFetch = mock.fn(() =>
       Promise.resolve({
@@ -68,7 +68,7 @@ describe("Trade Notification Service", () => {
       // Initialize with a disabled service (no botToken or chatId)
       const disabledService = new TelegramService({}, mockLogger);
       initTradeNotificationService(disabledService, mockLogger);
-      
+
       assert.strictEqual(isTradeNotificationEnabled(), false);
     });
 
@@ -114,14 +114,14 @@ describe("Trade Notification Service", () => {
 
       // Second initialization should be skipped
       initTradeNotificationService(secondService, mockLogger2);
-      
+
       // Check that debug log was called with "already initialized" message
       const debugCalls = mockLogger2.debug.mock.calls;
       const hasSkipMessage = debugCalls.some((call: { arguments: string[] }) =>
         call.arguments[0].includes("already initialized"),
       );
       assert.ok(hasSkipMessage, "Should log that init was skipped");
-      
+
       // Service should still be enabled (from first init)
       assert.strictEqual(isTradeNotificationEnabled(), true);
     });
@@ -207,7 +207,7 @@ describe("Trade Notification Service", () => {
         mockLogger,
       );
       initTradeNotificationService(enabledService, mockLogger);
-      
+
       // Set P&L callback
       setTradeNotificationPnLCallback(() => ({
         totalRealizedPnl: 100,
@@ -409,7 +409,7 @@ describe("Trade Notification Service", () => {
         mockLogger,
       );
       initTradeNotificationService(enabledService, mockLogger);
-      
+
       // Set P&L callback that throws
       setTradeNotificationPnLCallback(() => {
         throw new Error("P&L fetch failed");
