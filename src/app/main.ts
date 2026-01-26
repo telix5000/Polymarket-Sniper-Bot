@@ -53,24 +53,18 @@ async function main(): Promise<void> {
   // This controls which strategies/components are enabled
   const strategyConfig = loadStrategyConfig(cliOverrides);
 
-  // Legacy MODE env var - deprecated but still supported for backwards compatibility
-  // When STRATEGY_PRESET is set, MODE is ignored and config-driven behavior takes over
-  const legacyMode = String(
-    process.env.MODE ?? process.env.mode ?? "",
-  ).toLowerCase();
-
-  // Determine what runs based on strategyConfig (preferred) or legacy MODE
-  const arbEnabled = strategyConfig?.arbEnabled ?? (legacyMode === "arb" || legacyMode === "both");
-  const monitorEnabled = strategyConfig?.monitorEnabled ?? (legacyMode === "mempool" || legacyMode === "both" || legacyMode === "");
+  // Determine what runs based on strategyConfig
+  // If no strategyConfig is set, both arb and monitor default to enabled
+  const arbEnabled = strategyConfig?.arbEnabled ?? true;
+  const monitorEnabled = strategyConfig?.monitorEnabled ?? true;
 
   // Log startup mode
   if (strategyConfig) {
     logger.info(`🚀 Starting Polymarket (preset: ${strategyConfig.presetName})`);
     logger.info(`📊 Components: orchestrator=${strategyConfig.enabled ? "ON" : "OFF"}, arb=${arbEnabled ? "ON" : "OFF"}, monitor=${monitorEnabled ? "ON" : "OFF"}`);
-  } else if (legacyMode) {
-    logger.warn(`⚠️ Using legacy MODE=${legacyMode} - consider migrating to STRATEGY_PRESET`);
   } else {
     logger.info(`🚀 Starting Polymarket with default config`);
+    logger.info(`📊 Components: arb=${arbEnabled ? "ON" : "OFF"}, monitor=${monitorEnabled ? "ON" : "OFF"}`);
   }
 
   // Run authentication and preflight ONCE at top level before starting any engines
@@ -304,12 +298,12 @@ async function main(): Promise<void> {
     );
   }
 
-  // Start ARB engine if enabled (via config or legacy MODE)
+  // Start ARB engine if enabled via config
   if (arbEnabled) {
     await startArbitrageEngine(cliOverrides, client, tradingReady);
   }
 
-  // Start MEMPOOL monitor if enabled (via config or legacy MODE)
+  // Start MEMPOOL monitor if enabled via config
   if (monitorEnabled) {
     const mempoolEnv = loadMonitorConfig(cliOverrides);
     logger.info(formatClobCredsChecklist(mempoolEnv.clobCredsChecklist));
