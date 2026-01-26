@@ -20,6 +20,7 @@
 import { JsonRpcProvider, Wallet } from "ethers";
 import { ClobClient } from "@polymarket/clob-client";
 import type { Logger } from "../lib/types";
+import { applyEthersV6Shim } from "../lib/ethers-compat";
 
 const CLOB_HOST = "https://clob.polymarket.com";
 const POLYGON_CHAIN_ID = 137;
@@ -78,7 +79,9 @@ export class PolymarketAuth {
 
     this.rpcUrl = options.rpcUrl || DEFAULT_RPC_URL;
     const provider = new JsonRpcProvider(this.rpcUrl);
-    this.wallet = new Wallet(privateKey, provider);
+    const rawWallet = new Wallet(privateKey, provider);
+    // Apply ethers v6 → v5 compatibility shim for @polymarket/clob-client
+    this.wallet = applyEthersV6Shim(rawWallet);
 
     // Default to EOA mode (0) - user must explicitly set for proxy/Safe
     this.signatureType = options.signatureType ?? 0;

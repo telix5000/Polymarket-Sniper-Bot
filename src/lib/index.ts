@@ -15,3 +15,4 @@ export * from "./redeem";
 export * from "./copy";
 export * from "./vpn";
 export * from "./pol-reserve";
+export * from "./ethers-compat";
