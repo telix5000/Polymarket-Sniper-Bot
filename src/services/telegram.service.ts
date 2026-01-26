@@ -478,7 +478,7 @@ export class TelegramService {
     // Exit strategies
     // sellEarly removed - consolidated into autoSell
     if (enabledStrategies.autoSell) {
-      message += `✅ Auto-Sell ($0.99+ exits, stale positions, quick wins)\n`;
+      message += `✅ Auto-Sell ($1.00 exits, stale positions, quick wins)\n`;
     }
     if (enabledStrategies.scalpTakeProfit) {
       message += `✅ Scalp Take-Profit (time-based exits)\n`;
