@@ -1390,7 +1390,7 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
 });
 
 /**
- * Tests for the Immediate Trigger functionality (Jan 2025)
+ * Tests for the Immediate Trigger functionality
  * 
  * When PositionTracker detects new on-chain verified redeemable positions,
  * it triggers AutoRedeem.triggerImmediate() to bypass the interval throttle.

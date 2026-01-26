@@ -1615,10 +1615,15 @@ export class PositionTracker {
 
         // Trigger callback if there are newly redeemable positions
         if (newlyRedeemableTokenIds.length > 0) {
+          // Format token IDs for logging (first 3, truncated)
+          const tokenIdsPreview = newlyRedeemableTokenIds
+            .slice(0, 3)
+            .map((t) => t.slice(0, 8))
+            .join(", ");
+          const hasMore = newlyRedeemableTokenIds.length > 3 ? "..." : "";
+          
           this.logger.info(
-            `[PositionTracker] 🚨 NEW REDEEMABLE DETECTED: ${newlyRedeemableTokenIds.length} position(s) ` +
-              `[${newlyRedeemableTokenIds.slice(0, 3).map((t) => t.slice(0, 8)).join(", ")}${newlyRedeemableTokenIds.length > 3 ? "..." : ""}] ` +
-              `- triggering immediate redemption`
+            `[PositionTracker] 🚨 NEW REDEEMABLE DETECTED: ${newlyRedeemableTokenIds.length} position(s) [${tokenIdsPreview}${hasMore}] - triggering immediate redemption`
           );
           
           // Fire callback asynchronously to not block the refresh cycle
