@@ -103,12 +103,14 @@ Your existing V1 ENV variables will work! Here's the mapping:
 | `MONITOR_ADDRESSES` | `COPY_ADDRESSES` | Both work |
 | `TRADE_MULTIPLIER` | `COPY_MULTIPLIER` | Both work |
 | `MIN_TRADE_SIZE_USD` | `COPY_MIN_USD` | Both work |
+| `MIN_BUY_PRICE` | `COPY_MIN_BUY_PRICE` | Both work - skip BUYs below this price |
 | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_BOT_TOKEN` | ✅ Same |
 | `TELEGRAM_CHAT_ID` | `TELEGRAM_CHAT_ID` | ✅ Same |
 | `LEADERBOARD_LIMIT` | `LEADERBOARD_LIMIT` | ✅ Same |
 | `ARB_ENABLED` | `ARB_ENABLED` | ✅ Same |
 | `ARB_MAX_USD` | `ARB_MAX_USD` | ✅ Same |
 | `ARB_MIN_EDGE_BPS` | `ARB_MIN_EDGE_BPS` | ✅ Same |
+| `ARB_MIN_BUY_PRICE` | `ARB_MIN_BUY_PRICE` | ✅ Same (for arbitrage) |
 
 ### Example: Your V1 Config Works As-Is
 
@@ -277,17 +279,40 @@ Override with your own addresses:
 | `COPY_MULTIPLIER` | 1.0 | Size multiplier for copied trades |
 | `COPY_MIN_USD` | 5 | Min trade size to copy |
 | `COPY_MAX_USD` | 100 | Max trade size per copy |
+| `MIN_BUY_PRICE` | 0.50 | Don't copy BUYs below this price ($0.50 = 50¢) |
 
-**V1 Aliases:** `TRADE_MULTIPLIER`, `MIN_TRADE_SIZE_USD`
+**V1 Aliases:** `TRADE_MULTIPLIER`, `MIN_TRADE_SIZE_USD`, `COPY_MIN_BUY_PRICE`
 
-### Sell Signal Protection
+### Sell Signal Monitor
 
-When a tracked trader SELLS a position you also hold:
-- If you're losing > 40%: Stop loss (sell immediately)
-- If you're losing 15-40%: Hedge (buy opposite side)
-- If you're profitable: Hold (ignore their sell)
+When a tracked trader SELLS a position you also hold, V2 monitors and takes protective action:
 
-This is automatic when copy trading is enabled.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SELL_SIGNAL_ENABLED` | true | Enable sell signal monitoring |
+| `SELL_SIGNAL_MIN_LOSS_PCT` | 15 | Min loss % to trigger any action |
+| `SELL_SIGNAL_PROFIT_SKIP_PCT` | 20 | Skip if profit >= this ("knee deep in positive") |
+| `SELL_SIGNAL_SEVERE_PCT` | 40 | Trigger stop-loss if loss >= this |
+| `SELL_SIGNAL_COOLDOWN_MS` | 60000 | Cooldown per position (ms) |
+
+**V1 Aliases:** `SELL_SIGNAL_MIN_LOSS_PCT_TO_ACT`, `SELL_SIGNAL_PROFIT_THRESHOLD_TO_SKIP`, `SELL_SIGNAL_SEVERE_LOSS_PCT`
+
+**How it works:**
+1. Tracked trader sells a position we also hold
+2. We check our P&L on that position:
+   - **Profitable (>= 20%):** Ignore - we're "knee deep in positive"
+   - **Small loss (< 15%):** Alert only - just monitoring
+   - **Moderate loss (15-40%):** HEDGE - buy opposite side
+   - **Severe loss (>= 40%):** STOP-LOSS - sell immediately
+3. Cooldown prevents repeated actions on same position
+
+**Alert Format:**
+```
+📊 SellSignal | Trader sold but we're +25.3% - holding
+📊 SellSignal | Trader sold, we're -8.2% - monitoring  
+⚠️ SELL SIGNAL | Trader sold | We're -22.5% | HEDGE
+⚠️ SELL SIGNAL | Trader sold | We're -45.0% | STOP-LOSS
+```
 
 ---
 
