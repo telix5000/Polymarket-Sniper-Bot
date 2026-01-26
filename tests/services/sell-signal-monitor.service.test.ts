@@ -91,8 +91,14 @@ describe("Sell Signal Monitor Service", () => {
   describe("Default Configuration", () => {
     test("should have correct default values", () => {
       assert.strictEqual(DEFAULT_SELL_SIGNAL_MONITOR_CONFIG.enabled, true);
-      assert.strictEqual(DEFAULT_SELL_SIGNAL_MONITOR_CONFIG.minLossPctToAct, 15);
-      assert.strictEqual(DEFAULT_SELL_SIGNAL_MONITOR_CONFIG.profitThresholdToSkip, 20);
+      assert.strictEqual(
+        DEFAULT_SELL_SIGNAL_MONITOR_CONFIG.minLossPctToAct,
+        15,
+      );
+      assert.strictEqual(
+        DEFAULT_SELL_SIGNAL_MONITOR_CONFIG.profitThresholdToSkip,
+        20,
+      );
       assert.strictEqual(DEFAULT_SELL_SIGNAL_MONITOR_CONFIG.severeLossPct, 40);
       assert.strictEqual(DEFAULT_SELL_SIGNAL_MONITOR_CONFIG.cooldownMs, 60_000);
     });

@@ -29,7 +29,7 @@ test("loadStrategyConfig defaults to balanced preset when STRATEGY_PRESET is not
   delete process.env.STRATEGY_PRESET;
 
   const config = loadStrategyConfig();
-  
+
   // Should default to "balanced" preset
   assert.equal(config.presetName, "balanced");
   // Balanced preset has STRATEGY_ENABLED: true (orchestrator enabled)

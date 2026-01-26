@@ -1,7 +1,7 @@
 import { afterEach, test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { loadStrategyConfig } from "../../src/config/loadConfig";
-import { DEFAULT_SCALP_TRADE_CONFIG } from '../../src/strategies/scalp-trade';
+import { DEFAULT_SCALP_TRADE_CONFIG } from "../../src/strategies/scalp-trade";
 
 const baseEnv = {
   RPC_URL: "http://localhost:8545",

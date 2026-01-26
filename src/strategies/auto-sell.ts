@@ -9,10 +9,11 @@ import {
   HIGH_VALUE_NO_BID_LOG_TTL_MS,
 } from "../utils/log-deduper.util";
 import { notifySell } from "../services/trade-notification.service";
+import { FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
 import {
-  FALLING_KNIFE_SLIPPAGE_PCT,
-} from "./constants";
-import { postOrder } from "../utils/post-order.util";
+  postOrder,
+  ABSOLUTE_MIN_TRADEABLE_PRICE,
+} from "../utils/post-order.util";
 
 export interface AutoSellConfig {
   enabled: boolean;
@@ -150,6 +151,7 @@ interface SkipReasons {
   redeemable: number;
   notTradable: number;
   noBid: number;
+  zeroPrice: number;
   belowThreshold: number;
   minHoldTime: number;
   alreadySold: number;
@@ -249,6 +251,7 @@ export class AutoSellStrategy {
       redeemable: 0,
       notTradable: 0,
       noBid: 0,
+      zeroPrice: 0,
       belowThreshold: 0,
       minHoldTime: 0,
       alreadySold: 0,
@@ -302,8 +305,9 @@ export class AutoSellStrategy {
     let staleSoldCount = 0;
     const staleHours = this.config.stalePositionHours ?? 0;
     if (staleHours > 0) {
-      const staleProfitablePositions = this.getStaleProfitablePositions(staleHours);
-      
+      const staleProfitablePositions =
+        this.getStaleProfitablePositions(staleHours);
+
       for (const position of staleProfitablePositions) {
         scannedCount++;
         const sold = await this.processStalePosition(position);
@@ -358,10 +362,14 @@ export class AutoSellStrategy {
 
     // Log once-per-cycle summary
     const staleInfo = staleHours > 0 ? ` stale_sold=${staleSoldCount}` : "";
-    const quickWinInfo = this.config.quickWinEnabled ? ` quick_win_sold=${quickWinSoldCount}` : "";
-    const oversizedInfo = this.config.oversizedExitEnabled ? ` oversized_sold=${oversizedSoldCount}` : "";
+    const quickWinInfo = this.config.quickWinEnabled
+      ? ` quick_win_sold=${quickWinSoldCount}`
+      : "";
+    const oversizedInfo = this.config.oversizedExitEnabled
+      ? ` oversized_sold=${oversizedSoldCount}`
+      : "";
     this.logger.info(
-      `[AutoSell] scanned=${scannedCount} sold=${soldCount}${staleInfo}${quickWinInfo}${oversizedInfo} skipped_redeemable=${skipReasons.redeemable} skipped_not_tradable=${skipReasons.notTradable} skipped_no_bid=${skipReasons.noBid}`,
+      `[AutoSell] scanned=${scannedCount} sold=${soldCount}${staleInfo}${quickWinInfo}${oversizedInfo} skipped_redeemable=${skipReasons.redeemable} skipped_not_tradable=${skipReasons.notTradable} skipped_no_bid=${skipReasons.noBid} skipped_zero_price=${skipReasons.zeroPrice}`,
     );
 
     // Log aggregated skip summary (rate-limited DEBUG)
@@ -383,7 +391,7 @@ export class AutoSellStrategy {
    */
   private checkTradability(
     position: Position,
-  ): "REDEEMABLE" | "NOT_TRADABLE" | "NO_BID" | null {
+  ): "REDEEMABLE" | "NOT_TRADABLE" | "NO_BID" | "ZERO_PRICE" | null {
     // Filter 1: Skip REDEEMABLE positions ONLY if there's verified proof
     // Trust on-chain resolution (ONCHAIN_DENOM) or verified API flag (DATA_API_FLAG)
     // Don't skip if proofSource is DATA_API_UNCONFIRMED or NONE (can still sell)
@@ -406,6 +414,14 @@ export class AutoSellStrategy {
     // Filter 3: Skip positions with no bid (can't sell)
     if (position.currentBidPrice === undefined) {
       return "NO_BID";
+    }
+
+    // Filter 4: Skip positions with zero/near-zero price (economically worthless)
+    // Don't attempt to sell positions at or below ABSOLUTE_MIN_TRADEABLE_PRICE (0.10¢)
+    // These positions are essentially worthless and the sell would be blocked anyway
+    const currentPrice = position.currentBidPrice ?? position.currentPrice;
+    if (currentPrice <= ABSOLUTE_MIN_TRADEABLE_PRICE) {
+      return "ZERO_PRICE";
     }
 
     return null; // Position is tradable
@@ -486,6 +502,13 @@ export class AutoSellStrategy {
               this.logSkipOnce(`NO_BID:${tokenIdShort}`, noBidMessage);
             }
           }
+          break;
+        case "ZERO_PRICE":
+          skipReasons.zeroPrice++;
+          this.logSkipOnce(
+            `ZERO_PRICE:${tokenIdShort}`,
+            `[AutoSell] skip tokenId=${tokenIdShort}... reason=ZERO_PRICE ${diagInfo} — Position price ≤ ${(ABSOLUTE_MIN_TRADEABLE_PRICE * 100).toFixed(2)}¢ (economically worthless, not worth selling)`,
+          );
           break;
       }
       return false;
@@ -660,10 +683,11 @@ export class AutoSellStrategy {
     const timeHeldDays = timeHeldHours / 24;
 
     // Log the stale position detection
-    const timeHeldStr = timeHeldDays >= 1 
-      ? `${timeHeldDays.toFixed(1)}d`
-      : `${timeHeldHours.toFixed(1)}h`;
-    
+    const timeHeldStr =
+      timeHeldDays >= 1
+        ? `${timeHeldDays.toFixed(1)}d`
+        : `${timeHeldHours.toFixed(1)}h`;
+
     this.logger.info(
       `[AutoSell] STALE_PROFITABLE: Position held ${timeHeldStr} at +${position.pnlPct.toFixed(1)}% profit: tokenId=${tokenIdShort}... marketId=${position.marketId.slice(0, 16)}...`,
     );
@@ -677,7 +701,8 @@ export class AutoSellStrategy {
 
         // Calculate and log profit captured based on actual realized P&L
         const profitUsd = position.pnlUsd;
-        const freedCapital = position.size * (position.currentBidPrice ?? position.currentPrice);
+        const freedCapital =
+          position.size * (position.currentBidPrice ?? position.currentPrice);
 
         this.logger.info(
           `[AutoSell] ✅ STALE_PROFITABLE: Sold position held ${timeHeldStr}, realized profit $${profitUsd.toFixed(2)} (+${position.pnlPct.toFixed(1)}%), freed $${freedCapital.toFixed(2)} capital for new trades`,
@@ -696,7 +721,7 @@ export class AutoSellStrategy {
 
   /**
    * Unified sell method that follows the same methodology as hedging/stop-loss.
-   * 
+   *
    * Uses the same approach as hedging's sellPosition():
    * - Uses position's currentBidPrice/currentPrice (no manual orderbook fetch)
    * - postOrder() handles orderbook validation internally (single source of truth)
@@ -707,30 +732,34 @@ export class AutoSellStrategy {
    * @param strategyLabel - Label for logging (e.g., "AutoSell", "AutoSell (Stale)")
    * @returns true if order was submitted successfully
    */
-  private async executeSell(position: Position, strategyLabel: string): Promise<boolean> {
+  private async executeSell(
+    position: Position,
+    strategyLabel: string,
+  ): Promise<boolean> {
     try {
       const wallet = (this.client as { wallet?: Wallet }).wallet;
-      
+
       // Use position's currentBidPrice or currentPrice (same as hedging)
       // No manual orderbook fetch - let postOrder() handle validation
       const currentPrice = position.currentBidPrice ?? position.currentPrice;
       const sizeUsd = position.size * currentPrice;
-      
+
       // Calculate P&L info for logging
       const entryPrice = position.entryPrice;
       const expectedProfit = (currentPrice - entryPrice) * position.size;
-      const profitPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
-      
+      const profitPct =
+        entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
+
       // FIX (Jan 2025): Use sellSlippagePct to compute minAcceptablePrice from FRESH
       // orderbook data that postOrder fetches, rather than stale cached prices.
       // This prevents "Sale blocked" errors when the actual market price has dropped
       // below the cached position price.
-      
+
       this.logger.info(
         `[AutoSell] Executing ${strategyLabel} sell: ${position.size.toFixed(2)} shares at ~${(currentPrice * 100).toFixed(1)}¢ ` +
-        `(entry: ${(entryPrice * 100).toFixed(1)}¢, expected P&L: $${expectedProfit.toFixed(2)} / ${profitPct >= 0 ? "+" : ""}${profitPct.toFixed(1)}%)`,
+          `(entry: ${(entryPrice * 100).toFixed(1)}¢, expected P&L: $${expectedProfit.toFixed(2)} / ${profitPct >= 0 ? "+" : ""}${profitPct.toFixed(1)}%)`,
       );
-      
+
       // Execute sell using same pattern as hedging's sellPosition()
       const result = await postOrder({
         client: this.client,
@@ -746,12 +775,12 @@ export class AutoSellStrategy {
         skipDuplicatePrevention: true, // Required for exits
         skipMinOrderSizeCheck: true, // Allow selling small positions - same as hedging
       });
-      
+
       if (result.status === "submitted") {
         this.logger.info(
           `[AutoSell] ✓ ${strategyLabel} sell submitted: ${position.size.toFixed(2)} shares, expected P&L $${expectedProfit.toFixed(2)}`,
         );
-        
+
         // Send telegram notification
         const tradePnl = (currentPrice - position.entryPrice) * position.size;
         void notifySell(
@@ -769,7 +798,7 @@ export class AutoSellStrategy {
         ).catch(() => {
           // Ignore notification errors
         });
-        
+
         return true;
       } else if (result.status === "skipped") {
         this.logger.warn(
@@ -785,7 +814,9 @@ export class AutoSellStrategy {
         this.logger.error(
           `[AutoSell] ${strategyLabel} sell failed: ${result.reason ?? "unknown reason"}`,
         );
-        throw new Error(`${strategyLabel} sell failed: ${result.reason ?? "unknown"}`);
+        throw new Error(
+          `${strategyLabel} sell failed: ${result.reason ?? "unknown"}`,
+        );
       }
     } catch (err) {
       this.logger.error(
@@ -832,6 +863,7 @@ export class AutoSellStrategy {
       reasons.redeemable +
       reasons.notTradable +
       reasons.noBid +
+      reasons.zeroPrice +
       reasons.belowThreshold +
       reasons.minHoldTime +
       reasons.alreadySold;
@@ -841,7 +873,7 @@ export class AutoSellStrategy {
     }
 
     // Create fingerprint for change detection
-    const fingerprint = `${reasons.redeemable},${reasons.notTradable},${reasons.noBid}`;
+    const fingerprint = `${reasons.redeemable},${reasons.notTradable},${reasons.noBid},${reasons.zeroPrice}`;
 
     // Log only if fingerprint changed or TTL expired
     if (
@@ -852,10 +884,12 @@ export class AutoSellStrategy {
       )
     ) {
       const parts: string[] = [];
-      if (reasons.redeemable > 0) parts.push(`redeemable=${reasons.redeemable}`);
+      if (reasons.redeemable > 0)
+        parts.push(`redeemable=${reasons.redeemable}`);
       if (reasons.notTradable > 0)
         parts.push(`not_tradable=${reasons.notTradable}`);
       if (reasons.noBid > 0) parts.push(`no_bid=${reasons.noBid}`);
+      if (reasons.zeroPrice > 0) parts.push(`zero_price=${reasons.zeroPrice}`);
       if (reasons.belowThreshold > 0)
         parts.push(`below_threshold=${reasons.belowThreshold}`);
       if (reasons.minHoldTime > 0)
@@ -993,7 +1027,8 @@ export class AutoSellStrategy {
         // NOTE: These values reflect pre-trade state and may differ from actual realized P&L
         // due to slippage. Actual fill price may vary by up to 3% from currentBidPrice.
         const estimatedProfitUsd = position.pnlUsd;
-        const estimatedCapital = position.size * (position.currentBidPrice ?? position.currentPrice);
+        const estimatedCapital =
+          position.size * (position.currentBidPrice ?? position.currentPrice);
         const bestBid = position.currentBidPrice ?? position.currentPrice;
         const sizeUsd = position.size * bestBid;
 
@@ -1097,7 +1132,9 @@ export class AutoSellStrategy {
    * - "EVENT_APPROACHING": Event is approaching and still losing - force exit
    * - null: Don't exit yet (wait for better opportunity)
    */
-  private getOversizedExitReason(position: Position): "PROFITABLE" | "BREAKEVEN" | "EVENT_APPROACHING" | null {
+  private getOversizedExitReason(
+    position: Position,
+  ): "PROFITABLE" | "BREAKEVEN" | "EVENT_APPROACHING" | null {
     const tolerancePct = this.config.oversizedExitBreakevenTolerancePct ?? 2;
     const hoursBeforeEvent = this.config.oversizedExitHoursBeforeEvent ?? 1;
 
@@ -1159,15 +1196,16 @@ export class AutoSellStrategy {
     let timeToEventStr = "unknown";
     if (position.marketEndTime && position.marketEndTime > now) {
       const hoursRemaining = (position.marketEndTime - now) / (60 * 60 * 1000);
-      timeToEventStr = hoursRemaining >= 1 
-        ? `${hoursRemaining.toFixed(1)}h`
-        : `${(hoursRemaining * 60).toFixed(0)}m`;
+      timeToEventStr =
+        hoursRemaining >= 1
+          ? `${hoursRemaining.toFixed(1)}h`
+          : `${(hoursRemaining * 60).toFixed(0)}m`;
     }
 
     // Log the exit decision
     const exitReasonLabel = {
       PROFITABLE: "💚 PROFITABLE",
-      BREAKEVEN: "⚪ BREAKEVEN", 
+      BREAKEVEN: "⚪ BREAKEVEN",
       EVENT_APPROACHING: "🚨 EVENT_APPROACHING",
     }[exitReason];
 
@@ -1177,7 +1215,10 @@ export class AutoSellStrategy {
 
     try {
       // Use unified executeSell method
-      const sold = await this.executeSell(position, `AutoSell (Oversized ${exitReason})`);
+      const sold = await this.executeSell(
+        position,
+        `AutoSell (Oversized ${exitReason})`,
+      );
 
       if (sold) {
         this.soldPositions.add(positionKey);
