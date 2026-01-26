@@ -1398,86 +1398,119 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
  */
 describe("Auto-Redeem Immediate Trigger", () => {
   describe("triggerImmediate Behavior", () => {
+    // Create mock logger that tracks calls
+    const createMockLogger = () => ({
+      info: () => {},
+      debug: () => {},
+      warn: () => {},
+      error: () => {},
+    });
+
+    // Create mock CLOB client
+    const createMockClient = () => ({
+      wallet: {
+        address: "0x1234567890123456789012345678901234567890",
+        provider: {
+          getFeeData: async () => ({}),
+        },
+      },
+    });
+
     test("triggerImmediate should bypass interval throttle", async () => {
-      // Simulate the state tracking that AutoRedeemStrategy uses
-      let lastCheckTimeMs = Date.now() - 5000; // Last check was 5 seconds ago
-      const checkIntervalMs = 30000; // 30 second interval
-      let inFlight = false;
-      let executionCount = 0;
+      // Import the actual AutoRedeemStrategy class
+      const { AutoRedeemStrategy } = await import(
+        "../../src/strategies/auto-redeem"
+      );
 
-      // Mock execute() which respects interval throttle
-      const execute = async () => {
-        const now = Date.now();
-        const timeSinceLastCheck = now - lastCheckTimeMs;
-        if (timeSinceLastCheck < checkIntervalMs) {
-          return 0; // Throttled - skip
-        }
-        if (inFlight) {
-          return 0; // Already running - skip
-        }
-        inFlight = true;
-        lastCheckTimeMs = now;
-        executionCount++;
-        inFlight = false;
-        return executionCount;
-      };
+      const mockLogger = createMockLogger();
+      const mockClient = createMockClient();
 
-      // Mock triggerImmediate() which bypasses interval throttle
-      const triggerImmediate = async () => {
-        if (inFlight) {
-          return 0; // Still respects single-flight
-        }
-        inFlight = true;
-        lastCheckTimeMs = Date.now();
-        executionCount++;
-        inFlight = false;
-        return executionCount;
+      const strategy = new AutoRedeemStrategy({
+        client: mockClient as any,
+        logger: mockLogger as any,
+        config: {
+          enabled: true,
+          minPositionUsd: 0,
+          checkIntervalMs: 30000, // 30 second throttle
+        },
+      });
+
+      // Set last check time to 5 seconds ago (within throttle window)
+      (strategy as any).lastCheckTimeMs = Date.now() - 5000;
+
+      // Stub executeInternal to avoid network calls
+      let executeInternalCalled = false;
+      (strategy as any).executeInternal = async () => {
+        executeInternalCalled = true;
+        return 1;
       };
 
       // execute() should be throttled (only 5 seconds since last check)
-      const executeResult = await execute();
+      const executeResult = await strategy.execute();
       assert.strictEqual(
         executeResult,
         0,
         "execute() should be throttled after only 5 seconds",
       );
+      assert.strictEqual(
+        executeInternalCalled,
+        false,
+        "executeInternal should not have been called by execute()",
+      );
 
       // triggerImmediate() should bypass the throttle
-      const immediateResult = await triggerImmediate();
+      const immediateResult = await strategy.triggerImmediate();
       assert.strictEqual(
         immediateResult,
         1,
         "triggerImmediate() should bypass the throttle and execute",
       );
+      assert.strictEqual(
+        executeInternalCalled,
+        true,
+        "executeInternal should have been called by triggerImmediate()",
+      );
     });
 
     test("triggerImmediate should respect single-flight guard", async () => {
-      let inFlight = false;
-      let attemptedWhileInFlight = false;
+      const { AutoRedeemStrategy } = await import(
+        "../../src/strategies/auto-redeem"
+      );
 
-      // Mock triggerImmediate() which respects single-flight
-      const triggerImmediate = async () => {
-        if (inFlight) {
-          attemptedWhileInFlight = true;
-          return 0;
-        }
-        inFlight = true;
-        // Simulate some async work
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        inFlight = false;
+      const mockLogger = createMockLogger();
+      const mockClient = createMockClient();
+
+      const strategy = new AutoRedeemStrategy({
+        client: mockClient as any,
+        logger: mockLogger as any,
+        config: {
+          enabled: true,
+          minPositionUsd: 0,
+          checkIntervalMs: 30000,
+        },
+      });
+
+      // Track how many times executeInternal is called
+      let executeInternalCallCount = 0;
+
+      // Stub executeInternal to simulate slow execution
+      (strategy as any).executeInternal = async () => {
+        executeInternalCallCount++;
+        await new Promise((resolve) => setTimeout(resolve, 50)); // Slow execution
         return 1;
       };
 
       // Start first execution
-      const firstPromise = triggerImmediate();
+      const firstPromise = strategy.triggerImmediate();
+
+      // Small delay to ensure first execution has set inFlight
+      await new Promise((resolve) => setTimeout(resolve, 5));
 
       // Attempt second execution while first is in flight
-      const secondPromise = triggerImmediate();
+      const secondResult = await strategy.triggerImmediate();
 
-      const [firstResult, secondResult] = await Promise.all([
-        firstPromise,
-        secondPromise,
-      ]);
+      // Wait for first to complete
+      const firstResult = await firstPromise;
 
       assert.strictEqual(firstResult, 1, "First trigger should succeed");
       assert.strictEqual(
@@ -1486,51 +1519,89 @@ describe("Auto-Redeem Immediate Trigger", () => {
         "Second trigger should be skipped (in-flight)",
       );
       assert.strictEqual(
-        attemptedWhileInFlight,
-        true,
-        "Should have detected in-flight state",
+        executeInternalCallCount,
+        1,
+        "executeInternal should only have been called once",
       );
     });
 
     test("triggerImmediate should update lastCheckTimeMs to prevent immediate re-trigger", async () => {
-      let lastCheckTimeMs = Date.now() - 60000; // Last check was 60 seconds ago
-      const checkIntervalMs = 30000;
-      let inFlight = false;
+      const { AutoRedeemStrategy } = await import(
+        "../../src/strategies/auto-redeem"
+      );
 
-      const execute = async () => {
-        const now = Date.now();
-        const timeSinceLastCheck = now - lastCheckTimeMs;
-        if (timeSinceLastCheck < checkIntervalMs) {
-          return 0; // Throttled
-        }
-        if (inFlight) return 0;
-        inFlight = true;
-        lastCheckTimeMs = now;
-        inFlight = false;
+      const mockLogger = createMockLogger();
+      const mockClient = createMockClient();
+
+      const strategy = new AutoRedeemStrategy({
+        client: mockClient as any,
+        logger: mockLogger as any,
+        config: {
+          enabled: true,
+          minPositionUsd: 0,
+          checkIntervalMs: 30000,
+        },
+      });
+
+      // Set last check time to 60 seconds ago (outside throttle window)
+      (strategy as any).lastCheckTimeMs = Date.now() - 60000;
+
+      // Stub executeInternal
+      let executeInternalCallCount = 0;
+      (strategy as any).executeInternal = async () => {
+        executeInternalCallCount++;
         return 1;
       };
 
-      const triggerImmediate = async () => {
-        if (inFlight) return 0;
-        inFlight = true;
-        lastCheckTimeMs = Date.now(); // Update last check time
-        inFlight = false;
-        return 1;
-      };
-
-      // First, verify execute() would run (60 seconds since last check > 30 second interval)
-      // But don't actually run it, just verify the state
-
-      // Now trigger immediate
-      const immediateResult = await triggerImmediate();
+      // Trigger immediate (should succeed and update lastCheckTimeMs)
+      const immediateResult = await strategy.triggerImmediate();
       assert.strictEqual(immediateResult, 1, "Immediate trigger should succeed");
+      assert.strictEqual(executeInternalCallCount, 1);
 
       // Now execute() should be throttled because triggerImmediate updated lastCheckTimeMs
-      const executeResult = await execute();
+      const executeResult = await strategy.execute();
       assert.strictEqual(
         executeResult,
         0,
         "execute() should be throttled after triggerImmediate updated lastCheckTimeMs",
+      );
+      assert.strictEqual(
+        executeInternalCallCount,
+        1,
+        "executeInternal should not have been called again by execute()",
+      );
+    });
+
+    test("triggerImmediate should return 0 when disabled", async () => {
+      const { AutoRedeemStrategy } = await import(
+        "../../src/strategies/auto-redeem"
+      );
+
+      const mockLogger = createMockLogger();
+      const mockClient = createMockClient();
+
+      const strategy = new AutoRedeemStrategy({
+        client: mockClient as any,
+        logger: mockLogger as any,
+        config: {
+          enabled: false, // Disabled
+          minPositionUsd: 0,
+          checkIntervalMs: 30000,
+        },
+      });
+
+      let executeInternalCalled = false;
+      (strategy as any).executeInternal = async () => {
+        executeInternalCalled = true;
+        return 1;
+      };
+
+      const result = await strategy.triggerImmediate();
+      assert.strictEqual(result, 0, "Should return 0 when disabled");
+      assert.strictEqual(
+        executeInternalCalled,
+        false,
+        "executeInternal should not be called when disabled",
       );
     });
   });
@@ -1594,50 +1665,52 @@ describe("Auto-Redeem Immediate Trigger", () => {
       assert.strictEqual(newlyRedeemable4[0], "token-D");
     });
 
-    test("callback should fire asynchronously without blocking", async () => {
-      let callbackFired = false;
-      let callbackStartTime = 0;
-      let refreshCompleteTime = 0;
+    test("callback should fire asynchronously via setImmediate without blocking", async () => {
+      // Test that the callback is truly scheduled via setImmediate (not blocking synchronously)
+      let callbackExecuted = false;
+      let refreshCompleteBeforeCallback = false;
 
-      // Mock callback that takes some time
-      const onNewRedeemable = (tokenIds: string[]) => {
-        callbackStartTime = Date.now();
-        // Fire-and-forget - don't await
-        setTimeout(() => {
-          callbackFired = true;
-        }, 10);
-      };
+      // Simulate the production behavior using setImmediate
+      const simulateRefreshWithAsyncCallback = () => {
+        return new Promise<void>((resolve) => {
+          const newlyRedeemable = ["token-X", "token-Y"];
 
-      // Simulate the refresh flow
-      const simulateRefresh = async () => {
-        // Detect new redeemable positions
-        const newlyRedeemable = ["token-X", "token-Y"];
-
-        if (newlyRedeemable.length > 0) {
-          // Fire callback (should not block)
-          try {
-            onNewRedeemable(newlyRedeemable);
-          } catch {
-            // Ignore callback errors
+          if (newlyRedeemable.length > 0) {
+            // This matches the production code: callback via setImmediate
+            setImmediate(() => {
+              // This runs after refresh() returns
+              callbackExecuted = true;
+            });
           }
-        }
 
-        refreshCompleteTime = Date.now();
+          // Mark that refresh is complete (this happens synchronously)
+          refreshCompleteBeforeCallback = !callbackExecuted;
+          resolve();
+        });
       };
 
-      await simulateRefresh();
+      await simulateRefreshWithAsyncCallback();
 
-      // Refresh should complete immediately (callback didn't block)
-      assert.ok(refreshCompleteTime > 0, "Refresh should have completed");
-      assert.ok(callbackStartTime > 0, "Callback should have started");
-      assert.ok(
-        callbackStartTime <= refreshCompleteTime,
-        "Callback should have started before refresh completed",
+      // Callback should NOT have executed yet (it's scheduled via setImmediate)
+      assert.strictEqual(
+        refreshCompleteBeforeCallback,
+        true,
+        "Refresh should complete before callback executes (async via setImmediate)",
+      );
+      assert.strictEqual(
+        callbackExecuted,
+        false,
+        "Callback should not have executed synchronously",
       );
 
-      // Wait for async callback to complete
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.ok(callbackFired, "Callback should have completed asynchronously");
+      // Wait for setImmediate to fire
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.strictEqual(
+        callbackExecuted,
+        true,
+        "Callback should have executed after setImmediate",
+      );
     });
   });
 });

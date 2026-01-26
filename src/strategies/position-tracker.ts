@@ -1626,15 +1626,19 @@ export class PositionTracker {
             `[PositionTracker] 🚨 NEW REDEEMABLE DETECTED: ${newlyRedeemableTokenIds.length} position(s) [${tokenIdsPreview}${hasMore}] - triggering immediate redemption`
           );
           
-          // Fire callback asynchronously to not block the refresh cycle
+          // Fire callback asynchronously via setImmediate to not block the refresh cycle
           // The callback is expected to be the Orchestrator's triggerImmediateRedeem()
-          try {
-            this.onNewRedeemablePositions(newlyRedeemableTokenIds);
-          } catch (callbackErr) {
-            this.logger.error(
-              `[PositionTracker] onNewRedeemablePositions callback error: ${callbackErr instanceof Error ? callbackErr.message : String(callbackErr)}`
-            );
-          }
+          const callback = this.onNewRedeemablePositions;
+          const logger = this.logger;
+          setImmediate(() => {
+            try {
+              callback(newlyRedeemableTokenIds);
+            } catch (callbackErr) {
+              logger.error(
+                `[PositionTracker] onNewRedeemablePositions callback error: ${callbackErr instanceof Error ? callbackErr.message : String(callbackErr)}`
+              );
+            }
+          });
         }
       }
     } catch (err) {
