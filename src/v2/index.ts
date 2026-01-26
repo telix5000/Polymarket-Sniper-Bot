@@ -614,6 +614,7 @@ const MARKET_END_TIME_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes for successfu
 const MARKET_END_TIME_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for failed lookups
 const MARKET_END_TIME_CACHE_MAX_SIZE = 500;
 const ZERO_PRICE_BLOCK_TTL_MS = 60 * 60 * 1000; // 1 hour - how long to block sell retries for zero-price tokens
+const DISPUTE_EXIT_COOLDOWN_TTL_MS = 10 * 60 * 1000; // 10 minutes - cooldown for dispute exit sell failures (will recheck for redeemable status)
 
 // Arbitrage configuration
 const DEFAULT_ARBITRAGE_ACTIVE_MARKET_LIMIT = 100; // Matches V1 endgame-sweep
@@ -640,6 +641,7 @@ const state = {
   sold: new Set<string>(),
   copied: new Set<string>(),
   zeroPriceTokens: new Map<string, number>(), // tokenId -> timestamp when marked (TTL: ZERO_PRICE_BLOCK_TTL_MS)
+  disputeExitCooldown: new Map<string, number>(), // tokenId -> timestamp when dispute exit sell failed (TTL: DISPUTE_EXIT_COOLDOWN_TTL_MS)
   sellSignalCooldown: new Map<string, number>(),
   positionEntryTime: new Map<string, number>(),
   positionPriceHistory: new Map<string, { price: number; time: number }[]>(), // For momentum tracking
@@ -2965,25 +2967,42 @@ async function cycle(walletAddr: string, cfg: Config) {
 
     // 1b. DISPUTE WINDOW EXIT: Exit positions at 99.9¢ to avoid dispute wait
     // Positions near resolution can get stuck in 2-hour dispute windows
+    // When market is in dispute, the position can't be sold on CLOB - it must wait for redemption
     if (
       cfg.autoSell.disputeWindowExitEnabled &&
       p.curPrice >= cfg.autoSell.disputeWindowExitPrice &&
       p.curPrice < 1.0
     ) {
+      // Check if this position is in cooldown (previous sell attempt failed)
+      // If so, skip it - the market is likely in dispute and will become redeemable
+      const cooldownTime = state.disputeExitCooldown.get(p.tokenId);
+      if (cooldownTime && Date.now() - cooldownTime < DISPUTE_EXIT_COOLDOWN_TTL_MS) {
+        // Position is in cooldown - skip sell attempt, wait for redemption
+        continue;
+      }
+      // TTL expired, remove from cooldown map and retry
+      if (cooldownTime) {
+        state.disputeExitCooldown.delete(p.tokenId);
+      }
+
       log(`⚡ Dispute window exit | ${p.outcome} @ ${$price(p.curPrice)}`);
-      if (
-        await executeSell(
-          p.tokenId,
-          p.conditionId,
-          p.outcome,
-          p.value,
-          `DisputeExit (${$price(p.curPrice)})`,
-          cfg,
-          p.curPrice,
-        )
-      ) {
+      const sellSuccess = await executeSell(
+        p.tokenId,
+        p.conditionId,
+        p.outcome,
+        p.value,
+        `DisputeExit (${$price(p.curPrice)})`,
+        cfg,
+        p.curPrice,
+      );
+      if (sellSuccess) {
         state.sold.add(p.tokenId);
         cycleActed.add(p.tokenId);
+      } else {
+        // Sell failed - market is likely in dispute and not accepting orders
+        // Add to cooldown to prevent repeated sell attempts - position will be redeemed when market resolves
+        state.disputeExitCooldown.set(p.tokenId, Date.now());
+        log(`⏸️ Dispute exit failed, waiting for redemption | ${p.outcome} @ ${$price(p.curPrice)}`);
       }
       continue;
     }
