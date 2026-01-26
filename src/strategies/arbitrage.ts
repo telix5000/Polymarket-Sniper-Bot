@@ -308,10 +308,10 @@ export class ArbitrageStrategy {
     }
 
     // Check risk manager
-    const riskOk = await this.riskManager!.checkRisk(opportunity, now);
-    if (!riskOk) {
+    const riskCheck = this.riskManager!.canExecute(opportunity, now);
+    if (!riskCheck.allowed) {
       this.logger.debug(
-        `[Arbitrage] ⛔ Skip (risk) market=${opportunity.marketId.slice(0, 12)}...`,
+        `[Arbitrage] ⛔ Skip (risk: ${riskCheck.reason}) market=${opportunity.marketId.slice(0, 12)}...`,
       );
       return false;
     }
@@ -348,16 +348,7 @@ export class ArbitrageStrategy {
         );
 
         // Record with risk manager
-        this.riskManager!.recordTrade(opportunity, now);
-
-        // Record outcome with learner (assume success initially)
-        this.learner!.recordOutcome(opportunity.marketId, {
-          success: true,
-          profitUsd: opportunity.estProfitUsd * 0.8, // Conservative estimate
-          actualEdgeBps: opportunity.edgeBps,
-          slippageBps: arbConfig.slippageBps,
-          fillTimeMs: 0,
-        });
+        await this.riskManager!.onTradeSuccess(opportunity, now);
 
         return true;
       }
