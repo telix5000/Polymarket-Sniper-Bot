@@ -190,8 +190,8 @@ async function placeOrder(
   side: Side,
   sizeUsd: number
 ): Promise<boolean> {
-  // This is simplified - real implementation needs CLOB client signing
-  console.log(`[Order] ${side} ${outcome} $${sizeUsd.toFixed(2)} on ${tokenId.slice(0, 8)}...`);
+  // ⚠️ PLACEHOLDER - Real implementation needs @polymarket/clob-client integration
+  console.log(`[Order] ⚠️ SIMULATION: ${side} ${outcome} $${sizeUsd.toFixed(2)} on ${tokenId.slice(0, 8)}...`);
   
   // For now, just log - actual order execution requires CLOB client
   // In production, integrate with @polymarket/clob-client

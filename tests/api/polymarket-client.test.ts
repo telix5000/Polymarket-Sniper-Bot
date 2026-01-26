@@ -36,7 +36,7 @@ describe("PolymarketClient", () => {
 
     test("should identify position as complete when size is zero", () => {
       const isComplete = (size: number, currentValue: number, redeemable: boolean) =>
-        size <= 0 || currentValue <= 0 || (redeemable === true && size <= 0);
+        size <= 0 || currentValue <= 0;
 
       assert.equal(isComplete(0, 50, false), true, "Zero size = complete");
       assert.equal(isComplete(100, 0, false), true, "Zero value = complete");

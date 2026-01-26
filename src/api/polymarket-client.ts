@@ -462,7 +462,7 @@ export class PolymarketClient {
 
     // Determine if position is complete (zero value or fully redeemed)
     const isComplete =
-      size <= 0 || currentValue <= 0 || (raw.redeemable === true && size <= 0);
+      size <= 0 || currentValue <= 0;
 
     return {
       tokenId: raw.asset,

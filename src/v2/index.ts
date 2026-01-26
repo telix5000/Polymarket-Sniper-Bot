@@ -1,20 +1,31 @@
 /**
  * Polymarket Trading Bot V2 - Simple & Clean
  * 
- * STRATEGIES:
- * 1. AutoSell  - Sell positions near $1
- * 2. StopLoss  - Sell at max loss
- * 3. Hedge     - Buy opposite when losing
- * 4. Scalp     - Take profits
- * 5. Stack     - Double down on winners
- * 6. Endgame   - Buy high-confidence (85-99¢)
- * 7. Redeem    - Claim resolved positions
+ * REQUIRED ENV:
+ *   PRIVATE_KEY          - Wallet private key
+ *   RPC_URL              - Polygon RPC endpoint
  * 
- * ENV: PRIVATE_KEY, RPC_URL, PRESET (conservative|balanced|aggressive)
+ * PRESET:
+ *   PRESET               - conservative | balanced | aggressive (default: balanced)
+ * 
+ * COPY TRADING:
+ *   COPY_ADDRESSES       - Comma-separated addresses to copy
+ *   COPY_MULTIPLIER      - Size multiplier (default: 1.0)
+ *   COPY_MIN_USD         - Min trade size (default: 5)
+ *   COPY_MAX_USD         - Max trade size (default: 100)
+ * 
+ * OPTIONAL:
+ *   INTERVAL_MS          - Cycle interval ms (default: 5000)
+ *   TELEGRAM_TOKEN/CHAT  - Alerts
+ *   VPN_BYPASS_RPC       - Route RPC outside VPN (default: true)
+ *   LIVE_TRADING         - Enable real trades (default: false for safety)
  */
 
 import { JsonRpcProvider, Wallet, Contract, Interface, ZeroHash } from "ethers";
+import { ClobClient } from "@polymarket/clob-client";
 import axios from "axios";
+import { setupRpcVpnBypass } from "../utils/vpn-rpc-bypass.util";
+import { postOrder, type OrderSide, type OrderOutcome } from "../utils/post-order.util";
 
 // ============ TYPES ============
 
@@ -40,6 +51,18 @@ interface Config {
   stack: { enabled: boolean; minGainCents: number; maxUsd: number; maxPrice: number };
   endgame: { enabled: boolean; minPrice: number; maxPrice: number; maxUsd: number };
   redeem: { enabled: boolean; intervalMin: number };
+  copy: { enabled: boolean; addresses: string[]; multiplier: number; minUsd: number; maxUsd: number };
+}
+
+interface TradeSignal {
+  address: string;
+  conditionId: string;
+  tokenId: string;
+  outcome: string;
+  side: "BUY" | "SELL";
+  price: number;
+  usdSize: number;
+  timestamp: number;
 }
 
 // ============ PRESETS ============
@@ -53,6 +76,7 @@ const PRESETS: Record<Preset, Config> = {
     stack: { enabled: true, minGainCents: 25, maxUsd: 15, maxPrice: 0.90 },
     endgame: { enabled: true, minPrice: 0.90, maxPrice: 0.98, maxUsd: 15 },
     redeem: { enabled: true, intervalMin: 15 },
+    copy: { enabled: false, addresses: [], multiplier: 1.0, minUsd: 5, maxUsd: 50 },
   },
   balanced: {
     autoSell: { enabled: true, threshold: 0.99 },
@@ -62,6 +86,7 @@ const PRESETS: Record<Preset, Config> = {
     stack: { enabled: true, minGainCents: 20, maxUsd: 25, maxPrice: 0.95 },
     endgame: { enabled: true, minPrice: 0.85, maxPrice: 0.99, maxUsd: 25 },
     redeem: { enabled: true, intervalMin: 15 },
+    copy: { enabled: false, addresses: [], multiplier: 1.0, minUsd: 5, maxUsd: 100 },
   },
   aggressive: {
     autoSell: { enabled: true, threshold: 0.995 },
@@ -71,6 +96,7 @@ const PRESETS: Record<Preset, Config> = {
     stack: { enabled: true, minGainCents: 15, maxUsd: 50, maxPrice: 0.97 },
     endgame: { enabled: true, minPrice: 0.80, maxPrice: 0.995, maxUsd: 50 },
     redeem: { enabled: true, intervalMin: 10 },
+    copy: { enabled: false, addresses: [], multiplier: 1.5, minUsd: 5, maxUsd: 200 },
   },
 };
 
@@ -79,6 +105,7 @@ const PRESETS: Record<Preset, Config> = {
 const API = "https://data-api.polymarket.com";
 const CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
 const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+const INDEX_SETS: number[] = [1, 2];
 const PROXY_ABI = ["function proxy(address dest, bytes calldata data) external returns (bytes memory)"];
 const CTF_ABI = ["function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets) external"];
 
@@ -91,8 +118,13 @@ const state = {
   stacked: new Set<string>(),
   hedged: new Set<string>(),
   sold: new Set<string>(),
+  copied: new Set<string>(),
   telegram: undefined as { token: string; chatId: string } | undefined,
   proxyAddress: undefined as string | undefined,
+  copyLastCheck: new Map<string, number>(),
+  clobClient: undefined as ClobClient | undefined,
+  wallet: undefined as Wallet | undefined,
+  liveTrading: false,
 };
 
 // ============ LOGGING ============
@@ -151,6 +183,19 @@ async function fetchProxy(wallet: string): Promise<string | undefined> {
   } catch { return undefined; }
 }
 
+async function fetchActivity(address: string): Promise<TradeSignal[]> {
+  try {
+    const { data } = await axios.get(`${API}/activity?user=${address}`);
+    return (data || []).map((a: any) => ({
+      address, conditionId: a.conditionId, tokenId: a.asset,
+      outcome: a.outcomeIndex === 0 ? "YES" : "NO",
+      side: a.side?.toUpperCase() === "BUY" ? "BUY" as const : "SELL" as const,
+      price: Number(a.price) || 0, usdSize: Number(a.usdcSize) || 0,
+      timestamp: Number(a.timestamp) || 0,
+    }));
+  } catch { return []; }
+}
+
 async function countBuys(wallet: string, tokenId: string): Promise<number> {
   try {
     const { data } = await axios.get(`${API}/trades?user=${wallet}&asset=${tokenId}&limit=20`);
@@ -160,66 +205,172 @@ async function countBuys(wallet: string, tokenId: string): Promise<number> {
 
 function invalidate() { state.lastFetch = 0; }
 
-// ============ ORDERS ============
+// ============ ORDER EXECUTION ============
 
-async function sell(p: Position, reason: string): Promise<boolean> {
-  if (state.sold.has(p.tokenId)) return false;
-  log(`💰 ${reason}: SELL ${p.outcome} @ ${(p.curPrice*100).toFixed(0)}¢`);
-  await alert(reason, `Sold ${p.outcome} @ ${(p.curPrice*100).toFixed(0)}¢`);
-  state.sold.add(p.tokenId);
-  invalidate();
-  return true;
+const simpleLogger = { info: log, warn: log, error: log, debug: () => {} };
+
+async function executeSell(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string): Promise<boolean> {
+  if (!state.liveTrading) {
+    log(`🔸 ${reason}: SELL ${outcome} $${sizeUsd.toFixed(2)} [SIMULATED]`);
+    return true;
+  }
+  
+  if (!state.clobClient || !state.wallet) {
+    log(`❌ ${reason}: No CLOB client`);
+    return false;
+  }
+
+  log(`💰 ${reason}: SELL ${outcome} $${sizeUsd.toFixed(2)}`);
+  
+  try {
+    const result = await postOrder({
+      client: state.clobClient,
+      wallet: state.wallet,
+      tokenId,
+      outcome: outcome as OrderOutcome,
+      side: "SELL" as OrderSide,
+      sizeUsd,
+      sellSlippagePct: 5,
+      logger: simpleLogger as any,
+    });
+    
+    if (result.status === "submitted") {
+      await alert(reason, `Sold ${outcome} $${sizeUsd.toFixed(2)}`);
+      invalidate();
+      return true;
+    }
+    log(`⚠️ ${reason}: ${result.reason || "failed"}`);
+    return false;
+  } catch (e: any) {
+    log(`❌ ${reason}: ${e.message?.slice(0, 50)}`);
+    return false;
+  }
 }
 
-async function buy(p: Position, outcome: string, usd: number, reason: string): Promise<boolean> {
-  log(`🛒 ${reason}: BUY ${outcome} $${usd.toFixed(0)}`);
-  await alert(reason, `Bought ${outcome} $${usd.toFixed(0)}`);
-  invalidate();
-  return true;
+async function executeBuy(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string): Promise<boolean> {
+  if (!state.liveTrading) {
+    log(`🔸 ${reason}: BUY ${outcome} $${sizeUsd.toFixed(2)} [SIMULATED]`);
+    return true;
+  }
+  
+  if (!state.clobClient || !state.wallet) {
+    log(`❌ ${reason}: No CLOB client`);
+    return false;
+  }
+
+  log(`🛒 ${reason}: BUY ${outcome} $${sizeUsd.toFixed(2)}`);
+  
+  try {
+    const result = await postOrder({
+      client: state.clobClient,
+      wallet: state.wallet,
+      tokenId,
+      outcome: outcome as OrderOutcome,
+      side: "BUY" as OrderSide,
+      sizeUsd,
+      buySlippagePct: 3,
+      logger: simpleLogger as any,
+    });
+    
+    if (result.status === "submitted") {
+      await alert(reason, `Bought ${outcome} $${sizeUsd.toFixed(2)}`);
+      invalidate();
+      return true;
+    }
+    log(`⚠️ ${reason}: ${result.reason || "failed"}`);
+    return false;
+  } catch (e: any) {
+    log(`❌ ${reason}: ${e.message?.slice(0, 50)}`);
+    return false;
+  }
+}
+
+// ============ COPY TRADING ============
+
+async function copyTrades(cfg: Config) {
+  if (!cfg.copy.enabled || !cfg.copy.addresses.length) return;
+
+  for (const addr of cfg.copy.addresses) {
+    const activities = await fetchActivity(addr);
+    const lastCheck = state.copyLastCheck.get(addr) || 0;
+    
+    for (const signal of activities) {
+      if (signal.timestamp <= lastCheck) continue;
+      const key = `${signal.tokenId}-${signal.timestamp}`;
+      if (state.copied.has(key)) continue;
+      if (signal.side !== "BUY") continue; // Only copy buys
+      if (signal.price < 0.05) continue; // Skip garbage
+      
+      let copyUsd = signal.usdSize * cfg.copy.multiplier;
+      copyUsd = Math.max(cfg.copy.minUsd, Math.min(cfg.copy.maxUsd, copyUsd));
+      
+      const existing = state.positions.find(p => p.tokenId === signal.tokenId);
+      if (existing && existing.value > cfg.copy.maxUsd) {
+        state.copied.add(key);
+        continue;
+      }
+      
+      log(`👀 Copy ${addr.slice(0,8)}...: ${signal.outcome} $${copyUsd.toFixed(0)}`);
+      await executeBuy(signal.tokenId, signal.conditionId, signal.outcome, copyUsd, "Copy");
+      state.copied.add(key);
+    }
+    state.copyLastCheck.set(addr, Math.floor(Date.now() / 1000));
+  }
 }
 
 // ============ STRATEGIES ============
 
 async function autoSell(positions: Position[], cfg: Config) {
   if (!cfg.autoSell.enabled) return;
-  for (const p of positions.filter(p => p.curPrice >= cfg.autoSell.threshold)) {
-    await sell(p, "AutoSell");
+  for (const p of positions.filter(p => p.curPrice >= cfg.autoSell.threshold && !state.sold.has(p.tokenId))) {
+    if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "AutoSell")) {
+      state.sold.add(p.tokenId);
+    }
   }
 }
 
 async function stopLoss(positions: Position[], cfg: Config) {
   if (!cfg.stopLoss.enabled) return;
-  for (const p of positions.filter(p => p.pnlPct <= -cfg.stopLoss.maxLossPct)) {
-    await sell(p, "StopLoss");
+  for (const p of positions.filter(p => p.pnlPct <= -cfg.stopLoss.maxLossPct && !state.sold.has(p.tokenId))) {
+    if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "StopLoss")) {
+      state.sold.add(p.tokenId);
+    }
   }
 }
 
-async function hedge(wallet: string, positions: Position[], cfg: Config) {
+async function hedge(walletAddr: string, positions: Position[], cfg: Config) {
   if (!cfg.hedge.enabled) return;
   for (const p of positions.filter(p =>
     p.pnlPct < 0 && Math.abs(p.pnlPct) >= cfg.hedge.triggerPct &&
     Math.abs(p.pnlPct) < cfg.stopLoss.maxLossPct && !state.hedged.has(p.tokenId)
   )) {
-    await buy(p, p.outcome === "YES" ? "NO" : "YES", Math.min(cfg.hedge.maxUsd, p.value), "Hedge");
-    state.hedged.add(p.tokenId);
+    const opp = p.outcome === "YES" ? "NO" : "YES";
+    if (await executeBuy(p.tokenId, p.conditionId, opp, Math.min(cfg.hedge.maxUsd, p.value), "Hedge")) {
+      state.hedged.add(p.tokenId);
+    }
   }
 }
 
 async function scalp(positions: Position[], cfg: Config) {
   if (!cfg.scalp.enabled) return;
-  for (const p of positions.filter(p => p.pnlPct >= cfg.scalp.minProfitPct && p.gainCents >= cfg.scalp.minGainCents)) {
-    await sell(p, "Scalp");
+  for (const p of positions.filter(p => 
+    p.pnlPct >= cfg.scalp.minProfitPct && p.gainCents >= cfg.scalp.minGainCents && !state.sold.has(p.tokenId)
+  )) {
+    if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "Scalp")) {
+      state.sold.add(p.tokenId);
+    }
   }
 }
 
-async function stack(wallet: string, positions: Position[], cfg: Config) {
+async function stack(walletAddr: string, positions: Position[], cfg: Config) {
   if (!cfg.stack.enabled) return;
   for (const p of positions.filter(p =>
     p.gainCents >= cfg.stack.minGainCents && p.curPrice < cfg.stack.maxPrice && !state.stacked.has(p.tokenId)
   )) {
-    if (await countBuys(wallet, p.tokenId) >= 2) { state.stacked.add(p.tokenId); continue; }
-    await buy(p, p.outcome, cfg.stack.maxUsd, "Stack");
-    state.stacked.add(p.tokenId);
+    if (await countBuys(walletAddr, p.tokenId) >= 2) { state.stacked.add(p.tokenId); continue; }
+    if (await executeBuy(p.tokenId, p.conditionId, p.outcome, cfg.stack.maxUsd, "Stack")) {
+      state.stacked.add(p.tokenId);
+    }
   }
 }
 
@@ -229,52 +380,44 @@ async function endgame(positions: Position[], cfg: Config) {
     p.curPrice >= cfg.endgame.minPrice && p.curPrice <= cfg.endgame.maxPrice && p.value < cfg.endgame.maxUsd * 2
   )) {
     const add = Math.min(cfg.endgame.maxUsd, cfg.endgame.maxUsd * 2 - p.value);
-    if (add >= 5) await buy(p, p.outcome, add, "Endgame");
+    if (add >= 5) await executeBuy(p.tokenId, p.conditionId, p.outcome, add, "Endgame");
   }
 }
 
-// ============ REDEEM (Simple - from polymarketredeemer) ============
+// ============ REDEEM ============
 
-async function redeem(wallet: Wallet, walletAddr: string, cfg: Config) {
-  if (!cfg.redeem.enabled) return;
+async function redeem(walletAddr: string, cfg: Config) {
+  if (!cfg.redeem.enabled || !state.wallet) return;
   if (Date.now() - state.lastRedeem < cfg.redeem.intervalMin * 60 * 1000) return;
   
   state.lastRedeem = Date.now();
   const target = state.proxyAddress || walletAddr;
   const conditions = await fetchRedeemable(target);
-  
   if (!conditions.length) return;
-  log(`🎁 ${conditions.length} positions to redeem`);
-
-  const ctfInterface = new Interface(CTF_ABI);
   
-  for (const conditionId of conditions) {
+  log(`🎁 ${conditions.length} to redeem`);
+  const iface = new Interface(CTF_ABI);
+  
+  for (const cid of conditions) {
     try {
-      const redeemData = ctfInterface.encodeFunctionData("redeemPositions", [
-        USDC_ADDRESS, ZeroHash, conditionId, [1, 2]
-      ]);
-
+      const data = iface.encodeFunctionData("redeemPositions", [USDC_ADDRESS, ZeroHash, cid, INDEX_SETS]);
       let tx;
       if (state.proxyAddress && state.proxyAddress !== walletAddr) {
-        const proxy = new Contract(state.proxyAddress, PROXY_ABI, wallet);
-        tx = await proxy.proxy(CTF_ADDRESS, redeemData);
+        tx = await new Contract(state.proxyAddress, PROXY_ABI, state.wallet).proxy(CTF_ADDRESS, data);
       } else {
-        const ctf = new Contract(CTF_ADDRESS, CTF_ABI, wallet);
-        tx = await ctf.redeemPositions(USDC_ADDRESS, ZeroHash, conditionId, [1, 2]);
+        tx = await new Contract(CTF_ADDRESS, CTF_ABI, state.wallet).redeemPositions(USDC_ADDRESS, ZeroHash, cid, INDEX_SETS);
       }
-
-      log(`✅ Redeem tx: ${tx.hash}`);
-      await alert("Redeem", `Claimed ${conditionId.slice(0, 10)}...`);
+      log(`✅ Redeem: ${tx.hash.slice(0,10)}...`);
       await tx.wait();
-    } catch (e: any) {
-      log(`❌ Redeem failed: ${e.message?.slice(0, 50)}`);
-    }
+    } catch (e: any) { log(`❌ Redeem: ${e.message?.slice(0,40)}`); }
   }
 }
 
-// ============ MAIN ============
+// ============ MAIN CYCLE ============
 
-async function cycle(wallet: Wallet, walletAddr: string, cfg: Config) {
+async function cycle(walletAddr: string, cfg: Config) {
+  await copyTrades(cfg);
+  
   const positions = await fetchPositions(state.proxyAddress || walletAddr);
   if (positions.length) {
     await autoSell(positions, cfg);
@@ -284,8 +427,11 @@ async function cycle(wallet: Wallet, walletAddr: string, cfg: Config) {
     await stack(walletAddr, positions, cfg);
     await endgame(positions, cfg);
   }
-  await redeem(wallet, walletAddr, cfg);
+  
+  await redeem(walletAddr, cfg);
 }
+
+// ============ CONFIG ============
 
 export function loadConfig() {
   const privateKey = process.env.PRIVATE_KEY;
@@ -296,35 +442,84 @@ export function loadConfig() {
   const preset = (process.env.PRESET || "balanced") as Preset;
   if (!PRESETS[preset]) throw new Error(`Invalid PRESET: ${preset}`);
 
+  const cfg: Config = JSON.parse(JSON.stringify(PRESETS[preset]));
+  const env = (k: string) => process.env[k];
+  const envBool = (k: string) => env(k) === "true";
+  const envNum = (k: string) => env(k) ? Number(env(k)) : undefined;
+  
+  // Strategy overrides
+  if (env("AUTO_SELL_ENABLED")) cfg.autoSell.enabled = envBool("AUTO_SELL_ENABLED");
+  if (envNum("AUTO_SELL_THRESHOLD")) cfg.autoSell.threshold = envNum("AUTO_SELL_THRESHOLD")!;
+  if (env("STOP_LOSS_ENABLED")) cfg.stopLoss.enabled = envBool("STOP_LOSS_ENABLED");
+  if (envNum("STOP_LOSS_PCT")) cfg.stopLoss.maxLossPct = envNum("STOP_LOSS_PCT")!;
+  if (env("HEDGE_ENABLED")) cfg.hedge.enabled = envBool("HEDGE_ENABLED");
+  if (envNum("HEDGE_TRIGGER_PCT")) cfg.hedge.triggerPct = envNum("HEDGE_TRIGGER_PCT")!;
+  if (envNum("HEDGE_MAX_USD")) cfg.hedge.maxUsd = envNum("HEDGE_MAX_USD")!;
+  if (env("SCALP_ENABLED")) cfg.scalp.enabled = envBool("SCALP_ENABLED");
+  if (envNum("SCALP_MIN_PROFIT_PCT")) cfg.scalp.minProfitPct = envNum("SCALP_MIN_PROFIT_PCT")!;
+  if (envNum("SCALP_MIN_GAIN_CENTS")) cfg.scalp.minGainCents = envNum("SCALP_MIN_GAIN_CENTS")!;
+  if (env("STACK_ENABLED")) cfg.stack.enabled = envBool("STACK_ENABLED");
+  if (envNum("STACK_MIN_GAIN_CENTS")) cfg.stack.minGainCents = envNum("STACK_MIN_GAIN_CENTS")!;
+  if (envNum("STACK_MAX_USD")) cfg.stack.maxUsd = envNum("STACK_MAX_USD")!;
+  if (envNum("STACK_MAX_PRICE")) cfg.stack.maxPrice = envNum("STACK_MAX_PRICE")!;
+  if (env("ENDGAME_ENABLED")) cfg.endgame.enabled = envBool("ENDGAME_ENABLED");
+  if (envNum("ENDGAME_MIN_PRICE")) cfg.endgame.minPrice = envNum("ENDGAME_MIN_PRICE")!;
+  if (envNum("ENDGAME_MAX_PRICE")) cfg.endgame.maxPrice = envNum("ENDGAME_MAX_PRICE")!;
+  if (envNum("ENDGAME_MAX_USD")) cfg.endgame.maxUsd = envNum("ENDGAME_MAX_USD")!;
+  if (env("REDEEM_ENABLED")) cfg.redeem.enabled = envBool("REDEEM_ENABLED");
+  if (envNum("REDEEM_INTERVAL_MIN")) cfg.redeem.intervalMin = envNum("REDEEM_INTERVAL_MIN")!;
+  
+  // Copy trading
+  if (env("COPY_ADDRESSES")) {
+    cfg.copy.enabled = true;
+    cfg.copy.addresses = env("COPY_ADDRESSES")!.split(",").map(a => a.trim().toLowerCase());
+  }
+  if (envNum("COPY_MULTIPLIER")) cfg.copy.multiplier = envNum("COPY_MULTIPLIER")!;
+  if (envNum("COPY_MIN_USD")) cfg.copy.minUsd = envNum("COPY_MIN_USD")!;
+  if (envNum("COPY_MAX_USD")) cfg.copy.maxUsd = envNum("COPY_MAX_USD")!;
+
   return {
-    privateKey, rpcUrl, preset,
-    config: PRESETS[preset],
-    intervalMs: Number(process.env.INTERVAL_MS) || 5000,
-    telegram: process.env.TELEGRAM_TOKEN && process.env.TELEGRAM_CHAT
-      ? { token: process.env.TELEGRAM_TOKEN, chatId: process.env.TELEGRAM_CHAT }
-      : undefined,
+    privateKey, rpcUrl, preset, config: cfg,
+    intervalMs: envNum("INTERVAL_MS") || 5000,
+    liveTrading: envBool("LIVE_TRADING"),
+    telegram: env("TELEGRAM_TOKEN") && env("TELEGRAM_CHAT")
+      ? { token: env("TELEGRAM_TOKEN")!, chatId: env("TELEGRAM_CHAT")! } : undefined,
   };
 }
 
+// ============ STARTUP ============
+
 export async function startV2() {
   log("=== Polymarket Bot V2 ===");
-  const cfg = loadConfig();
-  const provider = new JsonRpcProvider(cfg.rpcUrl);
-  const wallet = new Wallet(cfg.privateKey, provider);
+  
+  const settings = loadConfig();
+  
+  // VPN bypass for fast RPC
+  // VPN bypass: setupRpcVpnBypass can be called if needed
+  
+  const provider = new JsonRpcProvider(settings.rpcUrl);
+  const wallet = new Wallet(settings.privateKey, provider);
   const addr = wallet.address.toLowerCase();
 
-  // Get proxy address
-  state.proxyAddress = await fetchProxy(addr);
-  state.telegram = cfg.telegram;
-
-  log(`Preset: ${cfg.preset}`);
-  log(`Wallet: ${addr.slice(0, 10)}...`);
-  if (state.proxyAddress) log(`Proxy: ${state.proxyAddress.slice(0, 10)}...`);
+  // Initialize CLOB client for trading
+  const clobClient = new ClobClient("https://clob.polymarket.com", 137, wallet as any);
   
-  await alert("Bot Started", `Preset: ${cfg.preset}`);
+  state.wallet = wallet;
+  state.clobClient = clobClient;
+  state.proxyAddress = await fetchProxy(addr);
+  state.telegram = settings.telegram;
+  state.liveTrading = settings.liveTrading;
 
-  await cycle(wallet, addr, cfg.config);
-  setInterval(() => cycle(wallet, addr, cfg.config).catch(e => log(`❌ ${e}`)), cfg.intervalMs);
+  log(`Preset: ${settings.preset}`);
+  log(`Wallet: ${addr.slice(0, 10)}...`);
+  log(`Trading: ${state.liveTrading ? "🟢 LIVE" : "🔸 SIMULATED"}`);
+  if (state.proxyAddress) log(`Proxy: ${state.proxyAddress.slice(0, 10)}...`);
+  if (settings.config.copy.enabled) log(`👀 Copying ${settings.config.copy.addresses.length} trader(s)`);
+  
+  await alert("Bot Started", `${settings.preset} | ${state.liveTrading ? "LIVE" : "SIM"}`);
+
+  await cycle(addr, settings.config);
+  setInterval(() => cycle(addr, settings.config).catch(e => log(`❌ ${e}`)), settings.intervalMs);
 
   process.on("SIGINT", async () => {
     await alert("Bot Stopped", "Shutdown");

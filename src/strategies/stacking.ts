@@ -403,7 +403,7 @@ export class StackingStrategy {
     // Determine stack size
     let stackUsd: number;
     if (this.cycleStackBudgetRemaining !== null) {
-      stackUsd = this.cycleStackBudgetRemaining;
+      stackUsd = Math.min(this.cycleStackBudgetRemaining, this.config.maxStackUsd);
       this.logger.info(
         `[Stacking] 📊 STACK SIZING: UNLIMITED MODE - using full available cash $${stackUsd.toFixed(2)}`,
       );
