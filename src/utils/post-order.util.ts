@@ -705,7 +705,6 @@ async function postOrderClobInner(
     logger,
   } = input;
   const settings = toOrderSubmissionSettings({
-    minOrderUsd: input.orderConfig?.minOrderUsd,
     orderSubmitMinIntervalMs: input.orderConfig?.orderSubmitMinIntervalMs,
     orderSubmitMaxPerHour: input.orderConfig?.orderSubmitMaxPerHour,
     orderSubmitMarketCooldownSeconds:

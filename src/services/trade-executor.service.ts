@@ -240,7 +240,6 @@ export class TradeExecutorService {
         scalpLowPriceThreshold: env.scalpLowPriceThreshold, // Allow low-price scalping
         logger,
         orderConfig: {
-          minOrderUsd: sizing.effectiveMinOrderUsd,
           orderSubmitMinIntervalMs: env.orderSubmitMinIntervalMs,
           orderSubmitMaxPerHour: env.orderSubmitMaxPerHour,
           orderSubmitMarketCooldownSeconds:

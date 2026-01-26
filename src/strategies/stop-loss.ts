@@ -540,7 +540,6 @@ export class StopLossStrategy {
         logger: this.logger,
         priority: true, // High priority for stop-loss
         skipDuplicatePrevention: true, // Stop-loss must bypass duplicate prevention
-        orderConfig: { minOrderUsd: 0 }, // Bypass minimum for stop-loss
       });
 
       if (result.status === "submitted") {

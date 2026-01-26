@@ -155,7 +155,6 @@ export class ArbTradeExecutor implements TradeExecutor {
       approveUnlimited: this.config.approveUnlimited,
     });
     this.submissionSettings = toOrderSubmissionSettings({
-      minOrderUsd: this.config.minOrderUsd,
       orderSubmitMinIntervalMs: this.config.orderSubmitMinIntervalMs,
       orderSubmitMaxPerHour: this.config.orderSubmitMaxPerHour,
       orderSubmitMarketCooldownSeconds:

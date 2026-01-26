@@ -2,7 +2,6 @@ import type { Logger } from "./logger.util";
 import { DEFAULT_CONFIG } from "../constants/polymarket.constants";
 
 export type OrderSubmissionSettings = {
-  minOrderUsd: number;
   minIntervalMs: number;
   maxPerHour: number;
   marketCooldownMs: number;
@@ -45,7 +44,6 @@ const BALANCE_ALLOWANCE_REGEX =
 const BALANCE_ALLOWANCE_COOLDOWN_MS = 10 * 60 * 1000;
 
 const DEFAULT_SETTINGS: OrderSubmissionSettings = {
-  minOrderUsd: DEFAULT_CONFIG.MIN_ORDER_USD,
   minIntervalMs: DEFAULT_CONFIG.ORDER_SUBMIT_MIN_INTERVAL_MS,
   maxPerHour: DEFAULT_CONFIG.ORDER_SUBMIT_MAX_PER_HOUR,
   marketCooldownMs: DEFAULT_CONFIG.ORDER_SUBMIT_MARKET_COOLDOWN_SECONDS * 1000,
@@ -56,7 +54,6 @@ const DEFAULT_SETTINGS: OrderSubmissionSettings = {
 };
 
 export type OrderSubmissionConfig = {
-  minOrderUsd?: number;
   orderSubmitMinIntervalMs?: number;
   orderSubmitMaxPerHour?: number;
   orderSubmitMarketCooldownSeconds?: number;
@@ -71,7 +68,6 @@ export type OrderSubmissionConfig = {
 export const toOrderSubmissionSettings = (
   config: OrderSubmissionConfig,
 ): OrderSubmissionSettings => ({
-  minOrderUsd: config.minOrderUsd ?? DEFAULT_SETTINGS.minOrderUsd,
   minIntervalMs:
     config.orderSubmitMinIntervalMs ?? DEFAULT_SETTINGS.minIntervalMs,
   maxPerHour: config.orderSubmitMaxPerHour ?? DEFAULT_SETTINGS.maxPerHour,
@@ -337,9 +333,6 @@ export class OrderSubmissionController {
     signerAddress?: string;
     collateralLabel?: string;
   }): OrderSubmissionResult | null {
-    // NOTE: Minimum order size check removed - buy sizes are controlled via configuration,
-    // and enforcing minimums here just blocks legitimate sells of small positions.
-
     const balanceCooldown = this.resolveBalanceCooldown(
       params.marketId,
       params.tokenId,

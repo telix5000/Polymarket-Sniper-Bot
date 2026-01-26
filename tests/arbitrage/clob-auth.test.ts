@@ -61,7 +61,7 @@ test("postOrder applies cached API creds before placing orders", async () => {
         debug: () => undefined,
       },
       orderConfig: {
-        minOrderUsd: 0,
+        
         orderSubmitMinIntervalMs: 0,
         orderSubmitMaxPerHour: 1000,
         orderSubmitMarketCooldownSeconds: 0,
@@ -130,7 +130,7 @@ test("postOrder re-applies API creds and retries once on auth failure", async ()
         debug: () => undefined,
       },
       orderConfig: {
-        minOrderUsd: 0,
+        
         orderSubmitMinIntervalMs: 0,
         orderSubmitMaxPerHour: 1000,
         orderSubmitMarketCooldownSeconds: 0,
@@ -191,7 +191,7 @@ test("postOrder returns skipped with NO_LIQUIDITY when orderbook has no bids for
         debug: () => undefined,
       },
       orderConfig: {
-        minOrderUsd: 0,
+        
         orderSubmitMinIntervalMs: 0,
         orderSubmitMaxPerHour: 1000,
         orderSubmitMarketCooldownSeconds: 0,
@@ -253,7 +253,7 @@ test("postOrder returns skipped with NO_LIQUIDITY when orderbook has no asks for
         debug: () => undefined,
       },
       orderConfig: {
-        minOrderUsd: 0,
+        
         orderSubmitMinIntervalMs: 0,
         orderSubmitMaxPerHour: 1000,
         orderSubmitMarketCooldownSeconds: 0,
@@ -361,7 +361,7 @@ test("postOrder SELL proceeds with top bid even when bids are below computed lim
         debug: () => undefined,
       },
       orderConfig: {
-        minOrderUsd: 5,
+        
         orderSubmitMinIntervalMs: 0,
         orderSubmitMaxPerHour: 1000,
         orderSubmitMarketCooldownSeconds: 0,
