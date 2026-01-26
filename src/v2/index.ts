@@ -623,6 +623,25 @@ const DEFAULT_ARBITRAGE_ACTIVE_MARKET_LIMIT = 100; // Matches V1 endgame-sweep
 const HEDGE_BUFFER_AUTO_SCALE_PCT = 0.10; // Scale hedge buffer to 10% of maxOpenPositions when not explicitly set
 const HEDGE_BUFFER_MIN_SLOTS = 3; // Minimum hedge buffer slots to ensure basic hedging capability
 
+// Telegram rate limiting configuration (addresses 429 errors)
+// Telegram limits: ~30 messages/second to same chat, but better to be conservative
+const TELEGRAM_MIN_INTERVAL_MS = 50; // Minimum 50ms between messages (20 msg/sec max)
+const TELEGRAM_MAX_RETRIES = 3; // Max retry attempts for failed messages
+const TELEGRAM_RETRY_BASE_DELAY_MS = 1000; // Initial retry delay (doubles with each retry)
+const TELEGRAM_QUEUE_MAX_SIZE = 100; // Max queued messages (drop oldest if exceeded)
+
+// ============ TELEGRAM MESSAGE QUEUE ============
+
+interface TelegramMessage {
+  text: string;
+  timestamp: number;
+  retryCount: number;
+}
+
+const telegramQueue: TelegramMessage[] = [];
+let telegramLastSentTime = 0;
+let telegramQueueProcessing = false;
+
 // ============ STATE ============
 
 const state = {
@@ -791,17 +810,7 @@ async function maybeSendSummary() {
   ledger.lastSummary = Date.now();
   const summary = getLedgerSummary();
   log(summary.replace(/<[^>]*>/g, "")); // Log without HTML tags
-
-  if (state.telegram) {
-    await axios
-      .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
-        chat_id: state.telegram.chatId,
-        text: summary,
-        parse_mode: "HTML",
-        disable_notification: state.telegram.silent,
-      })
-      .catch((e) => log(`⚠️ Telegram summary error: ${e.message}`));
-  }
+  queueTelegramMessage(summary);
 }
 
 // ============ RISK MANAGEMENT ============
@@ -1435,6 +1444,100 @@ function log(msg: string) {
 // ============ ALERTS (Rich Telegram - V1 feature) ============
 
 /**
+ * Queue a message for rate-limited Telegram delivery
+ * Prevents 429 errors by spacing out messages and retrying with backoff
+ */
+function queueTelegramMessage(text: string): void {
+  if (!state.telegram) return;
+  
+  // Drop oldest messages if queue is full
+  if (telegramQueue.length >= TELEGRAM_QUEUE_MAX_SIZE) {
+    const dropped = telegramQueue.shift();
+    if (dropped) {
+      log(`⚠️ Telegram queue full, dropped oldest message`);
+    }
+  }
+  
+  telegramQueue.push({
+    text,
+    timestamp: Date.now(),
+    retryCount: 0,
+  });
+  
+  // Start processing if not already running
+  if (!telegramQueueProcessing) {
+    processTelegramQueue();
+  }
+}
+
+/**
+ * Process the Telegram message queue with rate limiting and retry logic
+ * Handles 429 errors with exponential backoff
+ */
+async function processTelegramQueue(): Promise<void> {
+  if (telegramQueueProcessing || !state.telegram) return;
+  telegramQueueProcessing = true;
+  
+  try {
+    while (telegramQueue.length > 0) {
+      const msg = telegramQueue[0];
+      if (!msg) break;
+      
+      // Rate limiting: wait until minimum interval has passed
+      const timeSinceLastSend = Date.now() - telegramLastSentTime;
+      if (timeSinceLastSend < TELEGRAM_MIN_INTERVAL_MS) {
+        await new Promise(resolve => 
+          setTimeout(resolve, TELEGRAM_MIN_INTERVAL_MS - timeSinceLastSend)
+        );
+      }
+      
+      try {
+        const response = await axios.post(
+          `https://api.telegram.org/bot${state.telegram.token}/sendMessage`,
+          {
+            chat_id: state.telegram.chatId,
+            text: msg.text,
+            parse_mode: "HTML",
+            disable_notification: state.telegram.silent,
+          }
+        );
+        
+        telegramLastSentTime = Date.now();
+        telegramQueue.shift(); // Remove successfully sent message
+        
+      } catch (err) {
+        const axiosError = err as { response?: { status?: number; data?: { parameters?: { retry_after?: number } } }; message?: string };
+        const status = axiosError.response?.status;
+        
+        if (status === 429) {
+          // Rate limited - use Telegram's retry_after or exponential backoff
+          const retryAfter = axiosError.response?.data?.parameters?.retry_after;
+          const backoffDelay = retryAfter 
+            ? retryAfter * 1000 
+            : TELEGRAM_RETRY_BASE_DELAY_MS * Math.pow(2, msg.retryCount);
+          
+          msg.retryCount++;
+          
+          if (msg.retryCount >= TELEGRAM_MAX_RETRIES) {
+            log(`⚠️ Telegram: Dropping message after ${TELEGRAM_MAX_RETRIES} retries (429 rate limit)`);
+            telegramQueue.shift();
+          } else {
+            log(`⚠️ Telegram: Rate limited, retry ${msg.retryCount}/${TELEGRAM_MAX_RETRIES} in ${Math.round(backoffDelay/1000)}s`);
+            await new Promise(resolve => setTimeout(resolve, backoffDelay));
+          }
+        } else {
+          // Other errors - log and remove message
+          log(`⚠️ Telegram error: ${axiosError.message || 'Unknown error'}`);
+          telegramQueue.shift();
+        }
+      }
+    }
+  } finally {
+    telegramQueueProcessing = false;
+  }
+}
+
+/**
  * Send clean alerts for Telegram
  * Format: ACTION | RESULT | DETAILS
  * Uses HTML parse mode for reliable message delivery
@@ -1443,16 +1546,7 @@ async function alert(action: string, details: string, success = true) {
   const icon = success ? "✅" : "❌";
   const line = `${escapeHtml(action)} ${icon} | ${escapeHtml(details)}`;
   log(`📢 ${action} ${icon} | ${details}`);
-  if (state.telegram) {
-    await axios
-      .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
-        chat_id: state.telegram.chatId,
-        text: line,
-        parse_mode: "HTML",
-        disable_notification: state.telegram.silent,
-      })
-      .catch((e) => log(`⚠️ Telegram error: ${e.message}`));
-  }
+  queueTelegramMessage(line);
 }
 
 /**
@@ -1486,32 +1580,13 @@ async function alertTrade(
   }
 
   log(`📢 ${side} ${icon} | ${strategy} | ${outcome} ${$(sizeUsd)}${priceStr}${balanceStr}${pnlStr.replace("&amp;", "&")}`);
-
-  if (state.telegram) {
-    await axios
-      .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
-        chat_id: state.telegram.chatId,
-        text: msg,
-        parse_mode: "HTML",
-        disable_notification: state.telegram.silent,
-      })
-      .catch((e) => log(`⚠️ Telegram error: ${e.message}`));
-  }
+  queueTelegramMessage(msg);
 }
 
 /** Send startup/shutdown alerts with rich context */
 async function alertStatus(msg: string) {
   log(`📢 ${msg}`);
-  if (state.telegram) {
-    await axios
-      .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
-        chat_id: state.telegram.chatId,
-        text: `🤖 ${escapeHtml(msg)}`,
-        parse_mode: "HTML",
-        disable_notification: state.telegram.silent,
-      })
-      .catch((e) => log(`⚠️ Telegram error: ${e.message}`));
-  }
+  queueTelegramMessage(`🤖 ${escapeHtml(msg)}`);
 }
 
 // ============ FORMATTING ============
