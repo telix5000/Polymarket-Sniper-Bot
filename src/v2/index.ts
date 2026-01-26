@@ -174,6 +174,17 @@ interface Config {
     checkIntervalMin: number;   // How often to check POL balance (default: 5 minutes)
     slippagePct: number;        // Slippage tolerance for swap (default: 1%)
   };
+  // Dynamic Reserves - Risk-aware capital allocation (V1 DynamicReservesController feature)
+  dynamicReserves: {
+    enabled: boolean;                  // Enable risk-aware reserve scaling
+    baseReserveFloorUsd: number;       // Minimum reserve floor in USD
+    baseReserveEquityPct: number;      // Reserve as % of equity (positions + cash)
+    maxReserveUsd: number;             // Cap on total reserve requirement
+    hedgeCapUsd: number;               // Max per-position reserve (aligns with hedge max)
+    hedgeTriggerLossPct: number;       // Loss % to trigger hedge-tier reserve
+    catastrophicLossPct: number;       // Loss % for catastrophic-tier reserve
+    highWinProbPriceThreshold: number; // Price threshold for high win probability (low reserve)
+  };
 }
 
 interface TradeSignal {
@@ -227,6 +238,8 @@ const PRESETS: Record<Preset, Config> = {
     onChainExit: { enabled: true, priceThreshold: 0.99 },
     tradeMode: "clob",
     polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
+    // Conservative: Higher reserves, lower risk tolerance
+    dynamicReserves: { enabled: true, baseReserveFloorUsd: 25, baseReserveEquityPct: 0.08, maxReserveUsd: 250, hedgeCapUsd: 25, hedgeTriggerLossPct: 15, catastrophicLossPct: 40, highWinProbPriceThreshold: 0.90 },
   },
   balanced: {
     autoSell: { 
@@ -260,6 +273,8 @@ const PRESETS: Record<Preset, Config> = {
     onChainExit: { enabled: true, priceThreshold: 0.99 },
     tradeMode: "clob",
     polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
+    // Balanced: Moderate reserves, balanced risk tolerance
+    dynamicReserves: { enabled: true, baseReserveFloorUsd: 20, baseReserveEquityPct: 0.05, maxReserveUsd: 200, hedgeCapUsd: 50, hedgeTriggerLossPct: 20, catastrophicLossPct: 50, highWinProbPriceThreshold: 0.85 },
   },
   aggressive: {
     autoSell: { 
@@ -293,6 +308,8 @@ const PRESETS: Record<Preset, Config> = {
     onChainExit: { enabled: true, priceThreshold: 0.99 },
     tradeMode: "clob",
     polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
+    // Aggressive: Lower reserves, higher risk tolerance
+    dynamicReserves: { enabled: true, baseReserveFloorUsd: 15, baseReserveEquityPct: 0.03, maxReserveUsd: 150, hedgeCapUsd: 100, hedgeTriggerLossPct: 25, catastrophicLossPct: 60, highWinProbPriceThreshold: 0.80 },
   },
 };
 
@@ -333,6 +350,7 @@ const state = {
   lastBalanceCheck: 0,
   lastPolCheck: 0, // Last time we checked/rebalanced POL
   lastOrderTime: 0,
+  lastReserveLog: 0, // Last time we logged reserve status
   balance: 0,
   polBalance: 0, // POL balance in wallet
   sessionStartBalance: 0,
@@ -710,6 +728,91 @@ function getDynamicReservePct(cfg: Config): number {
   if (drawdownPct >= 5) return Math.min(35, cfg.reservePct + 5);   // +5% reserves at 5% drawdown
   
   return cfg.reservePct;
+}
+
+/**
+ * Risk-aware position reserve tier classification
+ * Based on V1 DynamicReservesController logic
+ */
+type ReserveTier = "NONE" | "HIGH_WIN_PROB" | "NORMAL" | "HEDGE" | "CATASTROPHIC";
+
+interface PositionRiskReserve {
+  tokenId: string;
+  tier: ReserveTier;
+  reserveUsd: number;
+  reason: string;
+}
+
+/**
+ * Compute risk-aware reserve requirement for a single position
+ * This mirrors V1's DynamicReservesController per-position reserve logic
+ */
+function computePositionRiskReserve(pos: Position, cfg: Config): PositionRiskReserve {
+  const dr = cfg.dynamicReserves;
+  const notionalUsd = pos.curPrice * pos.size;
+  const lossPct = Math.abs(Math.min(0, pos.pnlPct)); // Only count losses
+  
+  // Near-resolution positions need no reserve (high probability of payout)
+  // curPrice >= 0.99 (99¢) is considered near-resolution
+  if (pos.curPrice >= 0.99) {
+    return { tokenId: pos.tokenId, tier: "NONE", reserveUsd: 0, reason: "NEAR_RESOLUTION" };
+  }
+  
+  // HIGH WIN PROBABILITY: When current price is high (e.g., ≥85¢), minimal reserves needed
+  // This takes precedence over loss tiers because high current price = high probability of winning
+  if (pos.curPrice >= dr.highWinProbPriceThreshold) {
+    const reserve = Math.min(0.5, notionalUsd * 0.02); // 2% of notional, capped at $0.50
+    return { tokenId: pos.tokenId, tier: "HIGH_WIN_PROB", reserveUsd: reserve, reason: `HIGH_WIN_PROB_${(pos.curPrice * 100).toFixed(0)}¢` };
+  }
+  
+  // CATASTROPHIC LOSS: Position down >= catastrophicLossPct (e.g., 50%)
+  // Needs full hedge reserve to cover potential forced liquidation or emergency hedge
+  if (lossPct >= dr.catastrophicLossPct) {
+    const reserve = Math.min(dr.hedgeCapUsd, notionalUsd * 1.0); // 100% of notional, capped at hedgeCapUsd
+    return { tokenId: pos.tokenId, tier: "CATASTROPHIC", reserveUsd: reserve, reason: `CATASTROPHIC_LOSS_${lossPct.toFixed(0)}%` };
+  }
+  
+  // HEDGE TRIGGER: Position down >= hedgeTriggerLossPct (e.g., 20%)
+  // Needs half of notional reserved for hedge execution
+  if (lossPct >= dr.hedgeTriggerLossPct) {
+    const reserve = Math.min(dr.hedgeCapUsd, notionalUsd * 0.5); // 50% of notional, capped at hedgeCapUsd
+    return { tokenId: pos.tokenId, tier: "HEDGE", reserveUsd: reserve, reason: `HEDGE_TIER_${lossPct.toFixed(0)}%` };
+  }
+  
+  // NORMAL: Small buffer for general volatility protection
+  const reserve = Math.min(2, notionalUsd * 0.1); // 10% of notional, capped at $2
+  return { tokenId: pos.tokenId, tier: "NORMAL", reserveUsd: reserve, reason: "NORMAL_BUFFER" };
+}
+
+/**
+ * Compute total risk-aware reserve requirement based on all positions
+ * This is the main function that calculates reserves based on:
+ * 1. Base reserve (floor or equity percentage)
+ * 2. Per-position risk reserves (based on P&L tiers)
+ * 3. Maximum cap on total reserves
+ */
+function computeRiskAwareReserve(cfg: Config): { totalReserveUsd: number; positionReserves: PositionRiskReserve[]; baseReserveUsd: number } {
+  const dr = cfg.dynamicReserves;
+  
+  if (!dr.enabled) {
+    return { totalReserveUsd: 0, positionReserves: [], baseReserveUsd: 0 };
+  }
+  
+  // Calculate equity (cash + position value)
+  const positionValue = state.positions.reduce((sum, p) => sum + p.value, 0);
+  const equityUsd = state.balance + positionValue;
+  
+  // A) Base reserve: max(floor, equityPct * equity)
+  const baseReserveUsd = Math.max(dr.baseReserveFloorUsd, dr.baseReserveEquityPct * equityUsd);
+  
+  // B) Per-position reserves based on P&L tier and risk
+  const positionReserves = state.positions.map(pos => computePositionRiskReserve(pos, cfg));
+  const totalPositionReserve = positionReserves.reduce((sum, pr) => sum + pr.reserveUsd, 0);
+  
+  // C) Total capped at maxReserveUsd
+  const totalReserveUsd = Math.min(baseReserveUsd + totalPositionReserve, dr.maxReserveUsd);
+  
+  return { totalReserveUsd, positionReserves, baseReserveUsd };
 }
 
 /** Get total position value for a token (for max position check) */
@@ -1141,12 +1244,39 @@ async function fetchBalance(): Promise<number> {
 
 /**
  * Get available balance after dynamic reserves
- * Reserves increase as drawdown increases (V1 feature)
+ * Uses BOTH percentage-based reserves (drawdown scaling) AND risk-aware reserves (position analysis)
+ * Takes the HIGHER of the two reserve requirements to ensure adequate protection
  */
 function getAvailableBalance(cfg: Config): number {
+  // 1. Percentage-based reserve (drawdown scaling)
   const dynamicReservePct = getDynamicReservePct(cfg);
-  const reserved = state.balance * (dynamicReservePct / 100);
-  return Math.max(0, state.balance - reserved);
+  const pctBasedReserve = state.balance * (dynamicReservePct / 100);
+  
+  // 2. Risk-aware reserve (position analysis)
+  const { totalReserveUsd } = computeRiskAwareReserve(cfg);
+  
+  // Use the higher of the two reserve requirements to ensure adequate protection
+  const effectiveReserve = Math.max(pctBasedReserve, totalReserveUsd);
+  
+  return Math.max(0, state.balance - effectiveReserve);
+}
+
+/**
+ * Get detailed reserve breakdown for logging/diagnostics
+ */
+function getReserveBreakdown(cfg: Config): { pctReserve: number; riskReserve: number; effectiveReserve: number; mode: "RISK_ON" | "RISK_OFF"; topPositionRisks: PositionRiskReserve[] } {
+  const dynamicReservePct = getDynamicReservePct(cfg);
+  const pctReserve = state.balance * (dynamicReservePct / 100);
+  const { totalReserveUsd, positionReserves } = computeRiskAwareReserve(cfg);
+  const effectiveReserve = Math.max(pctReserve, totalReserveUsd);
+  const mode = state.balance >= effectiveReserve ? "RISK_ON" : "RISK_OFF";
+  
+  // Top 5 position risks by reserve amount
+  const topPositionRisks = positionReserves
+    .sort((a, b) => b.reserveUsd - a.reserveUsd)
+    .slice(0, 5);
+  
+  return { pctReserve, riskReserve: totalReserveUsd, effectiveReserve, mode, topPositionRisks };
 }
 
 /**
@@ -1929,6 +2059,29 @@ async function cycle(walletAddr: string, cfg: Config) {
   // After potential POL rebalance (which may spend USDC), refresh balance again
   await fetchBalance();
   
+  // Log reserve status periodically (every 60 seconds)
+  const RESERVE_LOG_INTERVAL_MS = 60_000;
+  if (cfg.dynamicReserves.enabled && Date.now() - state.lastReserveLog >= RESERVE_LOG_INTERVAL_MS) {
+    const breakdown = getReserveBreakdown(cfg);
+    const modeEmoji = breakdown.mode === "RISK_ON" ? "✅" : "⚠️";
+    const positionValue = state.positions.reduce((sum, p) => sum + p.value, 0);
+    log(`💰 [DynamicReserves] balance=$${state.balance.toFixed(2)} | positions=$${positionValue.toFixed(2)} | ` +
+        `reserves=$${breakdown.effectiveReserve.toFixed(2)} (pct:$${breakdown.pctReserve.toFixed(2)}, risk:$${breakdown.riskReserve.toFixed(2)}) | ` +
+        `${modeEmoji} ${breakdown.mode} (${state.positions.length} pos)`);
+    
+    // Log top risky positions if in RISK_OFF mode
+    if (breakdown.mode === "RISK_OFF" && breakdown.topPositionRisks.length > 0) {
+      const riskDetails = breakdown.topPositionRisks
+        .filter(r => r.reserveUsd > 0)
+        .map(r => `${r.tokenId.slice(0, 8)}...(${r.tier},$${r.reserveUsd.toFixed(2)})`)
+        .join(", ");
+      if (riskDetails) {
+        log(`   Risk drivers: ${riskDetails}`);
+      }
+    }
+    state.lastReserveLog = Date.now();
+  }
+  
   // Copy BUY trades from tracked traders
   await copyTrades(cfg);
   
@@ -2393,6 +2546,24 @@ export function loadConfig() {
     cfg.polReserve.enabled = false;
   }
 
+  // ========== DYNAMIC RESERVES (Risk-Aware Capital Allocation) ==========
+  // DYNAMIC_RESERVES_ENABLED: Enable risk-aware reserve scaling based on position P&L
+  // DYNAMIC_RESERVES_BASE_FLOOR_USD: Minimum reserve floor (default: from preset)
+  // DYNAMIC_RESERVES_EQUITY_PCT: Reserve as % of equity (default: from preset)
+  // DYNAMIC_RESERVES_MAX_USD: Cap on total reserve (default: from preset)
+  // DYNAMIC_RESERVES_HEDGE_CAP_USD: Max per-position reserve (default: from preset)
+  // DYNAMIC_RESERVES_HEDGE_TRIGGER_PCT: Loss % to trigger hedge-tier reserve (default: from preset)
+  // DYNAMIC_RESERVES_CATASTROPHIC_PCT: Loss % for catastrophic-tier reserve (default: from preset)
+  // DYNAMIC_RESERVES_HIGH_WIN_PRICE: Price threshold for high win probability (default: from preset)
+  if (envBool("DYNAMIC_RESERVES_ENABLED") !== undefined) cfg.dynamicReserves.enabled = envBool("DYNAMIC_RESERVES_ENABLED")!;
+  if (envNum("DYNAMIC_RESERVES_BASE_FLOOR_USD") !== undefined) cfg.dynamicReserves.baseReserveFloorUsd = envNum("DYNAMIC_RESERVES_BASE_FLOOR_USD")!;
+  if (envNum("DYNAMIC_RESERVES_EQUITY_PCT") !== undefined) cfg.dynamicReserves.baseReserveEquityPct = envNum("DYNAMIC_RESERVES_EQUITY_PCT")! / 100;
+  if (envNum("DYNAMIC_RESERVES_MAX_USD") !== undefined) cfg.dynamicReserves.maxReserveUsd = envNum("DYNAMIC_RESERVES_MAX_USD")!;
+  if (envNum("DYNAMIC_RESERVES_HEDGE_CAP_USD") !== undefined) cfg.dynamicReserves.hedgeCapUsd = envNum("DYNAMIC_RESERVES_HEDGE_CAP_USD")!;
+  if (envNum("DYNAMIC_RESERVES_HEDGE_TRIGGER_PCT") !== undefined) cfg.dynamicReserves.hedgeTriggerLossPct = envNum("DYNAMIC_RESERVES_HEDGE_TRIGGER_PCT")!;
+  if (envNum("DYNAMIC_RESERVES_CATASTROPHIC_PCT") !== undefined) cfg.dynamicReserves.catastrophicLossPct = envNum("DYNAMIC_RESERVES_CATASTROPHIC_PCT")!;
+  if (envNum("DYNAMIC_RESERVES_HIGH_WIN_PRICE") !== undefined) cfg.dynamicReserves.highWinProbPriceThreshold = envNum("DYNAMIC_RESERVES_HIGH_WIN_PRICE")!;
+
   // ========== LIVE TRADING ==========
   // V1: ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS
   // V2: LIVE_TRADING=I_UNDERSTAND_THE_RISKS or LIVE_TRADING=true
@@ -2565,6 +2736,11 @@ export async function startV2() {
   if (state.proxyAddress) log(`Proxy: ${state.proxyAddress.slice(0, 10)}...`);
   if (settings.config.copy.enabled) log(`👀 Copying ${settings.config.copy.addresses.length} trader(s)`);
   if (settings.config.polReserve.enabled) log(`⛽ POL Reserve enabled (target: ${settings.config.polReserve.targetPol} POL)`);
+  if (settings.config.dynamicReserves.enabled) {
+    const dr = settings.config.dynamicReserves;
+    log(`💰 Dynamic Reserves enabled (floor: $${dr.baseReserveFloorUsd}, max: $${dr.maxReserveUsd}, hedgeCap: $${dr.hedgeCapUsd})`);
+    log(`   Risk thresholds: hedgeTrigger: ${dr.hedgeTriggerLossPct}%, catastrophic: ${dr.catastrophicLossPct}%, highWinProb: ${(dr.highWinProbPriceThreshold * 100).toFixed(0)}¢`);
+  }
   
   await alertStatus(`Bot Started | ${settings.preset} | ${state.liveTrading ? "LIVE" : "SIM"} | ${$(state.balance)}`);
 
