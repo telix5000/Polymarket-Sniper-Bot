@@ -75,7 +75,8 @@ export function initTradeNotificationService(
   log?: Logger,
 ): void {
   // Idempotency guard: prevent duplicate initialization
-  if (initialized && telegramService) {
+  // Only check `initialized` flag for simplicity since both flags are always set together
+  if (initialized) {
     log?.debug(
       "[TradeNotification] Service already initialized - skipping duplicate init",
     );
