@@ -52,7 +52,7 @@ import {
   type OrderOutcome,
   ABSOLUTE_MIN_TRADEABLE_PRICE,
 } from "../utils/post-order.util";
-import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
+import { createPolymarketAuthFromEnvWithAutoDetect } from "../clob/polymarket-auth";
 
 // V1 Features: Adaptive Learning, On-Chain Exit, On-Chain Trading
 import {
@@ -3980,7 +3980,7 @@ export async function startV2() {
   // ============ AUTHENTICATION (same as V1 main.ts lines 86-98) ============
   log("🔐 Authenticating with Polymarket...");
 
-  const auth = createPolymarketAuthFromEnv(logger as any);
+  const auth = await createPolymarketAuthFromEnvWithAutoDetect(logger as any);
   const authResult = await auth.authenticate();
 
   if (!authResult.success) {

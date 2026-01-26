@@ -18,9 +18,44 @@ import { SignatureType } from "@polymarket/order-utils";
 import { POLYMARKET_API } from "../constants/polymarket.constants";
 import type { Logger } from "../utils/logger.util";
 import { asClobSigner } from "../utils/clob-signer.util";
+import axios from "axios";
 
 const POLYMARKET_HOST = POLYMARKET_API.BASE_URL;
 const POLYGON_CHAIN_ID = Chain.POLYGON;
+
+/**
+ * Auto-detect proxy wallet address from Polymarket's Gamma API.
+ * This allows users to skip manual POLYMARKET_PROXY_ADDRESS configuration.
+ *
+ * @param eoaAddress - The EOA (signer) address derived from the private key
+ * @param logger - Optional logger for diagnostics
+ * @returns The detected proxy wallet address, or undefined if not found
+ */
+async function detectProxyWallet(
+  eoaAddress: string,
+  logger?: Logger,
+): Promise<string | undefined> {
+  try {
+    const profileUrl = POLYMARKET_API.GAMMA_PROFILE_ENDPOINT(eoaAddress);
+    const response = await axios.get<{ proxyWallet?: string }>(profileUrl, {
+      timeout: 10000,
+    });
+
+    const proxyWallet = response.data?.proxyWallet;
+    if (proxyWallet && /^0x[a-fA-F0-9]{40}$/.test(proxyWallet)) {
+      logger?.info(
+        `[PolymarketAuth] Auto-detected proxy wallet: ${proxyWallet}`,
+      );
+      return proxyWallet;
+    }
+  } catch {
+    // API might not return data for all wallets - this is expected for EOA-only users
+    logger?.debug?.(
+      `[PolymarketAuth] No proxy wallet found for ${eoaAddress} (this is normal for EOA wallets)`,
+    );
+  }
+  return undefined;
+}
 
 /**
  * Credentials configuration for PolymarketAuth
@@ -367,6 +402,79 @@ export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
     : undefined;
   const funderAddress =
     process.env.POLYMARKET_PROXY_ADDRESS ?? process.env.CLOB_FUNDER_ADDRESS;
+
+  return new PolymarketAuth({
+    privateKey,
+    rpcUrl,
+    apiKey,
+    apiSecret,
+    passphrase,
+    signatureType,
+    funderAddress,
+    logger,
+  });
+}
+
+/**
+ * Create a PolymarketAuth instance from environment variables with automatic proxy wallet detection.
+ * This is the recommended factory for users who may have proxy wallets (created via Polymarket website).
+ *
+ * If POLYMARKET_PROXY_ADDRESS is not set, this function will:
+ * 1. Query the Gamma API to detect if the wallet has an associated proxy wallet
+ * 2. If found, automatically configure the correct signature type and funder address
+ * 3. This eliminates the need for manual configuration for most users
+ *
+ * @param logger - Optional logger for diagnostics
+ * @returns PolymarketAuth instance configured with auto-detected settings
+ */
+export async function createPolymarketAuthFromEnvWithAutoDetect(
+  logger?: Logger,
+): Promise<PolymarketAuth> {
+  const privateKey = process.env.PRIVATE_KEY;
+  if (!privateKey) {
+    throw new Error(
+      "PRIVATE_KEY environment variable is required for Polymarket authentication",
+    );
+  }
+
+  const rpcUrl = process.env.RPC_URL ?? process.env.rpc_url;
+  const apiKey =
+    process.env.POLYMARKET_API_KEY ??
+    process.env.POLY_API_KEY ??
+    process.env.CLOB_API_KEY;
+  const apiSecret =
+    process.env.POLYMARKET_API_SECRET ??
+    process.env.POLY_SECRET ??
+    process.env.CLOB_API_SECRET;
+  const passphrase =
+    process.env.POLYMARKET_API_PASSPHRASE ??
+    process.env.POLY_PASSPHRASE ??
+    process.env.CLOB_API_PASSPHRASE;
+  const signatureTypeStr =
+    process.env.POLYMARKET_SIGNATURE_TYPE ?? process.env.CLOB_SIGNATURE_TYPE;
+  let signatureType = signatureTypeStr
+    ? parseInt(signatureTypeStr, 10)
+    : undefined;
+  let funderAddress: string | undefined =
+    process.env.POLYMARKET_PROXY_ADDRESS ?? process.env.CLOB_FUNDER_ADDRESS;
+
+  // Auto-detect proxy wallet if not explicitly configured
+  if (!funderAddress && signatureType === undefined) {
+    const normalizedKey = privateKey.startsWith("0x")
+      ? privateKey
+      : `0x${privateKey}`;
+    const wallet = new Wallet(normalizedKey);
+    const detectedProxy = await detectProxyWallet(wallet.address, logger);
+
+    if (detectedProxy) {
+      funderAddress = detectedProxy;
+      // Use POLY_PROXY (1) for auto-detected proxy wallets
+      signatureType = SignatureType.POLY_PROXY;
+      logger?.info(
+        `[PolymarketAuth] Auto-configured for proxy wallet: signatureType=${signatureType} funderAddress=${funderAddress}`,
+      );
+    }
+  }
 
   return new PolymarketAuth({
     privateKey,

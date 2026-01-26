@@ -5,7 +5,7 @@ import {
   loadStrategyConfig,
   parseCliOverrides,
 } from "../config/loadConfig";
-import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
+import { createPolymarketAuthFromEnvWithAutoDetect } from "../clob/polymarket-auth";
 import { MempoolMonitorService } from "../services/mempool-monitor.service";
 import { TradeExecutorService } from "../services/trade-executor.service";
 import { SellSignalMonitorService } from "../services/sell-signal-monitor.service";
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
 
   // Run authentication and preflight ONCE at top level before starting any engines
   logger.info("🔐 Authenticating with Polymarket...");
-  const auth = createPolymarketAuthFromEnv(logger);
+  const auth = await createPolymarketAuthFromEnvWithAutoDetect(logger);
 
   const authResult = await auth.authenticate();
   if (!authResult.success) {
