@@ -74,6 +74,9 @@ export interface PresetConfig {
     checkIntervalMin: number;
     slippagePct: number;
   };
+  scavenger: {
+    enabled: boolean;
+  };
   maxPositionUsd: number;
 }
 
@@ -90,6 +93,7 @@ export const PRESETS: Record<Preset, PresetConfig> = {
     arb: { enabled: true, maxUsd: 15, minEdgeBps: 50 },
     risk: { maxDrawdownPct: 15, maxDailyLossUsd: 50, maxOpenPositions: 50, hedgeBuffer: 5, orderCooldownMs: 2000, maxOrdersPerHour: 100 },
     polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
+    scavenger: { enabled: true },
     maxPositionUsd: 15,
   },
   balanced: {
@@ -104,6 +108,7 @@ export const PRESETS: Record<Preset, PresetConfig> = {
     arb: { enabled: true, maxUsd: 25, minEdgeBps: 30 },
     risk: { maxDrawdownPct: 20, maxDailyLossUsd: 100, maxOpenPositions: 100, hedgeBuffer: 10, orderCooldownMs: 1000, maxOrdersPerHour: 200 },
     polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
+    scavenger: { enabled: true },
     maxPositionUsd: 25,
   },
   aggressive: {
@@ -118,6 +123,7 @@ export const PRESETS: Record<Preset, PresetConfig> = {
     arb: { enabled: true, maxUsd: 50, minEdgeBps: 20 },
     risk: { maxDrawdownPct: 30, maxDailyLossUsd: 200, maxOpenPositions: 200, hedgeBuffer: 20, orderCooldownMs: 500, maxOrdersPerHour: 500 },
     polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
+    scavenger: { enabled: true },
     maxPositionUsd: 50,
   },
 };
