@@ -58,9 +58,12 @@ import {
   // Redemption
   redeemAll,
   // VPN
+  capturePreVpnRouting,
   startWireguard,
   startOpenvpn,
   setupRpcBypass,
+  setupPolymarketReadBypass,
+  checkVpnForTrading,
   // POL Reserve
   loadPolReserveConfig,
   runPolReserve,
@@ -698,20 +701,32 @@ async function main(): Promise<void> {
   logger.info(`Live Trading: ${state.liveTrading ? "ENABLED" : "DISABLED"}`);
   logger.info(`POL Reserve: ${state.polReserveConfig.enabled ? `ON (target: ${state.polReserveConfig.targetPol} POL)` : "OFF"}`);
   logger.info(`Scavenger Mode: ${state.scavengerConfig.enabled ? "ENABLED" : "DISABLED"}`);
-  logger.info(
-    `POL Reserve: ${state.polReserveConfig.enabled ? `ON (target: ${state.polReserveConfig.targetPol} POL)` : "OFF"}`,
-  );
 
   // Telegram
   initTelegram();
 
-  // VPN
+  // VPN Setup - IMPORTANT: Capture pre-VPN routing BEFORE starting VPN
+  // This allows us to set up bypass routes for RPC and reads after VPN starts
   const rpcUrl = process.env.RPC_URL ?? "";
+  await capturePreVpnRouting(logger);
+
+  // Start VPN (OpenVPN takes priority over WireGuard)
   const ovpn = await startOpenvpn(logger);
   if (!ovpn) await startWireguard(logger);
-  await setupRpcBypass(rpcUrl, logger);
 
-  // Auth
+  // Setup bypass routes AFTER VPN is up (uses pre-VPN gateway)
+  // - RPC bypass: blockchain reads go direct for speed
+  // - Polymarket read bypass: orderbooks/markets go direct for speed
+  // - Auth and orders still route through VPN for geo-blocking
+  await setupRpcBypass(rpcUrl, logger);
+  await setupPolymarketReadBypass(logger);
+
+  // Check VPN status for live trading
+  if (state.liveTrading) {
+    checkVpnForTrading(logger);
+  }
+
+  // Auth (routes through VPN if active - for geo-blocking)
   logger.info("Authenticating...");
   const auth = await createClobClient(
     process.env.PRIVATE_KEY ?? "",
