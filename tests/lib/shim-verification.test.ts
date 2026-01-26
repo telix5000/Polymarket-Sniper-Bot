@@ -4,25 +4,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
 import { Wallet } from "ethers";
-
-/**
- * This is a copy of the shim function from auth.ts for testing purposes
- */
-function applyEthersV6Shim(wallet: Wallet): Wallet {
-  const typedWallet = wallet as Wallet & {
-    _signTypedData?: typeof wallet.signTypedData;
-  };
-
-  if (
-    typeof typedWallet._signTypedData !== "function" &&
-    typeof typedWallet.signTypedData === "function"
-  ) {
-    const signTypedDataFn = typedWallet.signTypedData.bind(typedWallet);
-    typedWallet._signTypedData = signTypedDataFn;
-  }
-
-  return wallet;
-}
+import { applyEthersV6Shim } from "../../src/lib/ethers-compat";
 
 describe("applyEthersV6Shim", () => {
   test("wallet does not have _signTypedData before shim", () => {
