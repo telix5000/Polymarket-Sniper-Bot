@@ -31,7 +31,7 @@
  */
 
 import "dotenv/config";
-import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
+import { createPolymarketAuthFromEnvWithAutoDetect } from "../clob/polymarket-auth";
 import { ConsoleLogger } from "../utils/logger.util";
 import { AutoRedeemStrategy } from "../strategies/auto-redeem";
 
@@ -111,7 +111,7 @@ async function run(): Promise<void> {
 
   // Authenticate
   logger.info("🔐 Authenticating with Polymarket...");
-  const auth = createPolymarketAuthFromEnv(logger);
+  const auth = await createPolymarketAuthFromEnvWithAutoDetect(logger);
   const authResult = await auth.authenticate();
 
   if (!authResult.success) {

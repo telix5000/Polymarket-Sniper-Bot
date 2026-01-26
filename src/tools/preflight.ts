@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { ConsoleLogger } from "../utils/logger.util";
-import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
+import { createPolymarketAuthFromEnvWithAutoDetect } from "../clob/polymarket-auth";
 import { ensureTradingReady } from "../polymarket/preflight";
 import { isApiKeyCreds } from "../utils/clob-credentials.util";
 
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
 
   // Simple authentication with ONLY private key (like pmxt and other Polymarket bots)
   logger.info("🔐 Authenticating with Polymarket...");
-  const auth = createPolymarketAuthFromEnv(logger);
+  const auth = await createPolymarketAuthFromEnvWithAutoDetect(logger);
 
   const authResult = await auth.authenticate();
   if (!authResult.success) {
