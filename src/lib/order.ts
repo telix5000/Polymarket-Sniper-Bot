@@ -2,9 +2,9 @@
  * V2 Order - Post orders to CLOB
  *
  * Based on the working upstream implementation from Novus-Tech-LLC/Polymarket-Sniper-Bot.
- * Uses the @polymarket/clob-client's createMarketOrder API correctly:
- * - BUY orders: amount = USD to spend
- * - SELL orders: amount = shares to sell
+ * Uses the @polymarket/clob-client's createMarketOrder API:
+ * - amount = number of shares to buy/sell
+ * - price = limit price for the order
  *
  * Uses Fill-Or-Kill (FOK) order type to ensure orders fill completely or not at all.
  */
@@ -30,9 +30,9 @@ export interface PostOrderInput {
   skipDuplicateCheck?: boolean;
   logger?: Logger;
   /**
-   * The exact number of shares to sell.
-   * Required for SELL orders to specify the share amount.
-   * For BUY orders, sizeUsd is used directly.
+   * Optional: exact number of shares to sell for SELL orders.
+   * When provided, will use the minimum of this value and the calculated shares.
+   * For BUY orders, this parameter is ignored.
    */
   shares?: number;
 }
@@ -40,8 +40,8 @@ export interface PostOrderInput {
 /**
  * Post order to CLOB
  *
- * For BUY orders: uses sizeUsd as the USD amount to spend
- * For SELL orders: uses shares as the number of shares to sell (calculated from sizeUsd/price if not provided)
+ * Calculates the number of shares based on sizeUsd and current orderbook price,
+ * then executes the order using Fill-Or-Kill (FOK) execution.
  */
 export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
   const { client, tokenId, side, sizeUsd, logger, maxAcceptablePrice } = input;
@@ -158,16 +158,16 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       const levelSize = parseFloat(level.size);
 
       // Calculate order size based on available liquidity
-      // For both BUY and SELL, we work in USD terms first, then convert to shares
+      // Convert USD amount to shares using current price
       const levelValue = levelSize * levelPrice;
       const orderValue = Math.min(remaining, levelValue);
       const orderShares = orderValue / levelPrice;
 
-      // For market orders:
-      // - BUY: amount is USD to spend
-      // - SELL: amount is shares to sell
-      // We use the shares calculation for both since createMarketOrder works with shares
-      const amount = isBuy ? orderShares : (input.shares !== undefined ? Math.min(input.shares, orderShares) : orderShares);
+      // For SELL orders, optionally use the provided shares value (capped by available liquidity)
+      // For BUY orders, always use the calculated shares
+      const amount = !isBuy && input.shares !== undefined
+        ? Math.min(input.shares, orderShares)
+        : orderShares;
 
       try {
         const signedOrder = await client.createMarketOrder({
