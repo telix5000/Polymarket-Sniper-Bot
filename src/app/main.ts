@@ -439,8 +439,9 @@ async function main(): Promise<void> {
       proxyWallet: mempoolEnv.proxyWallet,
       logger,
       env: mempoolEnv,
-      // Pass position tracker to prevent buying positions we already own (avoids stacking)
+      // Pass position tracker to prevent duplicate copy trades (avoids copying same signal multiple times)
       // NOTE: Does NOT block hedging - hedges use a different tokenId (opposite outcome)
+      // NOTE: Does NOT block Position Stacking - stacking uses separate code path via PositionStackingStrategy
       positionTracker: orchestrator?.getPositionTracker(),
       // Pass dynamic reserves controller to gate BUY orders when reserves are insufficient
       // NOTE: Does NOT block hedging/SELL paths since they help recover reserves

@@ -21,8 +21,9 @@ export type TradeExecutorDeps = {
   env: RuntimeEnv;
   logger: Logger;
   /**
-   * Optional position tracker to check existing positions before buying.
-   * When provided, prevents buying tokens we already own (avoids stacking).
+   * Optional position tracker to check existing positions before copying trades.
+   * When provided, prevents copying trades into tokens we already own (avoids duplicate copy trades).
+   * This is NOT the same as Position Stacking - stacking uses a separate code path.
    * Does NOT block hedging since hedges use a different tokenId (opposite outcome).
    */
   positionTracker?: PositionTracker;
@@ -118,15 +119,18 @@ export class TradeExecutorService {
       }
     }
 
-    // Check if we already own this exact token (prevents stacking/duplicate buys)
+    // Check if we already own this exact token (prevents duplicate copy trades)
+    // PURPOSE: Avoid copying the same signal multiple times when target wallet buys more of a position you already copied.
     // NOTE: This does NOT block hedging - hedges buy a different tokenId (opposite outcome)
+    // NOTE: This does NOT block Position Stacking Strategy - stacking uses a separate code path (postOrder directly)
+    //       If you want to intentionally increase positions, use POSITION_STACKING_ENABLED=true (on by default).
     if (signal.side === "BUY" && positionTracker) {
       const existingPosition = positionTracker.getPositionByTokenId(
         signal.tokenId,
       );
       if (existingPosition && existingPosition.size > 0) {
         logger.info(
-          `[Frontrun] ⏭️ Skipping BUY - already own ${existingPosition.size.toFixed(2)} shares of token ${signal.tokenId.slice(0, 8)}... (prevents stacking)`,
+          `[Frontrun] ⏭️ Skipping copy trade - already own ${existingPosition.size.toFixed(2)} shares of token ${signal.tokenId.slice(0, 8)}... (prevents duplicate copy trades; use Position Stacking for intentional adds)`,
         );
         return;
       }
