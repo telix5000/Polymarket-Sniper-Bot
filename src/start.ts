@@ -120,6 +120,7 @@ async function buy(
   sizeUsd: number,
   reason: string,
   marketId?: string,
+  shares?: number,
 ): Promise<boolean> {
   if (!state.client) return false;
 
@@ -138,6 +139,7 @@ async function buy(
     side: "BUY",
     sizeUsd: size,
     marketId,
+    shares,
     logger,
   });
 
@@ -160,6 +162,7 @@ async function sell(
   outcome: "YES" | "NO",
   sizeUsd: number,
   reason: string,
+  shares?: number,
 ): Promise<boolean> {
   if (!state.client) return false;
 
@@ -175,6 +178,7 @@ async function sell(
     outcome,
     side: "SELL",
     sizeUsd,
+    shares,
     skipDuplicateCheck: true,
     logger,
   });
@@ -201,7 +205,7 @@ async function runAutoSell(positions: Position[]): Promise<void> {
 
   for (const p of positions) {
     if (p.curPrice >= cfg.threshold) {
-      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `AutoSell (${(p.curPrice * 100).toFixed(0)}¢)`);
+      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `AutoSell (${(p.curPrice * 100).toFixed(0)}¢)`, p.size);
     }
   }
 }
@@ -236,7 +240,7 @@ async function runStopLoss(positions: Position[]): Promise<void> {
 
   for (const p of positions) {
     if (p.pnlPct < 0 && Math.abs(p.pnlPct) >= cfg.maxLossPct) {
-      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `StopLoss (${p.pnlPct.toFixed(1)}%)`);
+      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `StopLoss (${p.pnlPct.toFixed(1)}%)`, p.size);
     }
   }
 }
@@ -251,7 +255,7 @@ async function runScalp(positions: Position[]): Promise<void> {
       p.gainCents >= cfg.minGainCents &&
       p.pnlUsd >= cfg.minProfitUsd
     ) {
-      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `Scalp (+${p.pnlPct.toFixed(1)}%)`);
+      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `Scalp (+${p.pnlPct.toFixed(1)}%)`, p.size);
     }
   }
 }
