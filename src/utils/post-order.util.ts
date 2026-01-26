@@ -983,7 +983,7 @@ async function postOrderClobInner(
         logger.warn(
           `[CLOB] SELL price warning: Top bid ${(levelPrice * 100).toFixed(1)}¢ is below ` +
             `min acceptable ${(effectiveMinAcceptablePrice * 100).toFixed(1)}¢ ` +
-            `(slippage beyond tolerance). Proceeding with sell anyway. Token: ${tokenId.slice(0, 12)}...`,
+            `(slippage beyond tolerance). Proceeding with sell anyway. Token: ${tokenId.slice(0, 16)}...`,
         );
       }
 
@@ -996,7 +996,7 @@ async function postOrderClobInner(
       // Log for debugging
       logger.debug(
         `[CLOB] SELL using top bid: price=${(levelPrice * 100).toFixed(1)}¢ size=${levelSize.toFixed(2)} ` +
-          `orderValue=$${orderValue.toFixed(2)} remaining=$${remaining.toFixed(2)} tokenId=${tokenId.slice(0, 12)}...`,
+          `orderValue=$${orderValue.toFixed(2)} remaining=$${remaining.toFixed(2)} tokenId=${tokenId.slice(0, 16)}...`,
       );
     }
 

@@ -306,7 +306,7 @@ test("postOrder SELL proceeds with top bid even when bids are below computed lim
   const client = {
     getOrderBook,
     getBalanceAllowance: async () => ({ balance: "100", allowance: "100" }),
-    createMarketOrder: async (args: { price: number }) => {
+    createMarketOrder: async (args: { side: string; tokenID: string; amount: number; price: number }) => {
       // Capture the price at which order was created
       orderSubmittedAtPrice = String(args.price);
       return { signed: true };
