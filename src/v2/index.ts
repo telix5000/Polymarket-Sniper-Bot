@@ -1506,8 +1506,8 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
     state.zeroPriceTokens.delete(tokenId);
   }
   
-  // Risk check (SELL orders skip position cap check since they reduce positions, not increase them)
-  // SELL orders are always allowed for protective exits, but still rate limited
+  // Risk check: regular SELL orders skip position cap but respect other limits;
+  // protective exits (StopLoss/AutoSell/ForceLiq) bypass all risk checks (including rate limits)
   const riskCheck = checkRiskLimits(cfg, true); // skipPositionCap=true for SELL orders
   if (!riskCheck.allowed && !reason.includes("StopLoss") && !reason.includes("AutoSell") && !reason.includes("ForceLiq")) {
     log(`⚠️ SELL blocked | ${riskCheck.reason}`);
