@@ -946,7 +946,7 @@ export class HedgingStrategy {
       // Only liquidate as a last resort if hedge fails
       // 
       // Compute isCatastrophicLoss for the liquidation decision (uses forceLiquidationPct = 50%)
-      // This is separate from isSignificantLoss (emergencyLossPct = 30%) used for hold time bypass
+      // This is separate from shouldBypassHoldTime (triggerLossPct = 20%) used for hold time bypass
       const isCatastrophicLoss = position.pnlPct < 0 && lossPct >= this.config.forceLiquidationPct;
 
       // === HEDGE OPERATION LOCK ===
@@ -1494,6 +1494,13 @@ export class HedgingStrategy {
     // NOTE: For hedge up, we SKIP applyReserveAwareSizing() because we want to use
     // the full wallet balance. Reserves are for protecting against losses, not limiting
     // opportunistic wins on high-probability positions.
+    //
+    // RISK WARNING: This means hedge up can use the entire available balance, potentially
+    // leaving no reserves for hedging losses on other positions. This is intentional:
+    // - High-probability wins (85%+ price) are near-certain to resolve to $1
+    // - Missing the opportunity to maximize a win is worse than temporary reserve depletion
+    // - Reserves will be replenished when the position resolves
+    // - The absoluteMaxUsd config still caps individual hedge up amounts
 
     // Check minimum
     if (buyUsd < this.config.minHedgeUsd) {
