@@ -111,13 +111,18 @@ describe("V2 POL Rebalance Logic", () => {
 });
 
 describe("V2 POL Swap Calculation", () => {
+  // Constants matching the V2 implementation
+  const POL_PRICE_ESTIMATE_USD = 1.5;
+  const MIN_SWAP_USD = 5;
+  const AVAILABLE_USDC_BUFFER = 0.9;
+
   // Helper function that mirrors the V2 swap calculation
   function calculateSwapAmount(
     currentPol: number,
     targetPol: number,
     maxSwapUsd: number,
     availableUsdc: number,
-    estimatedPolPrice: number = 1.5 // Assume 1 POL ≈ $1.50
+    estimatedPolPrice: number = POL_PRICE_ESTIMATE_USD
   ): { usdcToSwap: number; reason: string } {
     const polNeeded = targetPol - currentPol;
     if (polNeeded <= 0) {
@@ -129,10 +134,10 @@ describe("V2 POL Swap Calculation", () => {
 
     // Ensure we have enough USDC
     if (usdcToSwap > availableUsdc) {
-      usdcToSwap = Math.max(availableUsdc * 0.9, 0);
+      usdcToSwap = Math.max(availableUsdc * AVAILABLE_USDC_BUFFER, 0);
     }
 
-    if (usdcToSwap < 5) {
+    if (usdcToSwap < MIN_SWAP_USD) {
       return { usdcToSwap: 0, reason: "SWAP_TOO_SMALL" };
     }
 

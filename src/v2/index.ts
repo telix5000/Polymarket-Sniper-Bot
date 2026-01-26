@@ -1227,38 +1227,46 @@ async function checkAndRebalancePol(cfg: Config): Promise<void> {
   
   // Get swap quote to determine USDC needed
   try {
-    // Start with a reasonable estimate (POL is usually ~$0.50-1.00)
-    let usdcToSwap = Math.min(polNeeded * 1.5, cfg.polReserve.maxSwapUsd); // Rough estimate: 1 POL ≈ $1.50
+    // POL price estimate for initial calculation (actual price comes from DEX quote)
+    // POL typically trades between $0.30-$1.50 - we use a conservative estimate
+    const POL_PRICE_ESTIMATE_USD = 1.5;
+    const MIN_SWAP_USD = 5; // Minimum swap to avoid dust transactions
+    const AVAILABLE_USDC_BUFFER = 0.9; // Use 90% of available USDC to leave buffer
+    const MIN_POL_QUOTE_THRESHOLD = 0.5; // Require at least 50% of needed POL from quote
+    const MIN_POL_RETRY_THRESHOLD = 0.3; // On retry, accept 30% of needed POL
+    
+    // Start with a reasonable estimate based on current POL price
+    let usdcToSwap = Math.min(polNeeded * POL_PRICE_ESTIMATE_USD, cfg.polReserve.maxSwapUsd);
     
     // Ensure we have enough USDC
     const availableUsdc = state.balance - (state.balance * cfg.reservePct / 100);
     if (usdcToSwap > availableUsdc) {
       log(`⚠️ POL Rebalance | Insufficient USDC (need ~${$(usdcToSwap)}, have ${$(availableUsdc)} available)`);
-      // Try with available amount
-      usdcToSwap = Math.max(availableUsdc * 0.9, 0); // Use 90% of available to leave buffer
+      // Try with available amount, leaving a small buffer
+      usdcToSwap = Math.max(availableUsdc * AVAILABLE_USDC_BUFFER, 0);
     }
     
-    if (usdcToSwap < 5) {
+    if (usdcToSwap < MIN_SWAP_USD) {
       log(`⚠️ POL Rebalance | Swap amount too small (${$(usdcToSwap)}), skipping`);
       return;
     }
     
-    // Get actual quote
+    // Get actual quote from DEX
     const quote = await getSwapQuote(usdcToSwap);
     
-    // Check if we'll get enough POL
-    if (quote.polAmount < polNeeded * 0.5) {
+    // Check if we'll get enough POL from this swap
+    if (quote.polAmount < polNeeded * MIN_POL_QUOTE_THRESHOLD) {
       log(`⚠️ POL Rebalance | Quote too low: ${quote.polAmount.toFixed(2)} POL for ${$(usdcToSwap)}`);
       // Increase swap amount and try again
       usdcToSwap = Math.min(usdcToSwap * 2, cfg.polReserve.maxSwapUsd, availableUsdc);
       const newQuote = await getSwapQuote(usdcToSwap);
-      if (newQuote.polAmount < polNeeded * 0.3) {
+      if (newQuote.polAmount < polNeeded * MIN_POL_RETRY_THRESHOLD) {
         log(`❌ POL Rebalance | Cannot get enough POL, skipping`);
         return;
       }
     }
     
-    // Calculate minimum POL out with slippage
+    // Calculate minimum POL out with slippage protection
     const minPolOut = quote.polAmount * (1 - cfg.polReserve.slippagePct / 100);
     
     log(`💱 POL Rebalance | Swapping ${$(usdcToSwap)} USDC → ~${quote.polAmount.toFixed(2)} POL (min: ${minPolOut.toFixed(2)})`);
