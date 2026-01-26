@@ -1,0 +1,248 @@
+{
+  "diagnostic_timestamp": "2026-01-26T17:27:45Z",
+  "issue": "WALLET_ADDRESS_MISMATCH",
+  "severity": "CRITICAL",
+  "status": "ROOT_CAUSE_IDENTIFIED",
+  
+  "symptoms": {
+    "reported_balance": "$0.00",
+    "reported_allowance": "$0.00",
+    "actual_balance_elsewhere": "unknown (user reports funds exist)",
+    "error_message": "INSUFFICIENT_BALANCE_OR_ALLOWANCE",
+    "user_complaint": "it isn't looking at the wallet in the right spot"
+  },
+  
+  "root_cause": {
+    "issue_type": "ADDRESS_MISMATCH_IN_BALANCE_CHECKS",
+    "summary": "Balance checking code queries the SIGNER address (derived from private key), but in proxy/Safe mode, funds are held in the FUNDER address. The bot checks the wrong address.",
+    
+    "address_derivation_chain": [
+      {
+        "step": 1,
+        "file": "src/lib/auth.ts",
+        "lines": "61-62",
+        "action": "Derive signer address from PRIVATE_KEY",
+        "code": "const wallet = new Wallet(normalizedKey, provider); const address = wallet.address;",
+        "result_address": "0x9B9883152BfFeFB1cBE2A96FC0391537012ee5D1",
+        "note": "This is the EOA (Externally Owned Account) derived from the private key"
+      },
+      {
+        "step": 2,
+        "file": "src/lib/auth.ts",
+        "lines": "73-75",
+        "action": "Read funder/proxy address from environment",
+        "code": "const funderAddressRaw = process.env.POLYMARKET_PROXY_ADDRESS ?? process.env.CLOB_FUNDER_ADDRESS; const funderAddress = funderAddressRaw?.toLowerCase();",
+        "result_address": "DEPENDS_ON_ENV_VAR",
+        "note": "If set, this is the address that holds the USDC for trading"
+      },
+      {
+        "step": 3,
+        "file": "src/lib/auth.ts",
+        "lines": "79-84",
+        "action": "Determine effective address for trading",
+        "code": "const effectiveSignatureType = signatureType > 0 && funderAddress ? signatureType : 0; const effectiveAddress = effectiveSignatureType > 0 && funderAddress ? funderAddress : address;",
+        "result_address": "FUNDER_ADDRESS (if proxy mode) OR SIGNER_ADDRESS (if EOA mode)",
+        "note": "This is the CORRECT address to check for balances"
+      },
+      {
+        "step": 4,
+        "file": "src/lib/auth.ts",
+        "lines": "135",
+        "action": "Return effectiveAddress as state.address",
+        "code": "address: normalizedEffectiveAddress",
+        "result_address": "Stored in state.address",
+        "note": "state.address contains the CORRECT address"
+      }
+    ],
+    
+    "balance_check_bug": [
+      {
+        "step": 1,
+        "file": "src/start.ts",
+        "line": "429",
+        "code": "const usdc = await getUsdcBalance(state.wallet);",
+        "problem": "Passes state.wallet (the Wallet object) instead of using state.address",
+        "note": "state.wallet is the SIGNER wallet, not the FUNDER wallet"
+      },
+      {
+        "step": 2,
+        "file": "src/lib/balance.ts",
+        "line": "14",
+        "code": "const balance = await contract.balanceOf(wallet.address);",
+        "problem": "ALWAYS checks wallet.address (the signer), ignoring effectiveAddress",
+        "queried_address": "0x9B9883152BfFeFB1cBE2A96FC0391537012ee5D1 (signer)",
+        "should_query_address": "FUNDER_ADDRESS (if in proxy mode)",
+        "result": "Returns $0.00 because signer address has no USDC"
+      }
+    ],
+    
+    "why_balance_is_zero": "The code checks wallet.address (signer EOA) which has $0.00 USDC. The actual USDC is in the funder/proxy address, which is NEVER queried by getUsdcBalance()."
+  },
+  
+  "affected_code_paths": [
+    {
+      "location": "src/start.ts:429",
+      "function": "startup balance check",
+      "impact": "Shows $0.00 balance on startup even if funder has funds"
+    },
+    {
+      "location": "src/start.ts:365",
+      "function": "periodic balance refresh",
+      "impact": "Shows $0.00 balance during runtime even if funder has funds"
+    },
+    {
+      "location": "src/lib/balance.ts:11-18",
+      "function": "getUsdcBalance",
+      "impact": "Core issue - always checks wallet.address instead of effectiveAddress"
+    },
+    {
+      "location": "src/lib/balance.ts:24-30",
+      "function": "getPolBalance",
+      "impact": "Also checks wallet.address - will show $0.00 POL if signer has no gas"
+    }
+  ],
+  
+  "configuration_modes": {
+    "eoa_mode": {
+      "signature_type": 0,
+      "env_var": "POLYMARKET_SIGNATURE_TYPE=0 or unset",
+      "funder_address": "not used",
+      "effective_address": "signer address (derived from PRIVATE_KEY)",
+      "bug_impact": "NONE - signer holds the funds, balance check works correctly",
+      "note": "This mode works correctly because signer == funder"
+    },
+    "proxy_safe_mode": {
+      "signature_type": "1 (proxy) or 2 (Safe)",
+      "env_var": "POLYMARKET_SIGNATURE_TYPE=1 or 2 AND POLYMARKET_PROXY_ADDRESS=0x...",
+      "funder_address": "value of POLYMARKET_PROXY_ADDRESS",
+      "effective_address": "funder address",
+      "bug_impact": "CRITICAL - funder holds the funds, but balance check queries signer",
+      "note": "This is where the bug manifests - signer has $0, funder has USDC"
+    }
+  },
+  
+  "evidence_from_logs": {
+    "log_line_1": "[17:26:49] [CLOB] Order skipped (INSUFFICIENT_BALANCE_OR_ALLOWANCE): need=10.00 have=0.00 allowance=0.00 asset=COLLATERAL signer=0x9B9883152BfFeFB1cBE2A96FC0391537012ee5D1 collateral=0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+    "log_line_2": "[17:27:45] ⚠️ Balance: $0.00 | 🔒 Allowance: $0.00",
+    "interpretation": [
+      "signer=0x9B9883152BfFeFB1cBE2A96FC0391537012ee5D1 is the SIGNER address (derived from private key)",
+      "Balance check returned $0.00 - this is the balance at the SIGNER address",
+      "User says 'it isn't looking at the wallet in the right spot' - confirms funds are elsewhere",
+      "The 'right spot' is the FUNDER/PROXY address configured in POLYMARKET_PROXY_ADDRESS"
+    ]
+  },
+  
+  "required_fix": {
+    "summary": "Update balance checking functions to accept and use an explicit address parameter",
+    "changes": [
+      {
+        "file": "src/lib/balance.ts",
+        "function": "getUsdcBalance",
+        "change": "Add optional address parameter, use it instead of wallet.address",
+        "before": "export async function getUsdcBalance(wallet: Wallet): Promise<number>",
+        "after": "export async function getUsdcBalance(wallet: Wallet, address?: string): Promise<number>",
+        "implementation": "const checkAddress = address || wallet.address; const balance = await contract.balanceOf(checkAddress);"
+      },
+      {
+        "file": "src/lib/balance.ts",
+        "function": "getPolBalance",
+        "change": "Add optional address parameter, use it instead of wallet.address",
+        "before": "export async function getPolBalance(wallet: Wallet): Promise<number>",
+        "after": "export async function getPolBalance(wallet: Wallet, address?: string): Promise<number>",
+        "implementation": "const checkAddress = address || wallet.address; const balance = await wallet.provider?.getBalance(checkAddress);"
+      },
+      {
+        "file": "src/start.ts",
+        "line": "429-430",
+        "change": "Pass state.address (effectiveAddress) to balance functions",
+        "before": "const usdc = await getUsdcBalance(state.wallet); const pol = await getPolBalance(state.wallet);",
+        "after": "const usdc = await getUsdcBalance(state.wallet, state.address); const pol = await getPolBalance(state.wallet, state.address);"
+      },
+      {
+        "file": "src/start.ts",
+        "line": "365",
+        "change": "Pass state.address to balance refresh",
+        "before": "const balance = state.wallet ? await getUsdcBalance(state.wallet) : 0;",
+        "after": "const balance = state.wallet ? await getUsdcBalance(state.wallet, state.address) : 0;"
+      }
+    ],
+    "backward_compatibility": "Making address optional ensures EOA mode (where signer == funder) continues to work without changes"
+  },
+  
+  "immediate_workarounds": {
+    "option_1": {
+      "action": "Move USDC to signer address",
+      "how": "Transfer USDC from funder/proxy to 0x9B9883152BfFeFB1cBE2A96FC0391537012ee5D1",
+      "tradeoff": "Works immediately but requires on-chain transaction and may not align with security model"
+    },
+    "option_2": {
+      "action": "Switch to EOA mode",
+      "how": "Unset POLYMARKET_SIGNATURE_TYPE and POLYMARKET_PROXY_ADDRESS, use signer directly",
+      "tradeoff": "Requires moving funds and changes security model"
+    },
+    "option_3": {
+      "action": "Apply the code fix",
+      "how": "Implement the changes in required_fix section",
+      "tradeoff": "Requires code changes but properly fixes the root cause"
+    }
+  },
+  
+  "verification_steps": [
+    {
+      "step": 1,
+      "action": "Check environment variables",
+      "commands": [
+        "echo $POLYMARKET_SIGNATURE_TYPE",
+        "echo $POLYMARKET_PROXY_ADDRESS"
+      ],
+      "expected": "If POLYMARKET_SIGNATURE_TYPE is 1 or 2 and POLYMARKET_PROXY_ADDRESS is set, you're in proxy mode"
+    },
+    {
+      "step": 2,
+      "action": "Check signer address USDC balance on-chain",
+      "url": "https://polygonscan.com/token/0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174?a=0x9B9883152BfFeFB1cBE2A96FC0391537012ee5D1",
+      "expected": "$0.00 or very low"
+    },
+    {
+      "step": 3,
+      "action": "Check funder address USDC balance on-chain",
+      "url": "https://polygonscan.com/token/0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174?a=FUNDER_ADDRESS",
+      "expected": "Significant USDC balance"
+    },
+    {
+      "step": 4,
+      "action": "After applying fix, verify logs show correct balance",
+      "expected_log": "[17:27:45] ✅ Balance: $XXX.XX | 🔒 Allowance: $XXX.XX"
+    }
+  ],
+  
+  "prevention_measures": [
+    {
+      "measure": "Add explicit logging of which address is being checked",
+      "example": "logger.debug(`Checking USDC balance at ${checkAddress}`)"
+    },
+    {
+      "measure": "Add assertion that balance check address matches effective trading address",
+      "example": "if (checkAddress !== state.address) { logger.warn('Balance check address mismatch!') }"
+    },
+    {
+      "measure": "Add comprehensive test coverage for proxy mode",
+      "test_cases": [
+        "EOA mode: signer == funder, balance check works",
+        "Proxy mode: signer != funder, balance check uses funder address",
+        "Safe mode: signer != funder, balance check uses funder address"
+      ]
+    }
+  ],
+  
+  "related_files": [
+    "src/lib/auth.ts - Authentication and address determination",
+    "src/lib/balance.ts - Balance checking (contains bug)",
+    "src/start.ts - Main entry point, calls balance functions",
+    "src/lib/constants.ts - Contains POLYGON.USDC_ADDRESS definition",
+    "legacy/AUTH_BALANCE_FIX.md - Previous similar issue documentation"
+  ],
+  
+  "confidence": "99%",
+  "next_action": "Apply the code fix to src/lib/balance.ts and src/start.ts as specified above"
+}

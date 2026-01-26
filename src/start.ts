@@ -362,7 +362,7 @@ async function runCycle(): Promise<void> {
 
 async function printSummary(): Promise<void> {
   const positions = await getPositions(state.address, true);
-  const balance = state.wallet ? await getUsdcBalance(state.wallet) : 0;
+  const balance = state.wallet ? await getUsdcBalance(state.wallet, state.address) : 0;
 
   const totalValue = positions.reduce((s, p) => s + p.value, 0);
   const totalPnl = positions.reduce((s, p) => s + p.pnlUsd, 0);
@@ -425,9 +425,9 @@ async function main(): Promise<void> {
 
   logger.info(`Wallet: ${state.address.slice(0, 10)}...`);
 
-  // Balances
-  const usdc = await getUsdcBalance(state.wallet);
-  const pol = await getPolBalance(state.wallet);
+  // Balances - check the effective address (funder), not just signer
+  const usdc = await getUsdcBalance(state.wallet, state.address);
+  const pol = await getPolBalance(state.wallet, state.address);
   logger.info(`USDC: ${$(usdc)}`);
   logger.info(`POL: ${pol.toFixed(4)}`);
   state.startBalance = usdc;

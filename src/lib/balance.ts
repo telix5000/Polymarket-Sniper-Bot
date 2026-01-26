@@ -6,12 +6,12 @@ import { Contract, type Wallet } from "ethers";
 import { POLYGON, ERC20_ABI } from "./constants";
 
 /**
- * Get USDC balance
+ * Get USDC balance for a specific address
  */
-export async function getUsdcBalance(wallet: Wallet): Promise<number> {
+export async function getUsdcBalance(wallet: Wallet, address: string): Promise<number> {
   try {
     const contract = new Contract(POLYGON.USDC_ADDRESS, ERC20_ABI, wallet.provider);
-    const balance = await contract.balanceOf(wallet.address);
+    const balance = await contract.balanceOf(address);
     return Number(balance) / 10 ** POLYGON.USDC_DECIMALS;
   } catch {
     return 0;
@@ -19,11 +19,11 @@ export async function getUsdcBalance(wallet: Wallet): Promise<number> {
 }
 
 /**
- * Get POL (native token) balance
+ * Get POL (native token) balance for a specific address
  */
-export async function getPolBalance(wallet: Wallet): Promise<number> {
+export async function getPolBalance(wallet: Wallet, address: string): Promise<number> {
   try {
-    const balance = await wallet.provider?.getBalance(wallet.address);
+    const balance = await wallet.provider?.getBalance(address);
     return balance ? Number(balance) / 1e18 : 0;
   } catch {
     return 0;
