@@ -11,13 +11,37 @@
  * 2. Starting VPN (which changes the default route)
  * 3. Adding explicit routes for bypass hosts via the pre-VPN gateway
  *
- * Environment Variables:
+ * Environment Variables for VPN bypass:
  * - VPN_BYPASS_RPC: Set to "false" to route RPC through VPN (default: true)
  * - VPN_BYPASS_POLYMARKET_READS: Set to "false" to route reads through VPN (default: true)
+ *
+ * WireGuard configuration (either file or env vars):
+ * - WG_CONFIG: Path to WireGuard config file
+ * - WIREGUARD_ENABLED: Set to "true" to enable WireGuard via env vars
+ * - WIREGUARD_INTERFACE_NAME: Interface name (default: wg0)
+ * - WIREGUARD_ADDRESS: Interface address (e.g., 10.0.0.2/24)
+ * - WIREGUARD_PRIVATE_KEY: Interface private key
+ * - WIREGUARD_MTU: MTU (optional)
+ * - WIREGUARD_DNS: DNS servers (optional)
+ * - WIREGUARD_PEER_PUBLIC_KEY: Peer public key
+ * - WIREGUARD_PEER_PRESHARED_KEY: Peer preshared key (optional)
+ * - WIREGUARD_PEER_ENDPOINT: Peer endpoint (host:port)
+ * - WIREGUARD_ALLOWED_IPS: Allowed IP ranges (e.g., 0.0.0.0/0)
+ * - WIREGUARD_PERSISTENT_KEEPALIVE: Keepalive interval (optional)
+ *
+ * OpenVPN configuration (either file or env vars):
+ * - OVPN_CONFIG: Path to OpenVPN config file
+ * - OPENVPN_ENABLED: Set to "true" to enable OpenVPN via env vars
+ * - OPENVPN_CONFIG: Full OpenVPN config contents (multiline)
+ * - OPENVPN_CONFIG_PATH: Path to write generated config (default: /etc/openvpn/client.ovpn)
+ * - OPENVPN_USERNAME: VPN username (optional)
+ * - OPENVPN_PASSWORD: VPN password (optional)
+ * - OPENVPN_AUTH_PATH: Path to auth file (default: /etc/openvpn/auth.txt)
  */
 
 import { execSync, spawn } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, writeFileSync, mkdirSync } from "fs";
+import { dirname } from "path";
 import type { Logger } from "./types";
 
 // Track VPN status globally
@@ -121,10 +145,125 @@ export async function capturePreVpnRouting(
 }
 
 /**
- * Start WireGuard if config exists
+ * Generate WireGuard config from environment variables
+ * Returns the config path if successful, null otherwise
+ */
+function generateWireguardConfig(logger?: Logger): string | null {
+  // Check if WireGuard is enabled via env var
+  const enabled = process.env.WIREGUARD_ENABLED?.toLowerCase() === "true";
+  if (!enabled) {
+    return null;
+  }
+
+  // Required env vars
+  const privateKey = process.env.WIREGUARD_PRIVATE_KEY;
+  const address = process.env.WIREGUARD_ADDRESS;
+  const peerPublicKey = process.env.WIREGUARD_PEER_PUBLIC_KEY;
+  const peerEndpoint = process.env.WIREGUARD_PEER_ENDPOINT;
+  const allowedIPs = process.env.WIREGUARD_ALLOWED_IPS;
+
+  if (!privateKey || !address || !peerPublicKey || !peerEndpoint || !allowedIPs) {
+    logger?.warn?.(
+      "WIREGUARD_ENABLED=true but missing required env vars: " +
+        "WIREGUARD_PRIVATE_KEY, WIREGUARD_ADDRESS, WIREGUARD_PEER_PUBLIC_KEY, " +
+        "WIREGUARD_PEER_ENDPOINT, WIREGUARD_ALLOWED_IPS"
+    );
+    return null;
+  }
+
+  // Optional env vars
+  const interfaceName = process.env.WIREGUARD_INTERFACE_NAME ?? "wg0";
+  const mtu = process.env.WIREGUARD_MTU;
+  const dns = process.env.WIREGUARD_DNS;
+  const presharedKey = process.env.WIREGUARD_PEER_PRESHARED_KEY;
+  const persistentKeepalive = process.env.WIREGUARD_PERSISTENT_KEEPALIVE;
+
+  // Build config
+  let config = "[Interface]\n";
+  config += `PrivateKey = ${privateKey}\n`;
+  config += `Address = ${address}\n`;
+  if (mtu) config += `MTU = ${mtu}\n`;
+  if (dns) config += `DNS = ${dns}\n`;
+
+  config += "\n[Peer]\n";
+  config += `PublicKey = ${peerPublicKey}\n`;
+  if (presharedKey) config += `PresharedKey = ${presharedKey}\n`;
+  config += `Endpoint = ${peerEndpoint}\n`;
+  config += `AllowedIPs = ${allowedIPs}\n`;
+  if (persistentKeepalive) config += `PersistentKeepalive = ${persistentKeepalive}\n`;
+
+  // Write config
+  const configDir = "/etc/wireguard";
+  const configPath = `${configDir}/${interfaceName}.conf`;
+
+  try {
+    // Ensure directory exists
+    if (!existsSync(configDir)) {
+      mkdirSync(configDir, { recursive: true, mode: 0o700 });
+    }
+
+    // Write config with secure permissions
+    writeFileSync(configPath, config, { mode: 0o600 });
+    logger?.info?.(`Generated WireGuard config at ${configPath}`);
+
+    return configPath;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger?.warn?.(`Failed to write WireGuard config: ${msg}`);
+    return null;
+  }
+}
+
+/**
+ * Start WireGuard if config exists or can be generated from env vars
  */
 export async function startWireguard(logger?: Logger): Promise<boolean> {
-  const configPath = process.env.WG_CONFIG ?? "/etc/wireguard/wg0.conf";
+  // Check for force restart
+  const forceRestart = process.env.WIREGUARD_FORCE_RESTART?.toLowerCase() === "true";
+  const interfaceName = process.env.WIREGUARD_INTERFACE_NAME ?? "wg0";
+
+  if (forceRestart) {
+    try {
+      execSync(`wg-quick down ${interfaceName} 2>/dev/null || true`, { stdio: "pipe" });
+      logger?.info?.(`Force restarted WireGuard interface ${interfaceName}`);
+    } catch {
+      // Ignore errors if interface doesn't exist
+    }
+  }
+
+  // First, try explicit config path
+  let configPath = process.env.WG_CONFIG ?? process.env.WIREGUARD_CONFIG_PATH;
+  
+  // If no explicit path, check for config file content from env
+  if (!configPath && process.env.WIREGUARD_CONFIG) {
+    // Write the full config content to file
+    const configDir = "/etc/wireguard";
+    configPath = `${configDir}/${interfaceName}.conf`;
+    try {
+      if (!existsSync(configDir)) {
+        mkdirSync(configDir, { recursive: true, mode: 0o700 });
+      }
+      writeFileSync(configPath, process.env.WIREGUARD_CONFIG, { mode: 0o600 });
+      logger?.info?.(`Wrote WireGuard config from WIREGUARD_CONFIG env var`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger?.warn?.(`Failed to write WIREGUARD_CONFIG: ${msg}`);
+      configPath = undefined;
+    }
+  }
+  
+  // If still no config, try to generate from individual env vars
+  if (!configPath || !existsSync(configPath)) {
+    const generatedPath = generateWireguardConfig(logger);
+    if (generatedPath) {
+      configPath = generatedPath;
+    }
+  }
+
+  // Fall back to default path
+  if (!configPath) {
+    configPath = "/etc/wireguard/wg0.conf";
+  }
 
   if (!existsSync(configPath)) {
     return false;
@@ -145,10 +284,80 @@ export async function startWireguard(logger?: Logger): Promise<boolean> {
 }
 
 /**
- * Start OpenVPN if config exists
+ * Generate OpenVPN config and auth files from environment variables
+ * Returns the config path if successful, null otherwise
+ */
+function generateOpenvpnConfig(logger?: Logger): string | null {
+  // Check if OpenVPN is enabled via env var
+  const enabled = process.env.OPENVPN_ENABLED?.toLowerCase() === "true";
+  if (!enabled) {
+    return null;
+  }
+
+  // Check for full config content
+  const configContent = process.env.OPENVPN_CONFIG;
+  if (!configContent) {
+    logger?.warn?.(
+      "OPENVPN_ENABLED=true but OPENVPN_CONFIG env var not set. " +
+        "Provide the full OpenVPN config content."
+    );
+    return null;
+  }
+
+  const configDir = "/etc/openvpn";
+  const configPath = process.env.OPENVPN_CONFIG_PATH ?? `${configDir}/client.ovpn`;
+  const authPath = process.env.OPENVPN_AUTH_PATH ?? `${configDir}/auth.txt`;
+
+  try {
+    // Ensure directory exists
+    const targetDir = dirname(configPath);
+    if (!existsSync(targetDir)) {
+      mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+    }
+
+    // Write config with secure permissions
+    writeFileSync(configPath, configContent, { mode: 0o600 });
+    logger?.info?.(`Generated OpenVPN config at ${configPath}`);
+
+    // Handle auth file if username/password provided
+    const username = process.env.OPENVPN_USERNAME;
+    const password = process.env.OPENVPN_PASSWORD;
+    if (username && password) {
+      const authDir = dirname(authPath);
+      if (!existsSync(authDir)) {
+        mkdirSync(authDir, { recursive: true, mode: 0o700 });
+      }
+      writeFileSync(authPath, `${username}\n${password}\n`, { mode: 0o600 });
+      logger?.info?.(`Generated OpenVPN auth file at ${authPath}`);
+    }
+
+    return configPath;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger?.warn?.(`Failed to write OpenVPN config: ${msg}`);
+    return null;
+  }
+}
+
+/**
+ * Start OpenVPN if config exists or can be generated from env vars
  */
 export async function startOpenvpn(logger?: Logger): Promise<boolean> {
-  const configPath = process.env.OVPN_CONFIG ?? "/etc/openvpn/client.ovpn";
+  // First, try explicit config path
+  let configPath = process.env.OVPN_CONFIG ?? process.env.OPENVPN_CONFIG_PATH;
+  
+  // If no explicit path, try to generate from env vars
+  if (!configPath || !existsSync(configPath)) {
+    const generatedPath = generateOpenvpnConfig(logger);
+    if (generatedPath) {
+      configPath = generatedPath;
+    }
+  }
+
+  // Fall back to default path
+  if (!configPath) {
+    configPath = "/etc/openvpn/client.ovpn";
+  }
 
   if (!existsSync(configPath)) {
     return false;
@@ -157,7 +366,17 @@ export async function startOpenvpn(logger?: Logger): Promise<boolean> {
   try {
     logger?.info?.("Starting OpenVPN...");
 
-    const proc = spawn("openvpn", ["--config", configPath, "--daemon"], {
+    // Build command arguments
+    const args = ["--config", configPath, "--daemon"];
+    
+    // Add extra args if provided
+    const extraArgs = process.env.OPENVPN_EXTRA_ARGS;
+    if (extraArgs) {
+      // Split extra args on whitespace, being careful with quoted strings
+      args.push(...extraArgs.split(/\s+/).filter(Boolean));
+    }
+
+    const proc = spawn("openvpn", args, {
       stdio: "pipe",
       detached: true,
     });
@@ -329,7 +548,10 @@ export function checkVpnForTrading(logger?: Logger): string[] {
       "⚠️  No VPN active - Polymarket API requests may be geo-blocked",
     );
     warnings.push(
-      "   Configure WireGuard (WG_CONFIG) or OpenVPN (OVPN_CONFIG) for reliable trading",
+      "   Configure WireGuard (WIREGUARD_ENABLED=true + WIREGUARD_* vars, or WG_CONFIG path)",
+    );
+    warnings.push(
+      "   Or OpenVPN (OPENVPN_ENABLED=true + OPENVPN_CONFIG, or OVPN_CONFIG path)",
     );
   }
 
