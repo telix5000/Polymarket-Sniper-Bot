@@ -2,43 +2,47 @@
 
 ## Active Patches
 
-### @polymarket/clob-client@5.2.1
+### @polymarket/clob-client+4.22.8.patch
 
-This patch includes two critical fixes:
+This patch fixes the API key derivation order to eliminate noisy 400 errors during authentication.
 
-#### Fix 1: Request Canonicalization for CLOB Authentication
+#### Fix: createOrDeriveApiKey() Order Reversal
 
-**Purpose**: Fix request canonicalization for CLOB authentication
+**Purpose**: Fix API key derivation order to prevent noisy 400 errors when keys already exist
 
-**Problem**: The ClobClient library was creating HMAC signatures using only the endpoint path, but passing query parameters separately to axios. This caused a signature mismatch because:
+**Problem**: The `createOrDeriveApiKey()` method tries to create a new API key first, then falls back to deriving. When an API key already exists, `createApiKey()` fails with a 400 "Could not create api key" error, which is logged to the console before the method falls back to `deriveApiKey()`.
 
-1. The signature was computed on `/balance-allowance`
-2. But axios sent the request to `/balance-allowance?asset_type=COLLATERAL&signature_type=0`
-3. The server rejected with 401 "Unauthorized/Invalid api key"
+**Original Code**:
+```javascript
+createOrDeriveApiKey(nonce) {
+    return this.createApiKey(nonce).then(response => {
+        if (!response.key) {
+            return this.deriveApiKey(nonce);
+        }
+        return response;
+    });
+}
+```
 
-**Solution**:
+**Patched Code**:
+```javascript
+createOrDeriveApiKey(nonce) {
+    // Patched: Try deriveApiKey first (for existing keys)
+    // then fall back to createApiKey (for new wallets)
+    // This avoids noisy 400 errors when key already exists
+    try {
+        const derived = yield this.deriveApiKey(nonce);
+        if (derived && derived.key) {
+            return derived;
+        }
+    } catch (e) {
+        // Derivation failed - wallet may be new, try creating
+    }
+    return this.createApiKey(nonce);
+}
+```
 
-- Added `buildCanonicalQueryString()` helper function that creates deterministic, sorted query strings
-- Modified `getBalanceAllowance()` to:
-  1. Build complete query string from params
-  2. Include query string in `requestPath` passed to `createL2Headers` for signing
-  3. Construct full URL manually (without using params object) to avoid axios re-serialization
-
-**Result**: The signed path now exactly matches the actual HTTP request URL, ensuring signature validation succeeds.
-
-#### Fix 2: createOrDeriveApiKey() Workaround
-
-**Purpose**: Fix API key derivation order to prevent failures when keys already exist
-
-**Problem**: The `createOrDeriveApiKey()` method tries to create a new API key first, then falls back to deriving. When an API key already exists, `createApiKey()` fails, causing the entire method to fail before attempting `deriveApiKey()`.
-
-**Solution**:
-
-- Changed `createOrDeriveApiKey()` to try `deriveApiKey()` first (for existing keys)
-- Only falls back to `createApiKey()` if derivation fails (for new wallets)
-- Uses try-catch pattern for proper error handling
-
-**Result**: Existing wallets can successfully derive their API keys without errors.
+**Result**: Existing wallets derive their API keys silently without 400 errors being logged. New wallets still get keys created correctly.
 
 **References**:
 
@@ -48,4 +52,4 @@ This patch includes two critical fixes:
 
 **Files modified**:
 
-- `dist/client.js`: Added `buildCanonicalQueryString()` helper, patched `getBalanceAllowance()` and `createOrDeriveApiKey()` methods
+- `dist/client.js`: Modified `createOrDeriveApiKey()` to try derive first, then create
