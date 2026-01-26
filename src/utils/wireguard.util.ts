@@ -323,10 +323,10 @@ const canWriteResolvConf = async (): Promise<boolean> => {
   }
 };
 
-export async function startWireguard(logger: Logger): Promise<void> {
+export async function startWireguard(logger: Logger): Promise<boolean> {
   const env = getWireguardEnv();
   if (!env.enabled) {
-    return;
+    return false;
   }
 
   try {
@@ -391,21 +391,23 @@ export async function startWireguard(logger: Logger): Promise<void> {
             logger.error(
               "WireGuard failed because ip6tables-restore is missing. Install iptables/ip6tables in the container or remove IPv6 entries from WIREGUARD_ADDRESS/WIREGUARD_ALLOWED_IPS.",
             );
-            return;
+            return false;
           }
           throw retryErr;
         }
-        return;
+        return true;
       }
       if (isMissingIp6tablesRestore(err)) {
         logger.error(
           "WireGuard failed because ip6tables-restore is missing. Install iptables/ip6tables in the container or remove IPv6 entries from WIREGUARD_ADDRESS/WIREGUARD_ALLOWED_IPS.",
         );
-        return;
+        return false;
       }
       throw err;
     }
+    return true;
   } catch (err) {
     logger.error("Failed to start WireGuard", err as Error);
+    return false;
   }
 }
