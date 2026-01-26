@@ -683,6 +683,7 @@ export class AutoRedeemStrategy {
    * Fetch all positions from Data API.
    * This is the source of tokenIds/conditionIds to check for redemption.
    * The Data API `redeemable` flag is NOT used - on-chain payoutDenominator is authoritative.
+   * Uses pagination to fetch all positions (API default limit is 25, max is 500)
    *
    * @returns Array of positions from wallet holdings
    */
@@ -696,21 +697,48 @@ export class AutoRedeemStrategy {
         return [];
       }
 
-      const url = POLYMARKET_API.POSITIONS_ENDPOINT(walletAddress);
-      const apiPositions = await httpGet<DataApiPosition[]>(url, {
-        timeout: AutoRedeemStrategy.API_TIMEOUT_MS,
-      });
+      // Fetch all positions using pagination
+      const POSITIONS_LIMIT = 500; // Maximum allowed by API
+      const MAX_OFFSET = 10000; // API maximum offset
+      const baseUrl = POLYMARKET_API.POSITIONS_ENDPOINT(walletAddress);
+      const allApiPositions: DataApiPosition[] = [];
+      let offset = 0;
 
-      if (!Array.isArray(apiPositions)) {
+      while (offset < MAX_OFFSET) {
+        const url = `${baseUrl}&limit=${POSITIONS_LIMIT}&offset=${offset}`;
+        const apiPositions = await httpGet<DataApiPosition[]>(url, {
+          timeout: AutoRedeemStrategy.API_TIMEOUT_MS,
+        });
+
+        if (!Array.isArray(apiPositions) || apiPositions.length === 0) {
+          break; // No more positions
+        }
+
+        allApiPositions.push(...apiPositions);
+
+        if (apiPositions.length < POSITIONS_LIMIT) {
+          break; // Last page (incomplete)
+        }
+
+        offset += POSITIONS_LIMIT;
+      }
+
+      if (offset >= MAX_OFFSET) {
+        this.logger.warn(
+          `[AutoRedeem] Reached maximum pagination limit of ${MAX_OFFSET} positions; results may be truncated.`,
+        );
+      }
+
+      if (allApiPositions.length === 0) {
         this.logger.debug(
-          `[AutoRedeem] Data API returned non-array response (type: ${typeof apiPositions})`,
+          `[AutoRedeem] Data API returned no positions after pagination`,
         );
         return [];
       }
 
       // Map to RedeemablePosition format
       // Note: We do NOT filter by redeemable flag - on-chain check is authoritative
-      return apiPositions
+      return allApiPositions
         .filter((p) => p.asset && p.conditionId && p.size > 0)
         .map((p) => ({
           tokenId: p.asset,

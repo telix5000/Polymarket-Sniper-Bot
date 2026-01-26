@@ -1571,8 +1571,34 @@ async function fetchPositions(wallet: string): Promise<Position[]> {
     return state.positions;
 
   try {
-    const { data } = await axios.get(`${API}/positions?user=${wallet}`);
-    const rawPositions = (data || [])
+    // Fetch all positions using pagination (API default limit is 25, max is 500)
+    const POSITIONS_LIMIT = 500; // Maximum allowed by API
+    const MAX_OFFSET = 10000; // API maximum offset
+    const allPositionsRaw: any[] = [];
+    let offset = 0;
+
+    while (offset < MAX_OFFSET) {
+      const { data } = await axios.get(
+        `${API}/positions?user=${wallet}&limit=${POSITIONS_LIMIT}&offset=${offset}`,
+      );
+      const pageData = data || [];
+      if (!Array.isArray(pageData) || pageData.length === 0) {
+        break; // No more positions
+      }
+      allPositionsRaw.push(...pageData);
+      if (pageData.length < POSITIONS_LIMIT) {
+        break; // Last page (incomplete)
+      }
+      offset += POSITIONS_LIMIT;
+    }
+
+    if (offset >= MAX_OFFSET) {
+      log(
+        `⚠️ Reached maximum pagination offset (${MAX_OFFSET}). Positions list may be truncated due to API offset limits.`,
+      );
+    }
+
+    const rawPositions = allPositionsRaw
       .filter((p: any) => Number(p.size) > 0 && !p.redeemable)
       .map((p: any) => {
         const size = Number(p.size),
@@ -1625,14 +1651,38 @@ interface RedeemablePosition {
 
 async function fetchRedeemable(wallet: string): Promise<RedeemablePosition[]> {
   try {
-    const { data } = await axios.get(
-      `${API}/positions?user=${wallet}&redeemable=true`,
-    );
-    if (!data || !Array.isArray(data)) return [];
+    // Fetch all redeemable positions using pagination (API default limit is 25, max is 500)
+    const POSITIONS_LIMIT = 500;
+    const MAX_OFFSET = 10000;
+    const allPositionsRaw: any[] = [];
+    let offset = 0;
+
+    while (offset < MAX_OFFSET) {
+      const { data } = await axios.get(
+        `${API}/positions?user=${wallet}&redeemable=true&limit=${POSITIONS_LIMIT}&offset=${offset}`,
+      );
+      const pageData = data || [];
+      if (!Array.isArray(pageData) || pageData.length === 0) {
+        break;
+      }
+      allPositionsRaw.push(...pageData);
+      if (pageData.length < POSITIONS_LIMIT) {
+        break;
+      }
+      offset += POSITIONS_LIMIT;
+    }
+
+    if (offset >= MAX_OFFSET) {
+      log(
+        `⚠️ Reached maximum pagination offset (${MAX_OFFSET}). Redeemable positions list may be truncated due to API offset limits.`,
+      );
+    }
+
+    if (allPositionsRaw.length === 0) return [];
 
     // Group by conditionId and sum values (in case of multiple tokens per condition)
     const byCondition = new Map<string, number>();
-    for (const p of data) {
+    for (const p of allPositionsRaw) {
       const cid = p.conditionId;
       if (!cid) continue;
       const size = Number(p.size) || 0;
