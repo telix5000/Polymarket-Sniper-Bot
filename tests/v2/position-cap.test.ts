@@ -15,17 +15,25 @@ describe("V2 Position Cap Fix", () => {
   /**
    * Helper function that mirrors the SELL order risk check bypass logic from executeSell()
    * This checks if a SELL order should be allowed despite a failed risk check
+   *
+   * Note: This logic is intentionally duplicated from the main code to ensure the test
+   * is self-contained and tests the expected behavior. If the main code changes,
+   * update this test accordingly to verify the new behavior.
    */
   function shouldAllowSellDespiteRiskFailure(
     reason: string,
     riskCheckReason: string | undefined,
   ): boolean {
     // Check if this is a protective exit that bypasses ALL risk checks
-    const isProtectiveExit =
-      reason.includes("StopLoss") ||
-      reason.includes("AutoSell") ||
-      reason.includes("ForceLiq") ||
-      reason.includes("DisputeExit");
+    const protectiveExitTypes = [
+      "StopLoss",
+      "AutoSell",
+      "ForceLiq",
+      "DisputeExit",
+    ];
+    const isProtectiveExit = protectiveExitTypes.some((type) =>
+      reason.includes(type),
+    );
 
     // Also ignore position cap failures for ALL SELL orders (defensive check)
     const isPositionCapFailure = riskCheckReason?.includes("Position cap");

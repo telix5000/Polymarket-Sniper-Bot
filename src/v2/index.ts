@@ -1973,7 +1973,8 @@ async function executeSell(
   // Risk check: SELL orders NEVER blocked by position cap (they reduce positions)
   // Protective exits (StopLoss/AutoSell/ForceLiq/DisputeExit) bypass ALL risk checks
   const riskCheck = checkRiskLimits(cfg, true); // skipPositionCap=true for SELL orders
-  const isProtectiveExit = reason.includes("StopLoss") || reason.includes("AutoSell") || reason.includes("ForceLiq") || reason.includes("DisputeExit");
+  const protectiveExitTypes = ["StopLoss", "AutoSell", "ForceLiq", "DisputeExit"];
+  const isProtectiveExit = protectiveExitTypes.some((type) => reason.includes(type));
   // Also ignore position cap failures for ALL SELL orders (defensive check)
   const isPositionCapFailure = riskCheck.reason?.includes("Position cap");
   if (!riskCheck.allowed && !isProtectiveExit && !isPositionCapFailure) {
