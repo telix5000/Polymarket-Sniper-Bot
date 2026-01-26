@@ -1377,23 +1377,29 @@ export class HedgingStrategy {
       return { success: false, reason: "PRICE_TOO_HIGH" };
     }
 
-    // === UNLIMITED MODE FOR HEDGE UP ===
-    // Use full available cash - no ENV cap.
+    // === HEDGE UP SIZING ===
+    // When HEDGING_ALLOW_EXCEED_MAX=true: Use absoluteMaxUsd (from HEDGING_ABSOLUTE_MAX_USD)
+    // for single large orders. When false: Use maxHedgeUsd as the cap.
     let buyUsd: number;
+    
+    // Determine target size based on allowExceedMax setting
+    // For hedge up, also respect hedgeUpMaxUsd as an additional cap
+    const targetBuySize = this.config.allowExceedMax 
+      ? Math.min(this.config.hedgeUpMaxUsd, this.config.absoluteMaxUsd)
+      : Math.min(this.config.hedgeUpMaxUsd, this.config.maxHedgeUsd);
+    
     if (this.cycleHedgeBudgetRemaining !== null) {
-      buyUsd = this.cycleHedgeBudgetRemaining;
+      // Use the smaller of target size and available cash
+      buyUsd = Math.min(targetBuySize, this.cycleHedgeBudgetRemaining);
       this.logger.info(
-        `[Hedging] 📈 HEDGE UP SIZING: UNLIMITED MODE - using full available cash $${buyUsd.toFixed(2)}`,
+        `[Hedging] 📈 HEDGE UP SIZING: targeting $${buyUsd.toFixed(2)} ` +
+          `(${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"} capped at $${targetBuySize}, available=$${this.cycleHedgeBudgetRemaining.toFixed(2)})`,
       );
     } else {
-      // Fallback to config limits if no budget tracking
-      if (this.config.allowExceedMax) {
-        buyUsd = Math.min(this.config.hedgeUpMaxUsd, this.config.absoluteMaxUsd);
-      } else {
-        buyUsd = Math.min(this.config.hedgeUpMaxUsd, this.config.maxHedgeUsd);
-      }
+      // Fallback when no budget tracking: use target size directly
+      buyUsd = targetBuySize;
       this.logger.info(
-        `[Hedging] 📈 HEDGE UP SIZING: fallback to config limit $${buyUsd.toFixed(2)}`,
+        `[Hedging] 📈 HEDGE UP SIZING: fallback to ${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"} $${buyUsd.toFixed(2)}`,
       );
     }
 
@@ -1664,36 +1670,52 @@ export class HedgingStrategy {
     const breakEvenShares = originalInvestment / hedgeProfit;
     const profitableHedgeUsd = breakEvenShares * oppositePrice * 1.1; // 10% buffer
 
-    // === UNLIMITED MODE FOR HEDGING ===
-    // Hedging uses full available cash - no ENV cap.
-    // The hedge amount is determined by available cash, not config limits.
-    // This ensures we can always protect against losses.
+    // === HEDGE SIZING ===
+    // When HEDGING_ALLOW_EXCEED_MAX=true: Use absoluteMaxUsd (from HEDGING_ABSOLUTE_MAX_USD)
+    // for single large orders instead of being limited by maxHedgeUsd (MAX_POSITION_USD).
+    // When HEDGING_ALLOW_EXCEED_MAX=false: Use maxHedgeUsd as the cap, also considering
+    // profitableHedgeUsd for non-emergency hedges to avoid over-hedging.
     const isEmergencyHedge = lossPct !== undefined && lossPct >= this.config.emergencyLossPct;
     let hedgeUsd: number;
     
-    // Use the full available budget (will be capped by applyReserveAwareSizing)
+    // Determine target hedge size based on allowExceedMax setting
+    let targetHedgeSize: number;
+    if (this.config.allowExceedMax) {
+      // Use absoluteMaxUsd for single large orders
+      targetHedgeSize = this.config.absoluteMaxUsd;
+    } else if (isEmergencyHedge) {
+      // Emergency: use maxHedgeUsd as the cap
+      targetHedgeSize = this.config.maxHedgeUsd;
+    } else {
+      // Normal hedge: cap at the smaller of profitableHedgeUsd and maxHedgeUsd
+      // to avoid hedging more than what's profitable
+      targetHedgeSize = Math.min(profitableHedgeUsd, this.config.maxHedgeUsd);
+    }
+    
     if (this.cycleHedgeBudgetRemaining !== null) {
-      hedgeUsd = this.cycleHedgeBudgetRemaining;
+      // Use the smaller of target size and available cash
+      hedgeUsd = Math.min(targetHedgeSize, this.cycleHedgeBudgetRemaining);
       if (isEmergencyHedge) {
         this.logger.warn(
-          `[Hedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss): UNLIMITED MODE - using full available cash $${hedgeUsd.toFixed(2)}`,
+          `[Hedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss): targeting $${hedgeUsd.toFixed(2)} ` +
+            `(${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"}=$${targetHedgeSize.toFixed(2)}, available=$${this.cycleHedgeBudgetRemaining.toFixed(2)})`,
         );
       } else {
         this.logger.info(
-          `[Hedging] 📊 HEDGE SIZING: loss=${lossPct?.toFixed(1) ?? "?"}%, UNLIMITED MODE - using available cash $${hedgeUsd.toFixed(2)}`,
+          `[Hedging] 📊 HEDGE SIZING: loss=${lossPct?.toFixed(1) ?? "?"}%, targeting $${hedgeUsd.toFixed(2)} ` +
+            `(${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"}=$${targetHedgeSize.toFixed(2)}, available=$${this.cycleHedgeBudgetRemaining.toFixed(2)})`,
         );
       }
     } else {
-      // Fallback to config limits if no budget tracking
+      // Fallback when no budget tracking: use target size directly
+      hedgeUsd = targetHedgeSize;
       if (isEmergencyHedge) {
-        hedgeUsd = this.config.allowExceedMax ? this.config.absoluteMaxUsd : this.config.maxHedgeUsd;
         this.logger.warn(
-          `[Hedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss): fallback to config limit $${hedgeUsd.toFixed(2)}`,
+          `[Hedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss): fallback to ${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"} $${hedgeUsd.toFixed(2)}`,
         );
       } else {
-        hedgeUsd = this.config.allowExceedMax ? this.config.absoluteMaxUsd : Math.min(profitableHedgeUsd, this.config.maxHedgeUsd);
         this.logger.info(
-          `[Hedging] 📊 HEDGE SIZING: loss=${lossPct?.toFixed(1) ?? "?"}%, fallback to config limit $${hedgeUsd.toFixed(2)}`,
+          `[Hedging] 📊 HEDGE SIZING: loss=${lossPct?.toFixed(1) ?? "?"}%, fallback to ${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"} $${hedgeUsd.toFixed(2)}`,
         );
       }
     }
