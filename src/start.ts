@@ -148,6 +148,7 @@ const logger: Logger = {
   info: (msg) => console.log(`[${time()}] ${msg}`),
   warn: (msg) => console.log(`[${time()}] ⚠️ ${msg}`),
   error: (msg) => console.log(`[${time()}] ❌ ${msg}`),
+  debug: (msg) => console.log(`[${time()}] 🔍 ${msg}`),
 };
 
 function time(): string {
@@ -181,7 +182,7 @@ async function buy(
   const size = cappedSize;
 
   if (!state.liveTrading) {
-    logger.info(`💰 [SIM] Buy ${outcome} @ $${(size / 100).toFixed(2)} for $${size.toFixed(2)} (${reason})`);
+    logger.info(`💰 [SIM] Buy ${outcome} $${size.toFixed(2)} (${reason})`);
     await sendTelegram("[SIM] BUY", `${reason}\n${outcome} ${$(size)}`);
     return true;
   }
@@ -200,13 +201,13 @@ async function buy(
   if (result.success) {
     const avgPrice = result.avgPrice ?? 0;
     const filled = result.filledUsd ?? size;
-    const shares = filled / avgPrice;
+    const filledShares = filled / avgPrice;
     logger.info(
-      `✅ Buy Success! ${outcome} ${shares.toFixed(1)} shares @ $${avgPrice.toFixed(2)} ($${filled.toFixed(2)} total) | ${reason}`
+      `✅ Buy Success! ${outcome} ${filledShares.toFixed(1)} shares @ $${avgPrice.toFixed(2)} ($${filled.toFixed(2)} total) | ${reason}`
     );
     await sendTelegram(
       "💰 BUY",
-      `${outcome} @ $${avgPrice.toFixed(2)}\n${shares.toFixed(1)} shares for $${filled.toFixed(2)}\n${reason}`
+      `${outcome} @ $${avgPrice.toFixed(2)}\n${filledShares.toFixed(1)} shares for $${filled.toFixed(2)}\n${reason}`
     );
     state.tradesExecuted++;
     invalidatePositions();
