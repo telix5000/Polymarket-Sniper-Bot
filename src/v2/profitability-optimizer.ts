@@ -173,6 +173,13 @@ export interface ProfitabilityOptimizerConfig {
    * Increases priority of hedging as losses grow
    */
   hedgingUrgencyFactor: number;
+
+  /**
+   * Maximum spread penalty as a fraction (default: 0.3 = 30%)
+   * Caps the confidence reduction from wide spreads to prevent excessive penalty
+   * in illiquid markets
+   */
+  maxSpreadPenalty: number;
 }
 
 /**
@@ -188,6 +195,7 @@ export const DEFAULT_OPTIMIZER_CONFIG: ProfitabilityOptimizerConfig = {
   spreadPenaltyPerBps: 0.001,
   stackingBonus: 1.1,
   hedgingUrgencyFactor: 1.2,
+  maxSpreadPenalty: 0.3,
 };
 
 // ============================================================
@@ -765,8 +773,8 @@ export class ProfitabilityOptimizer {
     // Closer to 0.5 = less confident, closer to 0 or 1 = more confident
     const probConfidence = 1 - 2 * Math.abs(winProbability - 0.5);
 
-    // Spread penalty
-    const spreadPenalty = Math.min(0.3, (spreadBps ?? 0) / 1000);
+    // Spread penalty - capped at configurable max to handle illiquid markets
+    const spreadPenalty = Math.min(this.config.maxSpreadPenalty, (spreadBps ?? 0) / 1000);
 
     return Math.max(0.1, probConfidence - spreadPenalty);
   }

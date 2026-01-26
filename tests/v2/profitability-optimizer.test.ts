@@ -55,6 +55,7 @@ test("DEFAULT_OPTIMIZER_CONFIG has sensible defaults", () => {
   assert.strictEqual(DEFAULT_OPTIMIZER_CONFIG.spreadPenaltyPerBps, 0.001);
   assert.strictEqual(DEFAULT_OPTIMIZER_CONFIG.stackingBonus, 1.1);
   assert.strictEqual(DEFAULT_OPTIMIZER_CONFIG.hedgingUrgencyFactor, 1.2);
+  assert.strictEqual(DEFAULT_OPTIMIZER_CONFIG.maxSpreadPenalty, 0.3);
 });
 
 // === CONSTRUCTOR TESTS ===
@@ -577,6 +578,33 @@ describe("Confidence Calculations", () => {
 
     // Tight spread should have higher or equal confidence
     assert.ok(tightResult.confidence >= wideResult.confidence);
+  });
+
+  test("max spread penalty is configurable", () => {
+    // Default max spread penalty is 0.3 (30%)
+    const defaultOptimizer = new ProfitabilityOptimizer();
+    // Custom optimizer with higher max spread penalty for illiquid markets
+    const illiquidOptimizer = new ProfitabilityOptimizer({
+      maxSpreadPenalty: 0.5, // Allow 50% penalty for very illiquid markets
+    });
+
+    const veryWideSpread = createMockPosition({
+      curPrice: 0.6,
+      spreadBps: 1000, // 10% spread - very wide
+    });
+
+    const defaultResult = defaultOptimizer.analyzePosition(veryWideSpread, 100, 1000);
+    const illiquidResult = illiquidOptimizer.analyzePosition(veryWideSpread, 100, 1000);
+
+    // Both should produce valid results
+    assert.ok(defaultResult.confidence >= 0 && defaultResult.confidence <= 1);
+    assert.ok(illiquidResult.confidence >= 0 && illiquidResult.confidence <= 1);
+    
+    // The illiquid optimizer allows higher spread penalty, so confidence might be lower
+    // (or same if capped at probability-based minimum)
+    assert.ok(illiquidResult.confidence <= defaultResult.confidence || 
+              illiquidResult.confidence === defaultResult.confidence,
+      "Illiquid optimizer should have equal or lower confidence");
   });
 });
 

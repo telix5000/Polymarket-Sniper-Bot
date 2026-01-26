@@ -3344,6 +3344,72 @@ async function cycle(walletAddr: string, cfg: Config) {
           cycleActed.add(p.tokenId);
         }
       }
+      continue;
+    }
+    
+    // 8. PROFITABILITY-GUIDED: If no fixed rule matched, check optimizer recommendations
+    // This is a final optimization pass that uses EV analysis to find profitable opportunities
+    // that don't fit the traditional rule-based patterns
+    if (cfg.profitabilityOptimizer.enabled && state.profitabilityOptimizer) {
+      const profitRec = profitRecMap.get(p.tokenId);
+      if (profitRec && profitRec.recommendedAction !== "HOLD") {
+        const bestAction = profitRec.rankedActions[0];
+        const minEv = cfg.profitabilityOptimizer.minExpectedValueUsd;
+        
+        // Only act if EV exceeds minimum threshold
+        if (bestAction.expectedValueUsd >= minEv) {
+          const recSize = Math.min(profitRec.recommendedSizeUsd, getAvailableBalance(cfg));
+          
+          if (recSize >= 5) { // Minimum trade size
+            switch (profitRec.recommendedAction) {
+              case "STACK":
+                // Optimizer suggests stacking - use optimizer's recommended size
+                if (!state.stacked.has(p.tokenId)) {
+                  log(`📊 [ProfitOptimizer] Stack opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(recSize)}`);
+                  if (await executeBuy(p.tokenId, p.conditionId, p.outcome, recSize, `OptStack (EV:${$(bestAction.expectedValueUsd)})`, cfg, false, p.curPrice)) {
+                    state.stacked.add(p.tokenId);
+                    cycleActed.add(p.tokenId);
+                  }
+                }
+                break;
+                
+              case "HEDGE_DOWN":
+                // Optimizer suggests hedging loss - may be more aggressive than fixed rules
+                if (!state.hedged.has(p.tokenId)) {
+                  const opp = p.outcome === "YES" ? "NO" : "YES";
+                  log(`📊 [ProfitOptimizer] Hedge opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${opp} ${$(recSize)}`);
+                  if (await executeBuy(p.tokenId, p.conditionId, opp, recSize, `OptHedge (EV:${$(bestAction.expectedValueUsd)})`, cfg, true, p.curPrice)) {
+                    state.hedged.add(p.tokenId);
+                    cycleActed.add(p.tokenId);
+                  }
+                }
+                break;
+                
+              case "HEDGE_UP":
+                // Optimizer suggests buying more at high probability
+                if (!state.stacked.has(p.tokenId)) {
+                  log(`📊 [ProfitOptimizer] Hedge-up opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(recSize)}`);
+                  if (await executeBuy(p.tokenId, p.conditionId, p.outcome, recSize, `OptHedgeUp (EV:${$(bestAction.expectedValueUsd)})`, cfg, false, p.curPrice)) {
+                    state.stacked.add(p.tokenId);
+                    cycleActed.add(p.tokenId);
+                  }
+                }
+                break;
+                
+              case "SELL":
+                // Optimizer suggests selling - lock in value
+                if (!state.sold.has(p.tokenId) && p.value >= 5) {
+                  log(`📊 [ProfitOptimizer] Sell opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(p.value)}`);
+                  if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, `OptSell (EV:${$(bestAction.expectedValueUsd)})`, cfg, p.curPrice)) {
+                    state.sold.add(p.tokenId);
+                    cycleActed.add(p.tokenId);
+                  }
+                }
+                break;
+            }
+          }
+        }
+      }
     }
   }
 
