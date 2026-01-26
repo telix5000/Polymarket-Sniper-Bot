@@ -1,6 +1,9 @@
 import assert from "node:assert";
 import { test, describe } from "node:test";
-import { ABSOLUTE_MIN_TRADEABLE_PRICE } from "../src/utils/post-order.util";
+import { ORDER } from "../src/lib/constants";
+
+// Use the constant from our lib/constants.ts
+const ABSOLUTE_MIN_TRADEABLE_PRICE = ORDER.MIN_TRADEABLE_PRICE;
 
 /**
  * Unit tests for V2 Minimum Tradeable Price Filter
