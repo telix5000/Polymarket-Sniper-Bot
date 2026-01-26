@@ -2378,18 +2378,28 @@ export class ScalpTradeStrategy {
       this.executionCircuitBreaker.delete(plan.tokenId);
     }
 
-    // === FRESH ORDERBOOK FETCH (Critical for accurate exit pricing) ===
-    // When useFreshOrderbook is enabled, fetch real-time orderbook data instead of
-    // relying on cached position tracker data (which can be 5+ seconds stale).
-    // This is critical for:
-    // 1. Accurate limit price calculation
-    // 2. Detecting when market has moved favorably
-    // 3. Avoiding "Sale blocked" errors from stale price-based decisions
+    // === SMART FRESH ORDERBOOK FETCH ===
+    // OPTIMIZATION: Only fetch fresh data when it matters:
+    // - LOSING positions: Hit API directly - every second counts in a falling knife
+    // - URGENT stages (BREAKEVEN/FORCE): Need real-time data for quick exit
+    // - WINNING positions in PROFIT stage: Use cached data - who cares if it's a few seconds stale
+    //
+    // This saves API calls on healthy positions while ensuring we have
+    // real-time data when we're bleeding money.
     let bestBidCents: number;
     let bestBidDollars: number;
     let bestAskDollars: number | null;
 
-    if (this.config.useFreshOrderbook) {
+    // Determine if we need fresh data based on position health
+    const cachedBidCents = (position.currentBidPrice ?? 0) * 100;
+    const isLosing = cachedBidCents < plan.avgEntryCents; // Currently at a loss
+    const isUrgentStage = plan.stage === "BREAKEVEN" || plan.stage === "FORCE";
+    const isFallingKnife = cachedBidCents < plan.avgEntryCents * 0.9; // Down 10%+ from entry
+    
+    // Fresh data needed for: losing positions, urgent stages, or falling knife
+    const needsFreshData = this.config.useFreshOrderbook && (isLosing || isUrgentStage || isFallingKnife);
+
+    if (needsFreshData) {
       try {
         // Use fast orderbook reader (bypasses VPN for speed) with fallback to VPN client
         const { orderbook: freshOrderbook, source, latencyMs } = await fetchOrderbookWithFallback(
@@ -2407,7 +2417,7 @@ export class ScalpTradeStrategy {
             this.logger.warn(
               `[ProfitTaker] FRESH_ORDERBOOK: No bids for tokenId=${plan.tokenId.slice(0, 12)}... ` +
                 `(cached bid was ${position.currentBidPrice !== undefined ? (position.currentBidPrice * 100).toFixed(1) + "¢" : "undefined"}) ` +
-                `source=${source} latency=${latencyMs}ms`,
+                `source=${source} latency=${latencyMs}ms reason=${isLosing ? "LOSING" : isUrgentStage ? "URGENT" : "FALLING_KNIFE"}`,
             );
           }
           return { filled: false, reason: "NO_BID", shouldContinue: true };
@@ -2442,10 +2452,23 @@ export class ScalpTradeStrategy {
         bestAskDollars = position.currentAskPrice ?? null;
       }
     } else {
-      // Use cached position data (legacy behavior)
+      // WINNING POSITION - use cached data (save API calls, avoid throttling)
+      // Who cares if data is a few seconds stale when we're making money?
+      // This lets us have our cake and eat it too:
+      // - Fresh data for losers (where every second counts)
+      // - Cached data for winners (saves API calls, prevents throttling)
       bestBidDollars = position.currentBidPrice!;
       bestBidCents = bestBidDollars * 100;
       bestAskDollars = position.currentAskPrice ?? null;
+      
+      // Occasional debug log to show we're being smart about API usage
+      if (this.logDeduper.shouldLog(`ScalpExit:CACHE_HIT:${plan.tokenId}`, 60_000)) {
+        this.logger.debug(
+          `[ProfitTaker] USING_CACHE: tokenId=${plan.tokenId.slice(0, 12)}... ` +
+            `stage=${plan.stage} bid=${bestBidCents.toFixed(1)}¢ entry=${plan.avgEntryCents.toFixed(1)}¢ ` +
+            `(position profitable, saving API calls)`,
+        );
+      }
     }
 
     // Calculate target and minimum acceptable prices for illiquid check
