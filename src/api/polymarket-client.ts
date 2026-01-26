@@ -399,21 +399,43 @@ export class PolymarketClient {
 
   /**
    * Refresh positions from API - only stores ACTIVE positions
+   * Uses pagination to fetch all positions (API default limit is 25, max is 500)
    */
   private async refreshPositions(address: string): Promise<void> {
-    const url = POLYMARKET_API.POSITIONS_ENDPOINT(address);
+    const baseUrl = POLYMARKET_API.POSITIONS_ENDPOINT(address);
+    const POSITIONS_LIMIT = 500; // Maximum allowed by Polymarket API
+    const MAX_OFFSET = 10000; // API maximum offset
 
-    this.logger.debug(`[PolymarketClient] 📡 Fetching positions from API...`);
+    this.logger.debug(`[PolymarketClient] 📡 Fetching positions from API (with pagination)...`);
 
     try {
-      const rawPositions = await httpGet<RawApiPosition[]>(url, {
-        timeout: this.apiTimeoutMs,
-      });
+      // Fetch all positions using pagination
+      const allRawPositions: RawApiPosition[] = [];
+      let offset = 0;
+
+      while (offset < MAX_OFFSET) {
+        const url = `${baseUrl}&limit=${POSITIONS_LIMIT}&offset=${offset}`;
+        const rawPositions = await httpGet<RawApiPosition[]>(url, {
+          timeout: this.apiTimeoutMs,
+        });
+
+        if (!rawPositions || !Array.isArray(rawPositions) || rawPositions.length === 0) {
+          break; // No more positions
+        }
+
+        allRawPositions.push(...rawPositions);
+
+        if (rawPositions.length < POSITIONS_LIMIT) {
+          break; // Last page (incomplete)
+        }
+
+        offset += POSITIONS_LIMIT;
+      }
 
       // Clear existing cache
       this.activePositions.clear();
 
-      if (!rawPositions || !Array.isArray(rawPositions)) {
+      if (allRawPositions.length === 0) {
         this.logger.debug(`[PolymarketClient] No positions returned from API`);
         this.positionsFetchedAtMs = Date.now();
         this.cachedAddress = address;
@@ -424,7 +446,7 @@ export class PolymarketClient {
       let skippedComplete = 0;
       let skippedRedeemable = 0;
 
-      for (const raw of rawPositions) {
+      for (const raw of allRawPositions) {
         const position = this.transformPosition(raw);
 
         // Skip complete positions ($0, no shares)

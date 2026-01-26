@@ -795,6 +795,10 @@ export class PositionTracker {
   private static readonly TRADES_PAGE_LIMIT = 500;
   private static readonly TRADES_MAX_PAGES = 20;
 
+  // Pagination settings for positions API (API default is 25, max is 500)
+  private static readonly POSITIONS_PAGE_LIMIT = 500;
+  private static readonly POSITIONS_MAX_OFFSET = 10000;
+
   // Threshold for determining market winner from outcomePrices
   // Price > 0.5 indicates the likely winner in resolved markets
   private static readonly WINNER_THRESHOLD = 0.5;
@@ -2797,9 +2801,28 @@ export class PositionTracker {
         return [];
       }
 
-      let apiPositions = await httpGet<ApiPosition[]>(positionsUrl, {
-        timeout: PositionTracker.API_TIMEOUT_MS,
-      });
+      // Fetch all positions using pagination (API default limit is 25, max is 500)
+      let apiPositions: ApiPosition[] = [];
+      let offset = 0;
+
+      while (offset < PositionTracker.POSITIONS_MAX_OFFSET) {
+        const paginatedUrl = `${positionsUrl}&limit=${PositionTracker.POSITIONS_PAGE_LIMIT}&offset=${offset}`;
+        const pagePositions = await httpGet<ApiPosition[]>(paginatedUrl, {
+          timeout: PositionTracker.API_TIMEOUT_MS,
+        });
+
+        if (!pagePositions || !Array.isArray(pagePositions) || pagePositions.length === 0) {
+          break; // No more positions
+        }
+
+        apiPositions.push(...pagePositions);
+
+        if (pagePositions.length < PositionTracker.POSITIONS_PAGE_LIMIT) {
+          break; // Last page (incomplete)
+        }
+
+        offset += PositionTracker.POSITIONS_PAGE_LIMIT;
+      }
 
       // === STICKY ADDRESS SELECTION WITH SANITY CHECKS (Jan 2025) ===
       // Prevents address flip-flop by keeping address sticky for ADDRESS_STICKY_DURATION_MS
@@ -2856,16 +2879,38 @@ export class PositionTracker {
           );
 
           try {
-            // Fetch from both addresses in parallel
+            // Fetch from both addresses in parallel with pagination
+            // For address probe, we need accurate counts to decide which address to use
+            const fetchPaginatedPositions = async (address: string): Promise<ApiPosition[]> => {
+              const allPositions: ApiPosition[] = [];
+              let offset = 0;
+              const baseUrl = POLYMARKET_API.POSITIONS_ENDPOINT(address);
+
+              while (offset < PositionTracker.POSITIONS_MAX_OFFSET) {
+                const url = `${baseUrl}&limit=${PositionTracker.POSITIONS_PAGE_LIMIT}&offset=${offset}`;
+                const pagePositions = await httpGet<ApiPosition[]>(url, {
+                  timeout: PositionTracker.API_TIMEOUT_MS,
+                });
+
+                if (!pagePositions || !Array.isArray(pagePositions) || pagePositions.length === 0) {
+                  break;
+                }
+
+                allPositions.push(...pagePositions);
+
+                if (pagePositions.length < PositionTracker.POSITIONS_PAGE_LIMIT) {
+                  break;
+                }
+
+                offset += PositionTracker.POSITIONS_PAGE_LIMIT;
+              }
+
+              return allPositions;
+            };
+
             const [eoaPositions, proxyPositions] = await Promise.all([
-              httpGet<ApiPosition[]>(
-                POLYMARKET_API.POSITIONS_ENDPOINT(eoaAddress),
-                { timeout: PositionTracker.API_TIMEOUT_MS },
-              ).catch(() => [] as ApiPosition[]),
-              httpGet<ApiPosition[]>(
-                POLYMARKET_API.POSITIONS_ENDPOINT(proxyAddress),
-                { timeout: PositionTracker.API_TIMEOUT_MS },
-              ).catch(() => [] as ApiPosition[]),
+              fetchPaginatedPositions(eoaAddress).catch(() => [] as ApiPosition[]),
+              fetchPaginatedPositions(proxyAddress).catch(() => [] as ApiPosition[]),
             ]);
 
             const eoaCount = eoaPositions?.length ?? 0;
