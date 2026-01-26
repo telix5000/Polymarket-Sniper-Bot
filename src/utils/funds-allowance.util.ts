@@ -960,27 +960,59 @@ export const checkFundsAndAllowance = async (
           : null;
 
       if (refreshedInsufficient) {
-        const balanceSufficient =
+        let balanceSufficient =
           refreshedInsufficient.balanceUsd >= requiredUsd;
         const allowanceSufficient =
           refreshedInsufficient.allowanceUsd >= requiredUsd;
 
+        // BUGFIX (Jan 2026): CLOB API returns balance=0 and allowance=0 even when on-chain balance/approvals are correct
+        // When Trust Mode is active and CLOB returns balance=$0.00, fetch balance on-chain to get real balance
+        // This fixes v2 buy orders being rejected when actual on-chain balance is sufficient
+        const shouldFetchOnchainBalance =
+          trustOnchainApprovals &&
+          onchainApprovalsVerified &&
+          !balanceSufficient &&
+          refreshedInsufficient.assetType === AssetType.COLLATERAL &&
+          refreshedInsufficient.balanceUsd === 0;
+
+        if (shouldFetchOnchainBalance) {
+          params.logger.info(
+            `[CLOB][TrustMode] CLOB API reports balance=$0.00, fetching on-chain balance...`,
+          );
+          
+          // Fetch balance on-chain to get the real balance
+          const onchainSnapshot = await buildOnchainSnapshot({
+            client: params.client,
+            owner: tradingAddress,
+            decimals: params.collateralTokenDecimals ?? DEFAULT_COLLATERAL_DECIMALS,
+            tokenAddress: params.collateralTokenAddress,
+            logger: params.logger,
+          });
+          
+          // Update balance from on-chain data
+          balanceUsd = onchainSnapshot.balanceUsd;
+          balanceSufficient = balanceUsd >= requiredUsd;
+          
+          params.logger.info(
+            `[CLOB][TrustMode] On-chain balance: ${formatUsd(balanceUsd)} (CLOB reported: ${formatUsd(refreshedInsufficient.balanceUsd)})`,
+          );
+        }
+
         // Trust mode bypass: Only applies to COLLATERAL tokens (USDC) when:
         // 1. Trust mode is enabled (TRUST_ONCHAIN_APPROVALS=true)
         // 2. Preflight verified on-chain approvals
-        // 3. Balance is sufficient (only allowance is the issue)
+        // 3. Balance is sufficient (checked on-chain if CLOB returns $0.00)
         // 4. This is a collateral token (not conditional)
-        // This bypasses CLOB's broken allowance=0 response for USDC approvals only.
+        // This bypasses CLOB's broken balance=0 and allowance=0 responses.
         const canBypassAllowanceCheck =
           trustOnchainApprovals &&
           onchainApprovalsVerified &&
           balanceSufficient &&
-          !allowanceSufficient &&
           refreshedInsufficient.assetType === AssetType.COLLATERAL;
 
         if (canBypassAllowanceCheck) {
           params.logger.info(
-            `[CLOB][TrustMode] Bypassing CLOB allowance check for COLLATERAL (known bug). Balance sufficient and on-chain approvals verified. need=${formatUsd(requiredUsd)} have=${formatUsd(refreshedInsufficient.balanceUsd)} allowance=${formatUsd(refreshedInsufficient.allowanceUsd)}`,
+            `[CLOB][TrustMode] Bypassing CLOB balance/allowance checks for COLLATERAL (known API bug). Balance sufficient and on-chain approvals verified. need=${formatUsd(requiredUsd)} have=${formatUsd(balanceUsd)} CLOB_allowance=${formatUsd(refreshedInsufficient.allowanceUsd)}`,
           );
           // Skip the error return and continue with ERC1155 approval checks below
         } else {
