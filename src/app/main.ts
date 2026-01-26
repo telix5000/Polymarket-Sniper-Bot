@@ -255,7 +255,7 @@ async function main(): Promise<void> {
         .sendStartupNotification({
           endgameSweep: strategyConfig.endgameSweepEnabled,
           positionStacking: strategyConfig.positionStackingEnabled,
-          sellEarly: strategyConfig.sellEarlyEnabled,
+          // sellEarly removed - consolidated into autoSell
           autoSell: strategyConfig.autoSellEnabled,
           scalpTakeProfit: strategyConfig.scalpTakeProfitEnabled,
           hedging: strategyConfig.hedgingEnabled,
@@ -403,7 +403,6 @@ async function main(): Promise<void> {
             // Other strategies are only available when orchestrator is also running
             endgameSweep: false,
             positionStacking: false,
-            sellEarly: false,
             autoSell: false,
             scalpTakeProfit: false,
             hedging: false,

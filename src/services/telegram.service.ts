@@ -57,7 +57,7 @@ export const DEFAULT_TELEGRAM_CONFIG: TelegramConfig = {
  *
  * Extended to cover all financial transaction types:
  * - BUY: Copy trade or endgame sweep buy
- * - SELL: General sell (quick flip, auto-sell, sell-early)
+ * - SELL: General sell (auto-sell handles capital efficiency)
  * - REDEEM: Position redemption after market resolution
  * - HEDGE: Hedge order placed to protect losing position
  * - HEDGE_EXIT: Hedge position sold (profitable or not)
@@ -132,7 +132,7 @@ export interface PnLSnapshot {
 export interface StartupStrategyStatus {
   endgameSweep?: boolean;
   positionStacking?: boolean;
-  sellEarly?: boolean;
+  // sellEarly removed - consolidated into autoSell
   autoSell?: boolean;
   scalpTakeProfit?: boolean;
   hedging?: boolean;
@@ -476,11 +476,9 @@ export class TelegramService {
     }
 
     // Exit strategies
-    if (enabledStrategies.sellEarly) {
-      message += `✅ Sell Early (99.9¢+ exits)\n`;
-    }
+    // sellEarly removed - consolidated into autoSell
     if (enabledStrategies.autoSell) {
-      message += `✅ Auto-Sell (99¢+ exits)\n`;
+      message += `✅ Auto-Sell (99.9¢+ exits, stale positions, quick wins)\n`;
     }
     if (enabledStrategies.scalpTakeProfit) {
       message += `✅ Scalp Take-Profit (time-based exits)\n`;

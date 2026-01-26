@@ -40,22 +40,13 @@ import {
   DEFAULT_ENDGAME_CONFIG,
 } from "./endgame-sweep";
 // Quick Flip module removed - functionality covered by ScalpTrade
-// import {
-//   QuickFlipStrategy,
-//   type QuickFlipConfig,
-//   DEFAULT_QUICKFLIP_CONFIG,
-// } from "./quick-flip";
+// SellEarly module removed - functionality consolidated into AutoSell
 import {
   ScalpTradeStrategy,
   type ScalpTradeConfig,
   DEFAULT_SCALP_TRADE_CONFIG,
 } from './scalp-trade';
 import { AutoRedeemStrategy, type AutoRedeemConfig } from "./auto-redeem";
-import {
-  SellEarlyStrategy,
-  type SellEarlyConfig,
-  DEFAULT_SELL_EARLY_CONFIG,
-} from "./sell-early";
 import {
   AutoSellStrategy,
   type AutoSellConfig,
@@ -103,9 +94,9 @@ export interface OrchestratorConfig {
   hedgingConfig?: Partial<HedgingConfig>;
   endgameConfig?: Partial<EndgameSweepConfig>;
   // quickFlipConfig removed - module deprecated
+  // sellEarlyConfig removed - consolidated into autoSellConfig
   scalpConfig?: Partial<ScalpTradeConfig>;
   autoRedeemConfig?: Partial<AutoRedeemConfig>;
-  sellEarlyConfig?: Partial<SellEarlyConfig>;
   autoSellConfig?: Partial<AutoSellConfig>;
   onChainExitConfig?: Partial<OnChainExitConfig>;
   stopLossConfig?: Partial<StopLossConfig>;
@@ -126,7 +117,7 @@ export class Orchestrator {
   private getWalletBalances?: () => Promise<WalletBalances>;
 
   // All strategies
-  private sellEarlyStrategy: SellEarlyStrategy;
+  // sellEarlyStrategy removed - consolidated into autoSellStrategy
   private autoSellStrategy: AutoSellStrategy;
   private onChainExitStrategy: OnChainExitStrategy;
   private autoRedeemStrategy: AutoRedeemStrategy;
@@ -205,22 +196,8 @@ export class Orchestrator {
       config.client as { relayerContext?: RelayerContext }
     ).relayerContext;
 
-    // 1. SellEarly - CAPITAL EFFICIENCY: Sell near-$1 ACTIVE positions (99.9¢+)
-    // Runs BEFORE AutoSell (which handles 99¢+) to catch highest-value exits first
-    // Only applies to ACTIVE positions (never REDEEMABLE - those go to AutoRedeem)
-    this.sellEarlyStrategy = new SellEarlyStrategy({
-      client: config.client,
-      logger: config.logger,
-      positionTracker: this.positionTracker,
-      config: {
-        ...DEFAULT_SELL_EARLY_CONFIG,
-        ...config.sellEarlyConfig,
-      },
-    });
-
-    // 2. AutoSell - NEAR-RESOLUTION EXIT: Sell positions at 99¢+ to free capital
-    // Handles dispute window exit (99.9¢) and normal near-resolution (99¢)
-    // Runs AFTER SellEarly (which handles 99.9¢) to catch remaining near-resolution positions
+    // 1. AutoSell - CAPITAL EFFICIENCY: Sell near-$1 ACTIVE positions (99.9¢+)
+    // Consolidated strategy handling: dispute window exit (99.9¢), stale positions, quick wins
     // Only applies to ACTIVE (non-redeemable) positions with valid execution status
     this.autoSellStrategy = new AutoSellStrategy({
       client: config.client,
@@ -233,7 +210,7 @@ export class Orchestrator {
       },
     });
 
-    // 3. OnChainExit - Route NOT_TRADABLE positions to on-chain redemption
+    // 2. OnChainExit - Route NOT_TRADABLE positions to on-chain redemption
     // When positions can't be sold via CLOB (executionStatus=NOT_TRADABLE_ON_CLOB)
     // but have high currentPrice (≥99¢), check if they can be redeemed on-chain.
     // Runs BEFORE Auto-Redeem to prepare positions for redemption.
@@ -247,7 +224,7 @@ export class Orchestrator {
       },
     });
 
-    // 4. Auto-Redeem - Claim REDEEMABLE positions (get money back!)
+    // 3. Auto-Redeem - Claim REDEEMABLE positions (get money back!)
     // AutoRedeem fetches positions directly from Data API and checks on-chain
     // payoutDenominator - it does NOT use PositionTracker.
     this.autoRedeemStrategy = new AutoRedeemStrategy({
@@ -515,22 +492,15 @@ export class Orchestrator {
       }
 
       // Phase 2: Capital efficiency and redemption
-      // 1. SellEarly - CAPITAL EFFICIENCY - sell near-$1 ACTIVE positions (99.9¢+)
-      await this.runStrategyTimed(
-        "SellEarly",
-        () => this.sellEarlyStrategy.execute(),
-        strategyTimings,
-      );
-
-      // 2. AutoSell - NEAR-RESOLUTION EXIT - sell near-resolution ACTIVE positions (99¢+)
-      //    Also handles dispute window exit (99.9¢) for faster capital recovery
+      // 1. AutoSell - CAPITAL EFFICIENCY - sell near-$1 ACTIVE positions (99.9¢+)
+      //    Consolidated strategy: handles dispute window exit, stale positions, quick wins
       await this.runStrategyTimed(
         "AutoSell",
         () => this.autoSellStrategy.execute(),
         strategyTimings,
       );
 
-      // 3. OnChainExit - Route NOT_TRADABLE positions to on-chain redemption
+      // 2. OnChainExit - Route NOT_TRADABLE positions to on-chain redemption
       //    Handles positions that AutoSell skips (executionStatus=NOT_TRADABLE_ON_CLOB)
       //    but have high currentPrice (≥99¢) and can be redeemed on-chain
       await this.runStrategyTimed(
@@ -539,7 +509,7 @@ export class Orchestrator {
         strategyTimings,
       );
 
-      // 4. Auto-Redeem - get money back from REDEEMABLE positions
+      // 3. Auto-Redeem - get money back from REDEEMABLE positions
       await this.runStrategyTimed(
         "AutoRedeem",
         () => this.autoRedeemStrategy.execute(),

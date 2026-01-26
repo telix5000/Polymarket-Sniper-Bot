@@ -177,10 +177,9 @@ function mapTypeToStrategyId(
   // Use explicit strategy if provided
   if (strategy) {
     const strategyMap: Record<string, StrategyId> = {
-      AutoSell: "QUICK_FLIP", // AutoSell is similar to quick flip
+      AutoSell: "QUICK_FLIP", // AutoSell handles capital efficiency
       "AutoSell (Stale)": "QUICK_FLIP",
       "AutoSell (Dispute)": "QUICK_FLIP",
-      SellEarly: "QUICK_FLIP", // SellEarly is capital efficiency
       AutoRedeem: "MANUAL", // Redemption - closest match
       Hedging: "SMART_HEDGE", // Smart hedging strategy
       ScalpTrade: "QUICK_FLIP", // Scalp is profit-taking

@@ -156,8 +156,8 @@ export const EMERGENCY_SELL_SLIPPAGE_PCT = 50; // 50% for emergency exits
  *   This can be the target price, current bid, or any price used as a baseline.
  *   Different strategies use different reference prices:
  *   - scalp-trade.ts: effectiveLimitPrice (target price)
- *   - sell-early.ts: position.currentBidPrice (cached bid)
- *   - smart-hedging.ts/quick-flip.ts: fresh bidPrice from orderbook
+ *   - auto-sell.ts: position.currentBidPrice (cached bid)
+ *   - smart-hedging.ts: fresh bidPrice from orderbook
  * @param slippagePct The slippage tolerance percentage (default: DEFAULT_SELL_SLIPPAGE_PCT).
  *   Must be between 0 and 100.
  * @returns The minimum acceptable price (referencePrice * (1 - slippagePct/100))

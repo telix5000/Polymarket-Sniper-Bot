@@ -500,7 +500,7 @@ export interface Position {
    * - redeemable is false
    *
    * Hedging MUST NOT hedge or liquidate positions where this is true.
-   * Instead, wait for resolution or use sell-early module if configured.
+   * Instead, wait for resolution or use auto-sell module if configured.
    *
    * CRITICAL SAFETY GUARD: Prices < 50¢ are NEVER classified as near-resolution.
    * This prevents false positives from broken/stale orderbook data.
@@ -3615,7 +3615,7 @@ export class PositionTracker {
                   // === ON-CHAIN REDEEMABLE CHECK ===
                   // When position has:
                   // 1. Price near 100¢ (or 0¢) - suggesting resolution
-                  // 2. NO_BOOK status (no orderbook bids) - can't sell via SellEarly
+                  // 2. NO_BOOK status (no orderbook bids) - can't sell via AutoSell
                   // 3. Data-API hasn't flagged as redeemable yet
                   //
                   // Check on-chain payoutDenominator to confirm if actually redeemable.
@@ -4286,7 +4286,7 @@ export class PositionTracker {
    * This is used as a fallback when:
    * 1. Data-API hasn't marked position as redeemable yet
    * 2. Position has price near 100¢ or 0¢ (suggesting resolution)
-   * 3. No orderbook/bids available (can't sell via SellEarly)
+   * 3. No orderbook/bids available (can't sell via AutoSell)
    *
    * @param conditionId - The conditionId (same as marketId in Polymarket)
    * @returns true if resolved on-chain (payoutDenominator > 0), false otherwise
