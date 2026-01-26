@@ -394,6 +394,12 @@ const logBalanceCheckWarn = (
 export type FundsAllowanceParams = {
   client: ClobClient;
   sizeUsd: number;
+  /**
+   * Order side: BUY or SELL.
+   * For SELL orders, we skip the collateral balance check since we're
+   * selling conditional tokens (position), not spending collateral.
+   */
+  side?: "BUY" | "SELL";
   balanceBufferBps?: number;
   collateralTokenAddress?: string;
   collateralTokenDecimals?: number;
@@ -755,6 +761,98 @@ export const checkFundsAndAllowance = async (
     params.collateralTokenId,
   );
 
+  // FIX (Jan 2026): SELL orders are the INVERSE of BUY orders.
+  // BUY: Spend collateral (USDC) → Receive conditional tokens
+  // SELL: Spend conditional tokens → Receive collateral (USDC)
+  // 
+  // For SELL orders, we do NOT need collateral balance/allowance checks.
+  // We only need ERC1155 approval (isApprovedForAll) to transfer our tokens.
+  // Skip directly to the ERC1155 approval check for SELL orders.
+  const isSellOrder = params.side === "SELL";
+  
+  if (isSellOrder) {
+    // For SELL orders, only check ERC1155 approval - skip collateral checks entirely
+    const approvedForAll = await fetchApprovedForAll({
+      client: params.client,
+      owner: tradingAddress,
+      logger: params.logger,
+    });
+    
+    if (!approvedForAll) {
+      // Try auto-approve if enabled
+      if (params.autoApprove) {
+        const wallet = (params.client as { wallet?: Wallet }).wallet;
+        if (wallet) {
+          const approvalsConfig = readApprovalsConfig();
+          const liveTradingEnabled = isLiveTradingEnabled();
+          if (liveTradingEnabled && approvalsConfig.mode === "true") {
+            const approvalKey = `${tradingAddress}:erc1155`;
+            const lastAttempt = approvalAttemptCooldown.get(approvalKey) ?? 0;
+            if (Date.now() - lastAttempt >= APPROVAL_RETRY_COOLDOWN_MS) {
+              approvalAttemptCooldown.set(approvalKey, Date.now());
+              await ensureApprovals({
+                wallet,
+                owner: tradingAddress,
+                relayer: (params.client as { relayerContext?: RelayerContext })
+                  .relayerContext,
+                logger: params.logger,
+                config: approvalsConfig,
+              });
+
+              // Sync CLOB cache with on-chain state after approvals
+              await syncClobAllowanceCache(
+                params.client,
+                params.logger,
+                "after ERC1155 approval for SELL",
+              );
+
+              const refreshedApproval = await fetchApprovedForAll({
+                client: params.client,
+                owner: tradingAddress,
+                logger: params.logger,
+              });
+              if (!refreshedApproval) {
+                return {
+                  ok: false,
+                  requiredUsd,
+                  balanceUsd: 0,
+                  allowanceUsd: 0,
+                  reason: "INSUFFICIENT_ALLOWANCE_OR_APPROVAL",
+                };
+              }
+            }
+          }
+        }
+      }
+      
+      if (!await fetchApprovedForAll({
+        client: params.client,
+        owner: tradingAddress,
+        logger: params.logger,
+      })) {
+        params.logger.warn(
+          `[CLOB] SELL order blocked: ERC1155 approval not set. Run approvals first.`,
+        );
+        return {
+          ok: false,
+          requiredUsd,
+          balanceUsd: 0,
+          allowanceUsd: 0,
+          reason: "INSUFFICIENT_ALLOWANCE_OR_APPROVAL",
+        };
+      }
+    }
+    
+    // SELL order approved - no collateral checks needed
+    return {
+      ok: true,
+      requiredUsd,
+      balanceUsd: Infinity, // Not relevant for SELL
+      allowanceUsd: Infinity, // Not relevant for SELL
+    };
+  }
+
+  // ===== BUY ORDER LOGIC (original code) =====
   // CLOB API Bug Workaround: getBalanceAllowance() returns allowance=0 even when on-chain approvals are set
   // See: https://github.com/Polymarket/clob-client/issues/128
   //      https://github.com/Polymarket/py-clob-client/issues/102
