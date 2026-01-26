@@ -313,9 +313,18 @@ async function runCopyTrading(): Promise<void> {
   const trades = await fetchRecentTrades(state.targets);
   const cfg = state.config.copy;
 
+  // Debug: Log trade processing info at debug level
+  let filtered = { sell: 0, lowPrice: 0, tooSmall: 0 };
+
   for (const t of trades) {
-    if (t.side !== "BUY") continue;
-    if (t.price < cfg.minBuyPrice) continue;
+    if (t.side !== "BUY") {
+      filtered.sell++;
+      continue;
+    }
+    if (t.price < cfg.minBuyPrice) {
+      filtered.lowPrice++;
+      continue;
+    }
 
     const size = Math.min(
       Math.max(t.sizeUsd * cfg.multiplier, cfg.minUsd),
@@ -323,7 +332,10 @@ async function runCopyTrading(): Promise<void> {
       state.maxPositionUsd,
     );
 
-    if (size < cfg.minUsd) continue;
+    if (size < cfg.minUsd) {
+      filtered.tooSmall++;
+      continue;
+    }
 
     await buy(
       t.tokenId,
@@ -332,6 +344,11 @@ async function runCopyTrading(): Promise<void> {
       `Copy (${t.trader.slice(0, 8)}...)`,
       t.marketId,
     );
+  }
+
+  // Log if trades were fetched but all filtered out
+  if (trades.length > 0 && filtered.sell + filtered.lowPrice + filtered.tooSmall === trades.length) {
+    logger.info(`Copy: ${trades.length} trades filtered (${filtered.sell} sell, ${filtered.lowPrice} low price, ${filtered.tooSmall} too small)`);
   }
 }
 
@@ -442,6 +459,16 @@ async function main(): Promise<void> {
   logger.info(`Live Trading: ${state.liveTrading ? "ENABLED" : "DISABLED"}`);
   logger.info(`POL Reserve: ${state.polReserveConfig.enabled ? `ON (target: ${state.polReserveConfig.targetPol} POL)` : "OFF"}`);
 
+  // Debug: Log exact LIVE_TRADING value to catch typos/whitespace
+  if (!state.liveTrading) {
+    const rawValue = process.env.LIVE_TRADING ?? process.env.ARB_LIVE_TRADING ?? "";
+    if (rawValue && rawValue !== "I_UNDERSTAND_THE_RISKS") {
+      logger.warn(`LIVE_TRADING value "${rawValue}" is not valid. Expected exact string: "I_UNDERSTAND_THE_RISKS"`);
+    } else if (!rawValue) {
+      logger.warn(`LIVE_TRADING not set - running in SIMULATION mode (no real trades will execute)`);
+    }
+  }
+
   // Telegram
   initTelegram();
 
@@ -468,7 +495,16 @@ async function main(): Promise<void> {
   state.wallet = auth.wallet;
   state.address = auth.address ?? "";
 
-  logger.info(`Wallet: ${state.address.slice(0, 10)}...`);
+  // Log address details for debugging address mismatch issues
+  const signerAddr = auth.wallet.address;
+  const effectiveAddr = auth.effectiveAddress ?? auth.address ?? "";
+  logger.info(`Signer: ${signerAddr.slice(0, 10)}...`);
+  logger.info(`Effective (trading/balance): ${effectiveAddr.slice(0, 10)}...`);
+  
+  if (signerAddr.toLowerCase() !== effectiveAddr.toLowerCase()) {
+    logger.warn(`⚠️ Using proxy/funder mode: signer differs from trading address`);
+    logger.warn(`Ensure API credentials were derived with matching signature type configuration`);
+  }
 
   // Balances - check the effective address (funder), not just signer
   const usdc = await getUsdcBalance(state.wallet, state.address);
