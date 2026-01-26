@@ -790,7 +790,7 @@ async function maybeSendSummary() {
 
   ledger.lastSummary = Date.now();
   const summary = getLedgerSummary();
-  log(summary.replace(/<[^>]*>/g, "")); // Log without HTML tags
+  log(summary.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&")); // Log without HTML tags/entities
 
   if (state.telegram) {
     await axios
