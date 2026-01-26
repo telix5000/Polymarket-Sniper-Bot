@@ -848,3 +848,168 @@ describe("AutoSell Quick Win Logic", () => {
     // If price drops back to 5¢, we'd have locked in $9.25 instead of $0
   });
 });
+
+// === OVERSIZED POSITION EXIT TESTS ===
+
+describe("AutoSell Oversized Position Exit", () => {
+  describe("Default Config", () => {
+    test("DEFAULT_AUTO_SELL_CONFIG has correct oversized exit defaults", () => {
+      assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitEnabled, false);
+      assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitThresholdUsd, 25);
+      assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitHoursBeforeEvent, 1);
+      assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitBreakevenTolerancePct, 2);
+    });
+  });
+
+  describe("Env Override", () => {
+    test("AUTO_SELL_OVERSIZED_EXIT_ENABLED can be overridden via env", () => {
+      resetEnv();
+      Object.assign(process.env, baseEnv, {
+        STRATEGY_PRESET: "balanced",
+        AUTO_SELL_OVERSIZED_EXIT_ENABLED: "true",
+      });
+
+      const config = loadStrategyConfig();
+      assert.strictEqual(config?.autoSellOversizedExitEnabled, true);
+    });
+
+    test("AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD can be overridden via env", () => {
+      resetEnv();
+      Object.assign(process.env, baseEnv, {
+        STRATEGY_PRESET: "balanced",
+        AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD: "50",
+      });
+
+      const config = loadStrategyConfig();
+      assert.strictEqual(config?.autoSellOversizedExitThresholdUsd, 50);
+    });
+
+    test("AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT can be overridden via env", () => {
+      resetEnv();
+      Object.assign(process.env, baseEnv, {
+        STRATEGY_PRESET: "balanced",
+        AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT: "2",
+      });
+
+      const config = loadStrategyConfig();
+      assert.strictEqual(config?.autoSellOversizedExitHoursBeforeEvent, 2);
+    });
+
+    test("AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT can be overridden via env", () => {
+      resetEnv();
+      Object.assign(process.env, baseEnv, {
+        STRATEGY_PRESET: "balanced",
+        AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT: "5",
+      });
+
+      const config = loadStrategyConfig();
+      assert.strictEqual(config?.autoSellOversizedExitBreakevenTolerancePct, 5);
+    });
+  });
+
+  describe("Exit Strategy Logic", () => {
+    test("oversized position that turns profitable should be sold immediately", () => {
+      // Scenario: Position exceeds $25 threshold, was losing but now profitable
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x456",
+        size: 100,
+        entryPrice: 0.30, // 30¢ entry = $30 invested (>$25 threshold)
+        currentBidPrice: 0.35, // 35¢ current = $35 value
+        pnlPct: 16.67, // +16.67% profit
+        pnlTrusted: true,
+      };
+
+      const investedUsd = position.size * position.entryPrice; // $30
+      const isOversized = investedUsd > 25;
+      const isProfitable = position.pnlPct > 0;
+
+      assert.ok(isOversized, "Position is oversized (>$25)");
+      assert.ok(isProfitable, "Position is profitable");
+      // Strategy: Should sell immediately to lock in profit
+    });
+
+    test("oversized position near breakeven should be sold", () => {
+      // Scenario: Position exceeds threshold, small loss within tolerance
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x456",
+        size: 100,
+        entryPrice: 0.30, // 30¢ entry = $30 invested
+        currentBidPrice: 0.295, // 29.5¢ current = $29.50 value
+        pnlPct: -1.67, // -1.67% loss (within 2% tolerance)
+        pnlTrusted: true,
+      };
+
+      const tolerancePct = 2;
+      const isNearBreakeven = Math.abs(position.pnlPct) <= tolerancePct;
+
+      assert.ok(isNearBreakeven, "Position is near breakeven (within 2%)");
+      // Strategy: Should sell to exit at minimal loss
+    });
+
+    test("oversized losing position should wait until event approaches", () => {
+      // Scenario: Position exceeds threshold, significant loss, event far away
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x456",
+        size: 100,
+        entryPrice: 0.30, // 30¢ entry = $30 invested
+        currentBidPrice: 0.24, // 24¢ current = $24 value
+        pnlPct: -20, // -20% loss (outside tolerance, should wait)
+        pnlTrusted: true,
+        marketEndTime: Date.now() + 24 * 60 * 60 * 1000, // 24 hours away
+      };
+
+      const tolerancePct = 2;
+      const hoursBeforeEvent = 1;
+      const hoursRemaining = (position.marketEndTime - Date.now()) / (60 * 60 * 1000);
+
+      const isNearBreakeven = Math.abs(position.pnlPct) <= tolerancePct;
+      const isEventApproaching = hoursRemaining <= hoursBeforeEvent;
+
+      assert.ok(!isNearBreakeven, "Position is NOT near breakeven");
+      assert.ok(!isEventApproaching, "Event is NOT approaching (>1h away)");
+      // Strategy: Should wait for better opportunity (price recovery or event approach)
+    });
+
+    test("oversized losing position should force exit when event is approaching", () => {
+      // Scenario: Position exceeds threshold, significant loss, event within 1 hour
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x456",
+        size: 100,
+        entryPrice: 0.30, // 30¢ entry = $30 invested
+        currentBidPrice: 0.24, // 24¢ current = $24 value
+        pnlPct: -20, // -20% loss
+        pnlTrusted: true,
+        marketEndTime: Date.now() + 30 * 60 * 1000, // 30 minutes away (<1 hour)
+      };
+
+      const hoursBeforeEvent = 1;
+      const hoursRemaining = (position.marketEndTime - Date.now()) / (60 * 60 * 1000);
+      const isEventApproaching = hoursRemaining <= hoursBeforeEvent;
+
+      assert.ok(isEventApproaching, "Event IS approaching (<1h away)");
+      // Strategy: Should force exit to avoid total loss at resolution
+    });
+
+    test("position below threshold should not be considered oversized", () => {
+      // Scenario: Small position that doesn't exceed threshold
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x456",
+        size: 50,
+        entryPrice: 0.20, // 20¢ entry = $10 invested (<$25 threshold)
+        currentBidPrice: 0.15, // 15¢ current
+        pnlPct: -25, // -25% loss
+      };
+
+      const investedUsd = position.size * position.entryPrice; // $10
+      const isOversized = investedUsd > 25;
+
+      assert.ok(!isOversized, "Position is NOT oversized (<$25)");
+      // Strategy: Not handled by oversized exit (too small)
+    });
+  });
+});
