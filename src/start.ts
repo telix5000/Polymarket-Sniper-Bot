@@ -520,7 +520,6 @@ async function runModeDetection(positions: Position[]): Promise<void> {
   );
 
   // Analyze conditions and handle mode transitions
-  const prevMode = state.scavengerState.mode;
   const { shouldSwitch, newMode, reasons, newState } = analyzeMarketConditions(
     state.scavengerState,
     cfg,
