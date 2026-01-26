@@ -1434,8 +1434,9 @@ export class PositionTracker {
       // Never mutate this.positions during fetch
       const positions = await this.fetchPositionsFromAPI();
 
-      // === PHASE 2: BUILD NEW POSITION MAP (local variable) ===
-      // Never clear this.positions - build replacement map in local variable
+      // === PHASE 2: BUILD NEW POSITION MAP ===
+      // Positions already have avgEntryPriceCents populated from Data API's avgPrice field
+      // (see fetchPositionsFromAPI where it's set as: avgEntryPriceCents: entryPrice * 100)
       const newPositions = new Map<string, Position>();
       const now = Date.now();
 
@@ -1444,13 +1445,9 @@ export class PositionTracker {
         newPositions.set(key, position);
         this.positionLastSeen.set(key, now);
 
-        // Preserve entry time if position already existed (from historical data or previous refresh)
-        // Only set to "now" for genuinely new positions (bought after startup)
+        // Track entry time for hold time checks (optional - strategies can also use timeHeldSec from API)
         if (!this.positionEntryTimes.has(key)) {
           this.positionEntryTimes.set(key, now);
-          this.logger.debug(
-            `[PositionTracker] New position detected (no historical entry time): ${key.slice(0, 30)}...`,
-          );
         }
       }
 
@@ -3941,6 +3938,9 @@ export class PositionTracker {
                 currentAskPrice: bestAskPrice,
                 status: finalStatus,
                 cacheAgeMs,
+                // === ENTRY METADATA (from Data API avgPrice) ===
+                // Convert entryPrice (0-1 scale) to cents for strategies like PositionStacking
+                avgEntryPriceCents: entryPrice * 100,
                 // New Data-API fields
                 pnlSource,
                 dataApiPnlUsd,

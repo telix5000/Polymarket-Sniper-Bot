@@ -263,6 +263,20 @@ const HEDGE_TOO_EXPENSIVE_THRESHOLD = 0.9;
 const NEAR_RESOLUTION_HEDGE_MAX_PRICE = 0.93;
 
 /**
+ * Information about a completed hedge for diagnostic logging
+ */
+interface HedgeInfo {
+  /** Timestamp when the hedge was placed */
+  hedgedAtMs: number;
+  /** USD amount spent on the hedge (or liquidation) */
+  hedgeSizeUsd: number;
+  /** Whether this was an emergency liquidation instead of a hedge */
+  wasLiquidation: boolean;
+  /** The P&L percentage at the time of hedging */
+  pnlPctAtHedge: number;
+}
+
+/**
  * Hedging Strategy
  */
 export class HedgingStrategy {
@@ -279,6 +293,10 @@ export class HedgingStrategy {
 
   // Track what we've already hedged to avoid double-hedging
   private hedgedPositions: Set<string> = new Set();
+  
+  // Track hedge details for diagnostic logging (separate from hedgedPositions to avoid breaking changes)
+  // Key: position key (marketId-tokenId), Value: HedgeInfo
+  private hedgeInfoMap: Map<string, HedgeInfo> = new Map();
 
   // === PAIRED HEDGE TRACKING ===
   // Track relationships between original positions and their hedge positions
@@ -607,12 +625,23 @@ export class HedgingStrategy {
         const isCatastrophicLossPosition = position.pnlPct < 0 && 
           Math.abs(position.pnlPct) >= this.config.forceLiquidationPct;
 
-        // Skip if already hedged
+        // Skip if already hedged - now includes detailed hedge info when available
         if (this.hedgedPositions.has(key)) {
+          const existingHedgeInfo = this.hedgeInfoMap.get(key);
           if (isCatastrophicLossPosition) {
-            this.logger.info(
-              `[Hedging] 📋 Catastrophic loss position already hedged: ${position.side ?? "?"} ${tokenIdShort}... at ${position.pnlPct.toFixed(1)}%`,
-            );
+            if (existingHedgeInfo) {
+              const hedgeAge = Math.round((now - existingHedgeInfo.hedgedAtMs) / 1000);
+              this.logger.info(
+                `[Hedging] 📋 Catastrophic loss position already hedged: ${position.side ?? "?"} ${tokenIdShort}... ` +
+                  `at ${position.pnlPct.toFixed(1)}% | hedgeKey=${key.slice(0, 20)}..., ` +
+                  `lastHedgeSize=$${existingHedgeInfo.hedgeSizeUsd.toFixed(2)}, ` +
+                  `wasLiquidation=${existingHedgeInfo.wasLiquidation}, hedgeAge=${hedgeAge}s`,
+              );
+            } else {
+              this.logger.info(
+                `[Hedging] 📋 Catastrophic loss position already hedged: ${position.side ?? "?"} ${tokenIdShort}... at ${position.pnlPct.toFixed(1)}%`,
+              );
+            }
           }
           skipAggregator.add(tokenIdShort, "already_hedged");
           continue;
@@ -741,9 +770,20 @@ export class HedgingStrategy {
           // Attempt liquidation using Data API price as fallback
           // NOTE: Consistent with lines 619-626 which allow action on catastrophic losses
           // even with untrusted P&L - the risk of inaction is greater than the risk of acting
+          
+          // Calculate expected liquidation value for diagnostic logging
+          const positionValueUsd = position.size * position.currentPrice;
+          const maxHedgeCap = this.config.allowExceedMax 
+            ? this.config.absoluteMaxUsd 
+            : this.config.maxHedgeUsd;
+          
           this.logger.warn(
             `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPctMagnitude.toFixed(1)}%) on NOT_TRADABLE position ${position.side} ${tokenIdShort}... ` +
-              `- ATTEMPTING LIQUIDATION using Data API price ${(position.currentPrice * 100).toFixed(1)}¢` +
+              `- ATTEMPTING EMERGENCY LIQUIDATION | ` +
+              `positionValue=$${positionValueUsd.toFixed(2)}, ` +
+              `maxHedgeCap=$${maxHedgeCap.toFixed(2)} (allowExceed=${this.config.allowExceedMax}, absoluteMax=$${this.config.absoluteMaxUsd}), ` +
+              `budget=$${this.cycleHedgeBudgetRemaining?.toFixed(2) ?? "null"}, ` +
+              `dataApiPrice=${(position.currentPrice * 100).toFixed(1)}¢` +
               `${!position.pnlTrusted ? ` (untrusted P&L: ${position.pnlUntrustedReason ?? "unknown"})` : ""}`,
           );
           
@@ -763,9 +803,17 @@ export class HedgingStrategy {
           const sold = await this.sellPosition(position);
           if (sold) {
             actionsCount++;
+            // Store hedge info for diagnostic logging
             this.hedgedPositions.add(key);
+            this.hedgeInfoMap.set(key, {
+              hedgedAtMs: now,
+              hedgeSizeUsd: positionValueUsd, // Approximate - actual sell price may differ
+              wasLiquidation: true,
+              pnlPctAtHedge: position.pnlPct,
+            });
             this.logger.info(
-              `[Hedging] ✅ Emergency liquidation succeeded for NOT_TRADABLE position ${position.side} ${tokenIdShort}...`,
+              `[Hedging] ✅ Emergency liquidation succeeded for NOT_TRADABLE position ${position.side} ${tokenIdShort}... ` +
+                `(~$${positionValueUsd.toFixed(2)} recovered)`,
             );
           } else {
             this.failedLiquidationCooldowns.set(key, now + FAILED_LIQUIDATION_COOLDOWN_MS);
@@ -1274,6 +1322,28 @@ export class HedgingStrategy {
     if (this.config.hedgeExitThreshold > 0 && this.pairedHedges.size > 0) {
       const exitActionsCount = await this.monitorHedgeExits(positions, now);
       actionsCount += exitActionsCount;
+    }
+
+    // === PER-CYCLE DIAGNOSTIC SUMMARY ===
+    // Log detailed budget and skip reason breakdown for debugging hedging decisions
+    // Rate-limited to avoid log spam
+    if (this.logDeduper.shouldLog("Hedging:cycle_summary", 30_000)) {
+      const alreadyHedgedCount = skipAggregator.getCount("already_hedged");
+      const notTradableCount = skipAggregator.getCount("not_tradable");
+      const lossBelowTriggerCount = skipAggregator.getCount("loss_below_trigger");
+      const nearResolutionCount = skipAggregator.getCount("near_resolution");
+      const untrustedPnlCount = skipAggregator.getCount("untrusted_pnl");
+      const cooldownCount = skipAggregator.getCount("cooldown");
+      
+      this.logger.info(
+        `[Hedging] 📊 CYCLE SUMMARY (cycle=${this.cycleCount}): actions=${actionsCount}, ` +
+          `budget=$${this.cycleHedgeBudgetRemaining?.toFixed(2) ?? "null"}, ` +
+          `maxHedgeCap=$${this.config.allowExceedMax ? this.config.absoluteMaxUsd : this.config.maxHedgeUsd} ` +
+          `(allowExceed=${this.config.allowExceedMax}, absoluteMax=$${this.config.absoluteMaxUsd}) | ` +
+          `Skips: already_hedged=${alreadyHedgedCount}, not_tradable=${notTradableCount}, ` +
+          `loss_below_trigger=${lossBelowTriggerCount}, near_resolution=${nearResolutionCount}, ` +
+          `pnl_untrusted=${untrustedPnlCount}, cooldown=${cooldownCount}`,
+      );
     }
 
     // === LOG DEDUPLICATION: Emit aggregated skip summary (rate-limited) ===
