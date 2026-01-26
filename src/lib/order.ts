@@ -14,7 +14,12 @@ import { OrderType, Side } from "@polymarket/clob-client";
 import { ORDER } from "./constants";
 import type { OrderSide, OrderOutcome, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
-import { isCloudflareBlock, formatErrorForLog } from "./error-handling";
+import {
+  isCloudflareBlock,
+  formatErrorForLog,
+  extractCloudflareDiagnostics,
+  formatCloudflareDiagnostics,
+} from "./error-handling";
 
 // In-flight tracking to prevent duplicate orders
 const inFlight = new Map<string, number>();
@@ -227,8 +232,10 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           // Check for Cloudflare block in response
           const errorMsg = response.errorMsg || response.error || "Unknown error";
           if (isCloudflareBlock(errorMsg) || isCloudflareBlock(response)) {
+            const diag = extractCloudflareDiagnostics(response);
             logger?.error?.(
-              `Order blocked by Cloudflare (403). Your IP may be geo-blocked. Consider using a VPN.`,
+              `Order blocked by Cloudflare (403). ${formatCloudflareDiagnostics(diag)}. ` +
+                `Your IP may be geo-blocked. Verify VPN is active and clob.polymarket.com is NOT bypassed.`,
             );
             return { success: false, reason: "CLOUDFLARE_BLOCKED" };
           }
@@ -238,8 +245,10 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
         retryCount++;
         // Check for Cloudflare block in error
         if (isCloudflareBlock(err)) {
+          const diag = extractCloudflareDiagnostics(err);
           logger?.error?.(
-            `Order blocked by Cloudflare (403). Your IP may be geo-blocked. Consider using a VPN.`,
+            `Order blocked by Cloudflare (403). ${formatCloudflareDiagnostics(diag)}. ` +
+              `Your IP may be geo-blocked. Verify VPN is active and clob.polymarket.com is NOT bypassed.`,
           );
           return { success: false, reason: "CLOUDFLARE_BLOCKED" };
         }

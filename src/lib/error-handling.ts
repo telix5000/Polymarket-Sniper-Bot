@@ -171,6 +171,122 @@ export function isCloudflareBlock(error: unknown): boolean {
 }
 
 /**
+ * Cloudflare diagnostic information extracted from error responses
+ */
+export interface CloudflareDiagnostics {
+  rayId: string | null;
+  statusCode: number | null;
+  blockedDomain: string | null;
+  clientIp: string | null;
+}
+
+/**
+ * Extract Cloudflare diagnostic information from an error response.
+ * Useful for troubleshooting 403 blocks by providing Ray ID and other details.
+ */
+export function extractCloudflareDiagnostics(
+  error: unknown,
+): CloudflareDiagnostics {
+  const diagnostics: CloudflareDiagnostics = {
+    rayId: null,
+    statusCode: null,
+    blockedDomain: null,
+    clientIp: null,
+  };
+
+  if (!error) return diagnostics;
+
+  const errorStr = safeErrorToString(error);
+
+  // Extract Ray ID - handles multiple HTML formats
+  const rayIdPatterns = [
+    /Cloudflare Ray ID:\s*<strong[^>]*>([a-f0-9]+)<\/strong>/i,
+    /Ray ID:\s*<strong[^>]*>([a-f0-9]+)<\/strong>/i,
+    /Ray ID:\s*<[^>]*>([a-f0-9]+)/i,
+    /Ray ID:\s*([a-f0-9]+)/i,
+    /"cf-ray":\s*"([a-f0-9]+)"/i,
+  ];
+
+  for (const pattern of rayIdPatterns) {
+    const match = errorStr.match(pattern);
+    if (match) {
+      diagnostics.rayId = match[1].trim();
+      break;
+    }
+  }
+
+  // Extract status code from error object or string
+  if (typeof error === "object" && error !== null) {
+    const errObj = error as Record<string, unknown>;
+    if (typeof errObj.status === "number") {
+      diagnostics.statusCode = errObj.status;
+    } else if (
+      typeof errObj.response === "object" &&
+      errObj.response !== null
+    ) {
+      const resp = errObj.response as Record<string, unknown>;
+      if (typeof resp.status === "number") {
+        diagnostics.statusCode = resp.status;
+      }
+    }
+  }
+  // Fallback: extract from string
+  if (!diagnostics.statusCode) {
+    const statusMatch = errorStr.match(/"status"\s*:\s*(\d{3})/);
+    if (statusMatch) {
+      diagnostics.statusCode = parseInt(statusMatch[1], 10);
+    }
+  }
+
+  // Extract blocked domain
+  const domainMatch = errorStr.match(
+    /unable to access\s*<\/span>\s*([a-z0-9.-]+)/i,
+  );
+  if (domainMatch) {
+    diagnostics.blockedDomain = domainMatch[1].trim();
+  } else {
+    const domainMatch2 = errorStr.match(/unable to access\s+([a-z0-9.-]+)/i);
+    if (domainMatch2) {
+      diagnostics.blockedDomain = domainMatch2[1].trim();
+    }
+  }
+
+  // Extract client IP if revealed in the response
+  const ipMatch = errorStr.match(
+    /id="cf-footer-ip"[^>]*>([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/i,
+  );
+  if (ipMatch) {
+    diagnostics.clientIp = ipMatch[1].trim();
+  }
+
+  return diagnostics;
+}
+
+/**
+ * Format Cloudflare diagnostics for logging
+ */
+export function formatCloudflareDiagnostics(
+  diagnostics: CloudflareDiagnostics,
+): string {
+  const parts: string[] = [];
+
+  if (diagnostics.statusCode) {
+    parts.push(`status=${diagnostics.statusCode}`);
+  }
+  if (diagnostics.rayId) {
+    parts.push(`rayId=${diagnostics.rayId}`);
+  }
+  if (diagnostics.blockedDomain) {
+    parts.push(`domain=${diagnostics.blockedDomain}`);
+  }
+  if (diagnostics.clientIp) {
+    parts.push(`clientIp=${diagnostics.clientIp}`);
+  }
+
+  return parts.length > 0 ? parts.join(" ") : "no diagnostics available";
+}
+
+/**
  * Check if an error indicates rate limiting
  */
 export function isRateLimited(error: unknown): boolean {
