@@ -725,7 +725,7 @@ export class AutoRedeemStrategy {
 
       if (allApiPositions.length === 0) {
         this.logger.debug(
-          `[AutoRedeem] Data API returned no positions`,
+          `[AutoRedeem] Data API returned no positions after pagination`,
         );
         return [];
       }
