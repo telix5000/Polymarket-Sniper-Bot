@@ -17,7 +17,7 @@ const WPOL_ADDRESS = "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270";
 
 // QuickSwap Router ABI (minimal for exactInputSingle)
 const QUICKSWAP_ROUTER_ABI = [
-  "function exactInputSingle((address tokenIn, address tokenOut, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 limitSqrtPrice)) external payable returns (uint256 amountOut)",
+  "function exactInputSingle(tuple(address tokenIn, address tokenOut, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 limitSqrtPrice) params) external payable returns (uint256 amountOut)",
   "function unwrapWNativeToken(uint256 amountMinimum, address recipient) external payable",
 ];
 
@@ -26,6 +26,12 @@ const ERC20_ABI = [
   "function approve(address spender, uint256 amount) returns (bool)",
   "function allowance(address owner, address spender) view returns (uint256)",
   "function balanceOf(address) view returns (uint256)",
+];
+
+// WPOL ABI for balance check
+const WPOL_ABI = [
+  "function balanceOf(address) view returns (uint256)",
+  "function withdraw(uint256 amount) external",
 ];
 
 // Constants for swap calculations
@@ -102,8 +108,9 @@ export function calculateSwapAmount(
   let usdcToSwap = Math.min(polNeeded * estimatedPolPrice, maxSwapUsd);
 
   // Ensure we have enough USDC (use only 90% of available)
-  if (usdcToSwap > availableUsdc * AVAILABLE_USDC_BUFFER) {
-    usdcToSwap = Math.max(availableUsdc * AVAILABLE_USDC_BUFFER, 0);
+  const maxAvailableUsdc = availableUsdc * AVAILABLE_USDC_BUFFER;
+  if (usdcToSwap > maxAvailableUsdc) {
+    usdcToSwap = maxAvailableUsdc;
   }
 
   if (usdcToSwap < MIN_SWAP_USD) {
@@ -140,6 +147,7 @@ export async function swapUsdcToPol(
 
     // Create contract instances
     const usdcContract = new Contract(POLYGON.USDC_ADDRESS, ERC20_ABI, wallet);
+    const wpolContract = new Contract(WPOL_ADDRESS, WPOL_ABI, wallet);
     const routerContract = new Contract(QUICKSWAP_ROUTER, QUICKSWAP_ROUTER_ABI, wallet);
 
     // Check and set allowance if needed
@@ -150,6 +158,9 @@ export async function swapUsdcToPol(
       await approveTx.wait();
       logger?.info?.(`USDC approved`);
     }
+
+    // Get WPOL balance before swap to calculate actual received
+    const wpolBalanceBefore = await wpolContract.balanceOf(address);
 
     // Estimate expected POL output (rough estimate for slippage calc)
     const estimatedPolOut = usdcAmount / POL_PRICE_ESTIMATE_USD;
@@ -177,16 +188,17 @@ export async function swapUsdcToPol(
     const swapTx = await routerContract.exactInputSingle(swapParams);
     const receipt = await swapTx.wait();
 
-    // Get the actual WPOL received from logs or estimate
-    // Note: For simplicity, we estimate based on the expected output
-    const polReceived = estimatedPolOut;
+    // Get actual WPOL received by comparing balances
+    const wpolBalanceAfter = await wpolContract.balanceOf(address);
+    const wpolReceived = wpolBalanceAfter - wpolBalanceBefore;
+    const polReceived = Number(formatUnits(wpolReceived, 18));
 
-    // Unwrap WPOL to native POL
+    // Unwrap WPOL to native POL using the actual received amount
     logger?.info?.(`Unwrapping WPOL to native POL...`);
-    const unwrapTx = await routerContract.unwrapWNativeToken(minAmountOut, address);
+    const unwrapTx = await wpolContract.withdraw(wpolReceived);
     await unwrapTx.wait();
 
-    logger?.info?.(`✅ POL Swap complete | ${usdcAmount.toFixed(2)} USDC → ~${polReceived.toFixed(2)} POL`);
+    logger?.info?.(`✅ POL Swap complete | ${usdcAmount.toFixed(2)} USDC → ${polReceived.toFixed(2)} POL`);
 
     return {
       success: true,
