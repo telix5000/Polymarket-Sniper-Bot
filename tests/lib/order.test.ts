@@ -58,6 +58,8 @@ describe("postOrder", () => {
     } else {
       delete process.env.LIVE_TRADING;
     }
+    // Clean up ABSOLUTE_MAX_POSITION_USD
+    delete process.env.ABSOLUTE_MAX_POSITION_USD;
     clearCooldowns();
   });
 
@@ -82,6 +84,62 @@ describe("postOrder", () => {
   describe("order validation", () => {
     beforeEach(() => {
       process.env.LIVE_TRADING = "I_UNDERSTAND_THE_RISKS";
+    });
+
+    it("rejects orders exceeding ABSOLUTE_MAX_POSITION_USD", async () => {
+      // Set absolute max to $50
+      process.env.ABSOLUTE_MAX_POSITION_USD = "50";
+      const client = createMockClient();
+
+      const result = await postOrder({
+        client: client as any,
+        tokenId: "test-token",
+        outcome: "YES",
+        side: "BUY",
+        sizeUsd: 75, // Exceeds the $50 cap
+      });
+
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.reason, "EXCEEDS_ABSOLUTE_MAX");
+      
+      // Cleanup
+      delete process.env.ABSOLUTE_MAX_POSITION_USD;
+    });
+
+    it("allows orders within ABSOLUTE_MAX_POSITION_USD", async () => {
+      // Set absolute max to $50
+      process.env.ABSOLUTE_MAX_POSITION_USD = "50";
+      const client = createMockClient();
+
+      const result = await postOrder({
+        client: client as any,
+        tokenId: "test-token",
+        outcome: "YES",
+        side: "BUY",
+        sizeUsd: 25, // Within the $50 cap
+      });
+
+      assert.strictEqual(result.success, true);
+      
+      // Cleanup
+      delete process.env.ABSOLUTE_MAX_POSITION_USD;
+    });
+
+    it("uses default ABSOLUTE_MAX_POSITION_USD of $50 when not set", async () => {
+      // Don't set ABSOLUTE_MAX_POSITION_USD, should default to $50
+      delete process.env.ABSOLUTE_MAX_POSITION_USD;
+      const client = createMockClient();
+
+      const result = await postOrder({
+        client: client as any,
+        tokenId: "test-token",
+        outcome: "YES",
+        side: "BUY",
+        sizeUsd: 60, // Exceeds the default $50 cap
+      });
+
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.reason, "EXCEEDS_ABSOLUTE_MAX");
     });
 
     it("rejects orders below minimum size", async () => {
