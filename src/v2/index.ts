@@ -2034,6 +2034,16 @@ async function executeSell(
         return false;
       }
 
+      // Handle PRICE_PROTECTION: Price too low to sell
+      // Add to cooldown list to prevent repeated attempts
+      if (result.reason === "PRICE_PROTECTION") {
+        state.zeroPriceTokens.set(tokenId, Date.now());
+        log(
+          `⚠️ SELL | ${reason} | Price protection triggered - skipping for 1h | ${outcome} ${$(sizeUsd)}`,
+        );
+        return false;
+      }
+
       // Fallback to CLOB if on-chain not implemented yet
       if (result.reason === "NOT_IMPLEMENTED" && state.clobClient) {
         log(`⚠️ On-chain not ready, falling back to CLOB`);
@@ -2085,6 +2095,19 @@ async function executeSell(
       state.zeroPriceTokens.set(tokenId, Date.now());
       log(
         `⚠️ SELL | ${reason} | Zero price - skipping for 1h (redeem only) | ${outcome} ${$(sizeUsd)}`,
+      );
+      return false;
+    }
+
+    // Skip noisy alerts for positions that can't be sold - these are not actionable errors
+    // The zeroPriceTokens blocklist already prevents retries
+    // List of non-alertable sell failure reasons (positions that simply can't be sold)
+    const nonAlertableSellReasons = [
+      "LOSER_POSITION_PRICE_TOO_LOW", // Price below minimum tradable threshold
+    ];
+    if (result.status === "skipped" && result.reason && nonAlertableSellReasons.includes(result.reason)) {
+      log(
+        `⚠️ SELL | ${reason} | ${result.reason} - position not tradeable | ${outcome} ${$(sizeUsd)}`,
       );
       return false;
     }
