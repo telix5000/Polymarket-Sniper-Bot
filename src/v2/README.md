@@ -96,6 +96,7 @@ The POL reserve system automatically maintains a minimum POL (Polygon native tok
 | `INTERVAL_MS` | `5000` | Cycle interval in milliseconds | `FETCH_INTERVAL` (in seconds) |
 | `TELEGRAM_BOT_TOKEN` | - | Telegram bot token | `TELEGRAM_TOKEN` |
 | `TELEGRAM_CHAT_ID` | - | Telegram chat ID | `TELEGRAM_CHAT` |
+| `TELEGRAM_SILENT` | `false` | Send notifications silently (no sound) | - |
 | `INITIAL_INVESTMENT_USD` | - | Your initial investment amount for tracking overall P&L return % | - |
 
 ### P&L Tracking

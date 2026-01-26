@@ -352,7 +352,7 @@ const state = {
   // Market end time cache with TTL support
   // Value: { endTime: number (-1 = not available), cachedAt: number (timestamp) }
   marketEndTimeCache: new Map<string, { endTime: number; cachedAt: number }>(),
-  telegram: undefined as { token: string; chatId: string } | undefined,
+  telegram: undefined as { token: string; chatId: string; silent: boolean } | undefined,
   proxyAddress: undefined as string | undefined,
   copyLastCheck: new Map<string, number>(),
   clobClient: undefined as (ClobClient & { wallet: Wallet }) | undefined,
@@ -465,6 +465,7 @@ async function maybeSendSummary() {
       chat_id: state.telegram.chatId,
       text: summary,
       parse_mode: "Markdown",
+      disable_notification: state.telegram.silent,
     }).catch(() => {});
   }
 }
@@ -816,6 +817,7 @@ async function alert(action: string, details: string, success = true) {
       chat_id: state.telegram.chatId, 
       text: line,
       parse_mode: "Markdown",
+      disable_notification: state.telegram.silent,
     }).catch((e) => log(`⚠️ Telegram error: ${e.message}`));
   }
 }
@@ -843,6 +845,7 @@ async function alertTrade(side: "BUY" | "SELL", strategy: string, outcome: strin
       chat_id: state.telegram.chatId, 
       text: msg,
       parse_mode: "Markdown",
+      disable_notification: state.telegram.silent,
     }).catch((e) => log(`⚠️ Telegram error: ${e.message}`));
   }
 }
@@ -855,6 +858,7 @@ async function alertStatus(msg: string) {
       chat_id: state.telegram.chatId, 
       text: `🤖 ${msg}`,
       parse_mode: "Markdown",
+      disable_notification: state.telegram.silent,
     }).catch((e) => log(`⚠️ Telegram error: ${e.message}`));
   }
 }
@@ -893,6 +897,7 @@ async function alertPositionSummary() {
     chat_id: state.telegram.chatId, 
     text: lines.join("\n"),
     parse_mode: "Markdown",
+    disable_notification: state.telegram.silent,
   }).catch((e) => log(`⚠️ Telegram error: ${e.message}`));
 }
 
@@ -2382,7 +2387,7 @@ export function loadConfig() {
     liveTrading: isLive,
     leaderboardLimit,
     telegram: (env("TELEGRAM_TOKEN") || env("TELEGRAM_BOT_TOKEN")) && (env("TELEGRAM_CHAT") || env("TELEGRAM_CHAT_ID"))
-      ? { token: (env("TELEGRAM_TOKEN") || env("TELEGRAM_BOT_TOKEN"))!, chatId: (env("TELEGRAM_CHAT") || env("TELEGRAM_CHAT_ID"))! } : undefined,
+      ? { token: (env("TELEGRAM_TOKEN") || env("TELEGRAM_BOT_TOKEN"))!, chatId: (env("TELEGRAM_CHAT") || env("TELEGRAM_CHAT_ID"))!, silent: (env("TELEGRAM_SILENT") ?? "").toLowerCase() === "true" } : undefined,
   };
 }
 
