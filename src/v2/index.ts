@@ -48,6 +48,10 @@ import axios from "axios";
 import { postOrder, type OrderSide, type OrderOutcome } from "../utils/post-order.util";
 import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 
+// V1 Features: Adaptive Learning, On-Chain Exit, On-Chain Trading
+import { getAdaptiveLearner, type AdaptiveTradeLearner } from "../arbitrage/learning/adaptive-learner";
+import { executeOnChainOrder, getOnChainStatus } from "../trading/onchain-executor";
+
 // ============ TYPES ============
 
 type Preset = "conservative" | "balanced" | "aggressive";
@@ -156,6 +160,10 @@ interface Config {
   };
   maxPositionUsd: number;
   reservePct: number;
+  // V1 Features
+  adaptiveLearning: { enabled: boolean };  // Learn from trade outcomes, avoid bad markets
+  onChainExit: { enabled: boolean; priceThreshold: number };  // Exit NOT_TRADABLE positions on-chain
+  tradeMode: "clob" | "onchain";  // Trade via CLOB API or direct on-chain
 }
 
 interface TradeSignal {
@@ -205,6 +213,9 @@ const PRESETS: Record<Preset, Config> = {
     risk: { maxDrawdownPct: 15, maxDailyLossUsd: 50, maxOpenPositions: 10, orderCooldownMs: 2000, maxOrdersPerHour: 100, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 2 },
     maxPositionUsd: 15,
     reservePct: 25,
+    adaptiveLearning: { enabled: true },
+    onChainExit: { enabled: true, priceThreshold: 0.99 },
+    tradeMode: "onchain",
   },
   balanced: {
     autoSell: { 
@@ -234,6 +245,9 @@ const PRESETS: Record<Preset, Config> = {
     risk: { maxDrawdownPct: 20, maxDailyLossUsd: 100, maxOpenPositions: 20, orderCooldownMs: 1000, maxOrdersPerHour: 200, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 3 },
     maxPositionUsd: 25,
     reservePct: 20,
+    adaptiveLearning: { enabled: true },
+    onChainExit: { enabled: true, priceThreshold: 0.99 },
+    tradeMode: "onchain",
   },
   aggressive: {
     autoSell: { 
@@ -263,6 +277,9 @@ const PRESETS: Record<Preset, Config> = {
     risk: { maxDrawdownPct: 30, maxDailyLossUsd: 200, maxOpenPositions: 30, orderCooldownMs: 500, maxOrdersPerHour: 500, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 5 },
     maxPositionUsd: 100,
     reservePct: 15,
+    adaptiveLearning: { enabled: true },
+    onChainExit: { enabled: true, priceThreshold: 0.99 },
+    tradeMode: "onchain",
   },
 };
 
@@ -307,6 +324,9 @@ const state = {
   authOk: false,
   riskHalted: false,
   vpnActive: false, // Track VPN status
+  // V1 Features
+  adaptiveLearner: undefined as AdaptiveTradeLearner | undefined,
+  pendingTrades: new Map<string, { marketId: string; entryPrice: number; sizeUsd: number; timestamp: number }>(), // For adaptive learning
 };
 
 // ============ P&L LEDGER ============
@@ -671,6 +691,75 @@ async function preOrderCheck(tokenId: string, side: "BUY" | "SELL", sizeUsd: num
   return { ok: true };
 }
 
+// ============ ADAPTIVE LEARNING HELPERS ============
+
+/**
+ * Evaluate trade with adaptive learner (V1 feature)
+ * Returns adjusted size based on market confidence
+ */
+function evaluateTradeWithLearning(conditionId: string, sizeUsd: number, spreadBps: number, cfg: Config): { shouldTrade: boolean; adjustedSize: number; reason?: string } {
+  if (!cfg.adaptiveLearning.enabled || !state.adaptiveLearner) {
+    return { shouldTrade: true, adjustedSize: sizeUsd };
+  }
+  
+  const evaluation = state.adaptiveLearner.evaluateTrade({
+    marketId: conditionId,
+    edgeBps: 100, // Default edge estimate
+    spreadBps,
+    sizeUsd,
+  });
+  
+  if (!evaluation.shouldTrade) {
+    return { shouldTrade: false, adjustedSize: 0, reason: evaluation.reasons.join(", ") };
+  }
+  
+  // Apply size adjustment from learner
+  const adjustedSize = sizeUsd * evaluation.adjustments.sizeMultiplier;
+  return { shouldTrade: true, adjustedSize: Math.max(1, adjustedSize) };
+}
+
+/**
+ * Record trade outcome for adaptive learning
+ */
+function recordTradeForLearning(conditionId: string, entryPrice: number, sizeUsd: number, spreadBps = 50) {
+  if (!state.adaptiveLearner) return;
+  
+  const tradeId = state.adaptiveLearner.recordTrade({
+    marketId: conditionId,
+    timestamp: Date.now(),
+    entryPrice,
+    sizeUsd,
+    edgeBps: 100,
+    spreadBps,
+    outcome: "pending",
+  });
+  
+  state.pendingTrades.set(conditionId, { marketId: conditionId, entryPrice, sizeUsd, timestamp: Date.now() });
+}
+
+// ============ ON-CHAIN EXIT HELPER ============
+
+/**
+ * Check for NOT_TRADABLE positions that can be redeemed on-chain (V1 feature)
+ * Simple version: just checks if position has high price and might be resolved
+ */
+async function checkOnChainExits(cfg: Config): Promise<number> {
+  if (!cfg.onChainExit.enabled) return 0;
+  if (!state.wallet) return 0;
+  
+  let found = 0;
+  for (const p of state.positions) {
+    // Only check high-price positions that might be near resolution
+    if (p.curPrice >= cfg.onChainExit.priceThreshold) {
+      // Position is near $1, likely resolved or close to it
+      // Log it for awareness - actual redemption happens via redeem()
+      log(`🔗 OnChainExit candidate: ${p.outcome} @ ${$price(p.curPrice)} (${$(p.value)})`);
+      found++;
+    }
+  }
+  return found;
+}
+
 // ============ LOGGING ============
 
 function log(msg: string) {
@@ -949,8 +1038,8 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
     return true;
   }
   
-  if (!state.clobClient || !state.wallet) {
-    log(`❌ SELL | ${reason} | No CLOB client`);
+  if (!state.wallet) {
+    log(`❌ SELL | ${reason} | No wallet`);
     recordTrade("SELL", outcome, reason, sizeUsd, curPrice || 0, false);
     return false;
   }
@@ -958,6 +1047,38 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
   log(`💰 SELL | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
   
   try {
+    // On-chain mode: trade directly with wallet
+    if (cfg.tradeMode === "onchain") {
+      log(`⛓️ SELL [ONCHAIN] | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
+      const result = await executeOnChainOrder({
+        wallet: state.wallet,
+        tokenId,
+        outcome: outcome as OrderOutcome,
+        side: "SELL" as OrderSide,
+        sizeUsd,
+        maxAcceptablePrice: curPrice ? curPrice * 0.95 : undefined, // 5% slippage
+        logger: simpleLogger as any,
+      });
+      
+      if (result.success) {
+        await alertTrade("SELL", reason, outcome, sizeUsd, curPrice, true);
+        recordTrade("SELL", outcome, reason, sizeUsd, curPrice || 0, true);
+        recordOrderPlaced();
+        invalidate();
+        return true;
+      }
+      await alertTrade("SELL", reason, outcome, sizeUsd, curPrice, false, result.reason);
+      recordTrade("SELL", outcome, reason, sizeUsd, curPrice || 0, false);
+      return false;
+    }
+    
+    // CLOB mode: use API
+    if (!state.clobClient) {
+      log(`❌ SELL | ${reason} | No CLOB client`);
+      recordTrade("SELL", outcome, reason, sizeUsd, curPrice || 0, false);
+      return false;
+    }
+    
     const result = await postOrder({
       client: state.clobClient,
       wallet: state.wallet,
@@ -1008,6 +1129,16 @@ async function executeBuy(tokenId: string, conditionId: string, outcome: string,
     return false;
   }
   
+  // Adaptive learning check (V1 feature) - skip for hedges
+  if (cfg.adaptiveLearning.enabled && state.adaptiveLearner && !isHedge) {
+    const evalResult = evaluateTradeWithLearning(conditionId, sizeUsd, 50, cfg);
+    if (!evalResult.shouldTrade) {
+      log(`🧠 BUY blocked by learning | ${evalResult.reason}`);
+      return false;
+    }
+    sizeUsd = evalResult.adjustedSize;
+  }
+  
   // Check reserves before buying (hedging can dip into reserves)
   if (!canSpend(sizeUsd, cfg, allowReserve)) {
     const avail = allowReserve ? state.balance : getAvailableBalance(cfg);
@@ -1019,11 +1150,13 @@ async function executeBuy(tokenId: string, conditionId: string, outcome: string,
     log(`🔸 BUY [SIM] | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
     recordTrade("BUY", outcome, reason, sizeUsd, price || 0, true);
     recordOrderPlaced();
+    // Record for adaptive learning
+    if (cfg.adaptiveLearning.enabled) recordTradeForLearning(conditionId, price || 0.5, sizeUsd);
     return true;
   }
   
-  if (!state.clobClient || !state.wallet) {
-    log(`❌ BUY | ${reason} | No CLOB client`);
+  if (!state.wallet) {
+    log(`❌ BUY | ${reason} | No wallet`);
     recordTrade("BUY", outcome, reason, sizeUsd, price || 0, false);
     return false;
   }
@@ -1031,6 +1164,39 @@ async function executeBuy(tokenId: string, conditionId: string, outcome: string,
   log(`🛒 BUY | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
   
   try {
+    // On-chain mode: trade directly with wallet
+    if (cfg.tradeMode === "onchain") {
+      log(`⛓️ BUY [ONCHAIN] | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
+      const result = await executeOnChainOrder({
+        wallet: state.wallet,
+        tokenId,
+        outcome: outcome as OrderOutcome,
+        side: "BUY" as OrderSide,
+        sizeUsd,
+        maxAcceptablePrice: price ? price * 1.03 : undefined, // 3% slippage
+        logger: simpleLogger as any,
+      });
+      
+      if (result.success) {
+        await alertTrade("BUY", reason, outcome, sizeUsd, price, true);
+        recordTrade("BUY", outcome, reason, sizeUsd, price || 0, true);
+        recordOrderPlaced();
+        if (cfg.adaptiveLearning.enabled) recordTradeForLearning(conditionId, price || 0.5, sizeUsd);
+        invalidate();
+        return true;
+      }
+      await alertTrade("BUY", reason, outcome, sizeUsd, price, false, result.reason);
+      recordTrade("BUY", outcome, reason, sizeUsd, price || 0, false);
+      return false;
+    }
+    
+    // CLOB mode: use API
+    if (!state.clobClient) {
+      log(`❌ BUY | ${reason} | No CLOB client`);
+      recordTrade("BUY", outcome, reason, sizeUsd, price || 0, false);
+      return false;
+    }
+    
     const result = await postOrder({
       client: state.clobClient,
       wallet: state.wallet,
@@ -1046,6 +1212,7 @@ async function executeBuy(tokenId: string, conditionId: string, outcome: string,
       await alertTrade("BUY", reason, outcome, sizeUsd, price, true);
       recordTrade("BUY", outcome, reason, sizeUsd, price || 0, true);
       recordOrderPlaced();
+      if (cfg.adaptiveLearning.enabled) recordTradeForLearning(conditionId, price || 0.5, sizeUsd);
       invalidate();
       return true;
     }
@@ -1679,6 +1846,17 @@ export function loadConfig() {
   if (envNum("ARB_MIN_EDGE_BPS") !== undefined) cfg.arbitrage.minEdgeBps = envNum("ARB_MIN_EDGE_BPS")!;
   if (envNum("ARB_MIN_BUY_PRICE") !== undefined) cfg.arbitrage.minBuyPrice = envNum("ARB_MIN_BUY_PRICE")!;
 
+  // ========== V1 FEATURES ==========
+  // Adaptive learning: learns from trade outcomes, avoids bad markets
+  if (envBool("ADAPTIVE_LEARNING_ENABLED") !== undefined) cfg.adaptiveLearning.enabled = envBool("ADAPTIVE_LEARNING_ENABLED")!;
+  // On-chain exit: handles NOT_TRADABLE positions
+  if (envBool("ON_CHAIN_EXIT_ENABLED") !== undefined) cfg.onChainExit.enabled = envBool("ON_CHAIN_EXIT_ENABLED")!;
+  if (envNum("ON_CHAIN_EXIT_PRICE_THRESHOLD") !== undefined) cfg.onChainExit.priceThreshold = envNum("ON_CHAIN_EXIT_PRICE_THRESHOLD")!;
+  // Trade mode: "onchain" (default) or "clob"
+  const tradeModeVal = env("TRADE_MODE");
+  if (tradeModeVal === "clob") cfg.tradeMode = "clob";
+  if (tradeModeVal === "onchain") cfg.tradeMode = "onchain";
+
   // ========== LIVE TRADING ==========
   // V1: ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS
   // V2: LIVE_TRADING=I_UNDERSTAND_THE_RISKS or LIVE_TRADING=true
@@ -1821,10 +1999,17 @@ export async function startV2() {
   // Fetch initial balance
   await fetchBalance();
 
+  // Initialize adaptive learner (V1 feature)
+  if (settings.config.adaptiveLearning.enabled) {
+    state.adaptiveLearner = getAdaptiveLearner(logger as any);
+    log("🧠 Adaptive learning enabled");
+  }
+
   log(`Preset: ${settings.preset}`);
   log(`Wallet: ${addr.slice(0, 10)}...`);
   log(`Balance: ${$(state.balance)} (${settings.config.reservePct}% reserved)`);
   log(`Trading: ${state.liveTrading ? "🟢 LIVE" : "🔸 SIMULATED"}`);
+  log(`Mode: ${settings.config.tradeMode === "onchain" ? "⛓️ ON-CHAIN" : "📡 CLOB API"}`);
   if (state.proxyAddress) log(`Proxy: ${state.proxyAddress.slice(0, 10)}...`);
   if (settings.config.copy.enabled) log(`👀 Copying ${settings.config.copy.addresses.length} trader(s)`);
   
