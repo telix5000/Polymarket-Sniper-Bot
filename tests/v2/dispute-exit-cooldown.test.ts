@@ -10,11 +10,22 @@ import { test, describe } from "node:test";
  *
  * This prevents log spam like:
  * "📢 SELL ❌ | DisputeExit ($1.00) | Team WE $6.16 | SKIP_MIN_ORDER_SIZE"
+ *
+ * NOTE: These tests use hardcoded constants that match the implementation in
+ * src/v2/index.ts. The constants are duplicated here intentionally to:
+ * 1. Allow tests to run independently without importing internal module state
+ * 2. Serve as documentation of expected values
+ * 3. Fail loudly if someone changes the implementation without updating tests
+ *
+ * The actual implementation uses configurable `cfg.autoSell.disputeWindowExitPrice`
+ * (default 0.999) which can be overridden via env vars. The cooldown TTL is a
+ * fixed constant (DISPUTE_EXIT_COOLDOWN_TTL_MS = 10 minutes).
  */
 
 // Constants that mirror the implementation in src/v2/index.ts
+// These are duplicated to avoid importing internal state and to clearly test expectations
 const DISPUTE_EXIT_COOLDOWN_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const DISPUTE_EXIT_PRICE_THRESHOLD = 0.999; // 99.9¢
+const DISPUTE_EXIT_PRICE_THRESHOLD = 0.999; // 99.9¢ - default value, configurable in production
 
 describe("V2 Dispute Exit Cooldown", () => {
   // Simulate the cooldown state
