@@ -9,6 +9,9 @@ import {
   isRateLimited,
   parseError,
   formatErrorForLog,
+  extractCloudflareRayId,
+  extractStatusCode,
+  extractCloudflareHeaders,
   ErrorCode,
 } from "../../src/lib/error-handling";
 
@@ -185,6 +188,100 @@ describe("Error Handling Utilities", () => {
       // Should not throw
       const result = formatErrorForLog(circular);
       assert.ok(result.includes("[Circular]"), "Should handle circular refs");
+    });
+  });
+
+  describe("extractCloudflareRayId", () => {
+    it("should extract Ray ID from HTML with <strong> tag", () => {
+      const html = '<span>Ray ID: <strong class="font-semibold">9c429198aa8c2a94</strong></span>';
+      const rayId = extractCloudflareRayId(html);
+      assert.strictEqual(rayId, "9c429198aa8c2a94");
+    });
+
+    it("should extract Ray ID from plain text", () => {
+      const text = "Request failed. Ray ID: 8e4f3c2b1a9d6e7f-SJC";
+      const rayId = extractCloudflareRayId(text);
+      assert.ok(rayId?.includes("8e4f3c2b1a9d6e7f"), "Should extract Ray ID");
+    });
+
+    it("should extract Ray ID from JSON", () => {
+      const json = '{"error": "Blocked", "ray_id": "abc123def456"}';
+      const rayId = extractCloudflareRayId(json);
+      assert.strictEqual(rayId, "abc123def456");
+    });
+
+    it("should return null if no Ray ID found", () => {
+      assert.strictEqual(extractCloudflareRayId("Regular error message"), null);
+      assert.strictEqual(extractCloudflareRayId(null), null);
+      assert.strictEqual(extractCloudflareRayId(undefined), null);
+    });
+
+    it("should handle Error objects", () => {
+      const err = new Error("Cloudflare Ray ID: abc123");
+      const rayId = extractCloudflareRayId(err);
+      assert.strictEqual(rayId, "abc123");
+    });
+  });
+
+  describe("extractStatusCode", () => {
+    it("should extract status from response.status", () => {
+      const error = { response: { status: 403 } };
+      assert.strictEqual(extractStatusCode(error), 403);
+    });
+
+    it("should extract status from statusCode property", () => {
+      const error = { statusCode: 401 };
+      assert.strictEqual(extractStatusCode(error), 401);
+    });
+
+    it("should extract status from status property", () => {
+      const error = { status: 500 };
+      assert.strictEqual(extractStatusCode(error), 500);
+    });
+
+    it("should return 'unknown' if no status found", () => {
+      assert.strictEqual(extractStatusCode({ message: "Error" }), "unknown");
+      assert.strictEqual(extractStatusCode(null), "unknown");
+      assert.strictEqual(extractStatusCode("string error"), "unknown");
+    });
+  });
+
+  describe("extractCloudflareHeaders", () => {
+    it("should extract cf-ray header", () => {
+      const error = {
+        response: {
+          headers: {
+            "cf-ray": "8e4f3c2b1a9d6e7f-SJC",
+            "cf-cache-status": "DYNAMIC",
+          },
+        },
+      };
+      const headers = extractCloudflareHeaders(error);
+      assert.strictEqual(headers.cfRay, "8e4f3c2b1a9d6e7f-SJC");
+      assert.strictEqual(headers.cfCacheStatus, "DYNAMIC");
+    });
+
+    it("should extract from headers property directly", () => {
+      const error = {
+        headers: {
+          "cf-ray": "abc123-LAX",
+        },
+      };
+      const headers = extractCloudflareHeaders(error);
+      assert.strictEqual(headers.cfRay, "abc123-LAX");
+    });
+
+    it("should return object with undefined values if no headers found", () => {
+      const headers = extractCloudflareHeaders({ message: "Error" });
+      assert.strictEqual(headers.cfRay, undefined);
+      assert.strictEqual(headers.cfCacheStatus, undefined);
+    });
+
+    it("should handle null/undefined gracefully", () => {
+      const headers1 = extractCloudflareHeaders(null);
+      assert.strictEqual(headers1.cfRay, undefined);
+      const headers2 = extractCloudflareHeaders(undefined);
+      assert.strictEqual(headers2.cfRay, undefined);
     });
   });
 });
