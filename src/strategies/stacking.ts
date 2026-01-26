@@ -341,7 +341,9 @@ export class StackingStrategy {
   /**
    * Apply budget-aware sizing to a stack amount.
    */
-  private applyBudgetAwareSizing(computedUsd: number):
+  private applyBudgetAwareSizing(
+    computedUsd: number,
+  ):
     | { skip: true; reason: string }
     | { skip: false; cappedUsd: number; isPartial: boolean } {
     if (this.cycleStackBudgetRemaining === null) {
@@ -403,7 +405,10 @@ export class StackingStrategy {
     // Determine stack size
     let stackUsd: number;
     if (this.cycleStackBudgetRemaining !== null) {
-      stackUsd = Math.min(this.cycleStackBudgetRemaining, this.config.maxStackUsd);
+      stackUsd = Math.min(
+        this.cycleStackBudgetRemaining,
+        this.config.maxStackUsd,
+      );
       this.logger.info(
         `[Stacking] 📊 STACK SIZING: UNLIMITED MODE - using full available cash $${stackUsd.toFixed(2)}`,
       );

@@ -447,7 +447,7 @@ export function checkIlliquidExit(
   if (
     bestBid <= ILLIQUID_EXIT_THRESHOLDS.TINY_BID_DOLLARS &&
     (targetPrice > ILLIQUID_EXIT_THRESHOLDS.MIN_TARGET_FOR_TINY_BID_CHECK ||
-     minAcceptable > ILLIQUID_EXIT_THRESHOLDS.MIN_TARGET_FOR_TINY_BID_CHECK)
+      minAcceptable > ILLIQUID_EXIT_THRESHOLDS.MIN_TARGET_FOR_TINY_BID_CHECK)
   ) {
     return {
       isIlliquid: true,
@@ -527,11 +527,11 @@ export const DUST_COOLDOWN_MS = 600_000;
  */
 export const ILLIQUID_EXIT_THRESHOLDS = {
   /** Spread threshold in dollars: spread > this = illiquid */
-  EXTREME_SPREAD_DOLLARS: 0.30, // 30¢
+  EXTREME_SPREAD_DOLLARS: 0.3, // 30¢
   /** Minimum bid threshold in dollars: bid ≤ this AND target > MIN_TARGET = illiquid */
   TINY_BID_DOLLARS: 0.02, // 2¢
   /** Target threshold: only check tiny bid when target > this */
-  MIN_TARGET_FOR_TINY_BID_CHECK: 0.50, // 50¢
+  MIN_TARGET_FOR_TINY_BID_CHECK: 0.5, // 50¢
 };
 
 /**
@@ -569,7 +569,11 @@ interface PriceHistoryEntry {
  * - FORCE: If window expires, exit at best bid even at loss (capital recovery)
  * - EXIT_DEFERRED_ILLQ: Book is illiquid (extreme spread or tiny bid); deferred with backoff
  */
-export type ExitLadderStage = "PROFIT" | "BREAKEVEN" | "FORCE" | "EXIT_DEFERRED_ILLQ";
+export type ExitLadderStage =
+  | "PROFIT"
+  | "BREAKEVEN"
+  | "FORCE"
+  | "EXIT_DEFERRED_ILLQ";
 
 /**
  * Exit Plan State
@@ -933,10 +937,7 @@ export class ScalpTradeStrategy {
       ) {
         // Snapshot reports 0 but lastGood had positions - treat as upstream failure
         if (
-          this.logDeduper.shouldLog(
-            "ScalpTrade:zero_active_fallback",
-            30_000,
-          )
+          this.logDeduper.shouldLog("ScalpTrade:zero_active_fallback", 30_000)
         ) {
           this.logger.warn(
             `[ProfitTaker] ⚠️ snapshot reports activeTotal=0 but lastGoodSnapshot had ` +
@@ -1080,8 +1081,7 @@ export class ScalpTradeStrategy {
       this.lastLoggedCounts.total !== activePositions.length;
     const shouldLogSummary =
       countsChanged ||
-      now - this.lastSummaryLogAt >=
-        ScalpTradeStrategy.SUMMARY_LOG_INTERVAL_MS;
+      now - this.lastSummaryLogAt >= ScalpTradeStrategy.SUMMARY_LOG_INTERVAL_MS;
 
     if (shouldLogSummary) {
       this.lastSummaryLogAt = now;
@@ -1438,9 +1438,7 @@ export class ScalpTradeStrategy {
     }
 
     if (scalpedCount > 0) {
-      this.logger.info(
-        `[ProfitTaker] ✅ Scalped ${scalpedCount} position(s)`,
-      );
+      this.logger.info(`[ProfitTaker] ✅ Scalped ${scalpedCount} position(s)`);
     }
 
     // Clean up stale tracking data (use enrichedPositions since they include all ACTIVE positions)
@@ -1463,9 +1461,10 @@ export class ScalpTradeStrategy {
    *
    * This is safer than using potentially incorrect hold-time data.
    */
-  private evaluatePnlOnlyExit(
-    position: Position,
-  ): { shouldExit: boolean; reason?: string } {
+  private evaluatePnlOnlyExit(position: Position): {
+    shouldExit: boolean;
+    reason?: string;
+  } {
     // === Check 1: Must meet minimum profit percentage ===
     if (position.pnlPct < this.config.minProfitPct) {
       return {
@@ -1775,8 +1774,7 @@ export class ScalpTradeStrategy {
     // A position at 65¢ is still speculative - scalp rules apply
     // A position at 92¢ is almost certainly going to $1.00 - let it ride!
     const nearResolution =
-      position.currentPrice >=
-      ScalpTradeStrategy.NEAR_RESOLUTION_THRESHOLD;
+      position.currentPrice >= ScalpTradeStrategy.NEAR_RESOLUTION_THRESHOLD;
 
     if (nearResolution) {
       this.logger.debug(
@@ -2105,9 +2103,11 @@ export class ScalpTradeStrategy {
       const exitPlan = this.exitPlans.get(position.tokenId);
 
       // Use avgEntryPriceCents if available (true cost basis), otherwise fall back to entryPrice
-      const entryCents = position.avgEntryPriceCents ?? position.entryPrice * 100;
+      const entryCents =
+        position.avgEntryPriceCents ?? position.entryPrice * 100;
       // Use bestBid if available, otherwise fall back to currentPrice for consistent "worth" calculation
-      const currentWorthCents = (position.currentBidPrice ?? position.currentPrice) * 100;
+      const currentWorthCents =
+        (position.currentBidPrice ?? position.currentPrice) * 100;
       const notionalUsd = position.size * (currentWorthCents / 100);
 
       // Build a plain-English error message
@@ -2243,7 +2243,10 @@ export class ScalpTradeStrategy {
 
       case "EXIT_DEFERRED_ILLQ": {
         // In deferred mode, use target price (won't actually execute - just for logging)
-        return { limitCents: plan.targetPriceCents, reason: "ILLIQUID_DEFERRED" };
+        return {
+          limitCents: plan.targetPriceCents,
+          reason: "ILLIQUID_DEFERRED",
+        };
       }
 
       default:
@@ -2379,7 +2382,11 @@ export class ScalpTradeStrategy {
     if (this.config.useFreshOrderbook) {
       try {
         // Use fast orderbook reader (bypasses VPN for speed) with fallback to VPN client
-        const { orderbook: freshOrderbook, source, latencyMs } = await fetchOrderbookWithFallback(
+        const {
+          orderbook: freshOrderbook,
+          source,
+          latencyMs,
+        } = await fetchOrderbookWithFallback(
           plan.tokenId,
           () => this.client.getOrderBook(plan.tokenId),
           this.logger,
@@ -2390,7 +2397,12 @@ export class ScalpTradeStrategy {
           // No bid available from fresh fetch
           plan.blockedReason = "NO_BID";
           plan.blockedAtMs = now;
-          if (this.logDeduper.shouldLog(`ScalpExit:FRESH_NO_BID:${plan.tokenId}`, 10_000)) {
+          if (
+            this.logDeduper.shouldLog(
+              `ScalpExit:FRESH_NO_BID:${plan.tokenId}`,
+              10_000,
+            )
+          ) {
             this.logger.warn(
               `[ProfitTaker] FRESH_ORDERBOOK: No bids for tokenId=${plan.tokenId.slice(0, 12)}... ` +
                 `source=${source} latency=${latencyMs}ms`,
@@ -2405,8 +2417,17 @@ export class ScalpTradeStrategy {
 
         // Log significant price drift for diagnostics
         const cachedBid = position.currentBidPrice ?? 0;
-        const priceDiffPct = cachedBid > 0 ? Math.abs((bestBidDollars - cachedBid) / cachedBid) * 100 : 0;
-        if (priceDiffPct > 5 && this.logDeduper.shouldLog(`ScalpExit:PRICE_DRIFT:${plan.tokenId}`, 30_000)) {
+        const priceDiffPct =
+          cachedBid > 0
+            ? Math.abs((bestBidDollars - cachedBid) / cachedBid) * 100
+            : 0;
+        if (
+          priceDiffPct > 5 &&
+          this.logDeduper.shouldLog(
+            `ScalpExit:PRICE_DRIFT:${plan.tokenId}`,
+            30_000,
+          )
+        ) {
           this.logger.info(
             `[ProfitTaker] PRICE_DRIFT: tokenId=${plan.tokenId.slice(0, 12)}... ` +
               `fresh=${bestBidCents.toFixed(1)}¢ cached=${(cachedBid * 100).toFixed(1)}¢ ` +
@@ -2415,8 +2436,16 @@ export class ScalpTradeStrategy {
         }
       } catch (orderbookErr) {
         // Fresh orderbook fetch failed - fall back to cached data
-        const errMsg = orderbookErr instanceof Error ? orderbookErr.message : String(orderbookErr);
-        if (this.logDeduper.shouldLog(`ScalpExit:ORDERBOOK_FETCH_FAILED:${plan.tokenId}`, 30_000)) {
+        const errMsg =
+          orderbookErr instanceof Error
+            ? orderbookErr.message
+            : String(orderbookErr);
+        if (
+          this.logDeduper.shouldLog(
+            `ScalpExit:ORDERBOOK_FETCH_FAILED:${plan.tokenId}`,
+            30_000,
+          )
+        ) {
           this.logger.warn(
             `[ProfitTaker] FRESH_ORDERBOOK fetch failed: ${errMsg}. Using cached data.`,
           );
@@ -2463,7 +2492,11 @@ export class ScalpTradeStrategy {
             `-> deferring exit for ${ILLIQUID_BACKOFF_MS[0] / 1000}s. Reason: ${illiquidResult.reason}`,
         );
 
-        return { filled: false, reason: "ILLIQUID_DEFERRED", shouldContinue: true };
+        return {
+          filled: false,
+          reason: "ILLIQUID_DEFERRED",
+          shouldContinue: true,
+        };
       }
     }
 
@@ -2472,7 +2505,11 @@ export class ScalpTradeStrategy {
       // Check if we're still in backoff period
       if (plan.illiquidNextRecheckAtMs && now < plan.illiquidNextRecheckAtMs) {
         // Still in backoff - skip without logging spam
-        return { filled: false, reason: "ILLIQUID_BACKOFF", shouldContinue: true };
+        return {
+          filled: false,
+          reason: "ILLIQUID_BACKOFF",
+          shouldContinue: true,
+        };
       }
 
       // Backoff expired - recheck liquidity
@@ -2486,7 +2523,10 @@ export class ScalpTradeStrategy {
       if (recheckResult.isIlliquid) {
         // Still illiquid - escalate backoff
         const currentLevel = plan.illiquidBackoffLevel ?? 0;
-        const nextLevel = Math.min(currentLevel + 1, ILLIQUID_BACKOFF_MS.length - 1);
+        const nextLevel = Math.min(
+          currentLevel + 1,
+          ILLIQUID_BACKOFF_MS.length - 1,
+        );
         const nextBackoffMs = ILLIQUID_BACKOFF_MS[nextLevel];
 
         plan.illiquidBackoffLevel = nextLevel;
@@ -2500,10 +2540,19 @@ export class ScalpTradeStrategy {
               `after ${plan.attempts} rechecks - market remained illiquid. ` +
               `bestBid=${(bestBidDollars * 100).toFixed(1)}¢ target=${(targetPriceDollars * 100).toFixed(1)}¢`,
           );
-          return { filled: false, reason: "ILLIQUID_MAX_RECHECKS", shouldContinue: false };
+          return {
+            filled: false,
+            reason: "ILLIQUID_MAX_RECHECKS",
+            shouldContinue: false,
+          };
         }
 
-        if (this.logDeduper.shouldLog(`ScalpExit:ILLIQUID_RECHECK:${plan.tokenId}`, 60_000)) {
+        if (
+          this.logDeduper.shouldLog(
+            `ScalpExit:ILLIQUID_RECHECK:${plan.tokenId}`,
+            60_000,
+          )
+        ) {
           this.logger.info(
             `[ProfitTaker] ILLIQUID_RECHECK tokenId=${plan.tokenId.slice(0, 12)}... ` +
               `still illiquid, escalating backoff to ${nextBackoffMs / 1000}s (level=${nextLevel} attempts=${plan.attempts}). ` +
@@ -2511,7 +2560,11 @@ export class ScalpTradeStrategy {
           );
         }
 
-        return { filled: false, reason: "ILLIQUID_RECHECK_FAILED", shouldContinue: true };
+        return {
+          filled: false,
+          reason: "ILLIQUID_RECHECK_FAILED",
+          shouldContinue: true,
+        };
       }
 
       // Liquidity restored! Transition back to normal stage
@@ -2552,13 +2605,12 @@ export class ScalpTradeStrategy {
     const isLosingPosition = bestBidCents < plan.avgEntryCents;
     const isUrgentStage = plan.stage === "BREAKEVEN" || plan.stage === "FORCE";
     const needsUrgentRetry = isUrgentStage || isLosingPosition;
-    const retryCadenceSec = needsUrgentRetry ? this.config.urgentRetrySec : this.config.profitRetrySec;
-    
+    const retryCadenceSec = needsUrgentRetry
+      ? this.config.urgentRetrySec
+      : this.config.profitRetrySec;
+
     const timeSinceLastAttempt = now - plan.lastAttemptAtMs;
-    if (
-      timeSinceLastAttempt < retryCadenceSec * 1000 &&
-      plan.attempts > 0
-    ) {
+    if (timeSinceLastAttempt < retryCadenceSec * 1000 && plan.attempts > 0) {
       return { filled: false, reason: "RETRY_COOLDOWN", shouldContinue: true };
     }
 
@@ -2801,10 +2853,7 @@ export class ScalpTradeStrategy {
     }
 
     // Check cooldown
-    if (
-      now - tracker.lastLogAt >=
-      ScalpTradeStrategy.SKIP_LOG_COOLDOWN_MS
-    ) {
+    if (now - tracker.lastLogAt >= ScalpTradeStrategy.SKIP_LOG_COOLDOWN_MS) {
       return true;
     }
 

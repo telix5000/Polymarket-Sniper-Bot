@@ -6,7 +6,10 @@ import {
   type ExitPlan,
   type ExitLadderStage,
 } from "../../src/strategies/scalp-trade";
-import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "../../src/strategies/constants";
+import {
+  calculateMinAcceptablePrice,
+  DEFAULT_SELL_SLIPPAGE_PCT,
+} from "../../src/strategies/constants";
 
 const baseEnv = {
   RPC_URL: "http://localhost:8545",
@@ -592,7 +595,7 @@ import {
 describe("Illiquid Exit Detection", () => {
   test("Extreme spread triggers illiquid exit (spread > 30¢)", () => {
     // bestBid=30¢, bestAsk=65¢ -> spread=35¢ > 30¢ threshold
-    const result = checkIlliquidExit(0.30, 0.65, 0.50, 0.40);
+    const result = checkIlliquidExit(0.3, 0.65, 0.5, 0.4);
 
     assert.strictEqual(result.isIlliquid, true, "Should detect as illiquid");
     assert.ok(
@@ -603,7 +606,7 @@ describe("Illiquid Exit Detection", () => {
 
   test("Normal spread does not trigger illiquid exit", () => {
     // bestBid=60¢, bestAsk=65¢ -> spread=5¢ < 30¢ threshold
-    const result = checkIlliquidExit(0.60, 0.65, 0.55, 0.50);
+    const result = checkIlliquidExit(0.6, 0.65, 0.55, 0.5);
 
     assert.strictEqual(result.isIlliquid, false, "Should not be illiquid");
   });
@@ -611,7 +614,7 @@ describe("Illiquid Exit Detection", () => {
   test("Tiny bid triggers illiquid when target is high (no extreme spread)", () => {
     // bestBid=2¢, bestAsk=30¢ (spread=28¢ < 30¢ threshold, no extreme spread)
     // But bid=2¢ ≤ 2¢ AND target=65¢ > 50¢ -> tiny bid trigger
-    const result = checkIlliquidExit(0.02, 0.30, 0.65, 0.50);
+    const result = checkIlliquidExit(0.02, 0.3, 0.65, 0.5);
 
     assert.strictEqual(result.isIlliquid, true, "Should detect as illiquid");
     assert.ok(
@@ -624,7 +627,7 @@ describe("Illiquid Exit Detection", () => {
     // bestBid=1¢, bestAsk=5¢ (spread=4¢ < 30¢, no extreme spread)
     // bid=1¢ ≤ 2¢ BUT target=10¢ < 50¢ (tiny bid threshold won't trigger)
     // minAcceptable=8¢ * 0.5 = 4¢, and bid=1¢ < 4¢ (far below acceptable WILL trigger)
-    const result = checkIlliquidExit(0.01, 0.05, 0.10, 0.08);
+    const result = checkIlliquidExit(0.01, 0.05, 0.1, 0.08);
 
     // In this case, the "far below acceptable" condition triggers because
     // bestBid (1¢) < minAcceptable (8¢) * 0.5 = 4¢
@@ -643,7 +646,7 @@ describe("Illiquid Exit Detection", () => {
     // bestBid=20¢, bestAsk=45¢ (spread=25¢ < 30¢, no extreme spread)
     // bid=20¢ > 2¢ (no tiny bid)
     // But minAcceptable=65¢ * 0.5 = 32.5¢, and bid=20¢ < 32.5¢
-    const result = checkIlliquidExit(0.20, 0.45, 0.75, 0.65);
+    const result = checkIlliquidExit(0.2, 0.45, 0.75, 0.65);
 
     assert.strictEqual(result.isIlliquid, true, "Should detect as illiquid");
     assert.ok(
@@ -653,7 +656,7 @@ describe("Illiquid Exit Detection", () => {
   });
 
   test("No bid returns not illiquid (handled separately)", () => {
-    const result = checkIlliquidExit(null, null, 0.65, 0.50);
+    const result = checkIlliquidExit(null, null, 0.65, 0.5);
 
     // null/0 bid is handled by NO_BID check, not illiquid check
     assert.strictEqual(result.isIlliquid, false, "Null bid handled elsewhere");
@@ -662,7 +665,7 @@ describe("Illiquid Exit Detection", () => {
   test("Illiquid thresholds have expected values", () => {
     assert.strictEqual(
       ILLIQUID_EXIT_THRESHOLDS.EXTREME_SPREAD_DOLLARS,
-      0.30,
+      0.3,
       "Extreme spread threshold should be 30¢",
     );
     assert.strictEqual(
@@ -672,20 +675,28 @@ describe("Illiquid Exit Detection", () => {
     );
     assert.strictEqual(
       ILLIQUID_EXIT_THRESHOLDS.MIN_TARGET_FOR_TINY_BID_CHECK,
-      0.50,
+      0.5,
       "Min target for tiny bid check should be 50¢",
     );
   });
 
   test("Illiquid backoff ladder has escalating values", () => {
-    assert.strictEqual(ILLIQUID_BACKOFF_MS.length, 3, "Should have 3 backoff levels");
+    assert.strictEqual(
+      ILLIQUID_BACKOFF_MS.length,
+      3,
+      "Should have 3 backoff levels",
+    );
     assert.strictEqual(ILLIQUID_BACKOFF_MS[0], 60_000, "Level 0: 1 minute");
     assert.strictEqual(ILLIQUID_BACKOFF_MS[1], 300_000, "Level 1: 5 minutes");
     assert.strictEqual(ILLIQUID_BACKOFF_MS[2], 900_000, "Level 2: 15 minutes");
   });
 
   test("MAX_ILLIQUID_RECHECKS limits retries", () => {
-    assert.strictEqual(MAX_ILLIQUID_RECHECKS, 10, "Should limit to 10 rechecks");
+    assert.strictEqual(
+      MAX_ILLIQUID_RECHECKS,
+      10,
+      "Should limit to 10 rechecks",
+    );
   });
 
   test("ExitLadderStage type supports EXIT_DEFERRED_ILLQ", () => {
@@ -699,7 +710,7 @@ describe("Illiquid Exit Detection", () => {
     const result = checkIlliquidExit(
       0.01, // bestBid = 1¢
       0.99, // bestAsk = 99¢ (extreme spread)
-      0.70, // target = 70¢
+      0.7, // target = 70¢
       0.646, // minAcceptable ≈ 64.6¢
     );
 
@@ -735,9 +746,14 @@ describe("Bid-Based Slippage for ProfitTaker Sells", () => {
     const slippagePct = DEFAULT_SELL_SLIPPAGE_PCT; // 2%
 
     // Old (buggy) calculation based on target:
-    const oldMinAcceptable = calculateMinAcceptablePrice(targetPriceDollars, slippagePct);
+    const oldMinAcceptable = calculateMinAcceptablePrice(
+      targetPriceDollars,
+      slippagePct,
+    );
     assert.ok(
-      Math.abs(oldMinAcceptable - targetPriceDollars * (1 - slippagePct / 100)) < 1e-9,
+      Math.abs(
+        oldMinAcceptable - targetPriceDollars * (1 - slippagePct / 100),
+      ) < 1e-9,
     );
     assert.ok(
       bestBidDollars < oldMinAcceptable,
@@ -745,9 +761,13 @@ describe("Bid-Based Slippage for ProfitTaker Sells", () => {
     );
 
     // New (fixed) calculation based on bestBid:
-    const newMinAcceptable = calculateMinAcceptablePrice(bestBidDollars, slippagePct);
+    const newMinAcceptable = calculateMinAcceptablePrice(
+      bestBidDollars,
+      slippagePct,
+    );
     assert.ok(
-      Math.abs(newMinAcceptable - bestBidDollars * (1 - slippagePct / 100)) < 1e-9,
+      Math.abs(newMinAcceptable - bestBidDollars * (1 - slippagePct / 100)) <
+        1e-9,
     );
     assert.ok(
       bestBidDollars >= newMinAcceptable,
@@ -758,17 +778,23 @@ describe("Bid-Based Slippage for ProfitTaker Sells", () => {
   test("Bid-based slippage allows profitable sells that would be blocked by target-based slippage", () => {
     // Entry=50¢, Target=66¢ (32% profit), BestBid=64¢ (28% profit)
     // Both are profitable but old behavior blocks the sell
-    const entryPrice = 0.50;
+    const entryPrice = 0.5;
     const targetPrice = 0.66;
     const bestBid = 0.64;
     const slippagePct = 2;
 
     // The sell is profitable at bestBid
     const profitAtBid = ((bestBid - entryPrice) / entryPrice) * 100;
-    assert.ok(profitAtBid > 0, `Sell at bestBid is profitable: +${profitAtBid.toFixed(1)}%`);
+    assert.ok(
+      profitAtBid > 0,
+      `Sell at bestBid is profitable: +${profitAtBid.toFixed(1)}%`,
+    );
 
     // Old: minAcceptable from target = 64.68¢, blocks because bestBid (64¢) < 64.68¢
-    const targetBasedFloor = calculateMinAcceptablePrice(targetPrice, slippagePct);
+    const targetBasedFloor = calculateMinAcceptablePrice(
+      targetPrice,
+      slippagePct,
+    );
     assert.ok(bestBid < targetBasedFloor, "Old behavior would BLOCK this sell");
 
     // New: minAcceptable from bestBid = 62.72¢, allows because bestBid (64¢) >= 62.72¢
@@ -837,6 +863,9 @@ describe("Bid-Based Slippage for ProfitTaker Sells", () => {
 
     // Verify we're still making profit (sell at bestBid is above entry)
     const profitPct = ((bestBidCents - avgEntryCents) / avgEntryCents) * 100;
-    assert.ok(profitPct > 0, `Still profitable at ${profitPct.toFixed(1)}% (${bestBidCents - avgEntryCents}¢ profit)`);
+    assert.ok(
+      profitPct > 0,
+      `Still profitable at ${profitPct.toFixed(1)}% (${bestBidCents - avgEntryCents}¢ profit)`,
+    );
   });
 });

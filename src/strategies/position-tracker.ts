@@ -11,6 +11,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
   TRACKER_HEARTBEAT_MS,
   TOKEN_ID_DISPLAY_LENGTH,
+  PORTFOLIO_STATUS_INTERVAL_MS,
 } from "../utils/log-deduper.util";
 import {
   formatCents,
@@ -552,6 +553,17 @@ export interface PositionTrackerConfig {
   client: ClobClient;
   logger: ConsoleLogger;
   refreshIntervalMs?: number;
+  /**
+   * Optional callback that fires when new on-chain verified redeemable positions are detected.
+   * 
+   * IMMEDIATE REDEMPTION TRIGGER:
+   * When PositionTracker detects new positions with verified on-chain payoutDenominator > 0
+   * that weren't previously marked as redeemable, this callback is invoked immediately.
+   * This allows AutoRedeem to trigger instant redemption without waiting for its interval.
+   * 
+   * @param newRedeemableTokenIds - Array of tokenIds that are newly detected as redeemable
+   */
+  onNewRedeemablePositions?: (newRedeemableTokenIds: string[]) => void;
 }
 
 /**
@@ -767,8 +779,10 @@ export class PositionTracker {
   // Since trading now fetches fresh data at execution time (see fast-orderbook.util.ts),
   // this can be longer to reduce API calls. 30 seconds is good for display purposes.
   // Configurable via POSITION_TRACKER_ORDERBOOK_CACHE_MS env var.
-  private static readonly ORDERBOOK_CACHE_TTL_MS = 
-    parseInt(process.env.POSITION_TRACKER_ORDERBOOK_CACHE_MS ?? "30000", 10); // 30 seconds default
+  private static readonly ORDERBOOK_CACHE_TTL_MS = parseInt(
+    process.env.POSITION_TRACKER_ORDERBOOK_CACHE_MS ?? "30000",
+    10,
+  ); // 30 seconds default
   private static readonly POSITION_BALANCE_CACHE_TTL_MS = 5000; // 5 seconds for position balances
   private static readonly MAX_ORDERBOOK_CACHE_SIZE = 500;
 
@@ -812,6 +826,11 @@ export class PositionTracker {
   };
   private static readonly PNL_SUMMARY_LOG_INTERVAL_MS = 60_000; // Log at most once per minute
 
+  // === PORTFOLIO STATUS UPDATE TRACKING ===
+  // Periodic detailed portfolio status showing P&L for each position with emoticons
+  // This gives users visibility into price changes without spamming logs
+  private lastPortfolioStatusLogAt = 0;
+
   // === P&L CONSISTENCY THRESHOLDS ===
   // Used to detect and handle discrepancies between Data-API P&L and price-derived P&L.
   // ROUNDING_TOLERANCE_PCT: Tiny differences (<0.5%) are ignored as floating-point noise.
@@ -826,10 +845,19 @@ export class PositionTracker {
   // Now we derive entry timestamps from the trade history API, which survives restarts.
   private entryMetaResolver: EntryMetaResolver;
 
+  // === IMMEDIATE REDEEM CALLBACK ===
+  // Callback invoked when new on-chain verified redeemable positions are detected.
+  // Allows AutoRedeem to trigger immediately instead of waiting for interval.
+  private onNewRedeemablePositions?: (newRedeemableTokenIds: string[]) => void;
+  
+  // Track previously known redeemable tokenIds to detect NEW redeemable positions
+  private knownRedeemableTokenIds: Set<string> = new Set();
+
   constructor(config: PositionTrackerConfig) {
     this.client = config.client;
     this.logger = config.logger;
     this.refreshIntervalMs = config.refreshIntervalMs ?? 30000; // 30 seconds default
+    this.onNewRedeemablePositions = config.onNewRedeemablePositions;
 
     // Initialize EntryMetaResolver for stateless entry metadata computation
     this.entryMetaResolver = new EntryMetaResolver({
@@ -840,6 +868,19 @@ export class PositionTracker {
       tradesPerPage: 500,
       useLastAcquiredForTimeHeld: false, // Use firstAcquiredAt by default
     });
+  }
+
+  /**
+   * Set the callback for newly detected redeemable positions.
+   * 
+   * This is a setter method that allows wiring up the callback after construction,
+   * which is necessary because the Orchestrator creates PositionTracker before
+   * AutoRedeemStrategy, but needs to wire them together.
+   * 
+   * @param callback Function to call when new on-chain verified redeemable positions are detected
+   */
+  setOnNewRedeemablePositions(callback: (newRedeemableTokenIds: string[]) => void): void {
+    this.onNewRedeemablePositions = callback;
   }
 
   /**
@@ -1559,6 +1600,55 @@ export class PositionTracker {
 
       // === RECOVERY: Mark success and reset backoff ===
       this.handleRefreshSuccess();
+
+      // === IMMEDIATE REDEEM TRIGGER: Detect newly redeemable positions ===
+      // If callback is configured, check for positions that are newly detected as redeemable
+      // and trigger immediate redemption (bypassing AutoRedeem's interval throttle)
+      if (this.onNewRedeemablePositions) {
+        // Get current redeemable tokenIds from the committed snapshot
+        const currentRedeemableTokenIds = new Set(
+          candidateSnapshot.redeemablePositions.map((p) => p.tokenId)
+        );
+
+        // Find newly redeemable positions (in current but not in known set)
+        const newlyRedeemableTokenIds: string[] = [];
+        for (const tokenId of currentRedeemableTokenIds) {
+          if (!this.knownRedeemableTokenIds.has(tokenId)) {
+            newlyRedeemableTokenIds.push(tokenId);
+          }
+        }
+
+        // Update known redeemable set to match current
+        this.knownRedeemableTokenIds = currentRedeemableTokenIds;
+
+        // Trigger callback if there are newly redeemable positions
+        if (newlyRedeemableTokenIds.length > 0) {
+          // Format token IDs for logging (first 3, truncated)
+          const tokenIdsPreview = newlyRedeemableTokenIds
+            .slice(0, 3)
+            .map((t) => t.slice(0, 8))
+            .join(", ");
+          const hasMore = newlyRedeemableTokenIds.length > 3 ? "..." : "";
+          
+          this.logger.info(
+            `[PositionTracker] 🚨 NEW REDEEMABLE DETECTED: ${newlyRedeemableTokenIds.length} position(s) [${tokenIdsPreview}${hasMore}] - triggering immediate redemption`
+          );
+          
+          // Fire callback asynchronously via setImmediate to not block the refresh cycle
+          // The callback is expected to be the Orchestrator's triggerImmediateRedeem()
+          const callback = this.onNewRedeemablePositions;
+          const logger = this.logger;
+          setImmediate(() => {
+            try {
+              callback(newlyRedeemableTokenIds);
+            } catch (callbackErr) {
+              logger.error(
+                `[PositionTracker] onNewRedeemablePositions callback error: ${callbackErr instanceof Error ? callbackErr.message : String(callbackErr)}`
+              );
+            }
+          });
+        }
+      }
     } catch (err) {
       // Refresh failed - use crash-proof recovery
       this.handleRefreshFailure(
@@ -3442,7 +3532,7 @@ export class PositionTracker {
                   this.logger.debug(
                     `[PositionTracker] Failed to fetch price data for ${tokenId.slice(0, 16)}...: ${errMsg} - keeping as ACTIVE with unknown P&L`,
                   );
-                  
+
                   // CRITICAL FIX (Jan 2025): If Data API provided curPrice, use it as currentPrice.
                   // This prevents P&L discrepancy issues when orderbook/fallback fetch fails but
                   // Data API already provided valid P&L data. Without this fix:
@@ -3823,8 +3913,7 @@ export class PositionTracker {
                 // For EXECUTABLE_BOOK and FALLBACK, pnlPct is derived from currentPrice so no discrepancy.
                 if (pnlSource === "DATA_API" && pnlDiscrepancy > 0) {
                   if (
-                    pnlDiscrepancy >
-                    PositionTracker.PNL_UNTRUSTED_THRESHOLD_PCT
+                    pnlDiscrepancy > PositionTracker.PNL_UNTRUSTED_THRESHOLD_PCT
                   ) {
                     // SEVERE DISCREPANCY: Data-API P&L materially disagrees with price-derived P&L
                     // Mark as untrusted to prevent scalper from acting on spurious values
@@ -4182,6 +4271,95 @@ export class PositionTracker {
               .join(", ");
             this.logger.info(
               `[PositionTracker] 🎯 Redeemable (${redeemablePositions.length}): ${redeemSummary}${redeemablePositions.length > 5 ? "..." : ""}`,
+            );
+          }
+
+          // === PERIODIC PORTFOLIO STATUS UPDATE ===
+          // Show detailed P&L for each position with emoticons at a configurable interval
+          // This gives users visibility into price changes without spamming logs
+          const portfolioStatusNow = Date.now();
+          const shouldLogPortfolioStatus =
+            portfolioStatusNow - this.lastPortfolioStatusLogAt >=
+            PORTFOLIO_STATUS_INTERVAL_MS;
+
+          if (shouldLogPortfolioStatus && activePositions.length > 0) {
+            this.lastPortfolioStatusLogAt = portfolioStatusNow;
+
+            // Calculate totals
+            const totalPnlUsd = activePositions.reduce(
+              (sum, p) => sum + (p.pnlUsd ?? 0),
+              0,
+            );
+            const winCount = activeProfitable.length;
+            const loseCount = activeLosing.length;
+
+            // Helper function for consistent P&L formatting
+            const formatPnl = (pnlUsd: number, pnlPct: number): string => {
+              const sign = pnlUsd >= 0 ? "+" : "";
+              return `${sign}$${pnlUsd.toFixed(2)} (${sign}${pnlPct.toFixed(1)}%)`;
+            };
+
+            // Format header with totals
+            const totalEmoji = totalPnlUsd >= 0 ? "🟢" : "🔴";
+            const totalSign = totalPnlUsd >= 0 ? "+" : "";
+            const totalPnlStr = `${totalSign}$${totalPnlUsd.toFixed(2)}`;
+
+            this.logger.info(
+              `[PositionTracker] ═══════════════════════════════════════════════════`,
+            );
+            this.logger.info(
+              `[PositionTracker] 📊 PORTFOLIO STATUS UPDATE ${totalEmoji} ${totalPnlStr} total`,
+            );
+            this.logger.info(
+              `[PositionTracker] 📈 Winners: ${winCount} | 📉 Losers: ${loseCount} | ⚪ Neutral: ${activeNeutral.length}`,
+            );
+            this.logger.info(
+              `[PositionTracker] ───────────────────────────────────────────────────`,
+            );
+
+            // Log winning positions (sorted by P&L descending)
+            if (activeProfitable.length > 0) {
+              const sortedWinners = [...activeProfitable].sort(
+                (a, b) => b.pnlUsd - a.pnlUsd,
+              );
+              for (const pos of sortedWinners.slice(0, 10)) {
+                this.logger.info(
+                  `[PositionTracker] 🟢📈 ${pos.side} @ ${formatCents(pos.currentPrice)} → ${formatPnl(pos.pnlUsd, pos.pnlPct)} [${pos.tokenId.slice(0, 12)}...]`,
+                );
+              }
+              if (sortedWinners.length > 10) {
+                this.logger.info(
+                  `[PositionTracker] 🟢   ... and ${sortedWinners.length - 10} more winning positions`,
+                );
+              }
+            }
+
+            // Log losing positions (sorted by P&L ascending - biggest losses first)
+            if (activeLosing.length > 0) {
+              const sortedLosers = [...activeLosing].sort(
+                (a, b) => a.pnlUsd - b.pnlUsd,
+              );
+              for (const pos of sortedLosers.slice(0, 10)) {
+                this.logger.info(
+                  `[PositionTracker] 🔴📉 ${pos.side} @ ${formatCents(pos.currentPrice)} → ${formatPnl(pos.pnlUsd, pos.pnlPct)} [${pos.tokenId.slice(0, 12)}...]`,
+                );
+              }
+              if (sortedLosers.length > 10) {
+                this.logger.info(
+                  `[PositionTracker] 🔴   ... and ${sortedLosers.length - 10} more losing positions`,
+                );
+              }
+            }
+
+            // Log neutral positions if any
+            if (activeNeutral.length > 0) {
+              this.logger.info(
+                `[PositionTracker] ⚪ Neutral: ${activeNeutral.length} position(s) at breakeven`,
+              );
+            }
+
+            this.logger.info(
+              `[PositionTracker] ═══════════════════════════════════════════════════`,
             );
           }
         }

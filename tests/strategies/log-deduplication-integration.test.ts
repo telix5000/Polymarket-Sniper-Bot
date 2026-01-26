@@ -83,9 +83,7 @@ describe("Log Deduplication Integration", () => {
 
     let fingerprint = skipAggregator.getFingerprint();
     if (logDeduper.shouldLogSummary("Hedging", fingerprint)) {
-      mockLogger.debug(
-        `[Hedging] Cycle 1: ${skipAggregator.getSummary()}`,
-      );
+      mockLogger.debug(`[Hedging] Cycle 1: ${skipAggregator.getSummary()}`);
     }
 
     // Cycle 2: Same positions - should NOT log
@@ -96,9 +94,7 @@ describe("Log Deduplication Integration", () => {
 
     fingerprint = skipAggregator.getFingerprint();
     if (logDeduper.shouldLogSummary("Hedging", fingerprint)) {
-      mockLogger.debug(
-        `[Hedging] Cycle 2: ${skipAggregator.getSummary()}`,
-      );
+      mockLogger.debug(`[Hedging] Cycle 2: ${skipAggregator.getSummary()}`);
     }
 
     // Cycle 3: One more position redeemable - fingerprint changes, SHOULD log
@@ -110,9 +106,7 @@ describe("Log Deduplication Integration", () => {
 
     fingerprint = skipAggregator.getFingerprint();
     if (logDeduper.shouldLogSummary("Hedging", fingerprint)) {
-      mockLogger.debug(
-        `[Hedging] Cycle 3: ${skipAggregator.getSummary()}`,
-      );
+      mockLogger.debug(`[Hedging] Cycle 3: ${skipAggregator.getSummary()}`);
     }
 
     const hedgingLogs = logs.filter((l) => l.includes("[Hedging]"));
@@ -248,9 +242,7 @@ describe("Log Deduplication Integration", () => {
     // Cycle 2: Position becomes redeemable - state changed!
     previousReason = lastSkipReasonByTokenId.get(tokenId);
     if (previousReason !== "redeemable") {
-      mockLogger.info(
-        `[Hedging] 🔄 Position became redeemable: ${tokenId}`,
-      );
+      mockLogger.info(`[Hedging] 🔄 Position became redeemable: ${tokenId}`);
       lastSkipReasonByTokenId.set(tokenId, "redeemable");
     }
 

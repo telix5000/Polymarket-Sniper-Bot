@@ -52,7 +52,11 @@ describe("VPN RPC Bypass Configuration", () => {
     resetEnv();
     process.env.vpn_bypass_rpc = "false";
     const config = getVpnBypassConfig();
-    assert.strictEqual(config.enabled, false, "Should support lowercase env var");
+    assert.strictEqual(
+      config.enabled,
+      false,
+      "Should support lowercase env var",
+    );
   });
 
   test("RPC_URL is read from environment", () => {
@@ -72,7 +76,11 @@ describe("VPN RPC Bypass Configuration", () => {
     resetEnv();
     process.env.VPN_BYPASS_RPC = "";
     const config = getVpnBypassConfig();
-    assert.strictEqual(config.enabled, true, "Empty string should default to true");
+    assert.strictEqual(
+      config.enabled,
+      true,
+      "Empty string should default to true",
+    );
   });
 
   // Restore original environment after all tests

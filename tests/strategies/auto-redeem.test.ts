@@ -901,7 +901,11 @@ describe("Auto-Redeem Continuous On-Chain Preflight", () => {
         tokenId: string;
         marketId: string;
         redeemable: boolean;
-        redeemableProofSource: "DATA_API_FLAG" | "DATA_API_UNCONFIRMED" | "ONCHAIN_DENOM" | "NONE";
+        redeemableProofSource:
+          | "DATA_API_FLAG"
+          | "DATA_API_UNCONFIRMED"
+          | "ONCHAIN_DENOM"
+          | "NONE";
       }
 
       const unconfirmedPosition: MockPosition = {
@@ -1002,9 +1006,24 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
   describe("Minimum Value Filter", () => {
     test("should exclude positions below minPositionUsd", async () => {
       const apiPositions: MockRedeemablePosition[] = [
-        { tokenId: "t1", marketId: "0x" + "1".repeat(64), size: 10, currentPrice: 1.0 }, // $10
-        { tokenId: "t2", marketId: "0x" + "2".repeat(64), size: 1, currentPrice: 0.5 },  // $0.50
-        { tokenId: "t3", marketId: "0x" + "3".repeat(64), size: 100, currentPrice: 0.01 }, // $1.00
+        {
+          tokenId: "t1",
+          marketId: "0x" + "1".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        }, // $10
+        {
+          tokenId: "t2",
+          marketId: "0x" + "2".repeat(64),
+          size: 1,
+          currentPrice: 0.5,
+        }, // $0.50
+        {
+          tokenId: "t3",
+          marketId: "0x" + "3".repeat(64),
+          size: 100,
+          currentPrice: 0.01,
+        }, // $1.00
       ];
 
       const onChainResolved = new Map<string, boolean | "reject">([
@@ -1020,13 +1039,26 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
         onChainResolved,
       );
 
-      assert.strictEqual(result.length, 1, "Should only include positions above $5");
-      assert.strictEqual(result[0].tokenId, "t1", "Should include the $10 position");
+      assert.strictEqual(
+        result.length,
+        1,
+        "Should only include positions above $5",
+      );
+      assert.strictEqual(
+        result[0].tokenId,
+        "t1",
+        "Should include the $10 position",
+      );
     });
 
     test("should include positions at exactly minPositionUsd", async () => {
       const apiPositions: MockRedeemablePosition[] = [
-        { tokenId: "t1", marketId: "0x" + "1".repeat(64), size: 5, currentPrice: 1.0 }, // Exactly $5
+        {
+          tokenId: "t1",
+          marketId: "0x" + "1".repeat(64),
+          size: 5,
+          currentPrice: 1.0,
+        }, // Exactly $5
       ];
 
       const onChainResolved = new Map<string, boolean | "reject">([
@@ -1040,13 +1072,27 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
         onChainResolved,
       );
 
-      assert.strictEqual(result.length, 1, "Should include position at exactly minPositionUsd");
+      assert.strictEqual(
+        result.length,
+        1,
+        "Should include position at exactly minPositionUsd",
+      );
     });
 
     test("should return empty array when all positions are below minPositionUsd", async () => {
       const apiPositions: MockRedeemablePosition[] = [
-        { tokenId: "t1", marketId: "0x" + "1".repeat(64), size: 1, currentPrice: 0.5 },
-        { tokenId: "t2", marketId: "0x" + "2".repeat(64), size: 2, currentPrice: 0.1 },
+        {
+          tokenId: "t1",
+          marketId: "0x" + "1".repeat(64),
+          size: 1,
+          currentPrice: 0.5,
+        },
+        {
+          tokenId: "t2",
+          marketId: "0x" + "2".repeat(64),
+          size: 2,
+          currentPrice: 0.1,
+        },
       ];
 
       const onChainResolved = new Map<string, boolean | "reject">([
@@ -1068,9 +1114,24 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
   describe("Cooldown Filter", () => {
     test("should skip markets in cooldown", async () => {
       const apiPositions: MockRedeemablePosition[] = [
-        { tokenId: "t1", marketId: "0x" + "1".repeat(64), size: 10, currentPrice: 1.0 },
-        { tokenId: "t2", marketId: "0x" + "2".repeat(64), size: 10, currentPrice: 1.0 },
-        { tokenId: "t3", marketId: "0x" + "3".repeat(64), size: 10, currentPrice: 1.0 },
+        {
+          tokenId: "t1",
+          marketId: "0x" + "1".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
+        {
+          tokenId: "t2",
+          marketId: "0x" + "2".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
+        {
+          tokenId: "t3",
+          marketId: "0x" + "3".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
       ];
 
       const cooldownMarkets = new Set(["0x" + "2".repeat(64)]); // Market 2 is in cooldown
@@ -1097,8 +1158,18 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
 
     test("should return empty array when all markets are in cooldown", async () => {
       const apiPositions: MockRedeemablePosition[] = [
-        { tokenId: "t1", marketId: "0x" + "1".repeat(64), size: 10, currentPrice: 1.0 },
-        { tokenId: "t2", marketId: "0x" + "2".repeat(64), size: 10, currentPrice: 1.0 },
+        {
+          tokenId: "t1",
+          marketId: "0x" + "1".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
+        {
+          tokenId: "t2",
+          marketId: "0x" + "2".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
       ];
 
       const cooldownMarkets = new Set([
@@ -1118,22 +1189,41 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
         onChainResolved,
       );
 
-      assert.strictEqual(result.length, 0, "Should return empty when all in cooldown");
+      assert.strictEqual(
+        result.length,
+        0,
+        "Should return empty when all in cooldown",
+      );
     });
   });
 
   describe("On-Chain payoutDenominator Check", () => {
     test("should only return positions with payoutDenominator > 0", async () => {
       const apiPositions: MockRedeemablePosition[] = [
-        { tokenId: "t1", marketId: "0x" + "1".repeat(64), size: 10, currentPrice: 1.0 },
-        { tokenId: "t2", marketId: "0x" + "2".repeat(64), size: 10, currentPrice: 1.0 },
-        { tokenId: "t3", marketId: "0x" + "3".repeat(64), size: 10, currentPrice: 1.0 },
+        {
+          tokenId: "t1",
+          marketId: "0x" + "1".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
+        {
+          tokenId: "t2",
+          marketId: "0x" + "2".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
+        {
+          tokenId: "t3",
+          marketId: "0x" + "3".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
       ];
 
       const onChainResolved = new Map<string, boolean | "reject">([
-        ["0x" + "1".repeat(64), true],  // Resolved
+        ["0x" + "1".repeat(64), true], // Resolved
         ["0x" + "2".repeat(64), false], // NOT resolved (payoutDenominator == 0)
-        ["0x" + "3".repeat(64), true],  // Resolved
+        ["0x" + "3".repeat(64), true], // Resolved
       ]);
 
       const result = await simulateGetRedeemablePositions(
@@ -1143,7 +1233,11 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
         onChainResolved,
       );
 
-      assert.strictEqual(result.length, 2, "Should only include resolved positions");
+      assert.strictEqual(
+        result.length,
+        2,
+        "Should only include resolved positions",
+      );
       assert.ok(
         result.some((p) => p.tokenId === "t1"),
         "Should include first resolved position",
@@ -1160,8 +1254,18 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
 
     test("should return empty array when no positions are resolved on-chain", async () => {
       const apiPositions: MockRedeemablePosition[] = [
-        { tokenId: "t1", marketId: "0x" + "1".repeat(64), size: 10, currentPrice: 1.0 },
-        { tokenId: "t2", marketId: "0x" + "2".repeat(64), size: 10, currentPrice: 1.0 },
+        {
+          tokenId: "t1",
+          marketId: "0x" + "1".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
+        {
+          tokenId: "t2",
+          marketId: "0x" + "2".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
       ];
 
       const onChainResolved = new Map<string, boolean | "reject">([
@@ -1176,22 +1280,41 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
         onChainResolved,
       );
 
-      assert.strictEqual(result.length, 0, "Should return empty when none are resolved");
+      assert.strictEqual(
+        result.length,
+        0,
+        "Should return empty when none are resolved",
+      );
     });
   });
 
   describe("Promise.allSettled Error Handling", () => {
     test("should handle rejected promises gracefully and continue with others", async () => {
       const apiPositions: MockRedeemablePosition[] = [
-        { tokenId: "t1", marketId: "0x" + "1".repeat(64), size: 10, currentPrice: 1.0 },
-        { tokenId: "t2", marketId: "0x" + "2".repeat(64), size: 10, currentPrice: 1.0 },
-        { tokenId: "t3", marketId: "0x" + "3".repeat(64), size: 10, currentPrice: 1.0 },
+        {
+          tokenId: "t1",
+          marketId: "0x" + "1".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
+        {
+          tokenId: "t2",
+          marketId: "0x" + "2".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
+        {
+          tokenId: "t3",
+          marketId: "0x" + "3".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
       ];
 
       const onChainResolved = new Map<string, boolean | "reject">([
-        ["0x" + "1".repeat(64), true],     // Resolved
+        ["0x" + "1".repeat(64), true], // Resolved
         ["0x" + "2".repeat(64), "reject"], // RPC error - will reject
-        ["0x" + "3".repeat(64), true],     // Resolved
+        ["0x" + "3".repeat(64), true], // Resolved
       ]);
 
       const result = await simulateGetRedeemablePositions(
@@ -1201,7 +1324,11 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
         onChainResolved,
       );
 
-      assert.strictEqual(result.length, 2, "Should include resolved positions despite one rejection");
+      assert.strictEqual(
+        result.length,
+        2,
+        "Should include resolved positions despite one rejection",
+      );
       assert.ok(
         result.some((p) => p.tokenId === "t1"),
         "Should include first resolved position",
@@ -1218,8 +1345,18 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
 
     test("should return empty array when all on-chain checks reject", async () => {
       const apiPositions: MockRedeemablePosition[] = [
-        { tokenId: "t1", marketId: "0x" + "1".repeat(64), size: 10, currentPrice: 1.0 },
-        { tokenId: "t2", marketId: "0x" + "2".repeat(64), size: 10, currentPrice: 1.0 },
+        {
+          tokenId: "t1",
+          marketId: "0x" + "1".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
+        {
+          tokenId: "t2",
+          marketId: "0x" + "2".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        },
       ];
 
       const onChainResolved = new Map<string, boolean | "reject">([
@@ -1234,7 +1371,11 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
         onChainResolved,
       );
 
-      assert.strictEqual(result.length, 0, "Should return empty when all checks reject");
+      assert.strictEqual(
+        result.length,
+        0,
+        "Should return empty when all checks reject",
+      );
     });
   });
 
@@ -1242,17 +1383,47 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
     test("should correctly apply all filters in sequence", async () => {
       const apiPositions: MockRedeemablePosition[] = [
         // Position 1: Above min, not in cooldown, resolved - SHOULD BE INCLUDED
-        { tokenId: "t1", marketId: "0x" + "1".repeat(64), size: 10, currentPrice: 1.0 }, // $10
+        {
+          tokenId: "t1",
+          marketId: "0x" + "1".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        }, // $10
         // Position 2: Below min - filtered out early
-        { tokenId: "t2", marketId: "0x" + "2".repeat(64), size: 1, currentPrice: 0.1 },  // $0.10
+        {
+          tokenId: "t2",
+          marketId: "0x" + "2".repeat(64),
+          size: 1,
+          currentPrice: 0.1,
+        }, // $0.10
         // Position 3: Above min, in cooldown - filtered out
-        { tokenId: "t3", marketId: "0x" + "3".repeat(64), size: 10, currentPrice: 1.0 }, // $10
+        {
+          tokenId: "t3",
+          marketId: "0x" + "3".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        }, // $10
         // Position 4: Above min, not in cooldown, NOT resolved - filtered out by on-chain check
-        { tokenId: "t4", marketId: "0x" + "4".repeat(64), size: 10, currentPrice: 1.0 }, // $10
+        {
+          tokenId: "t4",
+          marketId: "0x" + "4".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        }, // $10
         // Position 5: Above min, not in cooldown, resolved - SHOULD BE INCLUDED
-        { tokenId: "t5", marketId: "0x" + "5".repeat(64), size: 5, currentPrice: 2.0 },  // $10
+        {
+          tokenId: "t5",
+          marketId: "0x" + "5".repeat(64),
+          size: 5,
+          currentPrice: 2.0,
+        }, // $10
         // Position 6: Above min, not in cooldown, RPC error - filtered out
-        { tokenId: "t6", marketId: "0x" + "6".repeat(64), size: 10, currentPrice: 1.0 }, // $10
+        {
+          tokenId: "t6",
+          marketId: "0x" + "6".repeat(64),
+          size: 10,
+          currentPrice: 1.0,
+        }, // $10
       ];
 
       const cooldownMarkets = new Set(["0x" + "3".repeat(64)]);
@@ -1271,7 +1442,11 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
         onChainResolved,
       );
 
-      assert.strictEqual(result.length, 2, "Should only include 2 positions that pass all filters");
+      assert.strictEqual(
+        result.length,
+        2,
+        "Should only include 2 positions that pass all filters",
+      );
       assert.ok(
         result.some((p) => p.tokenId === "t1"),
         "Should include t1 (above min, not in cooldown, resolved)",
@@ -1301,7 +1476,7 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
   describe("P&L Calculation for Redemptions", () => {
     test("should calculate realized P&L correctly for winning position", () => {
       // Scenario: User bought YES at 0.30, market resolved to YES (1.0), redeemed
-      const entryPrice = 0.30;
+      const entryPrice = 0.3;
       const redemptionPrice = 1.0; // Winning outcome
       const size = 10;
 
@@ -1316,7 +1491,7 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
 
     test("should calculate realized P&L correctly for losing position", () => {
       // Scenario: User bought YES at 0.70, market resolved to NO (0.0), redeemed
-      const entryPrice = 0.70;
+      const entryPrice = 0.7;
       const redemptionPrice = 0.0; // Losing outcome
       const size = 15;
 
@@ -1384,6 +1559,332 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
         unknownResult,
         undefined,
         "Should return undefined for unknown token",
+      );
+    });
+  });
+});
+
+/**
+ * Tests for the Immediate Trigger functionality
+ * 
+ * When PositionTracker detects new on-chain verified redeemable positions,
+ * it triggers AutoRedeem.triggerImmediate() to bypass the interval throttle.
+ * This ensures capital is recovered as quickly as possible.
+ */
+describe("Auto-Redeem Immediate Trigger", () => {
+  describe("triggerImmediate Behavior", () => {
+    // Create mock logger that tracks calls
+    const createMockLogger = () => ({
+      info: () => {},
+      debug: () => {},
+      warn: () => {},
+      error: () => {},
+    });
+
+    // Create mock CLOB client
+    const createMockClient = () => ({
+      wallet: {
+        address: "0x1234567890123456789012345678901234567890",
+        provider: {
+          getFeeData: async () => ({}),
+        },
+      },
+    });
+
+    test("triggerImmediate should bypass interval throttle", async () => {
+      // Import the actual AutoRedeemStrategy class
+      const { AutoRedeemStrategy } = await import(
+        "../../src/strategies/auto-redeem"
+      );
+
+      const mockLogger = createMockLogger();
+      const mockClient = createMockClient();
+
+      const strategy = new AutoRedeemStrategy({
+        client: mockClient as any,
+        logger: mockLogger as any,
+        config: {
+          enabled: true,
+          minPositionUsd: 0,
+          checkIntervalMs: 30000, // 30 second throttle
+        },
+      });
+
+      // Set last check time to 5 seconds ago (within throttle window)
+      (strategy as any).lastCheckTimeMs = Date.now() - 5000;
+
+      // Stub executeInternal to avoid network calls
+      let executeInternalCalled = false;
+      (strategy as any).executeInternal = async () => {
+        executeInternalCalled = true;
+        return 1;
+      };
+
+      // execute() should be throttled (only 5 seconds since last check)
+      const executeResult = await strategy.execute();
+      assert.strictEqual(
+        executeResult,
+        0,
+        "execute() should be throttled after only 5 seconds",
+      );
+      assert.strictEqual(
+        executeInternalCalled,
+        false,
+        "executeInternal should not have been called by execute()",
+      );
+
+      // triggerImmediate() should bypass the throttle
+      const immediateResult = await strategy.triggerImmediate();
+      assert.strictEqual(
+        immediateResult,
+        1,
+        "triggerImmediate() should bypass the throttle and execute",
+      );
+      assert.strictEqual(
+        executeInternalCalled,
+        true,
+        "executeInternal should have been called by triggerImmediate()",
+      );
+    });
+
+    test("triggerImmediate should respect single-flight guard", async () => {
+      const { AutoRedeemStrategy } = await import(
+        "../../src/strategies/auto-redeem"
+      );
+
+      const mockLogger = createMockLogger();
+      const mockClient = createMockClient();
+
+      const strategy = new AutoRedeemStrategy({
+        client: mockClient as any,
+        logger: mockLogger as any,
+        config: {
+          enabled: true,
+          minPositionUsd: 0,
+          checkIntervalMs: 30000,
+        },
+      });
+
+      // Track how many times executeInternal is called
+      let executeInternalCallCount = 0;
+
+      // Stub executeInternal to simulate slow execution
+      (strategy as any).executeInternal = async () => {
+        executeInternalCallCount++;
+        await new Promise((resolve) => setTimeout(resolve, 50)); // Slow execution
+        return 1;
+      };
+
+      // Start first execution
+      const firstPromise = strategy.triggerImmediate();
+
+      // Small delay to ensure first execution has set inFlight
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      // Attempt second execution while first is in flight
+      const secondResult = await strategy.triggerImmediate();
+
+      // Wait for first to complete
+      const firstResult = await firstPromise;
+
+      assert.strictEqual(firstResult, 1, "First trigger should succeed");
+      assert.strictEqual(
+        secondResult,
+        0,
+        "Second trigger should be skipped (in-flight)",
+      );
+      assert.strictEqual(
+        executeInternalCallCount,
+        1,
+        "executeInternal should only have been called once",
+      );
+    });
+
+    test("triggerImmediate should update lastCheckTimeMs to prevent immediate re-trigger", async () => {
+      const { AutoRedeemStrategy } = await import(
+        "../../src/strategies/auto-redeem"
+      );
+
+      const mockLogger = createMockLogger();
+      const mockClient = createMockClient();
+
+      const strategy = new AutoRedeemStrategy({
+        client: mockClient as any,
+        logger: mockLogger as any,
+        config: {
+          enabled: true,
+          minPositionUsd: 0,
+          checkIntervalMs: 30000,
+        },
+      });
+
+      // Set last check time to 60 seconds ago (outside throttle window)
+      (strategy as any).lastCheckTimeMs = Date.now() - 60000;
+
+      // Stub executeInternal
+      let executeInternalCallCount = 0;
+      (strategy as any).executeInternal = async () => {
+        executeInternalCallCount++;
+        return 1;
+      };
+
+      // Trigger immediate (should succeed and update lastCheckTimeMs)
+      const immediateResult = await strategy.triggerImmediate();
+      assert.strictEqual(immediateResult, 1, "Immediate trigger should succeed");
+      assert.strictEqual(executeInternalCallCount, 1);
+
+      // Now execute() should be throttled because triggerImmediate updated lastCheckTimeMs
+      const executeResult = await strategy.execute();
+      assert.strictEqual(
+        executeResult,
+        0,
+        "execute() should be throttled after triggerImmediate updated lastCheckTimeMs",
+      );
+      assert.strictEqual(
+        executeInternalCallCount,
+        1,
+        "executeInternal should not have been called again by execute()",
+      );
+    });
+
+    test("triggerImmediate should return 0 when disabled", async () => {
+      const { AutoRedeemStrategy } = await import(
+        "../../src/strategies/auto-redeem"
+      );
+
+      const mockLogger = createMockLogger();
+      const mockClient = createMockClient();
+
+      const strategy = new AutoRedeemStrategy({
+        client: mockClient as any,
+        logger: mockLogger as any,
+        config: {
+          enabled: false, // Disabled
+          minPositionUsd: 0,
+          checkIntervalMs: 30000,
+        },
+      });
+
+      let executeInternalCalled = false;
+      (strategy as any).executeInternal = async () => {
+        executeInternalCalled = true;
+        return 1;
+      };
+
+      const result = await strategy.triggerImmediate();
+      assert.strictEqual(result, 0, "Should return 0 when disabled");
+      assert.strictEqual(
+        executeInternalCalled,
+        false,
+        "executeInternal should not be called when disabled",
+      );
+    });
+  });
+
+  describe("PositionTracker Callback Integration", () => {
+    test("should detect newly redeemable positions (set difference)", () => {
+      // Simulate knownRedeemableTokenIds tracking
+      let knownRedeemableTokenIds = new Set<string>();
+
+      // Simulate detecting newly redeemable positions
+      const detectNewlyRedeemable = (currentRedeemableTokenIds: Set<string>) => {
+        const newlyRedeemable: string[] = [];
+        for (const tokenId of currentRedeemableTokenIds) {
+          if (!knownRedeemableTokenIds.has(tokenId)) {
+            newlyRedeemable.push(tokenId);
+          }
+        }
+        // Update known set
+        knownRedeemableTokenIds = currentRedeemableTokenIds;
+        return newlyRedeemable;
+      };
+
+      // First snapshot: 2 redeemable positions
+      const snapshot1 = new Set(["token-A", "token-B"]);
+      const newlyRedeemable1 = detectNewlyRedeemable(snapshot1);
+      assert.strictEqual(
+        newlyRedeemable1.length,
+        2,
+        "Should detect 2 newly redeemable on first run",
+      );
+      assert.ok(newlyRedeemable1.includes("token-A"));
+      assert.ok(newlyRedeemable1.includes("token-B"));
+
+      // Second snapshot: same positions (no change)
+      const snapshot2 = new Set(["token-A", "token-B"]);
+      const newlyRedeemable2 = detectNewlyRedeemable(snapshot2);
+      assert.strictEqual(
+        newlyRedeemable2.length,
+        0,
+        "Should detect 0 newly redeemable when no change",
+      );
+
+      // Third snapshot: 1 new position added
+      const snapshot3 = new Set(["token-A", "token-B", "token-C"]);
+      const newlyRedeemable3 = detectNewlyRedeemable(snapshot3);
+      assert.strictEqual(
+        newlyRedeemable3.length,
+        1,
+        "Should detect 1 newly redeemable",
+      );
+      assert.strictEqual(newlyRedeemable3[0], "token-C");
+
+      // Fourth snapshot: 1 position removed, 1 added
+      const snapshot4 = new Set(["token-A", "token-C", "token-D"]);
+      const newlyRedeemable4 = detectNewlyRedeemable(snapshot4);
+      assert.strictEqual(
+        newlyRedeemable4.length,
+        1,
+        "Should only detect newly added position",
+      );
+      assert.strictEqual(newlyRedeemable4[0], "token-D");
+    });
+
+    test("callback should fire asynchronously via setImmediate without blocking", async () => {
+      // Test that the callback is truly scheduled via setImmediate (not blocking synchronously)
+      let callbackExecuted = false;
+      let refreshCompleteBeforeCallback = false;
+
+      // Simulate the production behavior using setImmediate
+      const simulateRefreshWithAsyncCallback = () => {
+        return new Promise<void>((resolve) => {
+          const newlyRedeemable = ["token-X", "token-Y"];
+
+          if (newlyRedeemable.length > 0) {
+            // This matches the production code: callback via setImmediate
+            setImmediate(() => {
+              // This runs after refresh() returns
+              callbackExecuted = true;
+            });
+          }
+
+          // Mark that refresh is complete (this happens synchronously)
+          refreshCompleteBeforeCallback = !callbackExecuted;
+          resolve();
+        });
+      };
+
+      await simulateRefreshWithAsyncCallback();
+
+      // Callback should NOT have executed yet (it's scheduled via setImmediate)
+      assert.strictEqual(
+        refreshCompleteBeforeCallback,
+        true,
+        "Refresh should complete before callback executes (async via setImmediate)",
+      );
+      assert.strictEqual(
+        callbackExecuted,
+        false,
+        "Callback should not have executed synchronously",
+      );
+
+      // Wait for setImmediate to fire
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.strictEqual(
+        callbackExecuted,
+        true,
+        "Callback should have executed after setImmediate",
       );
     });
   });
