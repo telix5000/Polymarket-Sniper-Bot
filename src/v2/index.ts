@@ -2438,6 +2438,8 @@ async function executeSell(
       side: "SELL" as OrderSide,
       sizeUsd,
       sellSlippagePct: 5,
+      skipMinOrderSizeCheck: true, // SELL orders must execute regardless of size
+      skipDuplicatePrevention: true, // SELL orders shouldn't be blocked by duplicate prevention
       logger: simpleLogger as any,
     });
 
