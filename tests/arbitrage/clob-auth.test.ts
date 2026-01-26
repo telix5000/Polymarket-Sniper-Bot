@@ -370,7 +370,9 @@ test("postOrder SELL proceeds with top bid even when bids are below computed lim
     });
 
     // NEW BEHAVIOR: SELL proceeds with top bid (40¢) instead of skipping
-    // The order should be submitted successfully or skipped for a different reason
+    // The order should be submitted successfully
+    assert.equal(result.status, "submitted", 
+      "SELL order should be submitted successfully");
     assert.notEqual(result.reason, "NO_LIQUIDITY_AT_PRICE", 
       "SELL should not skip with NO_LIQUIDITY_AT_PRICE when bids exist");
     

@@ -974,8 +974,8 @@ async function postOrderClobInner(
       }
 
       // Optional price floor check: if minAcceptablePrice was provided/computed,
-      // verify the top bid meets that floor. This is a safety net, not a hard block.
-      // Log a warning but proceed with the sell if the bid is below the floor.
+      // log a warning when the top bid is below that floor, but proceed with the
+      // sell anyway (informational warning only, not a blocking guard).
       if (
         effectiveMinAcceptablePrice !== undefined &&
         levelPrice < effectiveMinAcceptablePrice
