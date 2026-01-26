@@ -14,6 +14,18 @@ import type {
 import type { Logger } from "./types";
 
 /**
+ * Minimum price change threshold (0.1%) to consider order book as "moving"
+ * Below this threshold, the order book is considered stagnant
+ */
+const MIN_PRICE_CHANGE_THRESHOLD = 0.001;
+
+/**
+ * Minimum number of low liquidity conditions required to trigger scavenger mode
+ * Prevents false positives from single metric anomalies
+ */
+const MIN_LOW_LIQUIDITY_CONDITIONS = 2;
+
+/**
  * Market volume sample
  */
 interface VolumeSample {
@@ -187,7 +199,7 @@ function isOrderBookStagnant(
 
   if (recent.length < 2) return false;
 
-  // Check if best bid/ask have changed meaningfully (more than 0.1%)
+  // Check if best bid/ask have changed meaningfully
   const first = recent[0];
   const last = recent[recent.length - 1];
 
@@ -196,7 +208,10 @@ function isOrderBookStagnant(
   const askChange =
     Math.abs(last.bestAsk - first.bestAsk) / (first.bestAsk || 1);
 
-  return bidChange < 0.001 && askChange < 0.001;
+  return (
+    bidChange < MIN_PRICE_CHANGE_THRESHOLD &&
+    askChange < MIN_PRICE_CHANGE_THRESHOLD
+  );
 }
 
 /**
@@ -278,8 +293,8 @@ export function analyzeMarketConditions(
     lowLiquidityCount++;
   }
 
-  // Consider low liquidity if at least 2 conditions are met
-  isLowLiquidity = lowLiquidityCount >= 2;
+  // Consider low liquidity if multiple conditions are met
+  isLowLiquidity = lowLiquidityCount >= MIN_LOW_LIQUIDITY_CONDITIONS;
 
   // Update detection timestamps
   let newState = { ...state };

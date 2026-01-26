@@ -14,6 +14,12 @@ import type { ScavengerConfig } from "./scavenger-config";
 import { ORDER } from "./constants";
 
 /**
+ * Minimum price change threshold (0.1%) to consider price as "moving"
+ * Below this threshold, price is considered stalled
+ */
+const MIN_PRICE_CHANGE_THRESHOLD = 0.001;
+
+/**
  * Scavenger execution state
  */
 export interface ScavengerState {
@@ -135,9 +141,9 @@ export function isPriceStalled(
   const firstPrice = recentSamples[0].price;
   const latestPrice = recentSamples[recentSamples.length - 1].price;
 
-  // Consider stalled if price hasn't increased by more than 0.1%
+  // Consider stalled if price hasn't increased by more than threshold
   const priceChange = (latestPrice - firstPrice) / firstPrice;
-  return priceChange < 0.001;
+  return priceChange < MIN_PRICE_CHANGE_THRESHOLD;
 }
 
 /**
