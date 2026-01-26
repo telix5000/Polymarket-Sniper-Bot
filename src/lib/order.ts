@@ -110,15 +110,15 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     // Execute order
     const orderSide = isBuy ? Side.BUY : Side.SELL;
     let remaining = sizeUsd;
-    let remainingShares = input.shares ?? 0;
+    let remainingShares = input.shares;
     let totalFilled = 0;
     let weightedPrice = 0;
     let retries = 0;
 
-    // Use share-based tracking when shares are specified
-    const useSharesTracking = remainingShares > 0;
+    // Use share-based tracking when shares are explicitly specified and > 0
+    const useSharesTracking = remainingShares !== undefined && remainingShares > 0;
 
-    while ((useSharesTracking ? remainingShares > ORDER.MIN_SHARES_THRESHOLD : remaining > ORDER.MIN_ORDER_USD) && retries < ORDER.MAX_RETRIES) {
+    while ((useSharesTracking ? remainingShares! > ORDER.MIN_SHARES_THRESHOLD : remaining > ORDER.MIN_ORDER_USD) && retries < ORDER.MAX_RETRIES) {
       try {
         const book = await client.getOrderBook(tokenId);
         const lvls = isBuy ? book.asks : book.bids;
@@ -133,7 +133,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
         
         if (useSharesTracking) {
           // Share-based: buy/sell the minimum of remaining shares and level size
-          amount = Math.min(remainingShares, levelSize);
+          amount = Math.min(remainingShares!, levelSize);
           value = amount * price;
         } else {
           // USD-based calculation
@@ -152,7 +152,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
 
         if (resp.success) {
           remaining -= value;
-          if (useSharesTracking) remainingShares -= amount;
+          if (useSharesTracking) remainingShares = remainingShares! - amount;
           totalFilled += value;
           weightedPrice += value * price;
           retries = 0;
