@@ -632,7 +632,7 @@ export class AutoSellStrategy {
         wallet,
         marketId: position.marketId,
         tokenId: position.tokenId,
-        outcome: (position.side?.toUpperCase() as "YES" | "NO") || "YES",
+        outcome: this.normalizeOutcomeForOrder(position.side),
         side: "SELL",
         sizeUsd,
         // FALLING_KNIFE_SLIPPAGE_PCT (25%) for reliable fills - same as hedging
@@ -688,6 +688,26 @@ export class AutoSellStrategy {
       );
       throw err;
     }
+  }
+
+  /**
+   * Normalize an outcome string to the OrderOutcome type expected by postOrder.
+   *
+   * For YES/NO binary markets, returns the uppercase string "YES" or "NO".
+   * For other market types (Over/Under, Team A/Team B, etc.), returns "YES"
+   * as a placeholder since the tokenId is what actually identifies the outcome.
+   *
+   * @param outcome - The outcome string from the position
+   * @returns "YES" or "NO" for the order API
+   */
+  private normalizeOutcomeForOrder(outcome: string | undefined): "YES" | "NO" {
+    if (!outcome) return "YES";
+    const upper = outcome.toUpperCase();
+    if (upper === "YES" || upper === "NO") {
+      return upper as "YES" | "NO";
+    }
+    // For non-YES/NO markets, tokenId identifies the outcome - use "YES" as placeholder
+    return "YES";
   }
 
   /**
