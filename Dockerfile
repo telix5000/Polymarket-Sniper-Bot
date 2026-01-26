@@ -1,5 +1,5 @@
 # Stage 1: Install dependencies
-ARG NODE_IMAGE=node:20-alpine@sha256:3960ed74dfe320a67bf8da9555b6bade25ebda2b22b6081d2f60fd7d5d430e9c
+ARG NODE_IMAGE=node:20-alpine
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 
