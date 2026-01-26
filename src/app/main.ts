@@ -217,6 +217,7 @@ async function main(): Promise<void> {
         disputeWindowExitEnabled: strategyConfig.autoSellDisputeExitEnabled,
         disputeWindowExitPrice: strategyConfig.autoSellDisputeExitPrice,
         stalePositionHours: strategyConfig.autoSellStalePositionHours,
+        staleExpiryHoldHours: strategyConfig.autoSellStaleExpiryHoldHours,
         quickWinEnabled: strategyConfig.autoSellQuickWinEnabled,
         quickWinMaxHoldMinutes: strategyConfig.autoSellQuickWinMaxHoldMinutes,
         quickWinProfitPct: strategyConfig.autoSellQuickWinProfitPct,

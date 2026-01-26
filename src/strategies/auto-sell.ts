@@ -39,13 +39,30 @@ export interface AutoSellConfig {
    *
    * When enabled (stalePositionHours > 0), the strategy will:
    * 1. Find profitable positions (pnlPct > 0) held longer than stalePositionHours
-   * 2. Sell them at current market price to lock in the profit
-   * 3. Free up capital for new trading opportunities
+   * 2. Check if event expires soon (within staleExpiryHoldHours) - if so, HOLD for resolution
+   * 3. If not expiring soon, sell them at current market price to lock in the profit
+   * 4. Free up capital for new trading opportunities
    *
    * Set to 0 to disable stale position selling.
    * Default: 24 hours - positions in the green for 24+ hours are sold.
    */
   stalePositionHours?: number; // Hours before a profitable position is considered "stale" (0 = disabled)
+  /**
+   * EXPIRY-AWARE HOLD THRESHOLD
+   * If a stale profitable position's market expires within this many hours,
+   * HOLD the position instead of selling it. This is because:
+   * - Holding to resolution may yield better returns (100% payout if winning)
+   * - Selling now would forfeit potential profits from resolution
+   * - Events expiring soon are worth waiting for rather than freeing capital
+   *
+   * This prevents selling a profitable position at 85¢ when the event resolves
+   * in 12 hours and could pay out at $1.00. The capital efficiency loss from
+   * waiting 12 hours is less than the ~15% profit loss from selling early.
+   *
+   * Set to 0 to disable expiry-aware holding (always sell stale positions).
+   * Default: 48 hours - if event expires within 48 hours, hold for resolution
+   */
+  staleExpiryHoldHours?: number; // Hours before event expiry to hold instead of sell (0 = disabled)
   /**
    * QUICK WIN EXIT SETTINGS
    * Positions held for a short time with massive gains should be sold to lock in profit.
@@ -75,6 +92,7 @@ export interface AutoSellConfig {
  * - Normal threshold at 99.9¢ (0.999)
  * - Dispute exit at 99.9¢ (0.999) for faster capital recovery
  * - Stale position exit at 24 hours for profitable positions
+ * - Expiry-aware holding: hold if event expires within 48 hours
  * - Quick win exit disabled by default (opt-in feature)
  */
 export const DEFAULT_AUTO_SELL_CONFIG: AutoSellConfig = {
@@ -85,6 +103,7 @@ export const DEFAULT_AUTO_SELL_CONFIG: AutoSellConfig = {
   disputeWindowExitEnabled: true, // Enable dispute window exit
   disputeWindowExitPrice: 0.999, // Sell at 99.9¢ for dispute exit
   stalePositionHours: 24, // Sell profitable positions held for 24+ hours to free capital
+  staleExpiryHoldHours: 48, // If event expires within 48 hours, hold for resolution instead of selling
   quickWinEnabled: false, // Disabled by default - opt-in via ENV
   quickWinMaxHoldMinutes: 60, // Quick win window: 1 hour
   quickWinProfitPct: 90, // Quick win threshold: 90% profit
@@ -151,11 +170,14 @@ export class AutoSellStrategy {
       const staleInfo = this.config.stalePositionHours && this.config.stalePositionHours > 0
         ? ` stalePositionHours=${this.config.stalePositionHours}`
         : "";
+      const expiryHoldInfo = this.config.staleExpiryHoldHours && this.config.staleExpiryHoldHours > 0
+        ? ` expiryHoldHours=${this.config.staleExpiryHoldHours}`
+        : "";
       const quickWinInfo = this.config.quickWinEnabled
         ? ` quickWin=${this.config.quickWinMaxHoldMinutes}m@${this.config.quickWinProfitPct}%`
         : "";
       this.logger.info(
-        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}${staleInfo}${quickWinInfo}`,
+        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}${staleInfo}${expiryHoldInfo}${quickWinInfo}`,
       );
     }
   }
@@ -484,13 +506,25 @@ export class AutoSellStrategy {
    * These are positions "in the green" (pnlPct > 0) that aren't moving much
    * and are tying up capital that could be used elsewhere.
    *
+   * EXPIRY-AWARE LOGIC (Trading Bot vs Holding Bot):
+   * If staleExpiryHoldHours > 0 and the market expires within that window,
+   * we SKIP the position (hold for resolution) instead of selling it.
+   * This is because:
+   * - Resolution may yield $1.00 vs selling at 85¢ now
+   * - Short wait times are worth the potential upside
+   * - This is a trading bot, but smart trading means knowing when to hold
+   *
    * @param staleHours - Number of hours after which a profitable position is considered stale
-   * @returns Array of stale profitable positions
+   * @returns Array of stale profitable positions (excluding those expiring soon)
    */
   private getStaleProfitablePositions(staleHours: number): Position[] {
     const positions = this.positionTracker.getPositions();
     const staleThresholdMs = staleHours * 60 * 60 * 1000; // Convert hours to milliseconds
     const now = Date.now();
+    
+    // Expiry-aware hold threshold (default 48 hours)
+    const expiryHoldHours = this.config.staleExpiryHoldHours ?? 48;
+    const expiryHoldMs = expiryHoldHours * 60 * 60 * 1000;
 
     return positions.filter((pos) => {
       // Must be profitable (green)
@@ -515,6 +549,26 @@ export class AutoSellStrategy {
       const heldMs = now - pos.firstAcquiredAt;
       if (heldMs < staleThresholdMs) {
         return false;
+      }
+
+      // === EXPIRY-AWARE HOLD LOGIC ===
+      // If event expires within expiryHoldHours, HOLD for resolution instead of selling
+      // This prevents selling a profitable position (e.g., 85¢) when waiting for
+      // resolution (potential $1.00 payout) is the smarter play.
+      if (expiryHoldHours > 0 && pos.marketEndTime !== undefined) {
+        const timeToExpiryMs = pos.marketEndTime - now;
+        if (timeToExpiryMs > 0 && timeToExpiryMs <= expiryHoldMs) {
+          // Event expires soon - hold for resolution
+          const hoursToExpiry = timeToExpiryMs / (60 * 60 * 1000);
+          const posKey = `${pos.marketId}-${pos.tokenId}`.slice(0, 30);
+          // Log once per position per expiry window (rate-limited by LogDeduper)
+          if (this.logDeduper.shouldLog(`stale_expiry_hold:${posKey}`, 60 * 60 * 1000)) {
+            this.logger.info(
+              `[AutoSell] EXPIRY_HOLD: Skipping stale position (${hoursToExpiry.toFixed(1)}h to expiry, hold threshold=${expiryHoldHours}h) - waiting for resolution may be more profitable`,
+            );
+          }
+          return false;
+        }
       }
 
       // Must have a valid bid price to sell
