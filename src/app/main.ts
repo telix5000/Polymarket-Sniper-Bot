@@ -49,16 +49,31 @@ async function main(): Promise<void> {
   // This fetches top traders from Polymarket leaderboard dynamically
   await populateTargetAddressesFromLeaderboard(logger);
 
-  // Check if unified STRATEGY_PRESET is configured
+  // Load unified STRATEGY_PRESET configuration
+  // This controls which strategies/components are enabled
   const strategyConfig = loadStrategyConfig(cliOverrides);
 
-  const mode = String(
-    process.env.MODE ?? process.env.mode ?? "mempool",
+  // Legacy MODE env var - deprecated but still supported for backwards compatibility
+  // When STRATEGY_PRESET is set, MODE is ignored and config-driven behavior takes over
+  const legacyMode = String(
+    process.env.MODE ?? process.env.mode ?? "",
   ).toLowerCase();
-  logger.info(`🚀 Starting Polymarket runtime mode=${mode}`);
+
+  // Determine what runs based on strategyConfig (preferred) or legacy MODE
+  const arbEnabled = strategyConfig?.arbEnabled ?? (legacyMode === "arb" || legacyMode === "both");
+  const monitorEnabled = strategyConfig?.monitorEnabled ?? (legacyMode === "mempool" || legacyMode === "both" || legacyMode === "");
+
+  // Log startup mode
+  if (strategyConfig) {
+    logger.info(`🚀 Starting Polymarket (preset: ${strategyConfig.presetName})`);
+    logger.info(`📊 Components: orchestrator=${strategyConfig.enabled ? "ON" : "OFF"}, arb=${arbEnabled ? "ON" : "OFF"}, monitor=${monitorEnabled ? "ON" : "OFF"}`);
+  } else if (legacyMode) {
+    logger.warn(`⚠️ Using legacy MODE=${legacyMode} - consider migrating to STRATEGY_PRESET`);
+  } else {
+    logger.info(`🚀 Starting Polymarket with default config`);
+  }
 
   // Run authentication and preflight ONCE at top level before starting any engines
-  // This ensures MODE=both only runs preflight once, not twice
   logger.info("🔐 Authenticating with Polymarket...");
   const auth = createPolymarketAuthFromEnv(logger);
 
@@ -74,13 +89,12 @@ async function main(): Promise<void> {
   const client = await auth.getClobClient();
 
   // Load config to get parameters for preflight
-  // For MODE=both, prefer ARB config as it has all necessary parameters
-  const env =
-    mode === "arb" || mode === "both"
-      ? loadArbConfig(cliOverrides)
-      : loadMonitorConfig(cliOverrides);
+  // Use ARB config when arbitrage is enabled, otherwise monitor config
+  const env = arbEnabled
+    ? loadArbConfig(cliOverrides)
+    : loadMonitorConfig(cliOverrides);
 
-  // Run preflight ONCE for all modes
+  // Run preflight ONCE for all components
   logger.info("🔍 Running preflight checks...");
   const tradingReady = await ensureTradingReady({
     client,
@@ -288,17 +302,17 @@ async function main(): Promise<void> {
     }
   } else if (strategyConfig && !strategyConfig.enabled) {
     logger.info(
-      `[Strategy] Preset=${strategyConfig.presetName} disabled; using individual ARB/MONITOR presets.`,
+      `[Strategy] Preset=${strategyConfig.presetName} disabled; using individual config flags.`,
     );
   }
 
-  // Start ARB engine if configured, passing pre-authenticated client
-  if (mode === "arb" || mode === "both") {
+  // Start ARB engine if enabled (via config or legacy MODE)
+  if (arbEnabled) {
     await startArbitrageEngine(cliOverrides, client, tradingReady);
   }
 
-  // Start MEMPOOL monitor if configured, using same authenticated client
-  if (mode === "mempool" || mode === "both") {
+  // Start MEMPOOL monitor if enabled (via config or legacy MODE)
+  if (monitorEnabled) {
     const mempoolEnv = loadMonitorConfig(cliOverrides);
     logger.info(formatClobCredsChecklist(mempoolEnv.clobCredsChecklist));
 
