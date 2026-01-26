@@ -1580,8 +1580,8 @@ export type StrategyConfig = {
   /**
    * USD threshold for "oversized" positions
    * Positions with invested value (size * entryPrice) > this are considered oversized.
-   * Typically set to match HEDGING_ABSOLUTE_MAX_USD.
-   * Default: 25 (matches default HEDGING_ABSOLUTE_MAX_USD)
+   * Typically set to align with HEDGING_ABSOLUTE_MAX_USD, but configurable independently.
+   * Default: 25
    */
   autoSellOversizedExitThresholdUsd: number;
   /**

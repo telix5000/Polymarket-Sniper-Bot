@@ -112,7 +112,7 @@ export const DEFAULT_AUTO_SELL_CONFIG: AutoSellConfig = {
   quickWinMaxHoldMinutes: 60, // Quick win window: 1 hour
   quickWinProfitPct: 90, // Quick win threshold: 90% profit
   oversizedExitEnabled: false, // Disabled by default - opt-in via ENV
-  oversizedExitThresholdUsd: 25, // Default: 25 USD (matches HEDGING_ABSOLUTE_MAX_USD default)
+  oversizedExitThresholdUsd: 25, // Default: 25 USD (chosen to align with dynamic reserves hedgeCapUsd=25)
   oversizedExitHoursBeforeEvent: 1, // Default: exit 1 hour before event
   oversizedExitBreakevenTolerancePct: 2, // Default: +/- 2% considered breakeven
 };
