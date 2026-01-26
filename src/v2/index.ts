@@ -1377,51 +1377,6 @@ async function alertStatus(msg: string) {
   }
 }
 
-/** Send position summary (V1 feature) */
-async function alertPositionSummary() {
-  if (!state.telegram || state.positions.length === 0) return;
-
-  const holdingsValue = state.positions.reduce((sum, p) => sum + p.value, 0);
-  const totalPnl = state.positions.reduce(
-    (sum, p) => sum + (p.value * p.pnlPct) / 100,
-    0,
-  );
-  const winning = state.positions.filter((p) => p.pnlPct > 0).length;
-  const losing = state.positions.filter((p) => p.pnlPct < 0).length;
-
-  // Calculate total portfolio value (balance + holdings)
-  const portfolioValue = state.balance + holdingsValue;
-
-  const lines = [
-    `📊 *Position Summary*`,
-    `Positions: ${state.positions.length} (${winning}↑ ${losing}↓)`,
-    `Holdings Value: ${$(holdingsValue)}`,
-    `Unrealized P&L: ${$(totalPnl)}`,
-    `Balance: ${$(state.balance)}`,
-    `Total Value: ${$(portfolioValue)}`,
-    `Session P&L: ${$(state.balance - state.sessionStartBalance)}`,
-  ];
-
-  // Add overall P&L if INITIAL_INVESTMENT_USD is set
-  if (state.initialInvestment !== undefined && state.initialInvestment > 0) {
-    const overallGainLoss = portfolioValue - state.initialInvestment;
-    const overallReturnPct = (overallGainLoss / state.initialInvestment) * 100;
-    const sign = overallGainLoss >= 0 ? "+" : "";
-    lines.push(
-      `📈 *Overall P&L*: ${sign}${$(overallGainLoss)} (${sign}${overallReturnPct.toFixed(1)}%)`,
-    );
-  }
-
-  await axios
-    .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
-      chat_id: state.telegram.chatId,
-      text: lines.join("\n"),
-      parse_mode: "Markdown",
-      disable_notification: state.telegram.silent,
-    })
-    .catch((e) => log(`⚠️ Telegram error: ${e.message}`));
-}
-
 // ============ FORMATTING ============
 
 /** Format USD amount as $1.23 */
