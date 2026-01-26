@@ -523,14 +523,24 @@ const buildBalanceAllowanceRequestInfo = (params: {
   return { requestParams, signedPath, paramsKeys };
 };
 
-const logBalanceAllowanceRequest = (params: {
-  logger: Logger;
-  endpoint: string;
-  signedPath: string;
-  paramsKeys: string[];
-}): void => {
-  params.logger.info(
-    `[CLOB] Balance/allowance request endpoint=${params.endpoint} path=${params.signedPath} paramsKeys=${params.paramsKeys.length ? params.paramsKeys.join(",") : "none"} signatureIncludesQuery=${params.signedPath.includes("?")}`,
+/**
+ * Log a user-friendly balance breakdown with emoticons.
+ * Only logs for COLLATERAL (main USDC balance) to avoid noise.
+ */
+const logBalanceSnapshot = (
+  logger: Logger,
+  snapshot: BalanceAllowanceSnapshot,
+): void => {
+  // Only show friendly breakdown for collateral (USDC) balance
+  if (snapshot.assetType !== AssetType.COLLATERAL) return;
+
+  const balanceOk = snapshot.balanceUsd > 0;
+  const allowanceOk = snapshot.allowanceUsd > 0;
+  const balanceIcon = balanceOk ? "💰" : "⚠️";
+  const allowanceIcon = allowanceOk ? "✅" : "🔒";
+
+  logger.info(
+    `${balanceIcon} Balance: $${formatUsd(snapshot.balanceUsd)} | ${allowanceIcon} Allowance: $${formatUsd(snapshot.allowanceUsd)}`,
   );
 };
 
@@ -574,19 +584,13 @@ const fetchBalanceAllowance = async (
     }
   }
 
-  const { requestParams, signedPath, paramsKeys } =
+  const { requestParams } =
     buildBalanceAllowanceRequestInfo({
       client,
       endpoint: BALANCE_ALLOWANCE_ENDPOINT,
       assetType,
       tokenId,
     });
-  logBalanceAllowanceRequest({
-    logger,
-    endpoint: BALANCE_ALLOWANCE_ENDPOINT,
-    signedPath,
-    paramsKeys,
-  });
 
   try {
     const response = await client.getBalanceAllowance(requestParams);
@@ -599,6 +603,10 @@ const fetchBalanceAllowance = async (
       ),
     };
     balanceAllowanceCache.set(cacheKey, { snapshot, fetchedAt: now });
+
+    // Log friendly balance breakdown for collateral
+    logBalanceSnapshot(logger, snapshot);
+
     if (snapshot.allowanceUsd <= 0 && assetType === AssetType.COLLATERAL) {
       zeroAllowanceCooldown.set(cacheKey, {
         until: now + ZERO_ALLOWANCE_COOLDOWN_MS,
@@ -780,9 +788,7 @@ export const checkFundsAndAllowance = async (
     const refreshAndRetry = async (): Promise<void> => {
       if (refreshed) return;
       refreshed = true;
-      params.logger.info(
-        "[CLOB] Refreshing balance/allowance cache before skipping order.",
-      );
+      params.logger.info("🔄 Refreshing balance...");
       collateralSnapshot = await fetchBalanceAllowance(
         params.client,
         AssetType.COLLATERAL,

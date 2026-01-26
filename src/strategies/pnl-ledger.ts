@@ -68,6 +68,14 @@ export interface LedgerSummary {
   overallReturnPct?: number;
   /** Absolute gain/loss: totalValue - initialInvestment */
   overallGainLoss?: number;
+
+  // === POSITION COUNTS (optional - set by orchestrator) ===
+  /** Number of active (open) positions */
+  activePositionCount?: number;
+  /** Number of positions that are profitable (pnl > 0) */
+  profitablePositionCount?: number;
+  /** Number of positions that are in loss (pnl < 0) */
+  losingPositionCount?: number;
 }
 
 export class PnLLedger {

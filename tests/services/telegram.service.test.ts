@@ -453,15 +453,107 @@ describe("TelegramService Class", () => {
 
       const [, options] = mockFetch.mock.calls[0].arguments;
       const body = JSON.parse(options.body);
-      // Note: The message contains "P&amp;L Update" (HTML-escaped ampersand)
-      assert.ok(
-        body.text.includes("P&amp;L Update"),
-        "Message should contain P&L Update",
-      );
-      assert.ok(
-        body.text.includes("$145.00"),
-        "Message should contain net P&L value",
-      );
+      // Note: The message title now says "Portfolio Status" (HTML-escaped ampersand in P&L Summary section)
+      assert.ok(body.text.includes("Portfolio Status"), "Message should contain Portfolio Status");
+      assert.ok(body.text.includes("$145.00"), "Message should contain net P&L value");
+    } finally {
+      // Always stop to clean up the timer
+      service.stopPnlUpdates();
+    }
+  });
+
+  test("sendPnlUpdate sends balance-sheet message when holdings exist but no trade activity", async () => {
+    const logger = createMockLogger();
+    const service = new TelegramService(
+      { botToken: "test-token", chatId: "123456", pnlIntervalMinutes: 60 },
+      logger,
+    );
+    
+    // Verify service is enabled
+    assert.ok(service.isEnabled(), "Service should be enabled");
+    
+    // Mock summary with zero trades, zero P&L, but positive holdings and activePositionCount
+    const mockSummary = {
+      totalRealizedPnl: 0,
+      totalUnrealizedPnl: 0,
+      totalFees: 0,
+      netPnl: 0,
+      winningTrades: 0,
+      losingTrades: 0,
+      winRate: 0,
+      avgWin: 0,
+      avgLoss: 0,
+      largestWin: 0,
+      largestLoss: 0,
+      byStrategy: new Map(),
+      // Holdings data - this triggers the hasHoldings path
+      usdcBalance: 100,
+      holdingsValue: 50,
+      totalValue: 150,
+      activePositionCount: 2,
+      profitablePositionCount: 1,
+      losingPositionCount: 1,
+    };
+
+    // Start P&L updates to set the callback
+    service.startPnlUpdates(() => mockSummary);
+    
+    try {
+      const result = await service.sendPnlUpdate();
+
+      // Should return true because we have holdings, even with no trade activity
+      assert.strictEqual(result, true, "sendPnlUpdate should return true when holdings exist");
+      assert.strictEqual(mockFetch.mock.calls.length, 1, "fetch should be called once");
+
+      const [, options] = mockFetch.mock.calls[0].arguments;
+      const body = JSON.parse(options.body);
+      // Verify balance-sheet style message is sent
+      assert.ok(body.text.includes("Portfolio Status"), "Message should contain Portfolio Status");
+      assert.ok(body.text.includes("Balance Sheet"), "Message should contain Balance Sheet section");
+      assert.ok(body.text.includes("$150.00"), "Message should contain total value");
+      assert.ok(body.text.includes("Positions"), "Message should contain Positions section");
+      assert.ok(body.text.includes("Active: 2"), "Message should contain active position count");
+    } finally {
+      // Always stop to clean up the timer
+      service.stopPnlUpdates();
+    }
+  });
+
+  test("sendPnlUpdate returns false when no trade activity and no holdings", async () => {
+    const logger = createMockLogger();
+    const service = new TelegramService(
+      { botToken: "test-token", chatId: "123456", pnlIntervalMinutes: 60 },
+      logger,
+    );
+    
+    // Mock summary with zero everything - no trades, no P&L, no holdings
+    const mockSummary = {
+      totalRealizedPnl: 0,
+      totalUnrealizedPnl: 0,
+      totalFees: 0,
+      netPnl: 0,
+      winningTrades: 0,
+      losingTrades: 0,
+      winRate: 0,
+      avgWin: 0,
+      avgLoss: 0,
+      largestWin: 0,
+      largestLoss: 0,
+      byStrategy: new Map(),
+      // No holdings
+      holdingsValue: 0,
+      activePositionCount: 0,
+    };
+
+    // Start P&L updates to set the callback
+    service.startPnlUpdates(() => mockSummary);
+    
+    try {
+      const result = await service.sendPnlUpdate();
+
+      // Should return false because there's nothing to report
+      assert.strictEqual(result, false, "sendPnlUpdate should return false with no activity or holdings");
+      assert.strictEqual(mockFetch.mock.calls.length, 0, "fetch should not be called");
     } finally {
       // Always stop to clean up the timer
       service.stopPnlUpdates();

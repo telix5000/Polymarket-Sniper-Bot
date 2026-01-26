@@ -1544,6 +1544,15 @@ export type StrategyConfig = {
    */
   autoSellStalePositionHours: number;
   /**
+   * Expiry-aware hold threshold (hours before event expiry)
+   * If a stale profitable position's market expires within this many hours,
+   * HOLD the position instead of selling it - waiting for resolution may be more profitable.
+   * This prevents selling at 85¢ when the event resolves in 12 hours and could pay $1.00.
+   * Set to 0 to disable expiry-aware holding (always sell stale positions regardless of expiry).
+   * Default: 48 (if event expires within 48 hours, hold for resolution instead of selling)
+   */
+  autoSellStaleExpiryHoldHours: number;
+  /**
    * Enable quick win exit for positions with massive gains in short time
    * When enabled, positions held less than quickWinMaxHoldMinutes with gains
    * >= quickWinProfitPct will be sold to lock in profit before momentum reverses.
@@ -2208,6 +2217,16 @@ export function loadStrategyConfig(
             .AUTO_SELL_STALE_POSITION_HOURS
         : undefined) ??
       24, // Default: 24 hours - sell profitable positions held for 24+ hours
+    // AUTO_SELL_STALE_EXPIRY_HOLD_HOURS: Hours before event expiry to hold instead of sell
+    // If a stale profitable position's market expires within this window, HOLD for resolution
+    // instead of selling. Waiting for resolution may be more profitable ($1 vs current price).
+    // Set to 0 to disable expiry-aware holding (always sell stale positions).
+    autoSellStaleExpiryHoldHours:
+      parseNumber(readEnv("AUTO_SELL_STALE_EXPIRY_HOLD_HOURS", overrides) ?? "") ??
+      ("AUTO_SELL_STALE_EXPIRY_HOLD_HOURS" in preset
+        ? (preset as { AUTO_SELL_STALE_EXPIRY_HOLD_HOURS: number }).AUTO_SELL_STALE_EXPIRY_HOLD_HOURS
+        : undefined) ??
+      48, // Default: 48 hours - if event expires within 48 hours, hold for resolution
     // AUTO_SELL_QUICK_WIN_ENABLED: Enable quick win exit for positions with massive gains in short time
     autoSellQuickWinEnabled:
       parseBool(readEnv("AUTO_SELL_QUICK_WIN_ENABLED", overrides) ?? "") ??

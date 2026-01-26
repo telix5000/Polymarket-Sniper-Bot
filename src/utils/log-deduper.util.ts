@@ -133,6 +133,27 @@ const parseTrackerHeartbeat = (): number => {
 export const TRACKER_HEARTBEAT_MS = parseTrackerHeartbeat();
 
 /**
+ * Default interval for portfolio status updates (5 minutes)
+ * Configurable via environment variable PORTFOLIO_STATUS_INTERVAL_MINUTES
+ * This controls how often a detailed portfolio status with P&L per position is logged
+ */
+const parsePortfolioStatusInterval = (): number => {
+  const envValue = process.env.PORTFOLIO_STATUS_INTERVAL_MINUTES;
+  if (!envValue) return 5 * 60_000; // 5 minutes default
+
+  const parsed = parseInt(envValue, 10);
+  if (isNaN(parsed) || parsed < 1) {
+    console.warn(
+      `[LogDeduper] Invalid PORTFOLIO_STATUS_INTERVAL_MINUTES value "${envValue}", using default 5 minutes`,
+    );
+    return 5 * 60_000;
+  }
+  return parsed * 60_000; // Convert minutes to milliseconds
+};
+
+export const PORTFOLIO_STATUS_INTERVAL_MS = parsePortfolioStatusInterval();
+
+/**
  * Standard truncation length for tokenIds in log messages
  * Provides enough characters to identify tokens while keeping logs readable
  */

@@ -124,6 +124,14 @@ export interface PnLSnapshot {
   overallReturnPct?: number;
   /** Absolute gain/loss: totalValue - initialInvestment */
   overallGainLoss?: number;
+
+  // === POSITION COUNTS (optional) ===
+  /** Number of active (open) positions */
+  activePositionCount?: number;
+  /** Number of positions that are profitable (pnl > 0) */
+  profitablePositionCount?: number;
+  /** Number of positions that are in loss (pnl < 0) */
+  losingPositionCount?: number;
 }
 
 /**
@@ -332,6 +340,28 @@ export class TelegramService {
         message += `📉 Win Rate: ${(pnlSnapshot.winRate * 100).toFixed(1)}% (${pnlSnapshot.winningTrades}W/${pnlSnapshot.losingTrades}L)\n`;
       }
 
+      // Add position counts if available - show green/red counts without implying they should sum to total
+      // (breakeven positions exist but aren't shown to avoid clutter)
+      if (pnlSnapshot.activePositionCount !== undefined && pnlSnapshot.activePositionCount > 0) {
+        let positionStr = `📦 Positions: ${pnlSnapshot.activePositionCount}`;
+        if (pnlSnapshot.profitablePositionCount !== undefined && pnlSnapshot.losingPositionCount !== undefined) {
+          // Only show breakdown if there are positions in either category
+          if (pnlSnapshot.profitablePositionCount > 0 || pnlSnapshot.losingPositionCount > 0) {
+            positionStr += ` — `;
+            if (pnlSnapshot.profitablePositionCount > 0) {
+              positionStr += `${pnlSnapshot.profitablePositionCount}✅`;
+            }
+            if (pnlSnapshot.profitablePositionCount > 0 && pnlSnapshot.losingPositionCount > 0) {
+              positionStr += ` `;
+            }
+            if (pnlSnapshot.losingPositionCount > 0) {
+              positionStr += `${pnlSnapshot.losingPositionCount}❌`;
+            }
+          }
+        }
+        message += positionStr + `\n`;
+      }
+
       // Add balance breakdown if available
       if (
         pnlSnapshot.usdcBalance !== undefined &&
@@ -387,31 +417,87 @@ export class TelegramService {
     }
 
     // Skip sending if there's no meaningful data to report
-    // (no trades, no P&L, no fees - all zeros)
+    // - Either have trade history (wins/losses)
+    // - Or have P&L movement
+    // - Or have holdings (positions that user wants to track)
     const totalTrades = summary.winningTrades + summary.losingTrades;
-    const hasActivity =
+    const hasTradeActivity =
       totalTrades > 0 ||
       summary.netPnl !== 0 ||
       summary.totalRealizedPnl !== 0 ||
       summary.totalUnrealizedPnl !== 0 ||
       summary.totalFees !== 0;
+    const hasHoldings =
+      (summary.holdingsValue !== undefined && summary.holdingsValue > 0) ||
+      (summary.activePositionCount !== undefined && summary.activePositionCount > 0);
 
-    if (!hasActivity) {
+    // Always send updates when user has holdings (even if no recent trade activity)
+    // This ensures users get their "balance sheet" updates
+    if (!hasTradeActivity && !hasHoldings) {
       this.logger.debug(
-        "[Telegram] Skipping P&L update - no trading activity to report",
+        "[Telegram] Skipping P&L update - no trading activity or holdings to report",
       );
       return false;
     }
 
     const netEmoji = summary.netPnl >= 0 ? "🟢" : "🔴";
 
-    let message = `📊 <b>${this.escapeHtml(this.config.notificationName)} - P&amp;L Update</b>\n\n`;
-    message += `${netEmoji} <b>Net P&L: ${summary.netPnl >= 0 ? "+" : ""}$${summary.netPnl.toFixed(2)}</b>\n\n`;
+    let message = `📊 <b>${this.escapeHtml(this.config.notificationName)} - Portfolio Status</b>\n\n`;
+
+    // Show balance breakdown first (most important for "balance sheet" view)
+    if (
+      summary.usdcBalance !== undefined &&
+      summary.holdingsValue !== undefined &&
+      summary.totalValue !== undefined
+    ) {
+      message += `━━━ Balance Sheet ━━━\n`;
+      message += `🏦 Cash (USDC): $${summary.usdcBalance.toFixed(2)}\n`;
+      message += `📊 Holdings: $${summary.holdingsValue.toFixed(2)}\n`;
+      message += `💎 <b>Total Value: $${summary.totalValue.toFixed(2)}</b>\n`;
+
+      // Add overall return if initial investment is set
+      if (
+        summary.initialInvestment !== undefined &&
+        summary.overallReturnPct !== undefined &&
+        summary.overallGainLoss !== undefined
+      ) {
+        const returnEmoji = summary.overallGainLoss >= 0 ? "📈" : "📉";
+        message += `${returnEmoji} Return: ${summary.overallGainLoss >= 0 ? "+" : ""}$${summary.overallGainLoss.toFixed(2)} (${summary.overallReturnPct >= 0 ? "+" : ""}${summary.overallReturnPct.toFixed(1)}%)\n`;
+      }
+      message += `\n`;
+    }
+
+    // Show position counts if available - green/red counts don't need to sum to total
+    // (breakeven positions exist but aren't shown to avoid clutter)
+    if (summary.activePositionCount !== undefined && summary.activePositionCount > 0) {
+      message += `━━━ Positions ━━━\n`;
+      message += `📦 Active: ${summary.activePositionCount}\n`;
+      if (summary.profitablePositionCount !== undefined && summary.losingPositionCount !== undefined) {
+        // Only show breakdown if there are positions in either category
+        if (summary.profitablePositionCount > 0 || summary.losingPositionCount > 0) {
+          if (summary.profitablePositionCount > 0) {
+            message += `✅ In profit: ${summary.profitablePositionCount}\n`;
+          }
+          if (summary.losingPositionCount > 0) {
+            message += `❌ In loss: ${summary.losingPositionCount}\n`;
+          }
+        }
+      }
+      message += `\n`;
+    }
+
+    // Show P&L summary
+    message += `━━━ P&amp;L Summary ━━━\n`;
+    message += `${netEmoji} <b>Net P&L: ${summary.netPnl >= 0 ? "+" : ""}$${summary.netPnl.toFixed(2)}</b>\n`;
     message += `💰 Realized: ${summary.totalRealizedPnl >= 0 ? "+" : ""}$${summary.totalRealizedPnl.toFixed(2)}\n`;
     message += `📈 Unrealized: ${summary.totalUnrealizedPnl >= 0 ? "+" : ""}$${summary.totalUnrealizedPnl.toFixed(2)}\n`;
-    message += `💸 Fees: $${summary.totalFees.toFixed(2)}\n\n`;
+    if (summary.totalFees > 0) {
+      message += `💸 Fees: $${summary.totalFees.toFixed(2)}\n`;
+    }
 
+    // Show trade statistics if there are any completed trades
     if (totalTrades > 0) {
+      message += `\n━━━ Trade Stats ━━━\n`;
       message += `📉 Win Rate: ${(summary.winRate * 100).toFixed(1)}% (${summary.winningTrades}W / ${summary.losingTrades}L)\n`;
       message += `✅ Avg Win: $${summary.avgWin.toFixed(2)}\n`;
       message += `❌ Avg Loss: $${Math.abs(summary.avgLoss).toFixed(2)}\n`;
@@ -421,29 +507,6 @@ export class TelegramService {
       }
       if (summary.largestLoss < 0) {
         message += `💔 Worst: $${summary.largestLoss.toFixed(2)}\n`;
-      }
-    }
-
-    // Add balance breakdown if available
-    if (
-      summary.usdcBalance !== undefined &&
-      summary.holdingsValue !== undefined &&
-      summary.totalValue !== undefined
-    ) {
-      message += `\n━━━ Balance ━━━\n`;
-      message += `🏦 USDC: $${summary.usdcBalance.toFixed(2)}\n`;
-      message += `📊 Holdings: $${summary.holdingsValue.toFixed(2)}\n`;
-      message += `💎 Total: $${summary.totalValue.toFixed(2)}\n`;
-
-      // Add overall return if initial investment is set
-      if (
-        summary.initialInvestment !== undefined &&
-        summary.overallReturnPct !== undefined &&
-        summary.overallGainLoss !== undefined
-      ) {
-        const returnEmoji = summary.overallGainLoss >= 0 ? "📈" : "📉";
-        message += `${returnEmoji} Overall: ${summary.overallGainLoss >= 0 ? "+" : ""}$${summary.overallGainLoss.toFixed(2)} (${summary.overallReturnPct >= 0 ? "+" : ""}${summary.overallReturnPct.toFixed(1)}%)\n`;
-        message += `💵 Initial: $${summary.initialInvestment.toFixed(2)}\n`;
       }
     }
 
