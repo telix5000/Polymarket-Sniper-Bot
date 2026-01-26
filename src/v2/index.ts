@@ -341,6 +341,8 @@ const state = {
   // V1 Features
   adaptiveLearner: undefined as AdaptiveTradeLearner | undefined,
   pendingTrades: new Map<string, { marketId: string; tradeId: string; entryPrice: number; sizeUsd: number; timestamp: number }>(), // For adaptive learning
+  // Initial investment tracking for overall P&L
+  initialInvestment: undefined as number | undefined,
 };
 
 // ============ P&L LEDGER ============
@@ -399,14 +401,30 @@ function getLedgerSummary(): string {
   const balanceChange = state.balance - state.sessionStartBalance;
   const totalTrades = ledger.buyCount + ledger.sellCount;
   
-  return [
+  // Calculate total value (balance + holdings)
+  const holdingsValue = state.positions.reduce((sum, p) => sum + p.value, 0);
+  const totalValue = state.balance + holdingsValue;
+  
+  const lines = [
     `📊 *Session Summary*`,
     `Trades: ${totalTrades} (${ledger.buyCount} buys, ${ledger.sellCount} sells)`,
     `Bought: ${$(ledger.totalBuys)}`,
     `Sold: ${$(ledger.totalSells)}`,
     `Net Flow: ${$(netFlow)}`,
     `Balance: ${$(state.balance)} (${balanceChange >= 0 ? "+" : ""}${$(balanceChange)})`,
-  ].join("\n");
+    `Holdings: ${$(holdingsValue)} (${state.positions.length} positions)`,
+    `Total Value: ${$(totalValue)}`,
+  ];
+  
+  // Add overall P&L if INITIAL_INVESTMENT_USD is set
+  if (state.initialInvestment !== undefined && state.initialInvestment > 0) {
+    const overallGainLoss = totalValue - state.initialInvestment;
+    const overallReturnPct = (overallGainLoss / state.initialInvestment) * 100;
+    const sign = overallGainLoss >= 0 ? "+" : "";
+    lines.push(`📈 *Overall P&L*: ${sign}${$(overallGainLoss)} (${sign}${overallReturnPct.toFixed(1)}%)`);
+  }
+  
+  return lines.join("\n");
 }
 
 /** Send periodic summary if enough time has passed */
@@ -826,18 +844,30 @@ async function alertPositionSummary() {
   const winning = state.positions.filter(p => p.pnlPct > 0).length;
   const losing = state.positions.filter(p => p.pnlPct < 0).length;
   
-  const msg = [
+  // Calculate total portfolio value (balance + holdings)
+  const portfolioValue = state.balance + totalValue;
+  
+  const lines = [
     `📊 *Position Summary*`,
     `Positions: ${state.positions.length} (${winning}↑ ${losing}↓)`,
-    `Total Value: ${$(totalValue)}`,
+    `Holdings Value: ${$(totalValue)}`,
     `Unrealized P&L: ${$(totalPnl)}`,
     `Balance: ${$(state.balance)}`,
+    `Total Value: ${$(portfolioValue)}`,
     `Session P&L: ${$(state.balance - state.sessionStartBalance)}`,
-  ].join("\n");
+  ];
+  
+  // Add overall P&L if INITIAL_INVESTMENT_USD is set
+  if (state.initialInvestment !== undefined && state.initialInvestment > 0) {
+    const overallGainLoss = portfolioValue - state.initialInvestment;
+    const overallReturnPct = (overallGainLoss / state.initialInvestment) * 100;
+    const sign = overallGainLoss >= 0 ? "+" : "";
+    lines.push(`📈 *Overall P&L*: ${sign}${$(overallGainLoss)} (${sign}${overallReturnPct.toFixed(1)}%)`);
+  }
   
   await axios.post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
     chat_id: state.telegram.chatId, 
-    text: msg,
+    text: lines.join("\n"),
     parse_mode: "Markdown",
   }).catch((e) => log(`⚠️ Telegram error: ${e.message}`));
 }
@@ -924,10 +954,28 @@ async function fetchPositions(wallet: string): Promise<Position[]> {
   return state.positions;
 }
 
-async function fetchRedeemable(wallet: string): Promise<string[]> {
+interface RedeemablePosition {
+  conditionId: string;
+  value: number; // Position value in USD
+}
+
+async function fetchRedeemable(wallet: string): Promise<RedeemablePosition[]> {
   try {
     const { data } = await axios.get(`${API}/positions?user=${wallet}&redeemable=true`);
-    return [...new Set((data || []).map((p: any) => p.conditionId))] as string[];
+    if (!data || !Array.isArray(data)) return [];
+    
+    // Group by conditionId and sum values (in case of multiple tokens per condition)
+    const byCondition = new Map<string, number>();
+    for (const p of data) {
+      const cid = p.conditionId;
+      if (!cid) continue;
+      const size = Number(p.size) || 0;
+      const price = Number(p.curPrice || p.currentPrice) || 0;
+      const value = size * price;
+      byCondition.set(cid, (byCondition.get(cid) || 0) + value);
+    }
+    
+    return Array.from(byCondition.entries()).map(([conditionId, value]) => ({ conditionId, value }));
   } catch { return []; }
 }
 
@@ -1477,22 +1525,33 @@ async function redeem(walletAddr: string, cfg: Config) {
   
   state.lastRedeem = Date.now();
   const target = state.proxyAddress || walletAddr;
-  const conditions = await fetchRedeemable(target);
-  if (!conditions.length) return;
+  const allRedeemable = await fetchRedeemable(target);
+  if (!allRedeemable.length) return;
   
-  log(`🎁 ${conditions.length} to redeem`);
+  // Filter by minPositionUsd to avoid wasting gas on tiny/zero-value positions
+  const minValue = cfg.redeem.minPositionUsd;
+  const filtered = allRedeemable.filter(p => p.value >= minValue);
+  const skipped = allRedeemable.length - filtered.length;
+  
+  if (skipped > 0) {
+    log(`⏭️ Skipping ${skipped} positions below $${minValue.toFixed(2)} threshold`);
+  }
+  
+  if (!filtered.length) return;
+  
+  log(`🎁 ${filtered.length} to redeem`);
   const iface = new Interface(CTF_ABI);
   
-  for (const cid of conditions) {
+  for (const pos of filtered) {
     try {
-      const data = iface.encodeFunctionData("redeemPositions", [USDC_ADDRESS, ZeroHash, cid, INDEX_SETS]);
+      const data = iface.encodeFunctionData("redeemPositions", [USDC_ADDRESS, ZeroHash, pos.conditionId, INDEX_SETS]);
       let tx;
       if (state.proxyAddress && state.proxyAddress !== walletAddr) {
         tx = await new Contract(state.proxyAddress, PROXY_ABI, state.wallet).proxy(CTF_ADDRESS, data);
       } else {
-        tx = await new Contract(CTF_ADDRESS, CTF_ABI, state.wallet).redeemPositions(USDC_ADDRESS, ZeroHash, cid, INDEX_SETS);
+        tx = await new Contract(CTF_ADDRESS, CTF_ABI, state.wallet).redeemPositions(USDC_ADDRESS, ZeroHash, pos.conditionId, INDEX_SETS);
       }
-      log(`✅ Redeem: ${tx.hash.slice(0,10)}...`);
+      log(`✅ Redeem: ${tx.hash.slice(0,10)}... | $${pos.value.toFixed(2)}`);
       await tx.wait();
     } catch (e: any) { log(`❌ Redeem: ${e.message?.slice(0,40)}`); }
   }
@@ -2181,6 +2240,18 @@ export async function startV2() {
   if (settings.config.adaptiveLearning.enabled) {
     state.adaptiveLearner = getAdaptiveLearner(logger as any);
     log("🧠 Adaptive learning enabled");
+  }
+
+  // Initialize INITIAL_INVESTMENT_USD for overall P&L tracking
+  const initialInvestmentStr = process.env.INITIAL_INVESTMENT_USD;
+  if (initialInvestmentStr) {
+    const parsed = parseFloat(initialInvestmentStr);
+    if (!isNaN(parsed) && parsed > 0) {
+      state.initialInvestment = parsed;
+      log(`📈 Initial investment: ${$(parsed)} (tracking overall P&L)`);
+    } else {
+      log(`⚠️ Invalid INITIAL_INVESTMENT_USD: ${initialInvestmentStr} (must be positive number)`);
+    }
   }
 
   log(`Preset: ${settings.preset}`);

@@ -69,6 +69,19 @@ The reserve system keeps a percentage of your balance protected from regular tra
 | `INTERVAL_MS` | `5000` | Cycle interval in milliseconds | `FETCH_INTERVAL` (in seconds) |
 | `TELEGRAM_BOT_TOKEN` | - | Telegram bot token | `TELEGRAM_TOKEN` |
 | `TELEGRAM_CHAT_ID` | - | Telegram chat ID | `TELEGRAM_CHAT` |
+| `INITIAL_INVESTMENT_USD` | - | Your initial investment amount for tracking overall P&L return % | - |
+
+### P&L Tracking
+
+Set `INITIAL_INVESTMENT_USD` to track your overall portfolio performance:
+
+```bash
+INITIAL_INVESTMENT_USD=200 npm run start:v2
+```
+
+This will show in summaries:
+- **Overall P&L**: +$25.00 (+12.5%) - gain/loss vs your initial investment
+- Calculated as: (current balance + holdings value - initial investment)
 
 ---
 
@@ -81,6 +94,7 @@ Your existing V1 ENV variables will work! Here's the mapping:
 | `STRATEGY_PRESET` | `STRATEGY_PRESET` | ✅ Same |
 | `ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS` | `LIVE_TRADING=I_UNDERSTAND_THE_RISKS` | Both work |
 | `MAX_POSITION_USD` | `MAX_POSITION_USD` | ✅ Same |
+| `INITIAL_INVESTMENT_USD` | `INITIAL_INVESTMENT_USD` | ✅ Same - tracks overall P&L return % |
 | `HEDGING_ENABLED` | `HEDGE_ENABLED` | Both work |
 | `HEDGING_TRIGGER_LOSS_PCT` | `HEDGE_TRIGGER_PCT` | Both work |
 | `HEDGING_MAX_HEDGE_USD` | `HEDGE_MAX_USD` | Both work |
