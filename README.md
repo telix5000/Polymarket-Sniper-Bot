@@ -48,6 +48,27 @@ TARGET_ADDRESSES=0xabc...,0xdef... PRIVATE_KEY=0x... RPC_URL=https://polygon-rpc
 
 **V1 Alias:** `ARB_MAX_POSITION_USD`
 
+### ⚠️ Position Size Safety
+
+Set `ABSOLUTE_MAX_POSITION_USD` to prevent runaway position sizing:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ABSOLUTE_MAX_POSITION_USD` | **Hard cap** that overrides all strategies | `50` |
+
+**Key Points:**
+- This is a **hard cap** that overrides all strategies (hedging, stacking, endgame, scavenger)
+- No single position will ever exceed this amount
+- Enforced at both the order level and strategy level
+- **Recommended:** Start with $10-25 maximum for safety
+- Orders exceeding this limit will be rejected with a clear error message
+
+**Example:**
+```bash
+# Set a conservative $10 maximum per position
+ABSOLUTE_MAX_POSITION_USD=10
+```
+
 ### Reserve System
 
 The reserve system keeps a percentage of your balance protected from regular trades. This ensures you always have funds for hedging and emergencies.

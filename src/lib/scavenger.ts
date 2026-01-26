@@ -558,7 +558,7 @@ export async function processGreenExit(
   const costBasis = position.avgPrice * position.size;
   const minPrice = (costBasis + config.exit.minAcceptableProfitUsd) / position.size;
 
-  logger?.info?.(`🦅 [SCAV] Green exit: ${position.outcome} | P&L: ${position.pnlPct.toFixed(1)}%`);
+  logger?.info?.(`🦅 [SCAVENGER SELL] ${position.outcome} | ${position.tokenId.slice(0,8)}... | Size: ${position.size.toFixed(2)} shares | P&L: ${position.pnlPct.toFixed(1)}% | Reason: Green exit (stalled price)`);
 
   const orderResult = await executeSell(client, position, minPrice);
   if (orderResult.success) {
@@ -593,7 +593,7 @@ export async function processRedRecovery(
   }
 
   const minPrice = position.avgPrice * (1 - config.exit.conservativeSlippagePct / 100);
-  logger?.info?.(`🦅 [SCAV] Red recovered: ${position.outcome} | P&L: ${position.pnlPct.toFixed(1)}%`);
+  logger?.info?.(`🦅 [SCAVENGER SELL] ${position.outcome} | ${position.tokenId.slice(0,8)}... | Size: ${position.size.toFixed(2)} shares | P&L: ${position.pnlPct.toFixed(1)}% | Reason: Red position recovery`);
 
   const orderResult = await executeSell(client, position, minPrice);
   if (orderResult.success) {

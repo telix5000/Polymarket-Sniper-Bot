@@ -162,7 +162,15 @@ async function buy(
 ): Promise<boolean> {
   if (!state.client) return false;
 
-  const size = Math.min(sizeUsd, state.maxPositionUsd);
+  // Apply absolute cap (overrides all strategies)
+  const absoluteMaxUsd = parseFloat(process.env.ABSOLUTE_MAX_POSITION_USD ?? "50");
+  const cappedSize = Math.min(sizeUsd, state.maxPositionUsd, absoluteMaxUsd);
+  
+  if (cappedSize < sizeUsd) {
+    logger.warn(`⚠️  Position size capped: requested $${sizeUsd.toFixed(2)} → capped to $${cappedSize.toFixed(2)}`);
+  }
+
+  const size = cappedSize;
 
   if (!state.liveTrading) {
     logger.info(`🔸 [SIM] BUY ${outcome} ${$(size)} | ${reason}`);
@@ -425,6 +433,10 @@ async function runRedeem(): Promise<void> {
   if (now - state.lastRedeem < cfg.intervalMin * 60 * 1000) return;
 
   state.lastRedeem = now;
+  
+  // Log redemption check start
+  logger.info(`💰 [REDEEM] Checking positions for redemption...`);
+  
   const count = await redeemAll(
     state.wallet,
     state.address,
@@ -433,9 +445,11 @@ async function runRedeem(): Promise<void> {
   );
 
   if (count > 0) {
-    logger.info(`Redeemed ${count} positions`);
+    logger.info(`✅ [REDEEM] Redeemed ${count} positions`);
     await sendTelegram("Redeem", `Redeemed ${count} positions`);
     invalidatePositions();
+  } else {
+    logger?.debug?.(`[REDEEM] No positions ready for redemption`);
   }
 }
 
@@ -557,6 +571,8 @@ async function runScavengerMode(positions: Position[]): Promise<void> {
   const cfg = state.scavengerConfig;
   const balance = state.wallet ? await getUsdcBalance(state.wallet, state.address) : 0;
 
+  logger.info(`🦅 [SCAVENGER MODE] Active | Positions: ${positions.length} | Balance: $${balance.toFixed(2)} | Deployed: $${state.scavengerState.deployedCapitalUsd.toFixed(2)}`);
+
   // Run scavenger cycle
   const { results, newState } = await runScavengerCycle(
     state.client,
@@ -569,8 +585,13 @@ async function runScavengerMode(positions: Position[]): Promise<void> {
 
   state.scavengerState = newState;
 
-  // Update trade count
+  // Log summary of actions
   const executions = results.filter((r) => r.action !== "NONE" && r.orderResult?.success);
+  if (executions.length > 0) {
+    logger.info(`🦅 [SCAVENGER SUMMARY] Executed ${executions.length} actions in this cycle`);
+  }
+
+  // Update trade count
   state.tradesExecuted += executions.length;
 
   // Send notifications for significant actions
