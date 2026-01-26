@@ -23,7 +23,21 @@ const defaultDynamicReserves = {
   highWinProbPriceThreshold: 0.85,
 };
 
-// Mock position type matching V2 Position interface
+/**
+ * Simplified mock position type for testing dynamic reserves.
+ * 
+ * NOTE: This mock only includes the fields used by computePositionRiskReserve:
+ * - tokenId: Position identifier (for reserve breakdown)
+ * - size: Position size in shares (for notional calculation)
+ * - curPrice: Current price (for tier classification and notional)
+ * - pnlPct: P&L percentage (for loss tier classification)
+ * - value: Position value in USD (for total reserve calculation)
+ * 
+ * The actual Position interface (src/v2/index.ts:59-74) has additional fields
+ * (conditionId, outcome, avgPrice, gainCents, entryTime, lastPrice, priceHistory,
+ * marketEndTime) that are NOT used by the reserve calculation logic, so they are
+ * intentionally omitted here to keep tests focused and maintainable.
+ */
 interface MockPosition {
   tokenId: string;
   size: number;
