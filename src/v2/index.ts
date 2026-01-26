@@ -769,6 +769,37 @@ function getLedgerSummary(): string {
   const holdingsValue = state.positions.reduce((sum, p) => sum + p.value, 0);
   const totalValue = state.balance + holdingsValue;
 
+  // Calculate unrealized P&L from positions
+  // Cost basis = size * avgPrice, Current value = size * curPrice
+  // Unrealized P&L = sum of (value - cost) for each position
+  const positionStats = state.positions.reduce(
+    (acc, p) => {
+      const cost = p.size * p.avgPrice;
+      const unrealizedPnl = p.value - cost;
+      acc.totalCost += cost;
+      acc.unrealizedPnl += unrealizedPnl;
+      if (p.pnlPct > 0) {
+        acc.winners++;
+        acc.winnerValue += unrealizedPnl;
+      } else if (p.pnlPct < 0) {
+        acc.losers++;
+        acc.loserValue += unrealizedPnl;
+      } else {
+        acc.breakeven++;
+      }
+      return acc;
+    },
+    {
+      totalCost: 0,
+      unrealizedPnl: 0,
+      winners: 0,
+      losers: 0,
+      breakeven: 0,
+      winnerValue: 0,
+      loserValue: 0,
+    },
+  );
+
   const lines = [
     `📊 <b>Session Summary</b>`,
     `Trades: ${totalTrades} (${ledger.buyCount} buys, ${ledger.sellCount} sells)`,
@@ -779,6 +810,21 @@ function getLedgerSummary(): string {
     `Holdings: ${$(holdingsValue)} (${state.positions.length} positions)`,
     `Total Value: ${$(totalValue)}`,
   ];
+
+  // Add position performance breakdown if there are positions
+  if (state.positions.length > 0) {
+    const unrealizedSign = positionStats.unrealizedPnl >= 0 ? "+" : "";
+    const unrealizedPct =
+      positionStats.totalCost > 0
+        ? (positionStats.unrealizedPnl / positionStats.totalCost) * 100
+        : 0;
+    lines.push(
+      `💰 <b>Unrealized P&amp;L</b>: ${unrealizedSign}${$(positionStats.unrealizedPnl)} (${unrealizedSign}${unrealizedPct.toFixed(1)}%)`,
+    );
+    lines.push(
+      `📈 Winners: ${positionStats.winners} (+${$(positionStats.winnerValue)}) | 📉 Losers: ${positionStats.losers} (${$(positionStats.loserValue)})`,
+    );
+  }
 
   // Add overall P&L if INITIAL_INVESTMENT_USD is set
   if (state.initialInvestment !== undefined && state.initialInvestment > 0) {
