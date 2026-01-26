@@ -23,6 +23,9 @@ import axios from "axios";
 const POLYMARKET_HOST = POLYMARKET_API.BASE_URL;
 const POLYGON_CHAIN_ID = Chain.POLYGON;
 
+/** Timeout for proxy wallet detection API call */
+const PROXY_DETECT_TIMEOUT_MS = 10000;
+
 /**
  * Auto-detect proxy wallet address from Polymarket's Gamma API.
  * This allows users to skip manual POLYMARKET_PROXY_ADDRESS configuration.
@@ -38,7 +41,7 @@ async function detectProxyWallet(
   try {
     const profileUrl = POLYMARKET_API.GAMMA_PROFILE_ENDPOINT(eoaAddress);
     const response = await axios.get<{ proxyWallet?: string }>(profileUrl, {
-      timeout: 10000,
+      timeout: PROXY_DETECT_TIMEOUT_MS,
     });
 
     const proxyWallet = response.data?.proxyWallet;
@@ -48,11 +51,28 @@ async function detectProxyWallet(
       );
       return proxyWallet;
     }
-  } catch {
-    // API might not return data for all wallets - this is expected for EOA-only users
-    logger?.debug?.(
-      `[PolymarketAuth] No proxy wallet found for ${eoaAddress} (this is normal for EOA wallets)`,
-    );
+  } catch (error) {
+    // Distinguish between expected cases (404 - no proxy wallet) and actual errors
+    const axiosError = error as { response?: { status?: number }; code?: string };
+    const status = axiosError?.response?.status;
+    const code = axiosError?.code;
+
+    if (status === 404) {
+      // Expected case - user has no proxy wallet (pure EOA user)
+      logger?.debug?.(
+        `[PolymarketAuth] No proxy wallet found for ${eoaAddress} (this is normal for EOA wallets)`,
+      );
+    } else if (code === "ECONNABORTED" || code === "ETIMEDOUT") {
+      // Timeout - log as warning but continue with EOA mode
+      logger?.warn?.(
+        `[PolymarketAuth] Proxy wallet detection timed out for ${eoaAddress}, proceeding with EOA mode`,
+      );
+    } else {
+      // Unexpected error - log as warning with details
+      logger?.warn?.(
+        `[PolymarketAuth] Failed to detect proxy wallet for ${eoaAddress}: ${status ?? code ?? "unknown error"}`,
+      );
+    }
   }
   return undefined;
 }
