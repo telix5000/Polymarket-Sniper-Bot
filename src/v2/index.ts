@@ -1803,6 +1803,11 @@ async function cycle(walletAddr: string, cfg: Config) {
       
       // Force liquidation for extreme losses instead of hedge
       if (p.pnlPct <= -cfg.hedge.forceLiquidationPct) {
+        // Skip worthless positions - not worth the transaction fees
+        if (p.value < cfg.hedge.minHedgeUsd) {
+          log(`⏭️ Skip force liq | Value ${$(p.value)} too low (${pct(p.pnlPct)})`);
+          continue;
+        }
         log(`🚨 Force liquidation | ${pct(p.pnlPct)} exceeds ${cfg.hedge.forceLiquidationPct}%`);
         if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, `ForceLiq (${pct(p.pnlPct)})`, cfg, p.curPrice)) {
           state.sold.add(p.tokenId);
