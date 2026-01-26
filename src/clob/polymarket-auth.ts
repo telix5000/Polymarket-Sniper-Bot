@@ -18,9 +18,72 @@ import { SignatureType } from "@polymarket/order-utils";
 import { POLYMARKET_API } from "../constants/polymarket.constants";
 import type { Logger } from "../utils/logger.util";
 import { asClobSigner } from "../utils/clob-signer.util";
+import axios from "axios";
 
 const POLYMARKET_HOST = POLYMARKET_API.BASE_URL;
 const POLYGON_CHAIN_ID = Chain.POLYGON;
+
+/** Timeout for proxy wallet detection API call */
+const PROXY_DETECT_TIMEOUT_MS = 10000;
+
+/**
+ * Auto-detect proxy wallet address from Polymarket's Gamma API.
+ * This allows users to skip manual POLYMARKET_PROXY_ADDRESS configuration.
+ *
+ * @param eoaAddress - The EOA (signer) address derived from the private key
+ * @param logger - Optional logger for diagnostics
+ * @returns The detected proxy wallet address, or undefined if not found
+ */
+async function detectProxyWallet(
+  eoaAddress: string,
+  logger?: Logger,
+): Promise<string | undefined> {
+  try {
+    const profileUrl = POLYMARKET_API.GAMMA_PROFILE_ENDPOINT(eoaAddress);
+    const response = await axios.get<{ proxyWallet?: string }>(profileUrl, {
+      timeout: PROXY_DETECT_TIMEOUT_MS,
+    });
+
+    const proxyWallet = response.data?.proxyWallet;
+    if (proxyWallet && /^0x[a-fA-F0-9]{40}$/.test(proxyWallet)) {
+      logger?.info(
+        `[PolymarketAuth] Auto-detected proxy wallet: ${proxyWallet}`,
+      );
+      return proxyWallet;
+    }
+  } catch (error: unknown) {
+    // Distinguish between expected cases (404 - no proxy wallet) and actual errors
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status;
+      const code = error.code;
+
+      if (status === 404) {
+        // Expected case - user has no proxy wallet (pure EOA user)
+        logger?.debug?.(
+          `[PolymarketAuth] No proxy wallet found for ${eoaAddress} (this is normal for EOA wallets)`,
+        );
+      } else if (code === "ECONNABORTED" || code === "ETIMEDOUT") {
+        // Timeout - log as warning but continue with EOA mode
+        logger?.warn?.(
+          `[PolymarketAuth] Proxy wallet detection timed out for ${eoaAddress}, proceeding with EOA mode`,
+        );
+      } else {
+        // Unexpected Axios error - log as warning with details
+        logger?.warn?.(
+          `[PolymarketAuth] Failed to detect proxy wallet for ${eoaAddress}: ${status ?? code ?? "unknown error"}`,
+        );
+      }
+    } else {
+      // Non-Axios error - log generic warning
+      const message =
+        error instanceof Error ? error.message : String(error ?? "unknown error");
+      logger?.warn?.(
+        `[PolymarketAuth] Failed to detect proxy wallet for ${eoaAddress}: ${message}`,
+      );
+    }
+  }
+  return undefined;
+}
 
 /**
  * Credentials configuration for PolymarketAuth
@@ -336,10 +399,27 @@ export class PolymarketAuth {
 }
 
 /**
- * Create a PolymarketAuth instance from environment variables.
- * This is a convenience factory for common usage patterns.
+ * Environment variables for Polymarket authentication.
+ * This type represents the configuration read from environment variables.
  */
-export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
+interface EnvConfig {
+  privateKey: string;
+  rpcUrl?: string;
+  apiKey?: string;
+  apiSecret?: string;
+  passphrase?: string;
+  signatureType?: number;
+  funderAddress?: string;
+}
+
+/**
+ * Read Polymarket authentication configuration from environment variables.
+ * This is a shared helper used by both sync and async factory functions.
+ *
+ * @returns Configuration object with all environment variable values
+ * @throws Error if PRIVATE_KEY is not set
+ */
+function readEnvConfig(): EnvConfig {
   const privateKey = process.env.PRIVATE_KEY;
   if (!privateKey) {
     throw new Error(
@@ -368,12 +448,78 @@ export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
   const funderAddress =
     process.env.POLYMARKET_PROXY_ADDRESS ?? process.env.CLOB_FUNDER_ADDRESS;
 
-  return new PolymarketAuth({
+  return {
     privateKey,
     rpcUrl,
     apiKey,
     apiSecret,
     passphrase,
+    signatureType,
+    funderAddress,
+  };
+}
+
+/**
+ * Create a PolymarketAuth instance from environment variables.
+ * This is a convenience factory for common usage patterns.
+ */
+export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
+  const config = readEnvConfig();
+
+  return new PolymarketAuth({
+    privateKey: config.privateKey,
+    rpcUrl: config.rpcUrl,
+    apiKey: config.apiKey,
+    apiSecret: config.apiSecret,
+    passphrase: config.passphrase,
+    signatureType: config.signatureType,
+    funderAddress: config.funderAddress,
+    logger,
+  });
+}
+
+/**
+ * Create a PolymarketAuth instance from environment variables with automatic proxy wallet detection.
+ * This is the recommended factory for users who may have proxy wallets (created via Polymarket website).
+ *
+ * If POLYMARKET_PROXY_ADDRESS is not set, this function will:
+ * 1. Query the Gamma API to detect if the wallet has an associated proxy wallet
+ * 2. If found, automatically configure the correct signature type and funder address
+ * 3. This eliminates the need for manual configuration for most users
+ *
+ * @param logger - Optional logger for diagnostics
+ * @returns PolymarketAuth instance configured with auto-detected settings
+ */
+export async function createPolymarketAuthFromEnvWithAutoDetect(
+  logger?: Logger,
+): Promise<PolymarketAuth> {
+  const config = readEnvConfig();
+  let { signatureType, funderAddress } = config;
+
+  // Auto-detect proxy wallet if not explicitly configured
+  if (!funderAddress && signatureType === undefined) {
+    const normalizedKey = config.privateKey.startsWith("0x")
+      ? config.privateKey
+      : `0x${config.privateKey}`;
+    const wallet = new Wallet(normalizedKey);
+    const detectedProxy = await detectProxyWallet(wallet.address, logger);
+
+    if (detectedProxy) {
+      funderAddress = detectedProxy;
+      // Use POLY_PROXY (1) for auto-detected proxy wallets
+      signatureType = SignatureType.POLY_PROXY;
+      logger?.info(
+        `[PolymarketAuth] Auto-configured for proxy wallet: signatureType=${signatureType} funderAddress=${funderAddress}`,
+      );
+    }
+  }
+
+  return new PolymarketAuth({
+    privateKey: config.privateKey,
+    rpcUrl: config.rpcUrl,
+    apiKey: config.apiKey,
+    apiSecret: config.apiSecret,
+    passphrase: config.passphrase,
     signatureType,
     funderAddress,
     logger,
