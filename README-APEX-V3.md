@@ -32,6 +32,7 @@ APEX (Aggressive Polymarket Execution) v3.0 is a **complete revolution** of the 
 - 🛡️ **Protects capital** with 8 protection modules
 - 📊 **Tracks performance** with stateless 24hr memory
 - 🌍 **Never sleeps** - 24/7 market monitoring
+- 🚨 **Self-reports errors** - Automatic GitHub Issue creation
 
 ---
 
@@ -42,6 +43,21 @@ APEX (Aggressive Polymarket Execution) v3.0 is a **complete revolution** of the 
 APEX_MODE=AGGRESSIVE
 ```
 That's it! No more manual USD limits, static percentages, or complex configurations. APEX auto-detects your balance and optimizes everything.
+
+### 🚨 AUTOMATED ERROR REPORTING (NEW!)
+Bot automatically creates GitHub Issues when errors occur:
+- **Auto-classification**: Auth, network, order, data, config
+- **Full context**: Balance, positions, stack traces
+- **Smart deduplication**: Rate limiting prevents spam
+- **Telegram alerts**: Get notified immediately
+- **Suggested fixes**: Recommended actions included
+
+**Setup:** Just add your GitHub token to `.env`:
+```bash
+GITHUB_ERROR_REPORTER_TOKEN=ghp_your_token_here
+```
+
+📖 [Full Error Reporting Guide](docs/ERROR_REPORTING.md) | [Quick Start](ERROR_REPORTING_QUICKSTART.md)
 
 ### 📊 PERCENTAGE-BASED AUTO-SCALING
 Position sizes scale automatically with your balance:
