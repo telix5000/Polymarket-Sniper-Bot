@@ -51,26 +51,34 @@ async function detectProxyWallet(
       );
       return proxyWallet;
     }
-  } catch (error) {
+  } catch (error: unknown) {
     // Distinguish between expected cases (404 - no proxy wallet) and actual errors
-    const axiosError = error as { response?: { status?: number }; code?: string };
-    const status = axiosError?.response?.status;
-    const code = axiosError?.code;
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status;
+      const code = error.code;
 
-    if (status === 404) {
-      // Expected case - user has no proxy wallet (pure EOA user)
-      logger?.debug?.(
-        `[PolymarketAuth] No proxy wallet found for ${eoaAddress} (this is normal for EOA wallets)`,
-      );
-    } else if (code === "ECONNABORTED" || code === "ETIMEDOUT") {
-      // Timeout - log as warning but continue with EOA mode
-      logger?.warn?.(
-        `[PolymarketAuth] Proxy wallet detection timed out for ${eoaAddress}, proceeding with EOA mode`,
-      );
+      if (status === 404) {
+        // Expected case - user has no proxy wallet (pure EOA user)
+        logger?.debug?.(
+          `[PolymarketAuth] No proxy wallet found for ${eoaAddress} (this is normal for EOA wallets)`,
+        );
+      } else if (code === "ECONNABORTED" || code === "ETIMEDOUT") {
+        // Timeout - log as warning but continue with EOA mode
+        logger?.warn?.(
+          `[PolymarketAuth] Proxy wallet detection timed out for ${eoaAddress}, proceeding with EOA mode`,
+        );
+      } else {
+        // Unexpected Axios error - log as warning with details
+        logger?.warn?.(
+          `[PolymarketAuth] Failed to detect proxy wallet for ${eoaAddress}: ${status ?? code ?? "unknown error"}`,
+        );
+      }
     } else {
-      // Unexpected error - log as warning with details
+      // Non-Axios error - log generic warning
+      const message =
+        error instanceof Error ? error.message : String(error ?? "unknown error");
       logger?.warn?.(
-        `[PolymarketAuth] Failed to detect proxy wallet for ${eoaAddress}: ${status ?? code ?? "unknown error"}`,
+        `[PolymarketAuth] Failed to detect proxy wallet for ${eoaAddress}: ${message}`,
       );
     }
   }
@@ -391,10 +399,27 @@ export class PolymarketAuth {
 }
 
 /**
- * Create a PolymarketAuth instance from environment variables.
- * This is a convenience factory for common usage patterns.
+ * Environment variables for Polymarket authentication.
+ * This type represents the configuration read from environment variables.
  */
-export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
+interface EnvConfig {
+  privateKey: string;
+  rpcUrl?: string;
+  apiKey?: string;
+  apiSecret?: string;
+  passphrase?: string;
+  signatureType?: number;
+  funderAddress?: string;
+}
+
+/**
+ * Read Polymarket authentication configuration from environment variables.
+ * This is a shared helper used by both sync and async factory functions.
+ *
+ * @returns Configuration object with all environment variable values
+ * @throws Error if PRIVATE_KEY is not set
+ */
+function readEnvConfig(): EnvConfig {
   const privateKey = process.env.PRIVATE_KEY;
   if (!privateKey) {
     throw new Error(
@@ -423,7 +448,7 @@ export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
   const funderAddress =
     process.env.POLYMARKET_PROXY_ADDRESS ?? process.env.CLOB_FUNDER_ADDRESS;
 
-  return new PolymarketAuth({
+  return {
     privateKey,
     rpcUrl,
     apiKey,
@@ -431,6 +456,24 @@ export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
     passphrase,
     signatureType,
     funderAddress,
+  };
+}
+
+/**
+ * Create a PolymarketAuth instance from environment variables.
+ * This is a convenience factory for common usage patterns.
+ */
+export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
+  const config = readEnvConfig();
+
+  return new PolymarketAuth({
+    privateKey: config.privateKey,
+    rpcUrl: config.rpcUrl,
+    apiKey: config.apiKey,
+    apiSecret: config.apiSecret,
+    passphrase: config.passphrase,
+    signatureType: config.signatureType,
+    funderAddress: config.funderAddress,
     logger,
   });
 }
@@ -450,39 +493,14 @@ export function createPolymarketAuthFromEnv(logger?: Logger): PolymarketAuth {
 export async function createPolymarketAuthFromEnvWithAutoDetect(
   logger?: Logger,
 ): Promise<PolymarketAuth> {
-  const privateKey = process.env.PRIVATE_KEY;
-  if (!privateKey) {
-    throw new Error(
-      "PRIVATE_KEY environment variable is required for Polymarket authentication",
-    );
-  }
-
-  const rpcUrl = process.env.RPC_URL ?? process.env.rpc_url;
-  const apiKey =
-    process.env.POLYMARKET_API_KEY ??
-    process.env.POLY_API_KEY ??
-    process.env.CLOB_API_KEY;
-  const apiSecret =
-    process.env.POLYMARKET_API_SECRET ??
-    process.env.POLY_SECRET ??
-    process.env.CLOB_API_SECRET;
-  const passphrase =
-    process.env.POLYMARKET_API_PASSPHRASE ??
-    process.env.POLY_PASSPHRASE ??
-    process.env.CLOB_API_PASSPHRASE;
-  const signatureTypeStr =
-    process.env.POLYMARKET_SIGNATURE_TYPE ?? process.env.CLOB_SIGNATURE_TYPE;
-  let signatureType = signatureTypeStr
-    ? parseInt(signatureTypeStr, 10)
-    : undefined;
-  let funderAddress: string | undefined =
-    process.env.POLYMARKET_PROXY_ADDRESS ?? process.env.CLOB_FUNDER_ADDRESS;
+  const config = readEnvConfig();
+  let { signatureType, funderAddress } = config;
 
   // Auto-detect proxy wallet if not explicitly configured
   if (!funderAddress && signatureType === undefined) {
-    const normalizedKey = privateKey.startsWith("0x")
-      ? privateKey
-      : `0x${privateKey}`;
+    const normalizedKey = config.privateKey.startsWith("0x")
+      ? config.privateKey
+      : `0x${config.privateKey}`;
     const wallet = new Wallet(normalizedKey);
     const detectedProxy = await detectProxyWallet(wallet.address, logger);
 
@@ -497,11 +515,11 @@ export async function createPolymarketAuthFromEnvWithAutoDetect(
   }
 
   return new PolymarketAuth({
-    privateKey,
-    rpcUrl,
-    apiKey,
-    apiSecret,
-    passphrase,
+    privateKey: config.privateKey,
+    rpcUrl: config.rpcUrl,
+    apiKey: config.apiKey,
+    apiSecret: config.apiSecret,
+    passphrase: config.passphrase,
     signatureType,
     funderAddress,
     logger,
