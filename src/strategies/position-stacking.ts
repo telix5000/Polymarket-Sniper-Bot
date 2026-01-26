@@ -671,7 +671,7 @@ export class PositionStackingStrategy {
         const entryPrice = position.avgEntryPriceCents
           ? position.avgEntryPriceCents / 100
           : position.entryPrice;
-        notifyStack(
+        void notifyStack(
           position.marketId,
           position.tokenId,
           sizeUsd / position.currentPrice, // Estimate shares from USD

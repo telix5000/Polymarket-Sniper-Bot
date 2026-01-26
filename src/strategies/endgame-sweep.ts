@@ -340,7 +340,7 @@ export class EndgameSweepStrategy {
 
         // Send telegram notification for endgame sweep buy
         // notifyBuy handles its own logging; we just catch any unexpected errors
-        notifyBuy(
+        void notifyBuy(
           market.id,
           market.tokenId,
           sizeUsd / market.price, // Estimate shares from USD
