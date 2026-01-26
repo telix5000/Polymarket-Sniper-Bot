@@ -30,13 +30,14 @@
  * - WIREGUARD_PERSISTENT_KEEPALIVE: Keepalive interval (optional)
  *
  * OpenVPN configuration (either file or env vars):
- * - OVPN_CONFIG: Path to OpenVPN config file
- * - OPENVPN_ENABLED: Set to "true" to enable OpenVPN via env vars
- * - OPENVPN_CONFIG: Full OpenVPN config contents (multiline)
+ * - OVPN_CONFIG: Path to existing OpenVPN config file (use this if you have a .ovpn file)
+ * - OPENVPN_ENABLED: Set to "true" to enable OpenVPN via env vars (requires OPENVPN_CONFIG)
+ * - OPENVPN_CONFIG: Full OpenVPN config contents as a string (for Docker/K8s where you can't mount files)
  * - OPENVPN_CONFIG_PATH: Path to write generated config (default: /etc/openvpn/client.ovpn)
  * - OPENVPN_USERNAME: VPN username (optional)
  * - OPENVPN_PASSWORD: VPN password (optional)
  * - OPENVPN_AUTH_PATH: Path to auth file (default: /etc/openvpn/auth.txt)
+ * - OPENVPN_EXTRA_ARGS: Extra openvpn arguments (space-separated, no quoted args with spaces)
  */
 
 import { execSync, spawn } from "child_process";
@@ -370,9 +371,9 @@ export async function startOpenvpn(logger?: Logger): Promise<boolean> {
     const args = ["--config", configPath, "--daemon"];
     
     // Add extra args if provided
+    // Note: Args are split on whitespace - quoted args with spaces are NOT supported
     const extraArgs = process.env.OPENVPN_EXTRA_ARGS;
     if (extraArgs) {
-      // Split extra args on whitespace, being careful with quoted strings
       args.push(...extraArgs.split(/\s+/).filter(Boolean));
     }
 
