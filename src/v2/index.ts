@@ -2165,7 +2165,17 @@ const simpleLogger = {
  * DELETE THIS FUNCTION once sell process is verified working.
  *
  * ENV: TEST_SELL_RED_POSITION=true
+ *
+ * SAFETY: This feature only runs if TEST_SELL_RED_POSITION=true AND:
+ * - In simulation mode: always allowed
+ * - In live mode: requires explicit LIVE_TRADING to be set
  */
+
+// Test sell threshold constants
+const TEST_SELL_MIN_RED_PNL_PCT = -1; // Position must be at least 1% in the red
+const TEST_SELL_MAX_RED_PNL_PCT = -15; // Prefer positions not too deep in red (up to 15%)
+const TEST_SELL_MIN_POSITION_VALUE_USD = 1; // Minimum $1 position value
+
 async function executeTestSellRedPosition(
   walletAddr: string,
   cfg: Config,
@@ -2173,6 +2183,13 @@ async function executeTestSellRedPosition(
   log("🧪 [TestSell] ========================================");
   log("🧪 [TestSell] STARTING TEST SELL RED POSITION DIAGNOSTIC");
   log("🧪 [TestSell] ========================================");
+
+  // Safety warning for live trading
+  if (state.liveTrading) {
+    log("🧪 [TestSell] ⚠️ WARNING: LIVE TRADING IS ENABLED");
+    log("🧪 [TestSell] ⚠️ This will execute a REAL sell order");
+    log("🧪 [TestSell] ⚠️ Set ARB_DRY_RUN=true to simulate instead");
+  }
 
   // Force refresh positions (bypass cache)
   state.lastFetch = 0;
@@ -2200,38 +2217,40 @@ async function executeTestSellRedPosition(
 
   // Find positions slightly in the red: between -1% and -15%
   // We want a small loss to minimize actual financial impact while testing
-  const redPositions = positions.filter(
-    (p) => p.pnlPct < -1 && p.pnlPct > -15 && p.value >= 1,
+  let candidatePositions = positions.filter(
+    (p) =>
+      p.pnlPct < TEST_SELL_MIN_RED_PNL_PCT &&
+      p.pnlPct > TEST_SELL_MAX_RED_PNL_PCT &&
+      p.value >= TEST_SELL_MIN_POSITION_VALUE_USD,
   );
 
   log(
-    `🧪 [TestSell] Positions slightly in red (-1% to -15%): ${redPositions.length}`,
+    `🧪 [TestSell] Positions slightly in red (${TEST_SELL_MIN_RED_PNL_PCT}% to ${TEST_SELL_MAX_RED_PNL_PCT}%): ${candidatePositions.length}`,
   );
 
-  if (redPositions.length === 0) {
+  if (candidatePositions.length === 0) {
     // Expand search to any red position with value >= $1
-    const anyRedPositions = positions.filter(
-      (p) => p.pnlPct < 0 && p.value >= 1,
+    candidatePositions = positions.filter(
+      (p) => p.pnlPct < 0 && p.value >= TEST_SELL_MIN_POSITION_VALUE_USD,
     );
     log(
-      `🧪 [TestSell] Expanding search - any red positions (< 0%): ${anyRedPositions.length}`,
+      `🧪 [TestSell] Expanding search - any red positions (< 0%): ${candidatePositions.length}`,
     );
 
-    if (anyRedPositions.length === 0) {
-      log("🧪 [TestSell] ❌ No red positions found with value >= $1");
+    if (candidatePositions.length === 0) {
+      log(
+        `🧪 [TestSell] ❌ No red positions found with value >= $${TEST_SELL_MIN_POSITION_VALUE_USD}`,
+      );
       log(
         "🧪 [TestSell] TIP: Wait for a position to go slightly negative, or manually create one",
       );
       return;
     }
-
-    // Use the least negative position (closest to 0)
-    redPositions.push(...anyRedPositions.sort((a, b) => b.pnlPct - a.pnlPct));
   }
 
   // Sort by P&L descending (least negative first) and pick the smallest loss
-  redPositions.sort((a, b) => b.pnlPct - a.pnlPct);
-  const target = redPositions[0];
+  candidatePositions.sort((a, b) => b.pnlPct - a.pnlPct);
+  const target = candidatePositions[0];
 
   log("🧪 [TestSell] ========================================");
   log("🧪 [TestSell] SELECTED POSITION FOR TEST SELL:");
