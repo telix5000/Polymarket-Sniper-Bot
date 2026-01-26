@@ -149,3 +149,38 @@ export function isLiveTradingEnabled(): boolean {
   const flag = process.env.LIVE_TRADING ?? process.env.ARB_LIVE_TRADING ?? "";
   return flag === "I_UNDERSTAND_THE_RISKS";
 }
+
+/**
+ * Get auth diagnostic info for logging
+ * Returns info about signature type, proxy address, and mode
+ */
+export interface AuthDiagnostics {
+  signatureType: string;
+  signatureTypeLabel: string;
+  proxyAddress: string | undefined;
+  isProxyMode: boolean;
+}
+
+export function getAuthDiagnostics(
+  signerAddress: string,
+  effectiveAddress: string,
+): AuthDiagnostics {
+  const signatureType =
+    process.env.POLYMARKET_SIGNATURE_TYPE ??
+    process.env.CLOB_SIGNATURE_TYPE ??
+    "0";
+  const proxyAddress =
+    process.env.POLYMARKET_PROXY_ADDRESS ?? process.env.CLOB_FUNDER_ADDRESS;
+  const isProxyMode =
+    signerAddress.toLowerCase() !== effectiveAddress.toLowerCase();
+
+  const signatureTypeLabel =
+    signatureType === "0" ? "EOA" : signatureType === "1" ? "Proxy" : "Safe";
+
+  return {
+    signatureType,
+    signatureTypeLabel,
+    proxyAddress,
+    isProxyMode,
+  };
+}
