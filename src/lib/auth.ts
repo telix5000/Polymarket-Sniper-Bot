@@ -8,6 +8,7 @@
 import { JsonRpcProvider, Wallet } from "ethers";
 import { ClobClient } from "@polymarket/clob-client";
 import { POLYMARKET_API, POLYGON } from "./constants";
+import { applyEthersV6Shim } from "./ethers-compat";
 import type { Logger } from "./types";
 
 export interface AuthResult {
@@ -58,7 +59,9 @@ export async function createClobClient(
     }
 
     const provider = new JsonRpcProvider(rpcUrl);
-    const wallet = new Wallet(normalizedKey, provider);
+    const rawWallet = new Wallet(normalizedKey, provider);
+    // Apply ethers v6 → v5 compatibility shim for @polymarket/clob-client
+    const wallet = applyEthersV6Shim(rawWallet);
     const address = wallet.address;
 
     // Read signature type from env - default to 0 (EOA)
