@@ -363,4 +363,8 @@ test("market-level cooldown tracking", async (t) => {
     assert.equal(isMarketInCooldown(marketId1).blocked, false);
     assert.equal(isMarketInCooldown(marketId2).blocked, false);
   });
+
+  // TODO: Add integration test for on-chain balance fetching
+  // The fix is implemented in checkFundsAndAllowance() and tested manually
+  // Need to mock Contract, resolveApprovalTargets, and other dependencies for unit test
 });
