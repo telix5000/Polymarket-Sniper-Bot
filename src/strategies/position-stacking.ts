@@ -630,7 +630,9 @@ export class PositionStackingStrategy {
         outcome: outcome as "YES" | "NO",
         side: "BUY",
         sizeUsd,
-        maxAcceptablePrice: position.currentPrice * 1.02, // Allow 2% slippage
+        // Use buySlippagePct to compute maxAcceptablePrice from FRESH orderbook data.
+        // This ensures we don't overpay based on stale cached position.currentPrice.
+        buySlippagePct: 2, // Allow 2% slippage above fresh best ask
         logger: this.logger,
       });
 

@@ -73,7 +73,8 @@ import {
   TOKEN_ID_DISPLAY_LENGTH,
 } from "../utils/log-deduper.util";
 import { notifyScalp } from "../services/trade-notification.service";
-import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
+import { DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
+import { fetchOrderbookWithFallback } from "../utils/fast-orderbook.util";
 
 /**
  * Scalp Take-Profit Configuration
@@ -209,6 +210,21 @@ export interface ScalpTradeConfig {
    * Default: 15 seconds
    */
   profitRetrySec: number;
+
+  /**
+   * Retry cadence in seconds for urgent exits (BREAKEVEN, FORCE stages, or losing positions).
+   * Much faster than profitRetrySec to ensure quick exits in falling markets.
+   * Default: 3 seconds (5x faster than profit stage)
+   */
+  urgentRetrySec: number;
+
+  /**
+   * Whether to fetch fresh orderbook data before each exit attempt.
+   * When true, fetches real-time orderbook instead of relying on cached position data.
+   * This ensures decisions are based on current market conditions, not stale prices.
+   * Default: true (recommended for accurate exit pricing)
+   */
+  useFreshOrderbook: boolean;
 
   /**
    * Minimum order size in USD
@@ -685,6 +701,8 @@ export const DEFAULT_SCALP_TRADE_CONFIG: ScalpTradeConfig = {
   // Exit ladder configuration
   exitWindowSec: 120, // 2 minute exit window
   profitRetrySec: 15, // Retry every 15 seconds during PROFIT stage
+  urgentRetrySec: 3, // Retry every 3 seconds for urgent exits (BREAKEVEN/FORCE/losing)
+  useFreshOrderbook: true, // Fetch fresh orderbook before each exit attempt (critical for accurate pricing)
   minOrderUsd: 5, // Minimum order size (positions below this are DUST)
   // Legacy position handling (safer default)
   legacyPositionMode: "allow_profitable_only", // Only exit profitable positions with trusted P&L
@@ -1994,14 +2012,14 @@ export class ScalpTradeStrategy {
         return false;
       }
 
-      // FIX: Compute minAcceptablePrice from the current best bid (executable price),
-      // NOT from effectiveLimitPrice (which can be the PROFIT target).
-      // This largely prevents "Sale blocked: best bid is X but minimum acceptable is Y" errors
-      // when the target is higher than the current bid (e.g., target=66¢, bestBid=64¢),
-      // and aligns behavior with sell-early.ts and auto-sell.ts. Note: in fast markets the
-      // stored bid can still be stale relative to the preflight orderbook, so the check may
-      // occasionally fail even with bid-based slippage.
-      const referencePrice = position.currentBidPrice ?? effectiveLimitPrice;
+      // FIX (Jan 2025): Use sellSlippagePct to compute minAcceptablePrice from FRESH orderbook data.
+      // Previously, minAcceptablePrice was computed from stale cached position.currentBidPrice,
+      // which caused "Sale blocked: best bid is X but minimum acceptable is Y" errors when
+      // the actual market price dropped below the cached price.
+      //
+      // By passing sellSlippagePct instead of pre-computed minAcceptablePrice, postOrder()
+      // computes the floor price from the FRESH best bid it fetches, ensuring the price
+      // protection is based on actual current market conditions.
 
       const result = await postOrder({
         client: this.client,
@@ -2011,10 +2029,9 @@ export class ScalpTradeStrategy {
         outcome: (position.side?.toUpperCase() as "YES" | "NO") || "YES",
         side: "SELL",
         sizeUsd: notionalUsd,
-        // Apply 2% slippage tolerance from the current bid price to ensure profitable trades execute.
-        // Previously this used effectiveLimitPrice (target), which could block sells when
-        // bestBid < target - slippage (e.g., target=66¢, bestBid=64¢ blocked because 64 < 64.68).
-        minAcceptablePrice: calculateMinAcceptablePrice(referencePrice, DEFAULT_SELL_SLIPPAGE_PCT),
+        // Use sellSlippagePct to compute minAcceptablePrice from FRESH orderbook best bid.
+        // This ensures price protection is based on actual market conditions, not stale cached data.
+        sellSlippagePct: DEFAULT_SELL_SLIPPAGE_PCT,
         logger: this.logger,
         skipDuplicatePrevention: true,
         // Pass minOrderUsd so preflight and submission settings match
@@ -2361,11 +2378,71 @@ export class ScalpTradeStrategy {
       this.executionCircuitBreaker.delete(plan.tokenId);
     }
 
-    // At this point, currentBidPrice is guaranteed to exist and be > 0
-    // because validateOrderbookQuality() would have returned NO_EXECUTION_PRICE if not
-    const bestBidCents = position.currentBidPrice! * 100;
-    const bestBidDollars = position.currentBidPrice!;
-    const bestAskDollars = position.currentAskPrice ?? null;
+    // === ALWAYS USE FRESH ORDERBOOK DATA ===
+    // Polymarket /book endpoint: 1,500 requests per 10 seconds (150/sec) - MASSIVE headroom
+    // With this much capacity, caching stale data costs us money. Fresh data = better decisions.
+    //
+    // The rate limiter in fast-orderbook.util.ts ensures we stay under the limit.
+    // No need for complex "cache for winners, fresh for losers" logic.
+    let bestBidCents: number;
+    let bestBidDollars: number;
+    let bestAskDollars: number | null;
+
+    if (this.config.useFreshOrderbook) {
+      try {
+        // Use fast orderbook reader (bypasses VPN for speed) with fallback to VPN client
+        const { orderbook: freshOrderbook, source, latencyMs } = await fetchOrderbookWithFallback(
+          plan.tokenId,
+          () => this.client.getOrderBook(plan.tokenId),
+          this.logger,
+        );
+        const priceExtraction = extractOrderbookPrices(freshOrderbook);
+
+        if (priceExtraction.bestBid === null || priceExtraction.bestBid <= 0) {
+          // No bid available from fresh fetch
+          plan.blockedReason = "NO_BID";
+          plan.blockedAtMs = now;
+          if (this.logDeduper.shouldLog(`ScalpExit:FRESH_NO_BID:${plan.tokenId}`, 10_000)) {
+            this.logger.warn(
+              `[ProfitTaker] FRESH_ORDERBOOK: No bids for tokenId=${plan.tokenId.slice(0, 12)}... ` +
+                `source=${source} latency=${latencyMs}ms`,
+            );
+          }
+          return { filled: false, reason: "NO_BID", shouldContinue: true };
+        }
+
+        bestBidDollars = priceExtraction.bestBid;
+        bestBidCents = bestBidDollars * 100;
+        bestAskDollars = priceExtraction.bestAsk;
+
+        // Log significant price drift for diagnostics
+        const cachedBid = position.currentBidPrice ?? 0;
+        const priceDiffPct = cachedBid > 0 ? Math.abs((bestBidDollars - cachedBid) / cachedBid) * 100 : 0;
+        if (priceDiffPct > 5 && this.logDeduper.shouldLog(`ScalpExit:PRICE_DRIFT:${plan.tokenId}`, 30_000)) {
+          this.logger.info(
+            `[ProfitTaker] PRICE_DRIFT: tokenId=${plan.tokenId.slice(0, 12)}... ` +
+              `fresh=${bestBidCents.toFixed(1)}¢ cached=${(cachedBid * 100).toFixed(1)}¢ ` +
+              `drift=${priceDiffPct.toFixed(1)}% source=${source} latency=${latencyMs}ms`,
+          );
+        }
+      } catch (orderbookErr) {
+        // Fresh orderbook fetch failed - fall back to cached data
+        const errMsg = orderbookErr instanceof Error ? orderbookErr.message : String(orderbookErr);
+        if (this.logDeduper.shouldLog(`ScalpExit:ORDERBOOK_FETCH_FAILED:${plan.tokenId}`, 30_000)) {
+          this.logger.warn(
+            `[ProfitTaker] FRESH_ORDERBOOK fetch failed: ${errMsg}. Using cached data.`,
+          );
+        }
+        bestBidDollars = position.currentBidPrice!;
+        bestBidCents = bestBidDollars * 100;
+        bestAskDollars = position.currentAskPrice ?? null;
+      }
+    } else {
+      // useFreshOrderbook disabled - use cached position data
+      bestBidDollars = position.currentBidPrice!;
+      bestBidCents = bestBidDollars * 100;
+      bestAskDollars = position.currentAskPrice ?? null;
+    }
 
     // Calculate target and minimum acceptable prices for illiquid check
     const targetPriceDollars = plan.targetPriceCents / 100;
@@ -2480,9 +2557,18 @@ export class ScalpTradeStrategy {
     );
 
     // Check retry cadence
+    // Use faster retry (3s) for:
+    // - BREAKEVEN/FORCE stages (time-critical exits)
+    // - Losing positions (bestBid < entry) even in PROFIT stage
+    // Normal retry (15s) for profitable positions in PROFIT stage
+    const isLosingPosition = bestBidCents < plan.avgEntryCents;
+    const isUrgentStage = plan.stage === "BREAKEVEN" || plan.stage === "FORCE";
+    const needsUrgentRetry = isUrgentStage || isLosingPosition;
+    const retryCadenceSec = needsUrgentRetry ? this.config.urgentRetrySec : this.config.profitRetrySec;
+    
     const timeSinceLastAttempt = now - plan.lastAttemptAtMs;
     if (
-      timeSinceLastAttempt < this.config.profitRetrySec * 1000 &&
+      timeSinceLastAttempt < retryCadenceSec * 1000 &&
       plan.attempts > 0
     ) {
       return { filled: false, reason: "RETRY_COOLDOWN", shouldContinue: true };

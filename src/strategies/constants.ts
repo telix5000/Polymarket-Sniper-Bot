@@ -9,16 +9,44 @@
  * For HFT with many positions, we need fast refresh rates.
  * As you compound and scale up, position count grows exponentially.
  * The system must handle 100s of positions without bottlenecking.
+ *
+ * NOTE: This cache is for general position management (holdings, P&L display).
+ * For TRADING DECISIONS, we fetch fresh orderbook data at execution time
+ * (see useFreshOrderbook in scalp-trade.ts and fast-orderbook.util.ts).
+ *
+ * Environment variable: POSITION_TRACKER_REFRESH_MS (default: 5000)
  */
-export const POSITION_TRACKER_REFRESH_INTERVAL_MS = 5000; // 5 seconds - fast refresh for HFT
+const parsePositionTrackerRefreshMs = (): number => {
+  const envValue = process.env.POSITION_TRACKER_REFRESH_MS;
+  if (envValue) {
+    const parsed = parseInt(envValue, 10);
+    if (!isNaN(parsed) && parsed >= 1000) {
+      return parsed;
+    }
+  }
+  return 5000; // Default: 5 seconds
+};
+export const POSITION_TRACKER_REFRESH_INTERVAL_MS = parsePositionTrackerRefreshMs();
 
 /**
  * Orchestrator constants
  *
  * Strategy execution must be fast to catch quick profit opportunities.
  * With many positions, we run strategies in PARALLEL not sequential.
+ *
+ * Environment variable: STRATEGY_EXECUTION_INTERVAL_MS (default: 2000)
  */
-export const STRATEGY_EXECUTION_INTERVAL_MS = 2000; // 2 seconds - rapid execution for scalping
+const parseStrategyExecutionIntervalMs = (): number => {
+  const envValue = process.env.STRATEGY_EXECUTION_INTERVAL_MS;
+  if (envValue) {
+    const parsed = parseInt(envValue, 10);
+    if (!isNaN(parsed) && parsed >= 500) {
+      return parsed;
+    }
+  }
+  return 2000; // Default: 2 seconds
+};
+export const STRATEGY_EXECUTION_INTERVAL_MS = parseStrategyExecutionIntervalMs();
 
 /**
  * Auto-Redeem check interval

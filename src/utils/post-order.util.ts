@@ -25,6 +25,7 @@ import {
   validateOrderbookQuality,
   type OrderbookQualityResult,
 } from "../strategies/scalp-trade";
+import { calculateMinAcceptablePrice } from "../strategies/constants";
 
 // On-chain trading support
 import type { Wallet } from "ethers";
@@ -352,14 +353,48 @@ export type PostOrderInput = {
    * Maximum acceptable price for BUY orders (cap protection).
    * For BUY: If bestAsk > maxAcceptablePrice, reject (don't overpay).
    * Should NOT be used for SELL orders - use minAcceptablePrice instead.
+   *
+   * NOTE: If both maxAcceptablePrice AND buySlippagePct are provided,
+   * maxAcceptablePrice takes precedence (backward compatibility).
+   * Prefer using buySlippagePct for more accurate price protection.
    */
   maxAcceptablePrice?: number;
+  /**
+   * Slippage tolerance percentage for BUY orders.
+   * If provided, maxAcceptablePrice will be computed as:
+   *   maxAcceptablePrice = freshBestAsk * (1 + buySlippagePct / 100)
+   *
+   * This is PREFERRED over maxAcceptablePrice because it uses the FRESH
+   * orderbook data fetched by postOrder, not stale cached prices.
+   *
+   * Example: buySlippagePct=2 means accept prices up to 2% above the fresh best ask.
+   *
+   * Only applies to BUY orders. Ignored for SELL orders.
+   */
+  buySlippagePct?: number;
   /**
    * Minimum acceptable price for SELL orders (floor protection).
    * For SELL: If bestBid < minAcceptablePrice, reject (don't dump too cheap).
    * Should NOT be used for BUY orders - use maxAcceptablePrice instead.
+   *
+   * NOTE: If both minAcceptablePrice AND sellSlippagePct are provided,
+   * minAcceptablePrice takes precedence (backward compatibility).
+   * Prefer using sellSlippagePct for more accurate price protection.
    */
   minAcceptablePrice?: number;
+  /**
+   * Slippage tolerance percentage for SELL orders.
+   * If provided, minAcceptablePrice will be computed as:
+   *   minAcceptablePrice = freshBestBid * (1 - sellSlippagePct / 100)
+   *
+   * This is PREFERRED over minAcceptablePrice because it uses the FRESH
+   * orderbook data fetched by postOrder, not stale cached prices.
+   *
+   * Example: sellSlippagePct=2 means accept prices up to 2% below the fresh best bid.
+   *
+   * Only applies to SELL orders. Ignored for BUY orders.
+   */
+  sellSlippagePct?: number;
   priority?: boolean; // For frontrunning - execute with higher priority
   targetGasPrice?: string; // Gas price of target transaction for frontrunning
   /**
@@ -753,6 +788,55 @@ async function postOrderClobInner(
   const bestBid = priceExtraction.bestBid;
   const bestAsk = priceExtraction.bestAsk;
 
+  // === COMPUTE EFFECTIVE MIN ACCEPTABLE PRICE (SELL orders) ===
+  // If sellSlippagePct is provided and minAcceptablePrice is NOT provided,
+  // compute minAcceptablePrice from the FRESH bestBid (not stale cached data).
+  // This ensures price protection is based on actual current market conditions.
+  //
+  // Priority:
+  // 1. If minAcceptablePrice is explicitly provided, use it (backward compatibility)
+  // 2. If sellSlippagePct is provided and we have a valid bestBid, compute from fresh data
+  // 3. Otherwise, no floor protection (minAcceptablePrice remains undefined)
+  let effectiveMinAcceptablePrice = minAcceptablePrice;
+  if (
+    effectiveMinAcceptablePrice === undefined &&
+    input.sellSlippagePct !== undefined &&
+    side === "SELL" &&
+    bestBid !== null &&
+    bestBid > 0
+  ) {
+    effectiveMinAcceptablePrice = calculateMinAcceptablePrice(bestBid, input.sellSlippagePct);
+    logger.debug(
+      `[CLOB] Computed minAcceptablePrice from fresh bestBid: ` +
+        `${(effectiveMinAcceptablePrice * 100).toFixed(2)}¢ = ${(bestBid * 100).toFixed(2)}¢ * (1 - ${input.sellSlippagePct}%)`,
+    );
+  }
+
+  // === COMPUTE EFFECTIVE MAX ACCEPTABLE PRICE (BUY orders) ===
+  // If buySlippagePct is provided and maxAcceptablePrice is NOT provided,
+  // compute maxAcceptablePrice from the FRESH bestAsk (not stale cached data).
+  // This ensures we don't overpay based on stale price information.
+  //
+  // Priority:
+  // 1. If maxAcceptablePrice is explicitly provided, use it (backward compatibility)
+  // 2. If buySlippagePct is provided and we have a valid bestAsk, compute from fresh data
+  // 3. Otherwise, no cap protection (maxAcceptablePrice remains undefined)
+  let effectiveMaxAcceptablePrice = maxAcceptablePrice;
+  if (
+    effectiveMaxAcceptablePrice === undefined &&
+    input.buySlippagePct !== undefined &&
+    side === "BUY" &&
+    bestAsk !== null &&
+    bestAsk > 0
+  ) {
+    // For BUY: maxAcceptable = bestAsk * (1 + slippage%)
+    effectiveMaxAcceptablePrice = bestAsk * (1 + input.buySlippagePct / 100);
+    logger.debug(
+      `[CLOB] Computed maxAcceptablePrice from fresh bestAsk: ` +
+        `${(effectiveMaxAcceptablePrice * 100).toFixed(2)}¢ = ${(bestAsk * 100).toFixed(2)}¢ * (1 + ${input.buySlippagePct}%)`,
+    );
+  }
+
   // === ENHANCED DIAGNOSTICS (G) ===
   // Log orderbook fetch details for debugging tokenId mapping issues
   logger.debug(
@@ -773,10 +857,10 @@ async function postOrderClobInner(
   // - "corrupted data, need circuit breaker" (OrderbookQualityError)
   // - "legitimate price too low" (regular Error from price protection)
   //
-  // For SELL orders, use minAcceptablePrice as reference (represents expected price)
-  // For BUY orders, use maxAcceptablePrice as reference (represents expected price)
+  // For SELL orders, use effectiveMinAcceptablePrice as reference (represents expected price)
+  // For BUY orders, use effectiveMaxAcceptablePrice as reference (represents expected price)
   const referencePrice =
-    side === "SELL" ? minAcceptablePrice : maxAcceptablePrice;
+    side === "SELL" ? effectiveMinAcceptablePrice : effectiveMaxAcceptablePrice;
   const orderbookQuality = validateOrderbookQuality(
     bestBid,
     bestAsk,
@@ -801,8 +885,8 @@ async function postOrderClobInner(
     tokenId,
     bestBid,
     bestAsk,
-    minAcceptablePrice,
-    maxAcceptablePrice,
+    minAcceptablePrice: effectiveMinAcceptablePrice,
+    maxAcceptablePrice: effectiveMaxAcceptablePrice,
   });
 
   if (!priceProtection.valid) {
