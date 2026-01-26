@@ -249,7 +249,7 @@ async function executeSell(
       return { success: false, reason: "PRICE_TOO_LOW" };
     }
 
-    // Use limit sell at best bid
+    // Perform FOK market sell at best bid price (ensures immediate execution or cancellation)
     const signed = await client.createMarketOrder({
       side: Side.SELL,
       tokenID: position.tokenId,

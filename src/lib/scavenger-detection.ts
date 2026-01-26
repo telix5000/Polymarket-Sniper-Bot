@@ -392,38 +392,42 @@ export function analyzeMarketConditions(
 
 /**
  * Fetch recent market volume from Polymarket API
+ * Uses parallel requests with a short timeout to avoid blocking the main loop
  */
 export async function fetchRecentVolume(tokenIds: string[]): Promise<number> {
   if (tokenIds.length === 0) return 0;
 
   try {
-    let totalVolume = 0;
-
     // Sample a subset of tokens if there are many
     const sampleTokens = tokenIds.slice(0, 10);
+    const cutoff = Date.now() - 5 * 60 * 1000; // Last 5 minutes
 
-    for (const tokenId of sampleTokens) {
+    // Fetch all token volumes in parallel
+    const volumePromises = sampleTokens.map(async (tokenId) => {
       try {
         const url = `${POLYMARKET_API.DATA}/trades?asset=${tokenId}&limit=50`;
-        const { data } = await axios.get(url, { timeout: 5000 });
+        const { data } = await axios.get(url, { timeout: 3000 }); // Shorter timeout
 
         if (Array.isArray(data)) {
-          const cutoff = Date.now() - 5 * 60 * 1000; // Last 5 minutes
           const recentTrades = data.filter((t: any) => {
             const ts = new Date(t.timestamp || t.createdAt).getTime();
             return ts > cutoff;
           });
 
-          totalVolume += recentTrades.reduce((sum: number, t: any) => {
+          return recentTrades.reduce((sum: number, t: any) => {
             return sum + (Number(t.size) * Number(t.price) || 0);
           }, 0);
         }
+        return 0;
       } catch {
-        // Continue on individual token errors
+        return 0; // Return 0 for individual token errors
       }
-    }
+    });
 
-    return totalVolume;
+    const results = await Promise.allSettled(volumePromises);
+    return results.reduce((total, result) => {
+      return total + (result.status === "fulfilled" ? result.value : 0);
+    }, 0);
   } catch {
     return 0;
   }
@@ -431,6 +435,7 @@ export async function fetchRecentVolume(tokenIds: string[]): Promise<number> {
 
 /**
  * Check target addresses for recent activity
+ * Uses parallel requests with a short timeout to avoid blocking the main loop
  */
 export async function checkTargetActivity(
   targetAddresses: string[],
@@ -440,28 +445,106 @@ export async function checkTargetActivity(
     return { activeCount: 0, totalCount: 0 };
   }
 
-  let activeCount = 0;
   const cutoff = Date.now() - windowMs;
 
   // Check a sample of targets
   const sampleTargets = targetAddresses.slice(0, 10);
 
-  for (const addr of sampleTargets) {
+  // Fetch all target activity in parallel
+  const activityPromises = sampleTargets.map(async (addr) => {
     try {
       const url = `${POLYMARKET_API.DATA}/trades?user=${addr}&limit=5`;
-      const { data } = await axios.get(url, { timeout: 5000 });
+      const { data } = await axios.get(url, { timeout: 3000 }); // Shorter timeout
 
       if (Array.isArray(data) && data.length > 0) {
         const latest = data[0];
         const ts = new Date(latest.timestamp || latest.createdAt).getTime();
-        if (ts > cutoff) {
-          activeCount++;
-        }
+        return ts > cutoff;
       }
+      return false;
     } catch {
-      // Continue on errors
+      return false; // Treat errors as inactive
     }
-  }
+  });
+
+  const results = await Promise.allSettled(activityPromises);
+  const activeCount = results.filter(
+    (result) => result.status === "fulfilled" && result.value === true,
+  ).length;
 
   return { activeCount, totalCount: sampleTargets.length };
+}
+
+/**
+ * Fetch order book depth for a set of tokens
+ * Uses parallel requests with a short timeout
+ * Returns aggregated bid/ask depth and best bid/ask prices
+ */
+export async function fetchOrderBookDepth(
+  client: { getOrderBook: (tokenId: string) => Promise<any> },
+  tokenIds: string[],
+): Promise<{
+  avgBidDepthUsd: number;
+  avgAskDepthUsd: number;
+  bestBid: number;
+  bestAsk: number;
+}> {
+  if (tokenIds.length === 0) {
+    return { avgBidDepthUsd: 0, avgAskDepthUsd: 0, bestBid: 0, bestAsk: 0 };
+  }
+
+  // Sample a subset of tokens
+  const sampleTokens = tokenIds.slice(0, 5); // Fewer tokens since orderbook calls can be heavier
+
+  const depthPromises = sampleTokens.map(async (tokenId) => {
+    try {
+      const orderBook = await client.getOrderBook(tokenId);
+
+      let bidDepthUsd = 0;
+      let askDepthUsd = 0;
+      let bestBid = 0;
+      let bestAsk = 0;
+
+      if (orderBook?.bids?.length) {
+        bestBid = parseFloat(orderBook.bids[0].price);
+        bidDepthUsd = orderBook.bids.slice(0, 5).reduce((sum: number, level: any) => {
+          return sum + parseFloat(level.size) * parseFloat(level.price);
+        }, 0);
+      }
+
+      if (orderBook?.asks?.length) {
+        bestAsk = parseFloat(orderBook.asks[0].price);
+        askDepthUsd = orderBook.asks.slice(0, 5).reduce((sum: number, level: any) => {
+          return sum + parseFloat(level.size) * parseFloat(level.price);
+        }, 0);
+      }
+
+      return { bidDepthUsd, askDepthUsd, bestBid, bestAsk };
+    } catch {
+      return { bidDepthUsd: 0, askDepthUsd: 0, bestBid: 0, bestAsk: 0 };
+    }
+  });
+
+  const results = await Promise.allSettled(depthPromises);
+  const validResults = results
+    .filter((r) => r.status === "fulfilled")
+    .map((r) => (r as PromiseFulfilledResult<any>).value);
+
+  if (validResults.length === 0) {
+    return { avgBidDepthUsd: 0, avgAskDepthUsd: 0, bestBid: 0, bestAsk: 0 };
+  }
+
+  const totalBidDepth = validResults.reduce((sum, r) => sum + r.bidDepthUsd, 0);
+  const totalAskDepth = validResults.reduce((sum, r) => sum + r.askDepthUsd, 0);
+
+  // Use the first valid best bid/ask as representative
+  const firstWithBid = validResults.find((r) => r.bestBid > 0);
+  const firstWithAsk = validResults.find((r) => r.bestAsk > 0);
+
+  return {
+    avgBidDepthUsd: totalBidDepth / validResults.length,
+    avgAskDepthUsd: totalAskDepth / validResults.length,
+    bestBid: firstWithBid?.bestBid ?? 0,
+    bestAsk: firstWithAsk?.bestAsk ?? 0,
+  };
 }

@@ -78,8 +78,10 @@ import {
   analyzeMarketConditions,
   recordVolumeSample,
   recordTargetActivity,
+  recordOrderBookSnapshot,
   checkTargetActivity,
   fetchRecentVolume,
+  fetchOrderBookDepth,
   runScavengerCycle,
   getScavengerSummary,
   canMicroBuy,
@@ -471,13 +473,16 @@ async function runModeDetection(positions: Position[]): Promise<void> {
   if (now - state.lastDetectionCheck < DETECTION_INTERVAL_MS) return;
   state.lastDetectionCheck = now;
 
-  // Gather market data
+  // Gather market data in parallel to minimize blocking
   const tokenIds = positions.map((p) => p.tokenId);
-  const volume = await fetchRecentVolume(tokenIds);
-  const targetActivity = await checkTargetActivity(
-    state.targets,
-    cfg.detection.targetActivityWindowMs,
-  );
+
+  const [volume, targetActivity, orderBookDepth] = await Promise.all([
+    fetchRecentVolume(tokenIds),
+    checkTargetActivity(state.targets, cfg.detection.targetActivityWindowMs),
+    state.client
+      ? fetchOrderBookDepth(state.client, tokenIds)
+      : Promise.resolve({ avgBidDepthUsd: 0, avgAskDepthUsd: 0, bestBid: 0, bestAsk: 0 }),
+  ]);
 
   // Record samples
   state.detectionState = recordVolumeSample(
@@ -490,6 +495,17 @@ async function runModeDetection(positions: Position[]): Promise<void> {
     targetActivity.activeCount,
     targetActivity.totalCount,
     cfg.detection.targetActivityWindowMs,
+  );
+  // Record order book snapshot
+  state.detectionState = recordOrderBookSnapshot(
+    state.detectionState,
+    {
+      bidDepthUsd: orderBookDepth.avgBidDepthUsd,
+      askDepthUsd: orderBookDepth.avgAskDepthUsd,
+      bestBid: orderBookDepth.bestBid,
+      bestAsk: orderBookDepth.bestAsk,
+    },
+    cfg.detection.stagnantBookThresholdMs,
   );
 
   // Analyze conditions
@@ -540,8 +556,8 @@ async function runModeDetection(positions: Position[]): Promise<void> {
           volumeThreshold: cfg.reversion.volumeRecoveryThresholdUsd,
           orderBookDepth: result.metrics.avgOrderBookDepthUsd,
           depthThreshold: cfg.reversion.depthRecoveryThresholdUsd,
-          activeTargets: Math.round(result.metrics.activeTargetRatio * state.targets.length),
-          totalTargets: state.targets.length,
+          activeTargets: targetActivity.activeCount,
+          totalTargets: targetActivity.totalCount,
         },
       },
       logger,
