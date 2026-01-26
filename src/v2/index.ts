@@ -53,6 +53,7 @@ import {
   ABSOLUTE_MIN_TRADEABLE_PRICE,
 } from "../utils/post-order.util";
 import { createPolymarketAuthFromEnvWithAutoDetect } from "../clob/polymarket-auth";
+import { POLYGON_USDC_ADDRESS } from "../constants/polymarket.constants";
 
 // V1 Features: Adaptive Learning, On-Chain Exit, On-Chain Trading
 import {
@@ -2440,6 +2441,8 @@ async function executeSell(
       sellSlippagePct: 5,
       skipDuplicatePrevention: true, // SELL orders shouldn't be blocked by duplicate prevention
       logger: simpleLogger as any,
+      collateralTokenAddress: POLYGON_USDC_ADDRESS,
+      collateralTokenDecimals: 6,
     });
 
     if (result.status === "submitted") {
@@ -2655,6 +2658,8 @@ async function executeBuy(
       // Note: this path does not pass a marketId into postOrder(), so market-level cooldowns are
       // not applied here; this flag only affects token-level / in-flight duplicate-prevention logic.
       skipDuplicatePrevention: isProtectiveHedge,
+      collateralTokenAddress: POLYGON_USDC_ADDRESS,
+      collateralTokenDecimals: 6,
     });
 
     if (result.status === "submitted") {
