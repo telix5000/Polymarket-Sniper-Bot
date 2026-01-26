@@ -983,6 +983,20 @@ async function postOrderClobInner(
         `[CLOB] SELL depth analysis: limitPrice=${(limitPrice * 100).toFixed(1)}¢ cumulativeDepthUsd=$${cumulativeDepthUsd.toFixed(2)} remaining=$${remaining.toFixed(2)} tokenId=${tokenId.slice(0, 12)}...`,
       );
 
+      // FIX (Jan 2026): If no bids at/above limit price, skip early with clear reason
+      // Previously, this would proceed with orderValue=0 and hit SKIP_MIN_ORDER_SIZE,
+      // which was confusing. Now we return a clear NO_LIQUIDITY_AT_PRICE skip.
+      if (cumulativeDepthUsd <= 0) {
+        logger.warn(
+          `[CLOB] SELL skipped (NO_LIQUIDITY_AT_PRICE): No bids at or above limit price ${(limitPrice * 100).toFixed(1)}¢. ` +
+            `Cannot sell at desired price. Token: ${tokenId.slice(0, 16)}...`,
+        );
+        return {
+          status: "skipped",
+          reason: "NO_LIQUIDITY_AT_PRICE",
+        };
+      }
+
       // Size the order based on cumulative depth and remaining amount
       orderValue = Math.min(remaining, cumulativeDepthUsd);
       // Use limit price for order submission so it can fill across multiple levels
@@ -1014,6 +1028,7 @@ async function postOrderClobInner(
     const readiness = await checkFundsAndAllowance({
       client,
       sizeUsd: orderValue,
+      side, // Pass side so SELL orders skip collateral check
       balanceBufferBps: input.orderConfig?.balanceBufferBps,
       collateralTokenAddress: input.collateralTokenAddress,
       collateralTokenDecimals: input.collateralTokenDecimals,

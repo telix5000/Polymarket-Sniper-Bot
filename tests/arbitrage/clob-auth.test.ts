@@ -268,3 +268,87 @@ test("postOrder returns skipped with NO_LIQUIDITY when orderbook has no asks for
     process.env.ARB_LIVE_TRADING = previousLiveTrading;
   }
 });
+
+test("postOrder returns skipped with NO_LIQUIDITY_AT_PRICE when orderbook bids drop below limit during execution", async () => {
+  const previousLiveTrading = process.env.ARB_LIVE_TRADING;
+  process.env.ARB_LIVE_TRADING = "I_UNDERSTAND_THE_RISKS";
+
+  // First call: orderbook with bids at 50¢ (passes price protection)
+  // Second call (in while loop): bids drop to 40¢ (below limit price)
+  // This simulates market movement between orderbook fetches
+  let orderbookCallCount = 0;
+  const getOrderBook = async () => {
+    orderbookCallCount++;
+    if (orderbookCallCount === 1) {
+      // First call: Good bids at 50¢
+      return {
+        asks: [{ price: "0.60", size: "100" }],
+        bids: [{ price: "0.50", size: "100" }],
+      };
+    } else {
+      // Second call (in while loop): Bids dropped to 40¢
+      return {
+        asks: [{ price: "0.60", size: "100" }],
+        bids: [
+          { price: "0.40", size: "50" },  // Below limit
+          { price: "0.35", size: "100" }, // Below limit
+        ],
+      };
+    }
+  };
+
+  const client = {
+    getOrderBook,
+    getBalanceAllowance: async () => ({ balance: "100", allowance: "100" }),
+    createMarketOrder: async () => ({ signed: true }),
+    postOrder: async () => {
+      throw new Error("postOrder should not be called when no liquidity at price");
+    },
+  } as unknown as ClobClient;
+
+  Object.defineProperty(client, "creds", {
+    set: () => {
+      // no-op
+    },
+  });
+
+  await initializeApiCreds(client, {
+    key: "key",
+    secret: "secret",
+    passphrase: "pass",
+  });
+
+  try {
+    const result = await postOrder({
+      client,
+      tokenId: "token-changing-bids",
+      outcome: "YES",
+      side: "SELL",
+      sizeUsd: 10,
+      // Use sellSlippagePct instead of explicit minAcceptablePrice
+      // This computes minAcceptablePrice = bestBid * (1 - 5/100) = 0.50 * 0.95 = 0.475
+      sellSlippagePct: 5,
+      logger: {
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+        debug: () => undefined,
+      },
+      orderConfig: {
+        minOrderUsd: 5,
+        orderSubmitMinIntervalMs: 0,
+        orderSubmitMaxPerHour: 1000,
+        orderSubmitMarketCooldownSeconds: 0,
+        cloudflareCooldownSeconds: 0,
+      },
+    });
+
+    // Should return skipped with NO_LIQUIDITY_AT_PRICE because:
+    // - Price protection passed (first orderbook had bestBid=0.50 >= minAcceptable=0.475)
+    // - But in while loop, second orderbook has bids at 0.40, all below minAcceptable=0.475
+    assert.equal(result.status, "skipped");
+    assert.equal(result.reason, "NO_LIQUIDITY_AT_PRICE");
+  } finally {
+    process.env.ARB_LIVE_TRADING = previousLiveTrading;
+  }
+});

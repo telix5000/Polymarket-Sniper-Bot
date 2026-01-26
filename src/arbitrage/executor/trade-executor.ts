@@ -331,6 +331,7 @@ export class ArbTradeExecutor implements TradeExecutor {
     const readiness = await checkFundsAndAllowance({
       client: this.client,
       sizeUsd,
+      side: "BUY", // Arbitrage executor only does BUY orders
       balanceBufferBps,
       collateralTokenAddress: this.config.collateralTokenAddress,
       collateralTokenDecimals: this.config.collateralTokenDecimals,
