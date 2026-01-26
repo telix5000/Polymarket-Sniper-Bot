@@ -35,6 +35,7 @@ import {
   // Auth
   createClobClient,
   isLiveTradingEnabled,
+  getAuthDiagnostics,
   // Config
   loadPreset,
   getMaxPositionUsd,
@@ -45,6 +46,7 @@ import {
   invalidatePositions,
   getUsdcBalance,
   getPolBalance,
+  getUsdcAllowance,
   // Trading
   postOrder,
   // Copy trading
@@ -187,8 +189,13 @@ async function buy(
   });
 
   if (result.success) {
-    logger.info(`✅ BUY ${outcome} ${$(result.filledUsd ?? size)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢ | ${reason}`);
-    await sendTelegram("BUY", `${reason}\n${outcome} ${$(result.filledUsd ?? size)}`);
+    logger.info(
+      `✅ BUY ${outcome} ${$(result.filledUsd ?? size)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢ | ${reason}`,
+    );
+    await sendTelegram(
+      "BUY",
+      `${reason}\n${outcome} ${$(result.filledUsd ?? size)}`,
+    );
     state.tradesExecuted++;
     invalidatePositions();
     return true;
@@ -227,8 +234,13 @@ async function sell(
   });
 
   if (result.success) {
-    logger.info(`✅ SELL ${outcome} ${$(result.filledUsd ?? sizeUsd)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢ | ${reason}`);
-    await sendTelegram("SELL", `${reason}\n${outcome} ${$(result.filledUsd ?? sizeUsd)}`);
+    logger.info(
+      `✅ SELL ${outcome} ${$(result.filledUsd ?? sizeUsd)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢ | ${reason}`,
+    );
+    await sendTelegram(
+      "SELL",
+      `${reason}\n${outcome} ${$(result.filledUsd ?? sizeUsd)}`,
+    );
     state.tradesExecuted++;
     invalidatePositions();
     return true;
@@ -248,7 +260,13 @@ async function runAutoSell(positions: Position[]): Promise<void> {
 
   for (const p of positions) {
     if (p.curPrice >= cfg.threshold) {
-      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `AutoSell (${(p.curPrice * 100).toFixed(0)}¢)`, p.size);
+      await sell(
+        p.tokenId,
+        p.outcome as "YES" | "NO",
+        p.value,
+        `AutoSell (${(p.curPrice * 100).toFixed(0)}¢)`,
+        p.size,
+      );
     }
   }
 }
@@ -283,7 +301,13 @@ async function runStopLoss(positions: Position[]): Promise<void> {
 
   for (const p of positions) {
     if (p.pnlPct < 0 && Math.abs(p.pnlPct) >= cfg.maxLossPct) {
-      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `StopLoss (${p.pnlPct.toFixed(1)}%)`, p.size);
+      await sell(
+        p.tokenId,
+        p.outcome as "YES" | "NO",
+        p.value,
+        `StopLoss (${p.pnlPct.toFixed(1)}%)`,
+        p.size,
+      );
     }
   }
 }
@@ -298,7 +322,13 @@ async function runScalp(positions: Position[]): Promise<void> {
       p.gainCents >= cfg.minGainCents &&
       p.pnlUsd >= cfg.minProfitUsd
     ) {
-      await sell(p.tokenId, p.outcome as "YES" | "NO", p.value, `Scalp (+${p.pnlPct.toFixed(1)}%)`, p.size);
+      await sell(
+        p.tokenId,
+        p.outcome as "YES" | "NO",
+        p.value,
+        `Scalp (+${p.pnlPct.toFixed(1)}%)`,
+        p.size,
+      );
     }
   }
 }
@@ -378,7 +408,12 @@ async function runRedeem(): Promise<void> {
   if (now - state.lastRedeem < cfg.intervalMin * 60 * 1000) return;
 
   state.lastRedeem = now;
-  const count = await redeemAll(state.wallet, state.address, cfg.minPositionUsd, logger);
+  const count = await redeemAll(
+    state.wallet,
+    state.address,
+    cfg.minPositionUsd,
+    logger,
+  );
 
   if (count > 0) {
     logger.info(`Redeemed ${count} positions`);
@@ -392,7 +427,8 @@ async function runPolReserveCheck(): Promise<void> {
   if (!cfg.enabled || !state.wallet || !state.liveTrading) return;
 
   const now = Date.now();
-  if (now - state.lastPolReserveCheck < cfg.checkIntervalMin * 60 * 1000) return;
+  if (now - state.lastPolReserveCheck < cfg.checkIntervalMin * 60 * 1000)
+    return;
 
   state.lastPolReserveCheck = now;
 
@@ -411,7 +447,10 @@ async function runPolReserveCheck(): Promise<void> {
   );
 
   if (result?.success) {
-    await sendTelegram("💱 POL Rebalance", `Swapped $${result.usdcSwapped?.toFixed(2)} USDC → ${result.polReceived?.toFixed(2)} POL`);
+    await sendTelegram(
+      "💱 POL Rebalance",
+      `Swapped $${result.usdcSwapped?.toFixed(2)} USDC → ${result.polReceived?.toFixed(2)} POL`,
+    );
   } else if (result?.error) {
     await sendTelegram("❌ POL Rebalance Failed", result.error);
   }
@@ -595,7 +634,9 @@ async function runCycle(): Promise<void> {
 
 async function printSummary(): Promise<void> {
   const positions = await getPositions(state.address, true);
-  const balance = state.wallet ? await getUsdcBalance(state.wallet, state.address) : 0;
+  const balance = state.wallet
+    ? await getUsdcBalance(state.wallet, state.address)
+    : 0;
 
   const totalValue = positions.reduce((s, p) => s + p.value, 0);
   const totalPnl = positions.reduce((s, p) => s + p.pnlUsd, 0);
@@ -641,6 +682,9 @@ async function main(): Promise<void> {
   logger.info(`Live Trading: ${state.liveTrading ? "ENABLED" : "DISABLED"}`);
   logger.info(`POL Reserve: ${state.polReserveConfig.enabled ? `ON (target: ${state.polReserveConfig.targetPol} POL)` : "OFF"}`);
   logger.info(`Scavenger Mode: ${state.scavengerConfig.enabled ? "ENABLED" : "DISABLED"}`);
+  logger.info(
+    `POL Reserve: ${state.polReserveConfig.enabled ? `ON (target: ${state.polReserveConfig.targetPol} POL)` : "OFF"}`,
+  );
 
   // Telegram
   initTelegram();
@@ -668,13 +712,53 @@ async function main(): Promise<void> {
   state.wallet = auth.wallet;
   state.address = auth.address ?? "";
 
-  logger.info(`Wallet: ${state.address.slice(0, 10)}...`);
+  // === AUTH DIAGNOSTICS ===
+  const signerAddress = state.wallet.address;
+  const effectiveAddress = state.address;
+  const diag = getAuthDiagnostics(signerAddress, effectiveAddress);
+
+  logger.info(`\n=== Auth Diagnostics ===`);
+  logger.info(
+    `Signature Type: ${diag.signatureType} (${diag.signatureTypeLabel})`,
+  );
+  logger.info(
+    `Signer Address: ${signerAddress.slice(0, 10)}...${signerAddress.slice(-4)}`,
+  );
+  logger.info(
+    `Effective Address: ${effectiveAddress.slice(0, 10)}...${effectiveAddress.slice(-4)}`,
+  );
+  if (diag.proxyAddress) {
+    logger.info(
+      `Configured Proxy: ${diag.proxyAddress.slice(0, 10)}...${diag.proxyAddress.slice(-4)}`,
+    );
+  }
+  logger.info(
+    `Mode: ${diag.isProxyMode ? "Proxy/Safe (signer ≠ funder)" : "EOA (signer = funder)"}`,
+  );
+  logger.info(`========================\n`);
 
   // Balances - check the effective address (funder), not just signer
   const usdc = await getUsdcBalance(state.wallet, state.address);
   const pol = await getPolBalance(state.wallet, state.address);
-  logger.info(`USDC: ${$(usdc)}`);
+  const allowance = await getUsdcAllowance(state.wallet, state.address);
+
+  logger.info(`USDC Balance: ${$(usdc)}`);
+  logger.info(`USDC Allowance: ${$(allowance)}`);
   logger.info(`POL: ${pol.toFixed(4)}`);
+
+  // Warn if allowance might cause issues (only relevant for live trading)
+  if (state.liveTrading) {
+    if (allowance === 0) {
+      logger.warn(
+        `⚠️ No USDC allowance set. Orders will fail. Approve CTF Exchange first.`,
+      );
+    } else if (allowance < usdc && usdc > 0) {
+      logger.warn(
+        `⚠️ Allowance (${$(allowance)}) < Balance (${$(usdc)}). Large orders may fail.`,
+      );
+    }
+  }
+
   state.startBalance = usdc;
 
   // Targets
@@ -682,15 +766,22 @@ async function main(): Promise<void> {
   logger.info(`Copy targets: ${state.targets.length}`);
 
   // Startup notification
-  await sendTelegram("🚀 Bot Started", [
-    `Preset: ${name}`,
-    `Wallet: ${state.address.slice(0, 10)}...`,
-    `Balance: ${$(usdc)}`,
-    `Live: ${state.liveTrading ? "YES" : "NO"}`,
-  ].join("\n"));
+  await sendTelegram(
+    "🚀 Bot Started",
+    [
+      `Preset: ${name}`,
+      `Wallet: ${state.address.slice(0, 10)}...`,
+      `Balance: ${$(usdc)}`,
+      `Allowance: ${$(allowance)}`,
+      `Live: ${state.liveTrading ? "YES" : "NO"}`,
+    ].join("\n"),
+  );
 
   // Main loop
-  const interval = parseInt(process.env.INTERVAL_MS ?? String(TIMING.CYCLE_MS), 10);
+  const interval = parseInt(
+    process.env.INTERVAL_MS ?? String(TIMING.CYCLE_MS),
+    10,
+  );
   logger.info(`\nStarting (${interval}ms interval)...\n`);
 
   const loop = async () => {
