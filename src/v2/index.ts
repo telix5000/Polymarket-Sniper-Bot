@@ -2024,6 +2024,16 @@ async function executeSell(
         return true;
       }
 
+      // Handle NO_LIQUIDITY: No on-chain liquidity to sell into
+      // Add to cooldown list to prevent repeated attempts for 1h, these can only be redeemed
+      if (result.reason === "NO_LIQUIDITY") {
+        state.zeroPriceTokens.set(tokenId, Date.now());
+        log(
+          `⚠️ SELL | ${reason} | No on-chain liquidity - skipping for 1h (redeem only) | ${outcome} ${$(sizeUsd)}`,
+        );
+        return false;
+      }
+
       // Fallback to CLOB if on-chain not implemented yet
       if (result.reason === "NOT_IMPLEMENTED" && state.clobClient) {
         log(`⚠️ On-chain not ready, falling back to CLOB`);
@@ -2204,6 +2214,15 @@ async function executeBuy(
           recordTradeForLearning(conditionId, price || 0.5, sizeUsd);
         invalidate();
         return true;
+      }
+
+      // Handle NO_LIQUIDITY: No liquidity to buy from
+      // Silently skip these instead of alerting
+      if (result.reason === "NO_LIQUIDITY") {
+        log(
+          `⚠️ BUY | ${reason} | No on-chain liquidity - skipping | ${outcome} ${$(sizeUsd)}`,
+        );
+        return false;
       }
 
       // Fallback to CLOB if on-chain not implemented yet
