@@ -254,6 +254,77 @@ export function parseError(error: unknown): ParsedError {
 }
 
 /**
+ * Extract Cloudflare Ray ID from error message or response.
+ * Returns the Ray ID string if found, otherwise null.
+ */
+export function extractCloudflareRayId(error: unknown): string | null {
+  if (!error) return null;
+
+  const errorStr = safeErrorToString(error);
+
+  // Handles multiple HTML/text formats:
+  // - <strong class="font-semibold">abc123</strong>
+  // - <strong>abc123</strong>
+  // - Ray ID: abc123
+  // - "ray_id":"abc123"
+  const rayIdPatterns = [
+    /Ray ID:\s*<strong[^>]*>([^<]+)<\/strong>/i,
+    /Ray ID:\s*<[^>]*>([^<]+)/i,
+    /Ray ID:\s*([a-f0-9]+)/i,
+    /"ray[_-]?id"\s*:\s*"([^"]+)"/i,
+  ];
+
+  for (const pattern of rayIdPatterns) {
+    const match = errorStr.match(pattern);
+    if (match) {
+      return match[1].trim();
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract HTTP status code from error or response object.
+ * Returns the status code if found, otherwise "unknown".
+ */
+export function extractStatusCode(
+  error: unknown,
+): number | "unknown" {
+  if (!error || typeof error !== "object") return "unknown";
+
+  const obj = error as any;
+
+  // Try multiple common locations for status code
+  return (
+    obj.response?.status ||
+    obj.response?.statusCode ||
+    obj.status ||
+    obj.statusCode ||
+    "unknown"
+  );
+}
+
+/**
+ * Extract Cloudflare headers from error response.
+ * Returns an object with cf-ray and cf-cache-status headers if available.
+ */
+export function extractCloudflareHeaders(error: unknown): {
+  cfRay?: string;
+  cfCacheStatus?: string;
+} {
+  if (!error || typeof error !== "object") return {};
+
+  const obj = error as any;
+  const headers = obj.response?.headers || obj.headers || {};
+
+  return {
+    cfRay: headers["cf-ray"],
+    cfCacheStatus: headers["cf-cache-status"],
+  };
+}
+
+/**
  * Format error for logging (strips sensitive data, limits length)
  */
 export function formatErrorForLog(error: unknown, maxLength = 500): string {
@@ -275,25 +346,7 @@ export function formatErrorForLog(error: unknown, maxLength = 500): string {
 
   // If it's a Cloudflare block, provide a clean message instead of the HTML
   if (isCloudflareBlock(errorStr)) {
-    // Extract Ray ID if present - handles multiple HTML formats:
-    // - <strong class="font-semibold">abc123</strong>
-    // - <strong>abc123</strong>
-    // - Ray ID: abc123
-    const rayIdPatterns = [
-      /Ray ID:\s*<strong[^>]*>([^<]+)<\/strong>/i,
-      /Ray ID:\s*<[^>]*>([^<]+)/i,
-      /Ray ID:\s*([a-f0-9]+)/i,
-    ];
-
-    let rayId: string | null = null;
-    for (const pattern of rayIdPatterns) {
-      const match = errorStr.match(pattern);
-      if (match) {
-        rayId = match[1].trim();
-        break;
-      }
-    }
-
+    const rayId = extractCloudflareRayId(errorStr);
     return `Cloudflare block (403 Forbidden)${rayId ? ` - Ray ID: ${rayId}` : ""}`;
   }
 

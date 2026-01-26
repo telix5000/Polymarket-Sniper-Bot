@@ -14,11 +14,20 @@ import { OrderType, Side } from "@polymarket/clob-client";
 import { ORDER } from "./constants";
 import type { OrderSide, OrderOutcome, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
-import { isCloudflareBlock, formatErrorForLog } from "./error-handling";
+import {
+  isCloudflareBlock,
+  formatErrorForLog,
+  extractCloudflareRayId,
+  extractStatusCode,
+  extractCloudflareHeaders,
+} from "./error-handling";
 
 // In-flight tracking to prevent duplicate orders
 const inFlight = new Map<string, number>();
 const marketCooldown = new Map<string, number>();
+
+// Constants
+const ESTIMATED_OBJECT_BODY_LENGTH = 200; // Estimated bytes for non-string error objects
 
 export interface PostOrderInput {
   client: ClobClient;
@@ -226,25 +235,45 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           retryCount++;
           // Check for Cloudflare block in response
           const errorMsg = response.errorMsg || response.error || "Unknown error";
+          const statusCode = extractStatusCode(response); // Extract once for both branches
+
           if (isCloudflareBlock(errorMsg) || isCloudflareBlock(response)) {
+            const rayId = extractCloudflareRayId(errorMsg) ?? extractCloudflareRayId(response);
+            const bodyLength = typeof errorMsg === "string" ? errorMsg.length : ESTIMATED_OBJECT_BODY_LENGTH;
+
             logger?.error?.(
-              `Order blocked by Cloudflare (403). Your IP may be geo-blocked. Consider using a VPN.`,
+              `CLOB Order blocked by Cloudflare (403)${rayId ? ` - Ray ID: ${rayId}` : ""} | ` +
+                `Status: ${statusCode} | Body length: ~${bodyLength}B | ` +
+                `Check VPN routing and geo-restrictions`,
             );
             return { success: false, reason: "CLOUDFLARE_BLOCKED" };
           }
-          logger?.warn?.(`Order attempt failed: ${formatErrorForLog(errorMsg)}`);
+          // Log detailed diagnostics for other failures
+          logger?.warn?.(
+            `Order attempt failed [status=${statusCode}]: ${formatErrorForLog(errorMsg)}`,
+          );
         }
       } catch (err) {
         retryCount++;
         // Check for Cloudflare block in error
         if (isCloudflareBlock(err)) {
+          const rayId = extractCloudflareRayId(err);
+          const statusCode = extractStatusCode(err);
+          const errorStr = err instanceof Error ? err.message : String(err);
+          const bodyLength = errorStr.length;
+          const { cfRay, cfCacheStatus } = extractCloudflareHeaders(err);
+
           logger?.error?.(
-            `Order blocked by Cloudflare (403). Your IP may be geo-blocked. Consider using a VPN.`,
+            `CLOB Order blocked by Cloudflare (403)${rayId ? ` - Ray ID: ${rayId}` : ""}${cfRay ? ` (cf-ray: ${cfRay})` : ""} | ` +
+              `Status: ${statusCode} | Body length: ${bodyLength}B${cfCacheStatus ? ` | CF-Cache: ${cfCacheStatus}` : ""} | ` +
+              `Check VPN routing and geo-restrictions`,
           );
           return { success: false, reason: "CLOUDFLARE_BLOCKED" };
         }
+        // Log detailed diagnostics for other errors
+        const statusCode = extractStatusCode(err);
         const msg = formatErrorForLog(err);
-        logger?.warn?.(`Order execution error: ${msg}`);
+        logger?.warn?.(`Order execution error [status=${statusCode}]: ${msg}`);
         if (retryCount >= ORDER.MAX_RETRIES) {
           return { success: false, reason: msg };
         }
@@ -264,6 +293,10 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
   } catch (err) {
     // Check for Cloudflare block
     if (isCloudflareBlock(err)) {
+      const rayId = extractCloudflareRayId(err);
+      logger?.error?.(
+        `Order rejected: CLOUDFLARE_BLOCKED${rayId ? ` - Ray ID: ${rayId}` : ""} | Check VPN routing`,
+      );
       return { success: false, reason: "CLOUDFLARE_BLOCKED" };
     }
     const msg = err instanceof Error ? err.message : String(err);
