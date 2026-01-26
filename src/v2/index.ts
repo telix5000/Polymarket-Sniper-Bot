@@ -1452,10 +1452,8 @@ function queueTelegramMessage(text: string): void {
   
   // Drop oldest messages if queue is full
   if (telegramQueue.length >= TELEGRAM_QUEUE_MAX_SIZE) {
-    const dropped = telegramQueue.shift();
-    if (dropped) {
-      log(`⚠️ Telegram queue full, dropped oldest message`);
-    }
+    telegramQueue.shift();
+    log(`⚠️ Telegram queue full, dropped oldest message`);
   }
   
   telegramQueue.push({
@@ -1480,8 +1478,7 @@ async function processTelegramQueue(): Promise<void> {
   
   try {
     while (telegramQueue.length > 0) {
-      const msg = telegramQueue[0];
-      if (!msg) break;
+      const msg = telegramQueue[0]!; // Safe: loop condition ensures queue is non-empty
       
       // Rate limiting: wait until minimum interval has passed
       const timeSinceLastSend = Date.now() - telegramLastSentTime;
