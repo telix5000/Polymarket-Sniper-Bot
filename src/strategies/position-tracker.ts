@@ -2811,7 +2811,11 @@ export class PositionTracker {
           timeout: PositionTracker.API_TIMEOUT_MS,
         });
 
-        if (!pagePositions || !Array.isArray(pagePositions) || pagePositions.length === 0) {
+        if (
+          !pagePositions ||
+          !Array.isArray(pagePositions) ||
+          pagePositions.length === 0
+        ) {
           break; // No more positions
         }
 
@@ -2888,7 +2892,9 @@ export class PositionTracker {
           try {
             // Fetch from both addresses in parallel with pagination
             // For address probe, we need accurate counts to decide which address to use
-            const fetchPaginatedPositions = async (address: string): Promise<ApiPosition[]> => {
+            const fetchPaginatedPositions = async (
+              address: string,
+            ): Promise<ApiPosition[]> => {
               const allPositions: ApiPosition[] = [];
               let offset = 0;
               const baseUrl = POLYMARKET_API.POSITIONS_ENDPOINT(address);
@@ -2899,13 +2905,19 @@ export class PositionTracker {
                   timeout: PositionTracker.API_TIMEOUT_MS,
                 });
 
-                if (!pagePositions || !Array.isArray(pagePositions) || pagePositions.length === 0) {
+                if (
+                  !pagePositions ||
+                  !Array.isArray(pagePositions) ||
+                  pagePositions.length === 0
+                ) {
                   break;
                 }
 
                 allPositions.push(...pagePositions);
 
-                if (pagePositions.length < PositionTracker.POSITIONS_PAGE_LIMIT) {
+                if (
+                  pagePositions.length < PositionTracker.POSITIONS_PAGE_LIMIT
+                ) {
                   break;
                 }
 
@@ -2915,7 +2927,7 @@ export class PositionTracker {
               if (offset >= PositionTracker.POSITIONS_MAX_OFFSET) {
                 console.warn(
                   `PositionTracker: Reached POSITIONS_MAX_OFFSET (${PositionTracker.POSITIONS_MAX_OFFSET}) ` +
-                  `while fetching positions for address ${address}. Results may be truncated.`
+                    `while fetching positions for address ${address}. Results may be truncated.`,
                 );
               }
 
@@ -2923,8 +2935,12 @@ export class PositionTracker {
             };
 
             const [eoaPositions, proxyPositions] = await Promise.all([
-              fetchPaginatedPositions(eoaAddress).catch(() => [] as ApiPosition[]),
-              fetchPaginatedPositions(proxyAddress).catch(() => [] as ApiPosition[]),
+              fetchPaginatedPositions(eoaAddress).catch(
+                () => [] as ApiPosition[],
+              ),
+              fetchPaginatedPositions(proxyAddress).catch(
+                () => [] as ApiPosition[],
+              ),
             ]);
 
             const eoaCount = eoaPositions?.length ?? 0;

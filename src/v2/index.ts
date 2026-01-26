@@ -62,8 +62,8 @@ import {
 import { executeOnChainOrder } from "../trading/onchain-executor";
 
 // V2 Features: Profitability Optimizer
-import { 
-  ProfitabilityOptimizer, 
+import {
+  ProfitabilityOptimizer,
   createProfitabilityOptimizer,
   type AnalyzablePosition,
   type OptimizationResult,
@@ -220,10 +220,10 @@ interface Config {
   };
   // Profitability Optimizer - Risk-aware decision making for maximizing income
   profitabilityOptimizer: {
-    enabled: boolean;                  // Enable profitability-guided trading decisions
-    minExpectedValueUsd: number;       // Minimum EV to recommend an action
-    riskTolerance: number;             // Risk tolerance factor (0-1)
-    logRecommendations: boolean;       // Log optimizer recommendations for debugging
+    enabled: boolean; // Enable profitability-guided trading decisions
+    minExpectedValueUsd: number; // Minimum EV to recommend an action
+    riskTolerance: number; // Risk tolerance factor (0-1)
+    logRecommendations: boolean; // Log optimizer recommendations for debugging
   };
 }
 
@@ -620,7 +620,7 @@ const ZERO_PRICE_BLOCK_TTL_MS = 60 * 60 * 1000; // 1 hour - how long to block se
 const DEFAULT_ARBITRAGE_ACTIVE_MARKET_LIMIT = 100; // Matches V1 endgame-sweep
 
 // Hedge buffer auto-scaling configuration
-const HEDGE_BUFFER_AUTO_SCALE_PCT = 0.10; // Scale hedge buffer to 10% of maxOpenPositions when not explicitly set
+const HEDGE_BUFFER_AUTO_SCALE_PCT = 0.1; // Scale hedge buffer to 10% of maxOpenPositions when not explicitly set
 const HEDGE_BUFFER_MIN_SLOTS = 3; // Minimum hedge buffer slots to ensure basic hedging capability
 
 // Telegram rate limiting configuration (addresses 429 errors)
@@ -1433,20 +1433,22 @@ function toAnalyzablePosition(p: Position): AnalyzablePosition {
     curPrice: p.curPrice,
     pnlPct: p.pnlPct,
     value: p.value,
-    minutesToClose: p.marketEndTime ? Math.max(0, (p.marketEndTime - Date.now()) / 60000) : undefined,
+    minutesToClose: p.marketEndTime
+      ? Math.max(0, (p.marketEndTime - Date.now()) / 60000)
+      : undefined,
     spreadBps: 50, // Assume default spread if not available
   };
 }
 
 /**
  * Run profitability optimizer analysis and log recommendations
- * 
+ *
  * The optimizer analyzes all positions and suggests the most profitable actions:
  * - STACK: Double down on winning positions with momentum
  * - HEDGE_DOWN: Protect against losses by buying the opposite outcome
  * - HEDGE_UP: Maximize gains on high-probability positions
  * - SELL: Lock in value when opportunity cost is favorable
- * 
+ *
  * Returns top recommendations sorted by expected value
  */
 function analyzePortfolioProfitability(cfg: Config): OptimizationResult[] {
@@ -1454,12 +1456,13 @@ function analyzePortfolioProfitability(cfg: Config): OptimizationResult[] {
     return [];
   }
 
-  const portfolioValue = state.balance + state.positions.reduce((sum, p) => sum + p.value, 0);
+  const portfolioValue =
+    state.balance + state.positions.reduce((sum, p) => sum + p.value, 0);
   const availableCash = getAvailableBalance(cfg);
-  
+
   // Convert positions to analyzable format
   const analyzablePositions = state.positions.map(toAnalyzablePosition);
-  
+
   // Get optimizer recommendations
   const recommendations = state.profitabilityOptimizer.findBestActions(
     analyzablePositions,
@@ -1467,27 +1470,33 @@ function analyzePortfolioProfitability(cfg: Config): OptimizationResult[] {
     availableCash,
     portfolioValue,
   );
-  
+
   // Filter by minimum EV threshold
   const minEv = cfg.profitabilityOptimizer.minExpectedValueUsd;
   const actionableRecs = recommendations.filter(
-    r => r.rankedActions[0]?.expectedValueUsd >= minEv
+    (r) => r.rankedActions[0]?.expectedValueUsd >= minEv,
   );
-  
+
   // Log recommendations if enabled and interval has passed
   const LOG_INTERVAL_MS = 60_000; // Log every 60 seconds
-  if (cfg.profitabilityOptimizer.logRecommendations && 
-      Date.now() - state.lastProfitOptLog >= LOG_INTERVAL_MS &&
-      actionableRecs.length > 0) {
+  if (
+    cfg.profitabilityOptimizer.logRecommendations &&
+    Date.now() - state.lastProfitOptLog >= LOG_INTERVAL_MS &&
+    actionableRecs.length > 0
+  ) {
     state.lastProfitOptLog = Date.now();
-    
-    log(`📊 [ProfitOptimizer] Top ${Math.min(3, actionableRecs.length)} recommendations:`);
+
+    log(
+      `📊 [ProfitOptimizer] Top ${Math.min(3, actionableRecs.length)} recommendations:`,
+    );
     for (const rec of actionableRecs.slice(0, 3)) {
       const action = rec.rankedActions[0];
-      log(`   ${action.action}: EV=${$(action.expectedValueUsd)} | ${rec.summary.slice(0, 80)}`);
+      log(
+        `   ${action.action}: EV=${$(action.expectedValueUsd)} | ${rec.summary.slice(0, 80)}`,
+      );
     }
   }
-  
+
   return actionableRecs;
 }
 
@@ -2303,6 +2312,186 @@ const simpleLogger = {
 };
 
 /**
+ * TEST SELL RED POSITION - Diagnostic Feature
+ *
+ * When TEST_SELL_RED_POSITION=true, this function runs at startup to:
+ * 1. Fetch all positions
+ * 2. Find one that's slightly in the red (-1% to -15% P&L)
+ * 3. Execute a sell on it with verbose debug logging
+ *
+ * This helps verify that sells are working correctly in the bot.
+ * DELETE THIS FUNCTION once sell process is verified working.
+ *
+ * ENV: TEST_SELL_RED_POSITION=true
+ *
+ * SAFETY: This feature only runs if TEST_SELL_RED_POSITION=true AND:
+ * - In simulation mode: always allowed
+ * - In live mode: requires explicit LIVE_TRADING to be set
+ */
+
+// Test sell threshold constants
+const TEST_SELL_MIN_RED_PNL_PCT = -1; // Position must be at least 1% in the red
+const TEST_SELL_MAX_RED_PNL_PCT = -15; // Prefer positions not too deep in red (up to 15%)
+const TEST_SELL_MIN_POSITION_VALUE_USD = 1; // Minimum $1 position value
+
+async function executeTestSellRedPosition(
+  walletAddr: string,
+  cfg: Config,
+): Promise<void> {
+  log("🧪 [TestSell] ========================================");
+  log("🧪 [TestSell] STARTING TEST SELL RED POSITION DIAGNOSTIC");
+  log("🧪 [TestSell] ========================================");
+
+  // Safety warning for live trading
+  if (state.liveTrading) {
+    log("🧪 [TestSell] ⚠️ WARNING: LIVE TRADING IS ENABLED");
+    log("🧪 [TestSell] ⚠️ This will execute a REAL sell order");
+    log("🧪 [TestSell] ⚠️ Set ARB_DRY_RUN=true to simulate instead");
+  }
+
+  // Force refresh positions (bypass cache)
+  state.lastFetch = 0;
+  const positions = await fetchPositions(state.proxyAddress || walletAddr);
+
+  log(`🧪 [TestSell] Total positions fetched: ${positions.length}`);
+
+  if (positions.length === 0) {
+    log("🧪 [TestSell] ❌ No positions found - cannot test sell");
+    log("🧪 [TestSell] TIP: Make sure wallet has open positions");
+    return;
+  }
+
+  // Log all positions for debugging
+  log("🧪 [TestSell] All position P&L breakdown:");
+  for (const p of positions) {
+    const pnlEmoji = p.pnlPct >= 0 ? "🟢" : "🔴";
+    log(
+      `🧪 [TestSell]   ${pnlEmoji} ${p.outcome} | P&L: ${p.pnlPct.toFixed(2)}% | ` +
+        `Avg: ${$price(p.avgPrice)} | Cur: ${$price(p.curPrice)} | ` +
+        `Value: ${$(p.value)} | Size: ${p.size.toFixed(2)} | ` +
+        `Token: ${p.tokenId.slice(0, 12)}...`,
+    );
+  }
+
+  // Find positions slightly in the red: between -1% and -15%
+  // We want a small loss to minimize actual financial impact while testing
+  let candidatePositions = positions.filter(
+    (p) =>
+      p.pnlPct < TEST_SELL_MIN_RED_PNL_PCT &&
+      p.pnlPct > TEST_SELL_MAX_RED_PNL_PCT &&
+      p.value >= TEST_SELL_MIN_POSITION_VALUE_USD,
+  );
+
+  log(
+    `🧪 [TestSell] Positions slightly in red (${TEST_SELL_MIN_RED_PNL_PCT}% to ${TEST_SELL_MAX_RED_PNL_PCT}%): ${candidatePositions.length}`,
+  );
+
+  if (candidatePositions.length === 0) {
+    // Expand search to any red position with value >= $1
+    candidatePositions = positions.filter(
+      (p) => p.pnlPct < 0 && p.value >= TEST_SELL_MIN_POSITION_VALUE_USD,
+    );
+    log(
+      `🧪 [TestSell] Expanding search - any red positions (< 0%): ${candidatePositions.length}`,
+    );
+
+    if (candidatePositions.length === 0) {
+      log(
+        `🧪 [TestSell] ❌ No red positions found with value >= $${TEST_SELL_MIN_POSITION_VALUE_USD}`,
+      );
+      log(
+        "🧪 [TestSell] TIP: Wait for a position to go slightly negative, or manually create one",
+      );
+      return;
+    }
+  }
+
+  // Sort by P&L descending (least negative first) and pick the smallest loss
+  candidatePositions.sort((a, b) => b.pnlPct - a.pnlPct);
+  const target = candidatePositions[0];
+
+  log("🧪 [TestSell] ========================================");
+  log("🧪 [TestSell] SELECTED POSITION FOR TEST SELL:");
+  log(`🧪 [TestSell]   Outcome:    ${target.outcome}`);
+  log(`🧪 [TestSell]   P&L:        ${target.pnlPct.toFixed(2)}%`);
+  log(`🧪 [TestSell]   Avg Price:  ${$price(target.avgPrice)} (entry)`);
+  log(`🧪 [TestSell]   Cur Price:  ${$price(target.curPrice)} (current)`);
+  log(`🧪 [TestSell]   Gain/Loss:  ${target.gainCents.toFixed(1)}¢ per share`);
+  log(`🧪 [TestSell]   Size:       ${target.size.toFixed(4)} shares`);
+  log(`🧪 [TestSell]   Value:      ${$(target.value)}`);
+  log(`🧪 [TestSell]   TokenId:    ${target.tokenId}`);
+  log(`🧪 [TestSell]   ConditionId: ${target.conditionId}`);
+  log("🧪 [TestSell] ========================================");
+
+  // Check trading mode
+  log(
+    `🧪 [TestSell] Trading mode: ${state.liveTrading ? "🟢 LIVE" : "🔸 SIMULATED"}`,
+  );
+  log(
+    `🧪 [TestSell] Trade mode: ${cfg.tradeMode === "onchain" ? "⛓️ ON-CHAIN" : "📡 CLOB API"}`,
+  );
+
+  if (!state.liveTrading) {
+    log(
+      "🧪 [TestSell] ⚠️ SIMULATED MODE - sell will be logged but not executed",
+    );
+    log(
+      "🧪 [TestSell] Set LIVE_TRADING=I_UNDERSTAND_THE_RISKS for real execution",
+    );
+  }
+
+  // Execute the test sell
+  log("🧪 [TestSell] 🔄 EXECUTING TEST SELL...");
+  const startTime = Date.now();
+
+  try {
+    const success = await executeSell(
+      target.tokenId,
+      target.conditionId,
+      target.outcome,
+      target.value,
+      `TestSell (P&L: ${target.pnlPct.toFixed(2)}%)`,
+      cfg,
+      target.curPrice,
+    );
+
+    const elapsed = Date.now() - startTime;
+    log("🧪 [TestSell] ========================================");
+    log(
+      `🧪 [TestSell] TEST SELL RESULT: ${success ? "✅ SUCCESS" : "❌ FAILED"}`,
+    );
+    log(`🧪 [TestSell] Execution time: ${elapsed}ms`);
+    log("🧪 [TestSell] ========================================");
+
+    if (success) {
+      log("🧪 [TestSell] ✅ Sell order submitted successfully!");
+      log("🧪 [TestSell] Check your Polymarket positions to verify execution.");
+      // Mark as sold to prevent regular strategies from acting on it
+      state.sold.add(target.tokenId);
+    } else {
+      log("🧪 [TestSell] ❌ Sell order failed - check logs above for reason");
+      log("🧪 [TestSell] Common issues:");
+      log("🧪 [TestSell]   - Insufficient liquidity in orderbook");
+      log("🧪 [TestSell]   - Position too small to sell");
+      log("🧪 [TestSell]   - CLOB API issues or authentication problems");
+    }
+  } catch (e: any) {
+    const elapsed = Date.now() - startTime;
+    log("🧪 [TestSell] ========================================");
+    log(`🧪 [TestSell] ❌ TEST SELL THREW EXCEPTION`);
+    log(`🧪 [TestSell] Error: ${e.message}`);
+    log(`🧪 [TestSell] Execution time: ${elapsed}ms`);
+    if (e.stack) {
+      log(`🧪 [TestSell] Stack: ${e.stack.split("\n").slice(0, 3).join("\n")}`);
+    }
+    log("🧪 [TestSell] ========================================");
+  }
+
+  log("🧪 [TestSell] Diagnostic complete. Review logs above.");
+  log("🧪 [TestSell] Set TEST_SELL_RED_POSITION=false or remove to disable.");
+}
+
+/**
  * Execute a SELL order
  * Alert format: "SELL ✅ | {reason} | {outcome} {amount} @ {price}"
  */
@@ -2327,12 +2516,19 @@ async function executeSell(
   if (zeroPriceTime) {
     state.zeroPriceTokens.delete(tokenId);
   }
-  
+
   // Risk check: SELL orders NEVER blocked by position cap (they reduce positions)
   // Protective exits (StopLoss/AutoSell/ForceLiq/DisputeExit) bypass ALL risk checks
   const riskCheck = checkRiskLimits(cfg, true); // skipPositionCap=true for SELL orders
-  const protectiveExitTypes = ["StopLoss", "AutoSell", "ForceLiq", "DisputeExit"];
-  const isProtectiveExit = protectiveExitTypes.some((type) => reason.includes(type));
+  const protectiveExitTypes = [
+    "StopLoss",
+    "AutoSell",
+    "ForceLiq",
+    "DisputeExit",
+  ];
+  const isProtectiveExit = protectiveExitTypes.some((type) =>
+    reason.includes(type),
+  );
   // Also ignore position cap failures for ALL SELL orders (defensive check)
   const isPositionCapFailure = riskCheck.reason?.includes("Position cap");
   if (!riskCheck.allowed && !isProtectiveExit && !isPositionCapFailure) {
@@ -2525,11 +2721,13 @@ async function executeBuy(
     log(`⚠️ BUY blocked | ${riskCheck.reason}`);
     return false;
   }
-  
+
   // Hard cap: even protective hedges cannot exceed maxOpenPositions
   // This ensures position count never goes unbounded
   if (state.positions.length >= cfg.risk.maxOpenPositions) {
-    log(`⚠️ BUY blocked | Hard position cap: ${state.positions.length} >= ${cfg.risk.maxOpenPositions} (absolute max)`);
+    log(
+      `⚠️ BUY blocked | Hard position cap: ${state.positions.length} >= ${cfg.risk.maxOpenPositions} (absolute max)`,
+    );
     return false;
   }
 
@@ -2947,7 +3145,9 @@ async function redeem(walletAddr: string, cfg: Config) {
           state.wallet,
         ).redeemPositions(USDC_ADDRESS, ZeroHash, pos.conditionId, INDEX_SETS);
       }
-      log(`⏳ Redeem: ${tx.hash.slice(0, 10)}... | $${pos.value.toFixed(2)} (confirming...)`);
+      log(
+        `⏳ Redeem: ${tx.hash.slice(0, 10)}... | $${pos.value.toFixed(2)} (confirming...)`,
+      );
       await tx.wait();
       log(`✅ Redeem confirmed: ${tx.hash.slice(0, 10)}...`);
       // Send Telegram alert for successful redemption after confirmation
@@ -3645,7 +3845,7 @@ async function cycle(walletAddr: string, cfg: Config) {
       }
       continue;
     }
-    
+
     // 8. PROFITABILITY-GUIDED: If no fixed rule matched, check optimizer recommendations
     // This is a final optimization pass that uses EV analysis to find profitable opportunities
     // that don't fit the traditional rule-based patterns
@@ -3654,52 +3854,107 @@ async function cycle(walletAddr: string, cfg: Config) {
       if (profitRec && profitRec.recommendedAction !== "HOLD") {
         const bestAction = profitRec.rankedActions[0];
         const minEv = cfg.profitabilityOptimizer.minExpectedValueUsd;
-        
+
         // Only act if EV exceeds minimum threshold
         if (bestAction.expectedValueUsd >= minEv) {
-          const recSize = Math.min(profitRec.recommendedSizeUsd, getAvailableBalance(cfg));
-          
-          if (recSize >= 5) { // Minimum trade size
+          const recSize = Math.min(
+            profitRec.recommendedSizeUsd,
+            getAvailableBalance(cfg),
+          );
+
+          if (recSize >= 5) {
+            // Minimum trade size
             switch (profitRec.recommendedAction) {
               case "STACK":
                 // Optimizer suggests stacking - use optimizer's recommended size
                 if (!state.stacked.has(p.tokenId)) {
-                  log(`📊 [ProfitOptimizer] Stack opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(recSize)}`);
-                  if (await executeBuy(p.tokenId, p.conditionId, p.outcome, recSize, `OptStack (EV:${$(bestAction.expectedValueUsd)})`, cfg, false, p.curPrice)) {
+                  log(
+                    `📊 [ProfitOptimizer] Stack opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(recSize)}`,
+                  );
+                  if (
+                    await executeBuy(
+                      p.tokenId,
+                      p.conditionId,
+                      p.outcome,
+                      recSize,
+                      `OptStack (EV:${$(bestAction.expectedValueUsd)})`,
+                      cfg,
+                      false,
+                      p.curPrice,
+                    )
+                  ) {
                     state.stacked.add(p.tokenId);
                     cycleActed.add(p.tokenId);
                   }
                 }
                 break;
-                
+
               case "HEDGE_DOWN":
                 // Optimizer suggests hedging loss - may be more aggressive than fixed rules
                 if (!state.hedged.has(p.tokenId)) {
                   const opp = p.outcome === "YES" ? "NO" : "YES";
-                  log(`📊 [ProfitOptimizer] Hedge opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${opp} ${$(recSize)}`);
-                  if (await executeBuy(p.tokenId, p.conditionId, opp, recSize, `OptHedge (EV:${$(bestAction.expectedValueUsd)})`, cfg, true, p.curPrice)) {
+                  log(
+                    `📊 [ProfitOptimizer] Hedge opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${opp} ${$(recSize)}`,
+                  );
+                  if (
+                    await executeBuy(
+                      p.tokenId,
+                      p.conditionId,
+                      opp,
+                      recSize,
+                      `OptHedge (EV:${$(bestAction.expectedValueUsd)})`,
+                      cfg,
+                      true,
+                      p.curPrice,
+                    )
+                  ) {
                     state.hedged.add(p.tokenId);
                     cycleActed.add(p.tokenId);
                   }
                 }
                 break;
-                
+
               case "HEDGE_UP":
                 // Optimizer suggests buying more at high probability
                 if (!state.stacked.has(p.tokenId)) {
-                  log(`📊 [ProfitOptimizer] Hedge-up opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(recSize)}`);
-                  if (await executeBuy(p.tokenId, p.conditionId, p.outcome, recSize, `OptHedgeUp (EV:${$(bestAction.expectedValueUsd)})`, cfg, false, p.curPrice)) {
+                  log(
+                    `📊 [ProfitOptimizer] Hedge-up opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(recSize)}`,
+                  );
+                  if (
+                    await executeBuy(
+                      p.tokenId,
+                      p.conditionId,
+                      p.outcome,
+                      recSize,
+                      `OptHedgeUp (EV:${$(bestAction.expectedValueUsd)})`,
+                      cfg,
+                      false,
+                      p.curPrice,
+                    )
+                  ) {
                     state.stacked.add(p.tokenId);
                     cycleActed.add(p.tokenId);
                   }
                 }
                 break;
-                
+
               case "SELL":
                 // Optimizer suggests selling - lock in value
                 if (!state.sold.has(p.tokenId) && p.value >= 5) {
-                  log(`📊 [ProfitOptimizer] Sell opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(p.value)}`);
-                  if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, `OptSell (EV:${$(bestAction.expectedValueUsd)})`, cfg, p.curPrice)) {
+                  log(
+                    `📊 [ProfitOptimizer] Sell opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(p.value)}`,
+                  );
+                  if (
+                    await executeSell(
+                      p.tokenId,
+                      p.conditionId,
+                      p.outcome,
+                      p.value,
+                      `OptSell (EV:${$(bestAction.expectedValueUsd)})`,
+                      cfg,
+                      p.curPrice,
+                    )
+                  ) {
                     state.sold.add(p.tokenId);
                     cycleActed.add(p.tokenId);
                   }
@@ -3950,13 +4205,13 @@ export function loadConfig() {
     // because the preset default hedgeBuffer=500 is way too high
     const autoHedgeBuffer = Math.max(
       HEDGE_BUFFER_MIN_SLOTS,
-      Math.floor(cfg.risk.maxOpenPositions * HEDGE_BUFFER_AUTO_SCALE_PCT)
+      Math.floor(cfg.risk.maxOpenPositions * HEDGE_BUFFER_AUTO_SCALE_PCT),
     );
     if (autoHedgeBuffer !== cfg.risk.hedgeBuffer) {
       console.log(
         `⚙️ Auto-scaling HEDGE_BUFFER: ${cfg.risk.hedgeBuffer} → ${autoHedgeBuffer} ` +
           `(${HEDGE_BUFFER_AUTO_SCALE_PCT * 100}% of MAX_OPEN_POSITIONS=${cfg.risk.maxOpenPositions}). ` +
-          `Set HEDGE_BUFFER env var to override.`
+          `Set HEDGE_BUFFER env var to override.`,
       );
       cfg.risk.hedgeBuffer = autoHedgeBuffer;
     }
@@ -4076,10 +4331,22 @@ export function loadConfig() {
   // PROFITABILITY_OPTIMIZER_MIN_EV_USD: Minimum expected value to recommend an action
   // PROFITABILITY_OPTIMIZER_RISK_TOLERANCE: Risk tolerance factor (0-1, higher = more aggressive)
   // PROFITABILITY_OPTIMIZER_LOG_RECOMMENDATIONS: Log optimizer recommendations
-  if (envBool("PROFITABILITY_OPTIMIZER_ENABLED") !== undefined) cfg.profitabilityOptimizer.enabled = envBool("PROFITABILITY_OPTIMIZER_ENABLED")!;
-  if (envNum("PROFITABILITY_OPTIMIZER_MIN_EV_USD") !== undefined) cfg.profitabilityOptimizer.minExpectedValueUsd = envNum("PROFITABILITY_OPTIMIZER_MIN_EV_USD")!;
-  if (envNum("PROFITABILITY_OPTIMIZER_RISK_TOLERANCE") !== undefined) cfg.profitabilityOptimizer.riskTolerance = envNum("PROFITABILITY_OPTIMIZER_RISK_TOLERANCE")!;
-  if (envBool("PROFITABILITY_OPTIMIZER_LOG_RECOMMENDATIONS") !== undefined) cfg.profitabilityOptimizer.logRecommendations = envBool("PROFITABILITY_OPTIMIZER_LOG_RECOMMENDATIONS")!;
+  if (envBool("PROFITABILITY_OPTIMIZER_ENABLED") !== undefined)
+    cfg.profitabilityOptimizer.enabled = envBool(
+      "PROFITABILITY_OPTIMIZER_ENABLED",
+    )!;
+  if (envNum("PROFITABILITY_OPTIMIZER_MIN_EV_USD") !== undefined)
+    cfg.profitabilityOptimizer.minExpectedValueUsd = envNum(
+      "PROFITABILITY_OPTIMIZER_MIN_EV_USD",
+    )!;
+  if (envNum("PROFITABILITY_OPTIMIZER_RISK_TOLERANCE") !== undefined)
+    cfg.profitabilityOptimizer.riskTolerance = envNum(
+      "PROFITABILITY_OPTIMIZER_RISK_TOLERANCE",
+    )!;
+  if (envBool("PROFITABILITY_OPTIMIZER_LOG_RECOMMENDATIONS") !== undefined)
+    cfg.profitabilityOptimizer.logRecommendations = envBool(
+      "PROFITABILITY_OPTIMIZER_LOG_RECOMMENDATIONS",
+    )!;
 
   // ========== LIVE TRADING ==========
   // V1: ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS
@@ -4274,10 +4541,13 @@ export async function startV2() {
   if (settings.config.profitabilityOptimizer.enabled) {
     state.profitabilityOptimizer = createProfitabilityOptimizer({
       enabled: true,
-      minExpectedValueUsd: settings.config.profitabilityOptimizer.minExpectedValueUsd,
+      minExpectedValueUsd:
+        settings.config.profitabilityOptimizer.minExpectedValueUsd,
       riskTolerance: settings.config.profitabilityOptimizer.riskTolerance,
     });
-    log(`📊 Profitability optimizer enabled (minEV: $${settings.config.profitabilityOptimizer.minExpectedValueUsd}, risk: ${settings.config.profitabilityOptimizer.riskTolerance})`);
+    log(
+      `📊 Profitability optimizer enabled (minEV: $${settings.config.profitabilityOptimizer.minExpectedValueUsd}, risk: ${settings.config.profitabilityOptimizer.riskTolerance})`,
+    );
   }
 
   log(`Preset: ${settings.preset}`);
@@ -4310,6 +4580,17 @@ export async function startV2() {
   await alertStatus(
     `Bot Started | ${settings.preset} | ${state.liveTrading ? "LIVE" : "SIM"} | ${$(state.balance)}`,
   );
+
+  // ============ TEST SELL RED POSITION (DEBUG FEATURE) ============
+  // When TEST_SELL_RED_POSITION=true, find a position slightly in the red
+  // and sell it at startup to verify sell flow with debug logging.
+  // This is a temporary diagnostic feature - delete once sell process is verified.
+  if (process.env.TEST_SELL_RED_POSITION === "true") {
+    log(
+      "🧪 [TestSell] TEST_SELL_RED_POSITION enabled - looking for a red position to sell...",
+    );
+    await executeTestSellRedPosition(addr, settings.config);
+  }
 
   // ============ MAIN LOOP WITH IN-FLIGHT GUARD ============
   let cycleRunning = false;

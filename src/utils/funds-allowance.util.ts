@@ -740,7 +740,11 @@ const fetchApprovedForAll = async (params: {
   const cacheKey = `approved:${params.owner}`;
   const cached = approvalForAllCache.get(cacheKey);
   const now = Date.now();
-  if (!params.forceRefresh && cached && now - cached.fetchedAt < APPROVAL_FOR_ALL_CACHE_TTL_MS) {
+  if (
+    !params.forceRefresh &&
+    cached &&
+    now - cached.fetchedAt < APPROVAL_FOR_ALL_CACHE_TTL_MS
+  ) {
     return cached.approved;
   }
   const wallet = (params.client as { wallet?: Wallet }).wallet;
@@ -784,12 +788,12 @@ export const checkFundsAndAllowance = async (
   // FIX (Jan 2026): SELL orders are the INVERSE of BUY orders.
   // BUY: Spend collateral (USDC) → Receive conditional tokens
   // SELL: Spend conditional tokens → Receive collateral (USDC)
-  // 
+  //
   // For SELL orders, we do NOT need collateral balance/allowance checks.
   // We only need ERC1155 approval (isApprovedForAll) to transfer our tokens.
   // Skip directly to the ERC1155 approval check for SELL orders.
   const isSellOrder = params.side === "SELL";
-  
+
   if (isSellOrder) {
     // For SELL orders, only check ERC1155 approval - skip collateral checks entirely
     const approvedForAll = await fetchApprovedForAll({
@@ -797,7 +801,7 @@ export const checkFundsAndAllowance = async (
       owner: tradingAddress,
       logger: params.logger,
     });
-    
+
     if (!approvedForAll) {
       // Try auto-approve if enabled
       if (params.autoApprove) {
@@ -845,12 +849,14 @@ export const checkFundsAndAllowance = async (
           }
         }
       }
-      
-      if (!await fetchApprovedForAll({
-        client: params.client,
-        owner: tradingAddress,
-        logger: params.logger,
-      })) {
+
+      if (
+        !(await fetchApprovedForAll({
+          client: params.client,
+          owner: tradingAddress,
+          logger: params.logger,
+        }))
+      ) {
         params.logger.warn(
           `[CLOB] SELL order blocked: ERC1155 approval not set. Run approvals first.`,
         );
@@ -863,7 +869,7 @@ export const checkFundsAndAllowance = async (
         };
       }
     }
-    
+
     // SELL order approved - no collateral checks needed
     return {
       ok: true,

@@ -33,7 +33,13 @@ import type { ReservePlan, PositionReserve } from "../risk";
 /**
  * Possible trading actions
  */
-export type TradingAction = "OPEN_NEW" | "STACK" | "HEDGE_DOWN" | "HEDGE_UP" | "HOLD" | "SELL";
+export type TradingAction =
+  | "OPEN_NEW"
+  | "STACK"
+  | "HEDGE_DOWN"
+  | "HEDGE_UP"
+  | "HOLD"
+  | "SELL";
 
 /**
  * Position data needed for profitability analysis
@@ -187,7 +193,7 @@ export interface ProfitabilityOptimizerConfig {
  */
 export const DEFAULT_OPTIMIZER_CONFIG: ProfitabilityOptimizerConfig = {
   enabled: true,
-  minExpectedValueUsd: 0.50,
+  minExpectedValueUsd: 0.5,
   minConfidence: 0.5,
   riskTolerance: 0.5,
   maxPortfolioConcentration: 0.15,
@@ -321,9 +327,7 @@ export class ProfitabilityOptimizer {
 
     // Calculate implied win probability
     const winProbability =
-      opportunity.outcome === "YES"
-        ? opportunity.price
-        : 1 - opportunity.price;
+      opportunity.outcome === "YES" ? opportunity.price : 1 - opportunity.price;
 
     // 1. Analyze OPEN_NEW action
     analyses.push(
@@ -453,7 +457,10 @@ export class ProfitabilityOptimizer {
       winProbability * maxGainUsd - (1 - winProbability) * maxLossUsd;
 
     // Confidence is higher when probability is extreme (near 0 or 1)
-    const confidence = this.computeConfidence(winProbability, position.spreadBps);
+    const confidence = this.computeConfidence(
+      winProbability,
+      position.spreadBps,
+    );
 
     return {
       action: "HOLD",
@@ -478,7 +485,8 @@ export class ProfitabilityOptimizer {
   ): ActionAnalysis {
     // Proposed stack size - limited by available cash and concentration
     const maxStackByConcentration =
-      portfolioValueUsd * this.config.maxPortfolioConcentration - position.value;
+      portfolioValueUsd * this.config.maxPortfolioConcentration -
+      position.value;
     const proposedStackUsd = Math.min(
       availableCashUsd,
       Math.max(0, maxStackByConcentration),
@@ -512,11 +520,16 @@ export class ProfitabilityOptimizer {
     // Apply spread penalty (spreadBps is in basis points, i.e. 1/10,000)
     // Base cost is (spreadBps / 10000) * size, multiplied by configurable penalty factor
     // Default spreadPenaltyPerBps=0.001 makes this 0.1% of base spread cost
-    const baseSpreadCost = ((position.spreadBps ?? 0) / 10000) * proposedStackUsd;
-    const spreadPenalty = baseSpreadCost * (this.config.spreadPenaltyPerBps * 1000);
+    const baseSpreadCost =
+      ((position.spreadBps ?? 0) / 10000) * proposedStackUsd;
+    const spreadPenalty =
+      baseSpreadCost * (this.config.spreadPenaltyPerBps * 1000);
     const adjustedEv = expectedValueUsd - spreadPenalty;
 
-    const confidence = this.computeConfidence(winProbability, position.spreadBps);
+    const confidence = this.computeConfidence(
+      winProbability,
+      position.spreadBps,
+    );
 
     return {
       action: "STACK",
@@ -578,11 +591,15 @@ export class ProfitabilityOptimizer {
       oppositeWinProb * maxGainUsd - (1 - oppositeWinProb) * maxLossUsd;
 
     // Apply hedging urgency factor based on loss severity
-    const urgencyMultiplier = 1 + (lossPct / 100) * this.config.hedgingUrgencyFactor;
+    const urgencyMultiplier =
+      1 + (lossPct / 100) * this.config.hedgingUrgencyFactor;
     const adjustedEv = baseEv * urgencyMultiplier;
 
     // Higher confidence when position is significantly down
-    const baseConfidence = this.computeConfidence(oppositeWinProb, position.spreadBps);
+    const baseConfidence = this.computeConfidence(
+      oppositeWinProb,
+      position.spreadBps,
+    );
     const confidence = Math.min(1, baseConfidence + lossPct / 200);
 
     return {
@@ -610,7 +627,8 @@ export class ProfitabilityOptimizer {
     // Similar to stacking but specifically for high-confidence positions
 
     const maxHedgeUpByConcentration =
-      portfolioValueUsd * this.config.maxPortfolioConcentration - position.value;
+      portfolioValueUsd * this.config.maxPortfolioConcentration -
+      position.value;
     const proposedHedgeUpUsd = Math.min(
       availableCashUsd,
       Math.max(0, maxHedgeUpByConcentration),
@@ -625,7 +643,8 @@ export class ProfitabilityOptimizer {
         maxLossUsd: 0,
         maxGainUsd: 0,
         winProbability,
-        reason: "Cannot hedge up: insufficient funds, concentration limit, or probability too low",
+        reason:
+          "Cannot hedge up: insufficient funds, concentration limit, or probability too low",
       };
     }
 
@@ -742,8 +761,10 @@ export class ProfitabilityOptimizer {
 
     // Apply spread penalty (spreadBps is in basis points, i.e. 1/10,000)
     // Base cost is (spreadBps / 10000) * size, multiplied by configurable penalty factor
-    const baseSpreadCost = ((opportunity.spreadBps ?? 0) / 10000) * proposedSizeUsd;
-    const spreadPenalty = baseSpreadCost * (this.config.spreadPenaltyPerBps * 1000);
+    const baseSpreadCost =
+      ((opportunity.spreadBps ?? 0) / 10000) * proposedSizeUsd;
+    const spreadPenalty =
+      baseSpreadCost * (this.config.spreadPenaltyPerBps * 1000);
     const expectedValueUsd = baseEv - spreadPenalty;
 
     const confidence = this.computeConfidence(
@@ -770,13 +791,19 @@ export class ProfitabilityOptimizer {
   /**
    * Compute confidence score based on probability and spread
    */
-  private computeConfidence(winProbability: number, spreadBps?: number): number {
+  private computeConfidence(
+    winProbability: number,
+    spreadBps?: number,
+  ): number {
     // Base confidence from probability extremity
     // Closer to 0.5 = less confident, closer to 0 or 1 = more confident
     const probConfidence = 1 - 2 * Math.abs(winProbability - 0.5);
 
     // Spread penalty - capped at configurable max to handle illiquid markets
-    const spreadPenalty = Math.min(this.config.maxSpreadPenalty, (spreadBps ?? 0) / 1000);
+    const spreadPenalty = Math.min(
+      this.config.maxSpreadPenalty,
+      (spreadBps ?? 0) / 1000,
+    );
 
     return Math.max(0.1, probConfidence - spreadPenalty);
   }
@@ -795,7 +822,8 @@ export class ProfitabilityOptimizer {
 
     // If we have a reserve plan, respect available cash minus reserves
     if (reservePlan && reservePlan.mode === "RISK_OFF") {
-      const effectiveAvailable = reservePlan.availableCash - reservePlan.shortfall;
+      const effectiveAvailable =
+        reservePlan.availableCash - reservePlan.shortfall;
       baseSize = Math.min(baseSize, Math.max(0, effectiveAvailable));
     }
 
@@ -803,7 +831,8 @@ export class ProfitabilityOptimizer {
     // Bet size = (p * b - q) / b where p = win prob, q = 1-p, b = odds
     // Simplified: bet fraction of portfolio proportional to edge
     // For riskless actions (HOLD/SELL), Kelly doesn't apply
-    const isRisklessAction = action.action === "HOLD" || action.action === "SELL";
+    const isRisklessAction =
+      action.action === "HOLD" || action.action === "SELL";
     let edge = 0;
     if (!isRisklessAction && action.maxLossUsd > 0) {
       edge = action.riskAdjustedEv / action.maxLossUsd;

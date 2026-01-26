@@ -183,12 +183,7 @@ describe("analyzeNewOpportunity", () => {
       sizeUsd: 25,
     });
 
-    const result = optimizer.analyzeNewOpportunity(
-      opportunity,
-      100,
-      1000,
-      [],
-    );
+    const result = optimizer.analyzeNewOpportunity(opportunity, 100, 1000, []);
 
     // Should recommend OPEN_NEW if EV is positive
     assert.ok(result.rankedActions.length >= 1);
@@ -203,12 +198,7 @@ describe("analyzeNewOpportunity", () => {
     const optimizer = new ProfitabilityOptimizer();
     const opportunity = createMockOpportunity();
 
-    const result = optimizer.analyzeNewOpportunity(
-      opportunity,
-      100,
-      1000,
-      [],
-    );
+    const result = optimizer.analyzeNewOpportunity(opportunity, 100, 1000, []);
 
     const holdAction = result.rankedActions.find((a) => a.action === "HOLD");
     assert.ok(holdAction);
@@ -433,10 +423,13 @@ describe("Expected Value Calculations", () => {
       // Stacking bonus multiplies the base EV, so if base EV is positive, bonus version is higher
       // If base EV is negative, bonus version is also more negative (worse)
       // The test should verify the bonus is being applied correctly
-      const bonusApplied = Math.abs(stackWithBonus.expectedValueUsd) >= 
-                           Math.abs(stackNoBonus.expectedValueUsd) * 0.99; // Allow small floating point variance
-      assert.ok(bonusApplied || stackNoBonus.expectedValueUsd <= 0, 
-        "Stacking bonus should affect EV calculation");
+      const bonusApplied =
+        Math.abs(stackWithBonus.expectedValueUsd) >=
+        Math.abs(stackNoBonus.expectedValueUsd) * 0.99; // Allow small floating point variance
+      assert.ok(
+        bonusApplied || stackNoBonus.expectedValueUsd <= 0,
+        "Stacking bonus should affect EV calculation",
+      );
     }
   });
 
@@ -474,8 +467,10 @@ describe("Expected Value Calculations", () => {
     // Larger loss gets higher urgency multiplier in the EV calculation
     // Test that the urgency mechanism is working by checking the reason string
     if (hedgeLarge.riskAdjustedEv > -Infinity) {
-      assert.ok(hedgeLarge.reason.includes("urgency"), 
-        "Hedge down should mention urgency factor");
+      assert.ok(
+        hedgeLarge.reason.includes("urgency"),
+        "Hedge down should mention urgency factor",
+      );
     }
   });
 });
@@ -553,12 +548,16 @@ describe("Confidence Calculations", () => {
     // The optimizer uses different confidence calculations for different actions
     // At 95% probability, HEDGE_UP is likely recommended with high confidence
     // At 50% probability, confidence is lower due to uncertainty
-    
+
     // Check that both results have valid confidence scores
-    assert.ok(highResult.confidence >= 0 && highResult.confidence <= 1, 
-      "High prob confidence should be valid");
-    assert.ok(midResult.confidence >= 0 && midResult.confidence <= 1, 
-      "Mid prob confidence should be valid");
+    assert.ok(
+      highResult.confidence >= 0 && highResult.confidence <= 1,
+      "High prob confidence should be valid",
+    );
+    assert.ok(
+      midResult.confidence >= 0 && midResult.confidence <= 1,
+      "Mid prob confidence should be valid",
+    );
   });
 
   test("wide spreads reduce confidence", () => {
@@ -593,18 +592,28 @@ describe("Confidence Calculations", () => {
       spreadBps: 1000, // 10% spread - very wide
     });
 
-    const defaultResult = defaultOptimizer.analyzePosition(veryWideSpread, 100, 1000);
-    const illiquidResult = illiquidOptimizer.analyzePosition(veryWideSpread, 100, 1000);
+    const defaultResult = defaultOptimizer.analyzePosition(
+      veryWideSpread,
+      100,
+      1000,
+    );
+    const illiquidResult = illiquidOptimizer.analyzePosition(
+      veryWideSpread,
+      100,
+      1000,
+    );
 
     // Both should produce valid results
     assert.ok(defaultResult.confidence >= 0 && defaultResult.confidence <= 1);
     assert.ok(illiquidResult.confidence >= 0 && illiquidResult.confidence <= 1);
-    
+
     // The illiquid optimizer allows higher spread penalty, so confidence might be lower
     // (or same if capped at probability-based minimum)
-    assert.ok(illiquidResult.confidence <= defaultResult.confidence || 
-              illiquidResult.confidence === defaultResult.confidence,
-      "Illiquid optimizer should have equal or lower confidence");
+    assert.ok(
+      illiquidResult.confidence <= defaultResult.confidence ||
+        illiquidResult.confidence === defaultResult.confidence,
+      "Illiquid optimizer should have equal or lower confidence",
+    );
   });
 });
 
