@@ -315,6 +315,7 @@ async function runCopyTrading(): Promise<void> {
 
   // Debug: Log trade processing info at debug level
   let filtered = { sell: 0, lowPrice: 0, tooSmall: 0 };
+  let processed = 0;
 
   for (const t of trades) {
     if (t.side !== "BUY") {
@@ -337,6 +338,7 @@ async function runCopyTrading(): Promise<void> {
       continue;
     }
 
+    processed++;
     await buy(
       t.tokenId,
       t.outcome as "YES" | "NO",
@@ -346,9 +348,14 @@ async function runCopyTrading(): Promise<void> {
     );
   }
 
-  // Log if trades were fetched but all filtered out
-  if (trades.length > 0 && filtered.sell + filtered.lowPrice + filtered.tooSmall === trades.length) {
-    logger.info(`Copy: ${trades.length} trades filtered (${filtered.sell} sell, ${filtered.lowPrice} low price, ${filtered.tooSmall} too small)`);
+  // Log copy trading activity for debugging
+  if (trades.length > 0) {
+    const totalFiltered = filtered.sell + filtered.lowPrice + filtered.tooSmall;
+    if (totalFiltered === trades.length) {
+      logger.info(`Copy: ${trades.length} trades filtered (${filtered.sell} sell, ${filtered.lowPrice} low price, ${filtered.tooSmall} too small)`);
+    } else if (processed > 0) {
+      logger.info(`Copy: ${processed}/${trades.length} trades processed (${totalFiltered} filtered)`);
+    }
   }
 }
 
@@ -500,7 +507,7 @@ async function main(): Promise<void> {
   const effectiveAddr = auth.effectiveAddress ?? auth.address ?? "";
   logger.info(`Signer: ${signerAddr.slice(0, 10)}...`);
   logger.info(`Effective (trading/balance): ${effectiveAddr.slice(0, 10)}...`);
-  
+
   if (signerAddr.toLowerCase() !== effectiveAddr.toLowerCase()) {
     logger.warn(`⚠️ Using proxy/funder mode: signer differs from trading address`);
     logger.warn(`Ensure API credentials were derived with matching signature type configuration`);
