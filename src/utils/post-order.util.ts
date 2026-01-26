@@ -733,9 +733,18 @@ async function postOrderClobInner(
   const levels = isBuy ? orderBook.asks : orderBook.bids;
 
   if (!levels || levels.length === 0) {
-    throw new Error(
-      `No ${isBuy ? "asks" : "bids"} available for token ${tokenId} - market may be closed or have no liquidity`,
+    // Return graceful skip instead of throwing - allows callers to handle no-liquidity gracefully
+    // This commonly happens when:
+    // - Market is closed/resolved
+    // - Orderbook liquidity disappeared between check and execution (race condition)
+    // - Market has temporarily no liquidity on the required side
+    logger.warn(
+      `[CLOB] No ${isBuy ? "asks" : "bids"} available for token ${tokenId.slice(0, 16)}... - market may be closed or have no liquidity`,
     );
+    return {
+      status: "skipped",
+      reason: "NO_LIQUIDITY",
+    };
   }
 
   // Extract best prices using the safe extraction function
