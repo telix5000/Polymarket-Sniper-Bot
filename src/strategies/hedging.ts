@@ -349,6 +349,10 @@ export class HedgingStrategy {
     const wallet = (this.client as { wallet?: Wallet }).wallet;
     if (wallet?.address) {
       this.walletAddress = wallet.address;
+    } else {
+      this.logger.warn(
+        "[Hedging] Wallet not available - API-based hedge up detection will be disabled",
+      );
     }
 
     const hedgeUpStatus =
@@ -1521,8 +1525,8 @@ export class HedgingStrategy {
           return { action: "skipped", reason: "already_hedged_up_api" };
         }
       } catch (err) {
-        // On API error, fall through to in-memory check and proceed
-        // This prevents API failures from blocking hedge up entirely
+        // On API error, proceed with hedge up attempt (fail open).
+        // This prevents API failures from blocking hedge up entirely.
         this.logger.warn(
           `[Hedging] ⚠️ Failed to check hedge up history via API: ${err instanceof Error ? err.message : String(err)}`,
         );
