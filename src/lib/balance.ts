@@ -1,18 +1,12 @@
 /**
- * V2 Balance Utilities
- * Fetch wallet balances
+ * V2 Balance - Wallet balance utilities
  */
 
 import { Contract, type Wallet } from "ethers";
-import { POLYGON } from "./constants";
-
-const ERC20_ABI = [
-  "function balanceOf(address owner) view returns (uint256)",
-  "function decimals() view returns (uint8)",
-];
+import { POLYGON, ERC20_ABI } from "./constants";
 
 /**
- * Get USDC balance for a wallet
+ * Get USDC balance
  */
 export async function getUsdcBalance(wallet: Wallet): Promise<number> {
   try {
@@ -25,12 +19,12 @@ export async function getUsdcBalance(wallet: Wallet): Promise<number> {
 }
 
 /**
- * Get POL (native token) balance for a wallet
+ * Get POL (native token) balance
  */
 export async function getPolBalance(wallet: Wallet): Promise<number> {
   try {
     const balance = await wallet.provider?.getBalance(wallet.address);
-    return balance ? Number(balance) / 10 ** 18 : 0;
+    return balance ? Number(balance) / 1e18 : 0;
   } catch {
     return 0;
   }

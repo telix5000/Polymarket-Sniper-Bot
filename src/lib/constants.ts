@@ -1,37 +1,58 @@
 /**
- * V2 Constants
- * Self-contained constants for the V2 trading bot
+ * V2 Constants - All configuration constants
  */
 
-// Polymarket API endpoints
+// API Endpoints
 export const POLYMARKET_API = {
-  DATA_API: "https://data-api.polymarket.com",
-  CLOB_API: "https://clob.polymarket.com",
-  GAMMA_API: "https://gamma-api.polymarket.com",
+  CLOB: "https://clob.polymarket.com",
+  DATA: "https://data-api.polymarket.com",
+  GAMMA: "https://gamma-api.polymarket.com",
+  STRAPI: "https://strapi-matic.poly.market",
 } as const;
 
-// Polygon network constants
+// Polygon Network
 export const POLYGON = {
   CHAIN_ID: 137,
   USDC_ADDRESS: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
   USDC_DECIMALS: 6,
   CTF_ADDRESS: "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
   CTF_EXCHANGE: "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",
+  NEG_RISK_CTF_EXCHANGE: "0xC5d563A36AE78145C45a50134d48A1215220f80a",
+  NEG_RISK_ADAPTER: "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296",
 } as const;
 
-// Order execution settings
-export const ORDER_SETTINGS = {
+// Order Settings
+export const ORDER = {
   MAX_RETRIES: 3,
-  MIN_REMAINING_USD: 0.01,
+  MIN_ORDER_USD: 0.01,
+  MIN_TRADEABLE_PRICE: 0.001,
+  GLOBAL_MIN_BUY_PRICE: 0.10,
   DEFAULT_SLIPPAGE_PCT: 3,
-  MIN_TRADEABLE_PRICE: 0.001, // 0.1 cents - absolute floor
-  GLOBAL_MIN_BUY_PRICE: 0.10, // 10 cents - avoid loser positions
+  COOLDOWN_MS: 1000,
+  MARKET_COOLDOWN_MS: 5000,
 } as const;
 
-// Timing constants
+// Timing
 export const TIMING = {
-  DEFAULT_CYCLE_MS: 5000,
-  POSITION_CACHE_TTL_MS: 30000,
-  ORDER_COOLDOWN_MS: 1000,
-  TELEGRAM_SUMMARY_INTERVAL_MS: 300000, // 5 minutes
+  CYCLE_MS: 5000,
+  POSITION_CACHE_MS: 30000,
+  SUMMARY_INTERVAL_MS: 300000,
+  REDEEM_INTERVAL_MS: 600000,
 } as const;
+
+// ERC20 ABI (minimal)
+export const ERC20_ABI = [
+  "function balanceOf(address) view returns (uint256)",
+  "function decimals() view returns (uint8)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)",
+] as const;
+
+// CTF ABI (minimal for redemption)
+export const CTF_ABI = [
+  "function balanceOf(address account, uint256 id) view returns (uint256)",
+  "function balanceOfBatch(address[] accounts, uint256[] ids) view returns (uint256[])",
+  "function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets)",
+  "function payoutDenominator(bytes32 conditionId) view returns (uint256)",
+  "function payoutNumerators(bytes32 conditionId, uint256 index) view returns (uint256)",
+] as const;

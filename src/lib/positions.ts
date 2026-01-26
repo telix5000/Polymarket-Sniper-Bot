@@ -1,56 +1,31 @@
 /**
- * V2 Positions API
- * Fetch and manage positions from Polymarket Data API
+ * V2 Positions - Fetch positions from Polymarket API
  */
 
 import axios from "axios";
 import { POLYMARKET_API, TIMING } from "./constants";
+import type { Position } from "./types";
 
-export interface Position {
-  tokenId: string;
-  conditionId: string;
-  outcome: string;
-  size: number;
-  avgPrice: number;
-  curPrice: number;
-  pnlPct: number;
-  pnlUsd: number;
-  gainCents: number;
-  value: number;
-  entryTime?: number;
-}
-
-// Cache for positions
-let positionsCache: Position[] = [];
+let cache: Position[] = [];
 let lastFetch = 0;
 
 /**
- * Fetch positions for a wallet address
+ * Fetch positions for wallet
  */
-export async function getPositions(
-  walletAddress: string,
-  forceRefresh = false,
-): Promise<Position[]> {
+export async function getPositions(address: string, force = false): Promise<Position[]> {
   const now = Date.now();
-
-  // Return cached if fresh
-  if (!forceRefresh && now - lastFetch < TIMING.POSITION_CACHE_TTL_MS && positionsCache.length > 0) {
-    return positionsCache;
+  if (!force && now - lastFetch < TIMING.POSITION_CACHE_MS && cache.length > 0) {
+    return cache;
   }
 
   try {
-    const url = `${POLYMARKET_API.DATA_API}/positions?user=${walletAddress}&limit=500`;
+    const url = `${POLYMARKET_API.DATA}/positions?user=${address}&limit=500`;
     const { data } = await axios.get(url, { timeout: 10000 });
 
-    if (!Array.isArray(data)) {
-      return positionsCache;
-    }
+    if (!Array.isArray(data)) return cache;
 
-    positionsCache = data
-      .filter((p: any) => {
-        const size = Number(p.size) || 0;
-        return size > 0 && !p.redeemable;
-      })
+    cache = data
+      .filter((p: any) => Number(p.size) > 0 && !p.redeemable)
       .map((p: any) => {
         const size = Number(p.size) || 0;
         const avgPrice = Number(p.avgPrice) || 0;
@@ -63,6 +38,7 @@ export async function getPositions(
         return {
           tokenId: p.asset,
           conditionId: p.conditionId,
+          marketId: p.marketId,
           outcome: p.outcome || "YES",
           size,
           avgPrice,
@@ -75,23 +51,22 @@ export async function getPositions(
       });
 
     lastFetch = now;
-    return positionsCache;
-  } catch (err) {
-    console.error(`[Positions] Fetch error: ${err}`);
-    return positionsCache;
+    return cache;
+  } catch {
+    return cache;
   }
 }
 
 /**
- * Invalidate position cache
+ * Invalidate cache
  */
-export function invalidatePositionCache(): void {
+export function invalidatePositions(): void {
   lastFetch = 0;
 }
 
 /**
- * Get cached positions (without fetching)
+ * Get cached positions
  */
 export function getCachedPositions(): Position[] {
-  return positionsCache;
+  return cache;
 }

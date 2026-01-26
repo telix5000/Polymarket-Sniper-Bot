@@ -1,16 +1,11 @@
 /**
- * V2 Authentication Utility
- * Clean CLOB client creation for Polymarket
+ * V2 Auth - CLOB client authentication
  */
 
 import { JsonRpcProvider, Wallet } from "ethers";
 import { ClobClient } from "@polymarket/clob-client";
-import { POLYGON, POLYMARKET_API } from "./constants";
-
-export interface AuthConfig {
-  privateKey: string;
-  rpcUrl: string;
-}
+import { POLYMARKET_API, POLYGON } from "./constants";
+import type { Logger } from "./types";
 
 export interface AuthResult {
   success: boolean;
@@ -21,44 +16,42 @@ export interface AuthResult {
 }
 
 /**
- * Create an authenticated CLOB client
- * Derives API credentials from wallet signature
+ * Create authenticated CLOB client
  */
-export async function createClobClient(config: AuthConfig): Promise<AuthResult> {
+export async function createClobClient(
+  privateKey: string,
+  rpcUrl: string,
+  logger?: Logger,
+): Promise<AuthResult> {
   try {
-    const { privateKey, rpcUrl } = config;
-
-    if (!privateKey || !privateKey.startsWith("0x")) {
-      return { success: false, error: "Invalid PRIVATE_KEY format (must start with 0x)" };
+    if (!privateKey?.startsWith("0x")) {
+      return { success: false, error: "PRIVATE_KEY must start with 0x" };
     }
-
     if (!rpcUrl) {
-      return { success: false, error: "Missing RPC_URL" };
+      return { success: false, error: "RPC_URL is required" };
     }
 
-    // Create provider and wallet
     const provider = new JsonRpcProvider(rpcUrl);
     const wallet = new Wallet(privateKey, provider);
     const address = wallet.address.toLowerCase();
 
-    // Create CLOB client with credential derivation
+    logger?.info?.(`Authenticating wallet ${address.slice(0, 10)}...`);
+
     const client = new ClobClient(
-      POLYMARKET_API.CLOB_API,
+      POLYMARKET_API.CLOB,
       POLYGON.CHAIN_ID,
-      wallet as any, // Type cast needed due to ethers version differences
+      wallet as any,
     );
 
-    // Derive API credentials (this signs a message with the wallet)
+    // Derive API credentials
     await client.createOrDeriveApiKey();
 
-    return {
-      success: true,
-      client,
-      wallet,
-      address,
-    };
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    logger?.info?.("Authentication successful");
+
+    return { success: true, client, wallet, address };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger?.error?.(`Auth failed: ${msg}`);
     return { success: false, error: msg };
   }
 }
