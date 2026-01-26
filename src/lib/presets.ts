@@ -66,6 +66,14 @@ export interface PresetConfig {
     orderCooldownMs: number;
     maxOrdersPerHour: number;
   };
+  polReserve: {
+    enabled: boolean;
+    targetPol: number;
+    minPol: number;
+    maxSwapUsd: number;
+    checkIntervalMin: number;
+    slippagePct: number;
+  };
   maxPositionUsd: number;
 }
 
@@ -81,6 +89,7 @@ export const PRESETS: Record<Preset, PresetConfig> = {
     copy: { multiplier: 1.0, minUsd: 5, maxUsd: 50, minBuyPrice: 0.50 },
     arb: { enabled: true, maxUsd: 15, minEdgeBps: 50 },
     risk: { maxDrawdownPct: 15, maxDailyLossUsd: 50, maxOpenPositions: 50, hedgeBuffer: 5, orderCooldownMs: 2000, maxOrdersPerHour: 100 },
+    polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
     maxPositionUsd: 15,
   },
   balanced: {
@@ -94,6 +103,7 @@ export const PRESETS: Record<Preset, PresetConfig> = {
     copy: { multiplier: 1.0, minUsd: 5, maxUsd: 100, minBuyPrice: 0.50 },
     arb: { enabled: true, maxUsd: 25, minEdgeBps: 30 },
     risk: { maxDrawdownPct: 20, maxDailyLossUsd: 100, maxOpenPositions: 100, hedgeBuffer: 10, orderCooldownMs: 1000, maxOrdersPerHour: 200 },
+    polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
     maxPositionUsd: 25,
   },
   aggressive: {
@@ -107,6 +117,7 @@ export const PRESETS: Record<Preset, PresetConfig> = {
     copy: { multiplier: 1.0, minUsd: 5, maxUsd: 200, minBuyPrice: 0.50 },
     arb: { enabled: true, maxUsd: 50, minEdgeBps: 20 },
     risk: { maxDrawdownPct: 30, maxDailyLossUsd: 200, maxOpenPositions: 200, hedgeBuffer: 20, orderCooldownMs: 500, maxOrdersPerHour: 500 },
+    polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
     maxPositionUsd: 50,
   },
 };
