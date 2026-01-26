@@ -211,10 +211,15 @@ export class PolymarketAuth {
     // Otherwise, derive/create them using L1 auth
     this.log("info", "Deriving API credentials via L1 authentication...");
 
+    // BUGFIX: Pass signer.address as funderAddress for L1 auth client
+    // This ensures credential derivation uses the correct wallet address
     const l1Client = new ClobClient(
       POLYMARKET_HOST,
       POLYGON_CHAIN_ID,
       asClobSigner(this.signer),
+      undefined, // no creds yet
+      SignatureType.EOA, // signatureType: EOA
+      this.signer.address, // funderAddress
     );
 
     // Robust derivation strategy (from pmxt):
@@ -309,15 +314,14 @@ export class PolymarketAuth {
     );
 
     // Create L2-authenticated client
+    // BUGFIX: Always pass funderAddress to ensure balance queries use the correct wallet.
     this.clobClient = new ClobClient(
       POLYMARKET_HOST,
       POLYGON_CHAIN_ID,
       asClobSigner(this.signer),
       apiCreds,
       this.effectiveSignatureType,
-      this.effectiveSignatureType !== SignatureType.EOA
-        ? funderAddress
-        : undefined,
+      funderAddress, // Always pass funderAddress for all signature types
     );
 
     // Create and cache wrapped client for consistency
