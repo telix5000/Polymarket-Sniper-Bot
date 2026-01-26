@@ -271,6 +271,32 @@ export class PolymarketClient {
   }
 
   /**
+   * Check if a position has been "hedged up" before (bought additional shares).
+   *
+   * Uses trade history from API to detect if already hedged up.
+   * A position with 2+ BUY orders has been hedged up (1 initial buy + 1+ hedge up buys).
+   *
+   * This is the SAME logic as hasBeenStacked because both operations are
+   * "buy more of existing position". We use a separate method name for clarity
+   * in the hedging strategy code, but the underlying detection is identical.
+   *
+   * CRITICAL: This check survives bot restarts because it uses on-chain trade
+   * history, not in-memory tracking. This prevents the bug where the bot would
+   * repeatedly hedge up the same position after each restart, spending multiple
+   * times HEDGING_ABSOLUTE_MAX_USD.
+   *
+   * @param address - Wallet address
+   * @param tokenId - Token ID to check
+   * @returns True if the position has been hedged up (2+ BUY orders)
+   */
+  async hasBeenHedgedUp(address: string, tokenId: string): Promise<boolean> {
+    // Hedge up detection uses the same logic as stacked detection
+    // Both are "buy more of existing position" operations
+    // Reuse the stacked cache to avoid duplicate API calls
+    return this.hasBeenStacked(address, tokenId);
+  }
+
+  /**
    * Invalidate caches after a trade (call after stacking, selling, etc.)
    *
    * @param tokenId - Optional token ID to invalidate stacked cache for

@@ -32,11 +32,8 @@ import {
   acquireHedgeLock,
   releaseHedgeLock,
 } from "../utils/funds-allowance.util";
-import {
-  POLYMARKET_TAKER_FEE_BPS,
-  BASIS_POINTS_DIVISOR,
-  FALLING_KNIFE_SLIPPAGE_PCT,
-} from "./constants";
+import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR, FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
+import { PolymarketClient } from "../api/polymarket-client";
 
 /**
  * Hedging Direction - determines when hedging is active
@@ -291,6 +288,13 @@ export class HedgingStrategy {
   /** Optional getter for the current reserve plan (injected by orchestrator) */
   private getReservePlan?: () => ReservePlan | null;
 
+  // === API CLIENT FOR STATELESS HEDGE UP DETECTION ===
+  // Uses PolymarketClient to check trade history and detect if a position has
+  // already been "hedged up" (multiple BUY orders). This survives bot restarts
+  // and prevents repeatedly spending HEDGING_ABSOLUTE_MAX_USD on the same position.
+  private apiClient: PolymarketClient;
+  private walletAddress: string = "";
+
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
   private inFlight = false;
@@ -340,6 +344,20 @@ export class HedgingStrategy {
     this.config = config.config;
     this.getReservePlan = config.getReservePlan;
 
+    // Initialize API client for stateless hedge up detection
+    this.apiClient = new PolymarketClient({ logger: this.logger });
+
+    // Extract wallet address from CLOB client for API calls
+    // The ClobClient stores wallet info internally
+    const wallet = (this.client as { wallet?: Wallet }).wallet;
+    if (wallet?.address) {
+      this.walletAddress = wallet.address;
+    } else {
+      this.logger.warn(
+        "[Hedging] Wallet not available - API-based hedge up detection will be disabled",
+      );
+    }
+
     const hedgeUpStatus =
       this.config.direction !== "down"
         ? `@${(this.config.hedgeUpPriceThreshold * 100).toFixed(0)}¢-${(this.config.hedgeUpMaxPrice * 100).toFixed(0)}¢/$${this.config.hedgeUpMaxUsd}`
@@ -359,6 +377,9 @@ export class HedgingStrategy {
   }
 
   // Track positions that have been "hedged up" (bought more shares) this cycle
+  // NOTE: This is now supplementary to API-based detection. The API check is the
+  // primary guard against re-hedging (survives restarts). This in-memory set
+  // provides faster checks within a single bot process lifetime.
   private hedgedUpPositions: Set<string> = new Set();
 
   // === PER-CYCLE HEDGE BUDGET ===
@@ -1542,6 +1563,37 @@ export class HedgingStrategy {
       return { action: "skipped", reason: "invalid_book" };
     }
 
+    // === API-BASED HEDGE UP DETECTION (survives bot restarts) ===
+    // CRITICAL FIX: Check trade history to see if this position has already been
+    // "hedged up" (2+ BUY orders). This prevents the bug where the bot would
+    // repeatedly hedge up the same position after each restart, spending multiple
+    // times HEDGING_ABSOLUTE_MAX_USD on a single position.
+    //
+    // The in-memory hedgedUpPositions set provides faster checks within a single
+    // process, but the API check is the primary guard that survives restarts.
+    if (this.walletAddress) {
+      try {
+        const alreadyHedgedUp = await this.apiClient.hasBeenHedgedUp(
+          this.walletAddress,
+          position.tokenId,
+        );
+        if (alreadyHedgedUp) {
+          if (this.logDeduper.shouldLog(`HedgeUp:already:${position.tokenId}`, 300_000)) {
+            this.logger.info(
+              `[Hedging] 🔒 ${tokenIdShort}... already hedged up (detected via trade history API)`,
+            );
+          }
+          return { action: "skipped", reason: "already_hedged_up_api" };
+        }
+      } catch (err) {
+        // On API error, proceed with hedge up attempt (fail open).
+        // This prevents API failures from blocking hedge up entirely.
+        this.logger.warn(
+          `[Hedging] ⚠️ Failed to check hedge up history via API: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     // === EXECUTE HEDGE UP ===
     // Compute time to close for logging (may be undefined if no marketEndTime)
     const timeToCloseStr =
@@ -1695,6 +1747,8 @@ export class HedgingStrategy {
       if (result.status === "submitted") {
         // Deduct from per-cycle hedge budget to prevent exceeding reserves
         this.deductFromCycleHedgeBudget(buyUsd);
+        // Invalidate cache so future API checks see this new BUY order
+        this.apiClient.invalidateCache(position.tokenId);
         this.logger.info(`[Hedging] ✅ Buy more executed successfully`);
         return { success: true, amountUsd: buyUsd };
       }
