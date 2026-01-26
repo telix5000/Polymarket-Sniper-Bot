@@ -533,8 +533,8 @@ export class HedgingStrategy {
         
         // Log each candidate with details for visibility
         for (const pos of hedgeCandidates) {
-          const entryTime = this.positionTracker.getPositionEntryTime(pos.marketId, pos.tokenId);
-          const holdSeconds = entryTime ? Math.floor((now - entryTime) / 1000) : 0;
+          // Use position.timeHeldSec from actual trade history, not in-memory map
+          const timeHeldSec = pos.timeHeldSec ?? 0;
           const key = `${pos.marketId}-${pos.tokenId}`;
           const alreadyHedged = this.hedgedPositions.has(key);
           const inCooldown = this.failedLiquidationCooldowns.has(key) && now < (this.failedLiquidationCooldowns.get(key) ?? 0);
@@ -542,7 +542,7 @@ export class HedgingStrategy {
           this.logger.info(
             `[Hedging] 📊 Candidate: ${pos.side ?? "?"} ${pos.tokenId.slice(0, 12)}... ` +
               `loss=${Math.abs(pos.pnlPct).toFixed(1)}% ($${Math.abs(pos.pnlUsd).toFixed(2)}), ` +
-              `held=${holdSeconds}s/${this.config.minHoldSeconds}s, ` +
+              `held=${timeHeldSec}s/${this.config.minHoldSeconds}s (from trade history), ` +
               `pnlTrusted=${pos.pnlTrusted}, tradable=${pos.executionStatus !== "NOT_TRADABLE_ON_CLOB"}, ` +
               `hedged=${alreadyHedged}, cooldown=${inCooldown}`,
           );
@@ -851,10 +851,19 @@ export class HedgingStrategy {
       const lossPct = Math.abs(position.pnlPct);
       const shouldBypassHoldTime = position.pnlPct < 0 && lossPct >= this.config.triggerLossPct;
       
-      const entryTime = this.positionTracker.getPositionEntryTime(
-        position.marketId,
-        position.tokenId,
-      );
+      // === USE ACTUAL ACQUISITION TIME FROM POSITION DATA ===
+      // CRITICAL FIX: Use position.firstAcquiredAt (from trade history API) instead of
+      // the in-memory positionEntryTimes map. The position object has the REAL acquisition
+      // timestamp that survives container restarts.
+      //
+      // The old code used getPositionEntryTime() which:
+      // 1. Uses an in-memory map that resets on restart
+      // 2. Falls back to "first seen" time if historical loading fails
+      // 3. Could cause hedging to skip positions because it thinks they're "new"
+      //
+      // The position.firstAcquiredAt comes from actual BUY trade history on-chain.
+      const entryTime = position.firstAcquiredAt;
+      const timeHeldSec = position.timeHeldSec;
       
       if (!entryTime) {
         if (shouldBypassHoldTime) {
@@ -872,9 +881,9 @@ export class HedgingStrategy {
       }
 
       // Check hold time (but bypass for losses at trigger threshold that need immediate action)
-      if (entryTime && !shouldBypassHoldTime) {
-        const holdSeconds = (now - entryTime) / 1000;
-        if (holdSeconds < this.config.minHoldSeconds) {
+      // Use position.timeHeldSec which is pre-computed from actual trade history
+      if (timeHeldSec !== undefined && !shouldBypassHoldTime) {
+        if (timeHeldSec < this.config.minHoldSeconds) {
           skipAggregator.add(tokenIdShort, "hold_time_short");
           continue;
         }
