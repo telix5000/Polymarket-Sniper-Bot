@@ -56,20 +56,25 @@ const rateLimiter: RateLimiterState = {
   backoffMultiplier: 1,
 };
 
+// Track if rate limiter has been initialized (prevents re-init on every config read)
+let rateLimiterInitialized = false;
+
 /**
  * Initialize rate limiter with custom settings
  * Call on startup to override defaults
  * 
- * @param refillRate - Tokens per second (default: 100, max safe: 140)
+ * @param refillRate - Tokens per second (default: 100, min: 10, max safe: 140)
  * @param burstCapacity - Max burst size (default: 50)
  */
 export const initRateLimiter = (refillRate: number, burstCapacity: number = 50): void => {
-  rateLimiter.refillRate = Math.min(refillRate, 140); // Never exceed 140/sec
+  // Enforce minimum of 10 and maximum of 140 req/sec
+  rateLimiter.refillRate = Math.max(10, Math.min(refillRate, 140));
   rateLimiter.maxTokens = burstCapacity;
   rateLimiter.tokens = burstCapacity;
   rateLimiter.lastRefill = Date.now();
   rateLimiter.backoffUntil = 0;
   rateLimiter.backoffMultiplier = 1;
+  rateLimiterInitialized = true; // Mark as initialized to prevent env override
 };
 
 /**
@@ -163,17 +168,31 @@ const parseBool = (raw: string | undefined, defaultValue: boolean): boolean => {
  * Environment variables:
  * - CLOB_BYPASS_VPN_FOR_READS: Enable direct (non-VPN) orderbook fetches (default: true)
  * - CLOB_READ_TIMEOUT_MS: Timeout for direct orderbook fetches in milliseconds (default: 5000)
- * - CLOB_MAX_REQUESTS_PER_SEC: Rate limit for orderbook fetches (default: 100, max: 140)
+ * - CLOB_MAX_REQUESTS_PER_SEC: Rate limit for orderbook fetches (default: 100, min: 10, max: 140)
  */
-export const getFastOrderbookConfig = (): FastOrderbookConfig => {
-  // Initialize rate limiter from env if set
+
+/**
+ * Initialize rate limiter from environment variables (called once at startup)
+ */
+const initRateLimiterFromEnv = (): void => {
+  if (rateLimiterInitialized) return;
+  
   const envMaxReq = readEnv("CLOB_MAX_REQUESTS_PER_SEC");
   if (envMaxReq) {
     const parsed = parseInt(envMaxReq, 10);
-    if (!isNaN(parsed) && parsed > 0 && parsed <= 140) {
+    // Minimum 10 req/sec to prevent misconfiguration that would throttle trading
+    // Maximum 140 req/sec to stay under Polymarket's 150 req/sec limit
+    if (!isNaN(parsed) && parsed >= 10 && parsed <= 140) {
       rateLimiter.refillRate = parsed;
     }
   }
+  
+  rateLimiterInitialized = true;
+};
+
+export const getFastOrderbookConfig = (): FastOrderbookConfig => {
+  // Initialize rate limiter once (no side effects on subsequent calls)
+  initRateLimiterFromEnv();
   
   return {
     enabled: parseBool(readEnv("CLOB_BYPASS_VPN_FOR_READS"), true),
@@ -277,6 +296,9 @@ export async function fetchOrderbookDirect(
 
     const orderbook = (await response.json()) as OrderBookSummary;
     const latencyMs = Date.now() - startMs;
+
+    // Clear timeout immediately on success (don't wait for finally)
+    clearTimeout(timeoutId);
 
     // Success - reset backoff
     onSuccess();

@@ -356,7 +356,7 @@ describe("sellSlippagePct vs minAcceptablePrice (fresh orderbook fix)", () => {
     const slippagePct = 2;
     const minAcceptable = calculateMinAcceptablePrice(freshBid, slippagePct);
 
-    // If price drops 3% during execution (more than slippage), order is blocked
+    // If price drops 4% during execution (more than slippage), order is blocked
     const executionBid = 0.48; // 4% drop from fresh bid
     assert.ok(executionBid < minAcceptable, "Large drop during execution is still blocked");
 

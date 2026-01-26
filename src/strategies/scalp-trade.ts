@@ -2557,10 +2557,14 @@ export class ScalpTradeStrategy {
     );
 
     // Check retry cadence
-    // Use faster retry (3s) for urgent stages, normal (15s) for PROFIT stage
-    // With fresh API data on every call, we don't need complex loss-based logic
+    // Use faster retry (3s) for:
+    // - BREAKEVEN/FORCE stages (time-critical exits)
+    // - Losing positions (bestBid < entry) even in PROFIT stage
+    // Normal retry (15s) for profitable positions in PROFIT stage
+    const isLosingPosition = bestBidCents < plan.avgEntryCents;
     const isUrgentStage = plan.stage === "BREAKEVEN" || plan.stage === "FORCE";
-    const retryCadenceSec = isUrgentStage ? this.config.urgentRetrySec : this.config.profitRetrySec;
+    const needsUrgentRetry = isUrgentStage || isLosingPosition;
+    const retryCadenceSec = needsUrgentRetry ? this.config.urgentRetrySec : this.config.profitRetrySec;
     
     const timeSinceLastAttempt = now - plan.lastAttemptAtMs;
     if (
