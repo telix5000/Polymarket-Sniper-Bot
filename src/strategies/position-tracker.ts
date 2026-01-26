@@ -4204,17 +4204,22 @@ export class PositionTracker {
 
             // Calculate totals
             const totalPnlUsd = activePositions.reduce(
-              (sum, p) => sum + (p.pnlUsd || 0),
+              (sum, p) => sum + (p.pnlUsd ?? 0),
               0,
             );
             const winCount = activeProfitable.length;
             const loseCount = activeLosing.length;
 
+            // Helper function for consistent P&L formatting
+            const formatPnl = (pnlUsd: number, pnlPct: number): string => {
+              const sign = pnlUsd >= 0 ? "+" : "";
+              return `${sign}$${pnlUsd.toFixed(2)} (${sign}${pnlPct.toFixed(1)}%)`;
+            };
+
             // Format header with totals
             const totalEmoji = totalPnlUsd >= 0 ? "🟢" : "🔴";
-            const totalPnlStr = totalPnlUsd >= 0
-              ? `+$${totalPnlUsd.toFixed(2)}`
-              : `-$${Math.abs(totalPnlUsd).toFixed(2)}`;
+            const totalSign = totalPnlUsd >= 0 ? "+" : "";
+            const totalPnlStr = `${totalSign}$${totalPnlUsd.toFixed(2)}`;
 
             this.logger.info(
               `[PositionTracker] ═══════════════════════════════════════════════════`,
@@ -4235,10 +4240,8 @@ export class PositionTracker {
                 (a, b) => b.pnlUsd - a.pnlUsd,
               );
               for (const pos of sortedWinners.slice(0, 10)) {
-                const priceCents = (pos.currentPrice * 100).toFixed(1);
-                const pnlStr = `+$${pos.pnlUsd.toFixed(2)} (+${pos.pnlPct.toFixed(1)}%)`;
                 this.logger.info(
-                  `[PositionTracker] 🟢📈 ${pos.side} @ ${priceCents}¢ → ${pnlStr} [${pos.tokenId.slice(0, 12)}...]`,
+                  `[PositionTracker] 🟢📈 ${pos.side} @ ${formatCents(pos.currentPrice)} → ${formatPnl(pos.pnlUsd, pos.pnlPct)} [${pos.tokenId.slice(0, 12)}...]`,
                 );
               }
               if (sortedWinners.length > 10) {
@@ -4254,10 +4257,8 @@ export class PositionTracker {
                 (a, b) => a.pnlUsd - b.pnlUsd,
               );
               for (const pos of sortedLosers.slice(0, 10)) {
-                const priceCents = (pos.currentPrice * 100).toFixed(1);
-                const pnlStr = `-$${Math.abs(pos.pnlUsd).toFixed(2)} (${pos.pnlPct.toFixed(1)}%)`;
                 this.logger.info(
-                  `[PositionTracker] 🔴📉 ${pos.side} @ ${priceCents}¢ → ${pnlStr} [${pos.tokenId.slice(0, 12)}...]`,
+                  `[PositionTracker] 🔴📉 ${pos.side} @ ${formatCents(pos.currentPrice)} → ${formatPnl(pos.pnlUsd, pos.pnlPct)} [${pos.tokenId.slice(0, 12)}...]`,
                 );
               }
               if (sortedLosers.length > 10) {
