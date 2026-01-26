@@ -69,20 +69,19 @@ export interface AutoSellConfig {
   quickWinProfitPct?: number; // Profit % threshold for quick win (default: 90%)
   /**
    * OVERSIZED POSITION EXIT SETTINGS
-   * Positions with negative P&L that exceed a USD threshold (e.g., HEDGING_ABSOLUTE_MAX_USD)
-   * are "oversized" and should be managed carefully to minimize losses.
+   * Positions where invested USD exceeds a threshold (e.g., HEDGING_ABSOLUTE_MAX_USD)
+   * are "oversized" and should be managed carefully to minimize losses or lock in gains.
    *
    * Strategy (in priority order):
-   * 1. If position is now profitable (green), sell immediately
-   * 2. If position can break even (neutral), sell at breakeven
-   * 3. If still losing but event is approaching, exit before event
-   * 4. Emergency exit: If still red 1 hour before event starts, force exit
+   * 1. If position is now profitable (green), sell immediately to lock in gains
+   * 2. If position is near breakeven (within tolerance), sell to exit at minimal loss
+   * 3. If still losing and event is approaching (< N hours), force exit to avoid total loss
    *
    * When enabled, the strategy will:
-   * 1. Find losing positions where invested USD exceeds oversizedExitThresholdUsd
+   * 1. Find positions where invested USD exceeds oversizedExitThresholdUsd
    * 2. Check if position has turned profitable -> sell immediately
-   * 3. Check if position is near breakeven (within 2%) -> sell to exit at minimal loss
-   * 4. Check time to event (marketEndTime) -> if <1 hour remaining and still red, force exit
+   * 3. Check if position is near breakeven (within tolerance %) -> sell to exit
+   * 4. Check time to event (marketEndTime) -> if within hoursBeforeEvent and still losing, force exit
    *
    * Default: Disabled (false) - opt-in feature via ENV variable
    */
@@ -979,15 +978,15 @@ export class AutoSellStrategy {
 
   /**
    * Get positions that are "oversized" - invested USD exceeds threshold
-   * These are positions we want to exit to reduce risk exposure.
+   * These are positions we want to evaluate for potential exit based on
+   * their P&L status and time to event.
    *
-   * The strategy prioritizes exiting based on:
-   * 1. If profitable (pnlPct > 0) - sell immediately to lock in gains
-   * 2. If near breakeven - sell to exit at minimal loss
-   * 3. If losing but event is approaching - force exit before event
+   * Note: Returns ALL oversized positions regardless of P&L status.
+   * The exit decision (profit/breakeven/event-approaching) is made by
+   * processOversizedPosition() using getOversizedExitReason().
    *
    * @param thresholdUsd - USD threshold - positions with invested value > this are "oversized"
-   * @returns Array of oversized positions
+   * @returns Array of oversized positions (both profitable and losing)
    */
   private getOversizedPositions(thresholdUsd: number): Position[] {
     const positions = this.positionTracker.getPositions();
