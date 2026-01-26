@@ -988,6 +988,19 @@ async function postOrderClobInner(
       // Use limit price for order submission so it can fill across multiple levels
       orderPrice = limitPrice;
       orderSize = orderValue / orderPrice;
+
+      // Early exit if no liquidity at acceptable price level
+      // This prevents the confusing SKIP_MIN_ORDER_SIZE error when the real issue
+      // is that there's no orderbook depth at the limit price
+      if (cumulativeDepthUsd <= ORDER_EXECUTION.MIN_REMAINING_USD) {
+        logger.warn(
+          `[CLOB] No liquidity at acceptable price: limitPrice=${(limitPrice * 100).toFixed(1)}¢ depth=$${cumulativeDepthUsd.toFixed(2)} tokenId=${tokenId.slice(0, 12)}...`,
+        );
+        return {
+          status: "skipped",
+          reason: "NO_LIQUIDITY_AT_PRICE",
+        };
+      }
     }
 
     const orderArgs = {
