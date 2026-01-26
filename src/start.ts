@@ -380,9 +380,19 @@ async function runCopyTrading(): Promise<void> {
   const trades = await fetchRecentTrades(state.targets);
   const cfg = state.config.copy;
 
+  // Debug: Log trade processing info at debug level
+  let filtered = { sell: 0, lowPrice: 0, tooSmall: 0 };
+  let processed = 0;
+
   for (const t of trades) {
-    if (t.side !== "BUY") continue;
-    if (t.price < cfg.minBuyPrice) continue;
+    if (t.side !== "BUY") {
+      filtered.sell++;
+      continue;
+    }
+    if (t.price < cfg.minBuyPrice) {
+      filtered.lowPrice++;
+      continue;
+    }
 
     const size = Math.min(
       Math.max(t.sizeUsd * cfg.multiplier, cfg.minUsd),
@@ -390,8 +400,12 @@ async function runCopyTrading(): Promise<void> {
       state.maxPositionUsd,
     );
 
-    if (size < cfg.minUsd) continue;
+    if (size < cfg.minUsd) {
+      filtered.tooSmall++;
+      continue;
+    }
 
+    processed++;
     await buy(
       t.tokenId,
       t.outcome as "YES" | "NO",
@@ -399,6 +413,16 @@ async function runCopyTrading(): Promise<void> {
       `Copy (${t.trader.slice(0, 8)}...)`,
       t.marketId,
     );
+  }
+
+  // Log copy trading activity for debugging
+  if (trades.length > 0) {
+    const totalFiltered = filtered.sell + filtered.lowPrice + filtered.tooSmall;
+    if (totalFiltered === trades.length) {
+      logger.info(`Copy: ${trades.length} trades filtered (${filtered.sell} sell, ${filtered.lowPrice} low price, ${filtered.tooSmall} too small)`);
+    } else if (processed > 0) {
+      logger.info(`Copy: ${processed}/${trades.length} trades processed (${totalFiltered} filtered)`);
+    }
   }
 }
 
@@ -701,6 +725,16 @@ async function main(): Promise<void> {
   logger.info(
     `POL Reserve: ${state.polReserveConfig.enabled ? `ON (target: ${state.polReserveConfig.targetPol} POL)` : "OFF"}`,
   );
+
+  // Debug: Log exact LIVE_TRADING value to catch typos/whitespace
+  if (!state.liveTrading) {
+    const rawValue = process.env.LIVE_TRADING ?? process.env.ARB_LIVE_TRADING ?? "";
+    if (rawValue && rawValue !== "I_UNDERSTAND_THE_RISKS") {
+      logger.warn(`LIVE_TRADING value "${rawValue}" is not valid. Expected exact string: "I_UNDERSTAND_THE_RISKS"`);
+    } else if (!rawValue) {
+      logger.warn(`LIVE_TRADING not set - running in SIMULATION mode (no real trades will execute)`);
+    }
+  }
 
   // Telegram
   initTelegram();
