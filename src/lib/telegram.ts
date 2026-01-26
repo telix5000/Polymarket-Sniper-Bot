@@ -49,10 +49,14 @@ export async function sendTelegram(title: string, message: string): Promise<void
   if (!config) return;
 
   // Rate limiting: ensure minimum interval between messages
+  // Reserve the time slot immediately to prevent race conditions with concurrent calls
   const now = Date.now();
   const elapsed = now - lastSendTime;
-  if (elapsed < MIN_INTERVAL_MS) {
-    await sleep(MIN_INTERVAL_MS - elapsed);
+  const waitTime = elapsed < MIN_INTERVAL_MS ? MIN_INTERVAL_MS - elapsed : 0;
+  lastSendTime = now + waitTime; // Reserve the slot for when we'll actually send
+  
+  if (waitTime > 0) {
+    await sleep(waitTime);
   }
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -67,7 +71,6 @@ export async function sendTelegram(title: string, message: string): Promise<void
         },
         { timeout: 5000 },
       );
-      lastSendTime = Date.now(); // Update timestamp only on success
       return; // Success, exit
     } catch (error) {
       const axiosError = error as AxiosError;
@@ -85,6 +88,7 @@ export async function sendTelegram(title: string, message: string): Promise<void
           : BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
 
         console.log(`[Telegram] Rate limited (429), retrying in ${delayMs}ms...`);
+        lastSendTime = Date.now() + delayMs; // Update reservation during retry
         await sleep(delayMs);
         continue;
       }
@@ -97,6 +101,7 @@ export async function sendTelegram(title: string, message: string): Promise<void
       return;
     }
   }
+  return; // Explicit return after retry loop exhaustion
 }
 
 /**
