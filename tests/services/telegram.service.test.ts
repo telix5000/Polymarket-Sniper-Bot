@@ -210,22 +210,19 @@ describe("Telegram Service Message Formatting - formatPrice", () => {
     assert.strictEqual(formatPrice(-Infinity), "Unknown");
   });
 
-  test("should format prices >= $0.995 as dollars", () => {
+  test("should format all prices as dollars for consistency", () => {
     assert.strictEqual(formatPrice(1.0), "$1.00");
-    assert.strictEqual(formatPrice(0.995), "$1.00");
+    assert.strictEqual(formatPrice(0.996), "$1.00");
     assert.strictEqual(formatPrice(0.999), "$1.00");
     assert.strictEqual(formatPrice(1.5), "$1.50");
-  });
-
-  test("should format prices < $0.995 as cents", () => {
-    assert.strictEqual(formatPrice(0.5), "50.0¢");
-    assert.strictEqual(formatPrice(0.65), "65.0¢");
-    assert.strictEqual(formatPrice(0.994), "99.4¢");
-    assert.strictEqual(formatPrice(0.001), "0.1¢");
+    assert.strictEqual(formatPrice(0.5), "$0.50");
+    assert.strictEqual(formatPrice(0.65), "$0.65");
+    assert.strictEqual(formatPrice(0.994), "$0.99");
+    assert.strictEqual(formatPrice(0.001), "$0.00");
   });
 
   test("should format zero price", () => {
-    assert.strictEqual(formatPrice(0), "0.0¢");
+    assert.strictEqual(formatPrice(0), "$0.00");
   });
 });
 
@@ -666,10 +663,10 @@ describe("TelegramService Class", () => {
 
     const [, options] = mockFetch.mock.calls[0].arguments;
     const body = JSON.parse(options.body);
-    // Check for entry price format: "Entry: 65.0¢ → 80.0¢"
-    assert.ok(body.text.includes("65.0¢"));
-    assert.ok(body.text.includes("80.0¢"));
-    assert.ok(body.text.includes("+15.0¢")); // Gain
+    // Check for entry price format: "Entry: $0.65 → $0.80 (+$0.15)"
+    assert.ok(body.text.includes("$0.65"));
+    assert.ok(body.text.includes("$0.80"));
+    assert.ok(body.text.includes("+$0.15")); // Gain
   });
 
   test("sendTradeNotification includes tx hash when provided", async () => {
