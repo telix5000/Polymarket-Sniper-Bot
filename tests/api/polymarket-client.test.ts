@@ -30,9 +30,9 @@ describe("PolymarketClient", () => {
       const isComplete = (size: number, currentValue: number) =>
         size <= 0 || currentValue <= 0;
 
-      assert.equal(isComplete(0, 50, false), true, "Zero size = complete");
-      assert.equal(isComplete(100, 0, false), true, "Zero value = complete");
-      assert.equal(isComplete(100, 50, false), false, "Active position");
+      assert.equal(isComplete(0, 50), true, "Zero size = complete");
+      assert.equal(isComplete(100, 0), true, "Zero value = complete");
+      assert.equal(isComplete(100, 50), false, "Active position");
     });
   });
 
