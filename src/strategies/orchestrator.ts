@@ -749,6 +749,8 @@ export class Orchestrator {
           if (typeof pos.pnlUsd === "number") {
             unrealizedPnl += pos.pnlUsd;
             // Count profitable vs losing positions
+            // Breakeven positions (pnlUsd === 0) are intentionally not counted in either category
+            // This is common shortly after buying before prices move significantly
             if (pos.pnlUsd > 0) {
               profitableCount++;
             } else if (pos.pnlUsd < 0) {

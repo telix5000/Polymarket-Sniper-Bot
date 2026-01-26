@@ -340,13 +340,26 @@ export class TelegramService {
         message += `📉 Win Rate: ${(pnlSnapshot.winRate * 100).toFixed(1)}% (${pnlSnapshot.winningTrades}W/${pnlSnapshot.losingTrades}L)\n`;
       }
 
-      // Add position counts if available
+      // Add position counts if available - show green/red counts without implying they should sum to total
+      // (breakeven positions exist but aren't shown to avoid clutter)
       if (pnlSnapshot.activePositionCount !== undefined && pnlSnapshot.activePositionCount > 0) {
-        message += `📦 Positions: ${pnlSnapshot.activePositionCount}`;
+        let positionStr = `📦 Positions: ${pnlSnapshot.activePositionCount}`;
         if (pnlSnapshot.profitablePositionCount !== undefined && pnlSnapshot.losingPositionCount !== undefined) {
-          message += ` (${pnlSnapshot.profitablePositionCount}✅ / ${pnlSnapshot.losingPositionCount}❌)`;
+          // Only show breakdown if there are positions in either category
+          if (pnlSnapshot.profitablePositionCount > 0 || pnlSnapshot.losingPositionCount > 0) {
+            positionStr += ` — `;
+            if (pnlSnapshot.profitablePositionCount > 0) {
+              positionStr += `${pnlSnapshot.profitablePositionCount}✅`;
+            }
+            if (pnlSnapshot.profitablePositionCount > 0 && pnlSnapshot.losingPositionCount > 0) {
+              positionStr += ` `;
+            }
+            if (pnlSnapshot.losingPositionCount > 0) {
+              positionStr += `${pnlSnapshot.losingPositionCount}❌`;
+            }
+          }
         }
-        message += `\n`;
+        message += positionStr + `\n`;
       }
 
       // Add balance breakdown if available
@@ -454,13 +467,21 @@ export class TelegramService {
       message += `\n`;
     }
 
-    // Show position counts if available
+    // Show position counts if available - green/red counts don't need to sum to total
+    // (breakeven positions exist but aren't shown to avoid clutter)
     if (summary.activePositionCount !== undefined && summary.activePositionCount > 0) {
       message += `━━━ Positions ━━━\n`;
       message += `📦 Active: ${summary.activePositionCount}\n`;
       if (summary.profitablePositionCount !== undefined && summary.losingPositionCount !== undefined) {
-        message += `✅ Profitable: ${summary.profitablePositionCount}\n`;
-        message += `❌ Losing: ${summary.losingPositionCount}\n`;
+        // Only show breakdown if there are positions in either category
+        if (summary.profitablePositionCount > 0 || summary.losingPositionCount > 0) {
+          if (summary.profitablePositionCount > 0) {
+            message += `✅ In profit: ${summary.profitablePositionCount}\n`;
+          }
+          if (summary.losingPositionCount > 0) {
+            message += `❌ In loss: ${summary.losingPositionCount}\n`;
+          }
+        }
       }
       message += `\n`;
     }
