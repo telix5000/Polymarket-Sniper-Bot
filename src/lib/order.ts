@@ -24,6 +24,12 @@ export interface PostOrderInput {
   slippagePct?: number;
   skipDuplicateCheck?: boolean;
   logger?: Logger;
+  /**
+   * The exact number of shares to buy/sell.
+   * When specified, this takes precedence over sizeUsd for order sizing.
+   * This prevents balance errors when orderbook price differs from cached position price.
+   */
+  shares?: number;
 }
 
 /**
@@ -104,11 +110,15 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     // Execute order
     const orderSide = isBuy ? Side.BUY : Side.SELL;
     let remaining = sizeUsd;
+    let remainingShares = input.shares ?? 0;
     let totalFilled = 0;
     let weightedPrice = 0;
     let retries = 0;
 
-    while (remaining > ORDER.MIN_ORDER_USD && retries < ORDER.MAX_RETRIES) {
+    // Use share-based tracking when shares are specified
+    const useSharesTracking = remainingShares > 0;
+
+    while ((useSharesTracking ? remainingShares > ORDER.MIN_SHARES_THRESHOLD : remaining > ORDER.MIN_ORDER_USD) && retries < ORDER.MAX_RETRIES) {
       try {
         const book = await client.getOrderBook(tokenId);
         const lvls = isBuy ? book.asks : book.bids;
@@ -116,9 +126,20 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
 
         const lvl = lvls[0];
         const price = parseFloat(lvl.price);
-        const size = parseFloat(lvl.size);
-        const value = Math.min(remaining, size * price);
-        const amount = value / price;
+        const levelSize = parseFloat(lvl.size);
+        
+        let amount: number;
+        let value: number;
+        
+        if (useSharesTracking) {
+          // Share-based: buy/sell the minimum of remaining shares and level size
+          amount = Math.min(remainingShares, levelSize);
+          value = amount * price;
+        } else {
+          // USD-based calculation
+          value = Math.min(remaining, levelSize * price);
+          amount = value / price;
+        }
 
         const signed = await client.createMarketOrder({
           side: orderSide,
@@ -131,6 +152,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
 
         if (resp.success) {
           remaining -= value;
+          if (useSharesTracking) remainingShares -= amount;
           totalFilled += value;
           weightedPrice += value * price;
           retries = 0;
