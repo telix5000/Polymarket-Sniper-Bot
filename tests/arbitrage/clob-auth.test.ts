@@ -24,11 +24,9 @@ test("postOrder applies cached API creds before placing orders", async () => {
     | { key: string; secret: string; passphrase: string }
     | undefined;
 
-  // CLOB API returns balance/allowance in microUSDC (6 decimals)
-  // 100000000 microUSDC = 100 USD
   const client = {
     getOrderBook: async () => baseOrderBook,
-    getBalanceAllowance: async () => ({ balance: "100000000", allowance: "100000000" }),
+    getBalanceAllowance: async () => ({ balance: "100", allowance: "100" }),
     createMarketOrder: async () => ({ signed: true }),
     postOrder: async () => {
       callOrder.push("post");
@@ -90,11 +88,9 @@ test("postOrder re-applies API creds and retries once on auth failure", async ()
   let postAttempts = 0;
   const setCalls: string[] = [];
 
-  // CLOB API returns balance/allowance in microUSDC (6 decimals)
-  // 100000000 microUSDC = 100 USD
   const client = {
     getOrderBook: async () => baseOrderBook,
-    getBalanceAllowance: async () => ({ balance: "100000000", allowance: "100000000" }),
+    getBalanceAllowance: async () => ({ balance: "100", allowance: "100" }),
     createMarketOrder: async () => ({ signed: true }),
     postOrder: async () => {
       postAttempts += 1;
@@ -159,11 +155,9 @@ test("postOrder returns skipped with NO_LIQUIDITY when orderbook has no bids for
     bids: [], // No bids available
   };
 
-  // CLOB API returns balance/allowance in microUSDC (6 decimals)
-  // 100000000 microUSDC = 100 USD
   const client = {
     getOrderBook: async () => emptyBidsOrderBook,
-    getBalanceAllowance: async () => ({ balance: "100000000", allowance: "100000000" }),
+    getBalanceAllowance: async () => ({ balance: "100", allowance: "100" }),
     createMarketOrder: async () => ({ signed: true }),
     postOrder: async () => {
       throw new Error("postOrder should not be called when no liquidity");
@@ -223,11 +217,9 @@ test("postOrder returns skipped with NO_LIQUIDITY when orderbook has no asks for
     bids: [{ price: "0.50", size: "100" }],
   };
 
-  // CLOB API returns balance/allowance in microUSDC (6 decimals)
-  // 100000000 microUSDC = 100 USD
   const client = {
     getOrderBook: async () => emptyAsksOrderBook,
-    getBalanceAllowance: async () => ({ balance: "100000000", allowance: "100000000" }),
+    getBalanceAllowance: async () => ({ balance: "100", allowance: "100" }),
     createMarketOrder: async () => ({ signed: true }),
     postOrder: async () => {
       throw new Error("postOrder should not be called when no liquidity");

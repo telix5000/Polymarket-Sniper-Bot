@@ -23,15 +23,13 @@ const createLogger = () => ({
 test("checkFundsAndAllowance refreshes via second balance-allowance read", async () => {
   let collateralCalls = 0;
 
-  // CLOB API returns balance/allowance in microUSDC (6 decimals)
-  // So 100000000 microUSDC = 100 USD
   const client = {
     getBalanceAllowance: async (params: { asset_type: AssetType }) => {
       if (params.asset_type === AssetType.COLLATERAL) {
         collateralCalls += 1;
         return collateralCalls === 1
           ? { balance: "0", allowance: "0" }
-          : { balance: "100000000", allowance: "100000000" }; // 100 USD in microUSDC
+          : { balance: "100", allowance: "100" };
       }
       return { balance: "0", allowance: "0" };
     },

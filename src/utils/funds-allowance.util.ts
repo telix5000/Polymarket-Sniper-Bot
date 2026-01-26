@@ -447,11 +447,6 @@ export const formatCollateralLabel = (
     : addressLabel;
 };
 
-/**
- * Parse a USD value from the CLOB API response.
- * The CLOB API returns balance/allowance in the smallest unit (microUSDC with 6 decimals),
- * so we divide by 10^6 to convert to human-readable USD.
- */
 const parseUsdValue = (value: unknown): number => {
   const parsed =
     typeof value === "string"
@@ -459,9 +454,7 @@ const parseUsdValue = (value: unknown): number => {
       : typeof value === "number"
         ? value
         : NaN;
-  if (!Number.isFinite(parsed)) return 0;
-  // Convert from microUSDC (6 decimals) to USD
-  return parsed / 10 ** DEFAULT_COLLATERAL_DECIMALS;
+  return Number.isFinite(parsed) ? parsed : 0;
 };
 
 const formatUsd = (value: number): string => value.toFixed(2);
