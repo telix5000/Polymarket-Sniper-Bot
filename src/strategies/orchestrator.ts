@@ -257,6 +257,25 @@ export class Orchestrator {
       },
     });
 
+    // === WIRE UP IMMEDIATE REDEMPTION TRIGGER ===
+    // Connect PositionTracker to AutoRedeemStrategy so newly detected redeemable
+    // positions trigger immediate redemption (bypassing the 30-second interval).
+    // This is critical for capital efficiency - we want to redeem as soon as possible.
+    this.positionTracker.setOnNewRedeemablePositions((newRedeemableTokenIds) => {
+      // Log the trigger event
+      this.logger.info(
+        `[Orchestrator] 🚨 Triggering immediate redemption for ${newRedeemableTokenIds.length} newly redeemable position(s)`
+      );
+      
+      // Fire-and-forget: trigger immediate redemption asynchronously
+      // This doesn't block the PositionTracker refresh cycle
+      this.autoRedeemStrategy.triggerImmediate().catch((err) => {
+        this.logger.error(
+          `[Orchestrator] Immediate redemption trigger failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
+    });
+
     // 4. Hedging - Hedge losing positions
     const hedgingConfig = {
       ...DEFAULT_HEDGING_CONFIG,

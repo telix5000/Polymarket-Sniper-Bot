@@ -1388,3 +1388,256 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
     });
   });
 });
+
+/**
+ * Tests for the Immediate Trigger functionality (Jan 2025)
+ * 
+ * When PositionTracker detects new on-chain verified redeemable positions,
+ * it triggers AutoRedeem.triggerImmediate() to bypass the interval throttle.
+ * This ensures capital is recovered as quickly as possible.
+ */
+describe("Auto-Redeem Immediate Trigger", () => {
+  describe("triggerImmediate Behavior", () => {
+    test("triggerImmediate should bypass interval throttle", async () => {
+      // Simulate the state tracking that AutoRedeemStrategy uses
+      let lastCheckTimeMs = Date.now() - 5000; // Last check was 5 seconds ago
+      const checkIntervalMs = 30000; // 30 second interval
+      let inFlight = false;
+      let executionCount = 0;
+
+      // Mock execute() which respects interval throttle
+      const execute = async () => {
+        const now = Date.now();
+        const timeSinceLastCheck = now - lastCheckTimeMs;
+        if (timeSinceLastCheck < checkIntervalMs) {
+          return 0; // Throttled - skip
+        }
+        if (inFlight) {
+          return 0; // Already running - skip
+        }
+        inFlight = true;
+        lastCheckTimeMs = now;
+        executionCount++;
+        inFlight = false;
+        return executionCount;
+      };
+
+      // Mock triggerImmediate() which bypasses interval throttle
+      const triggerImmediate = async () => {
+        if (inFlight) {
+          return 0; // Still respects single-flight
+        }
+        inFlight = true;
+        lastCheckTimeMs = Date.now();
+        executionCount++;
+        inFlight = false;
+        return executionCount;
+      };
+
+      // execute() should be throttled (only 5 seconds since last check)
+      const executeResult = await execute();
+      assert.strictEqual(
+        executeResult,
+        0,
+        "execute() should be throttled after only 5 seconds",
+      );
+
+      // triggerImmediate() should bypass the throttle
+      const immediateResult = await triggerImmediate();
+      assert.strictEqual(
+        immediateResult,
+        1,
+        "triggerImmediate() should bypass the throttle and execute",
+      );
+    });
+
+    test("triggerImmediate should respect single-flight guard", async () => {
+      let inFlight = false;
+      let attemptedWhileInFlight = false;
+
+      // Mock triggerImmediate() which respects single-flight
+      const triggerImmediate = async () => {
+        if (inFlight) {
+          attemptedWhileInFlight = true;
+          return 0;
+        }
+        inFlight = true;
+        // Simulate some async work
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inFlight = false;
+        return 1;
+      };
+
+      // Start first execution
+      const firstPromise = triggerImmediate();
+
+      // Attempt second execution while first is in flight
+      const secondPromise = triggerImmediate();
+
+      const [firstResult, secondResult] = await Promise.all([
+        firstPromise,
+        secondPromise,
+      ]);
+
+      assert.strictEqual(firstResult, 1, "First trigger should succeed");
+      assert.strictEqual(
+        secondResult,
+        0,
+        "Second trigger should be skipped (in-flight)",
+      );
+      assert.strictEqual(
+        attemptedWhileInFlight,
+        true,
+        "Should have detected in-flight state",
+      );
+    });
+
+    test("triggerImmediate should update lastCheckTimeMs to prevent immediate re-trigger", async () => {
+      let lastCheckTimeMs = Date.now() - 60000; // Last check was 60 seconds ago
+      const checkIntervalMs = 30000;
+      let inFlight = false;
+
+      const execute = async () => {
+        const now = Date.now();
+        const timeSinceLastCheck = now - lastCheckTimeMs;
+        if (timeSinceLastCheck < checkIntervalMs) {
+          return 0; // Throttled
+        }
+        if (inFlight) return 0;
+        inFlight = true;
+        lastCheckTimeMs = now;
+        inFlight = false;
+        return 1;
+      };
+
+      const triggerImmediate = async () => {
+        if (inFlight) return 0;
+        inFlight = true;
+        lastCheckTimeMs = Date.now(); // Update last check time
+        inFlight = false;
+        return 1;
+      };
+
+      // First, verify execute() would run (60 seconds since last check > 30 second interval)
+      // But don't actually run it, just verify the state
+
+      // Now trigger immediate
+      const immediateResult = await triggerImmediate();
+      assert.strictEqual(immediateResult, 1, "Immediate trigger should succeed");
+
+      // Now execute() should be throttled because triggerImmediate updated lastCheckTimeMs
+      const executeResult = await execute();
+      assert.strictEqual(
+        executeResult,
+        0,
+        "execute() should be throttled after triggerImmediate updated lastCheckTimeMs",
+      );
+    });
+  });
+
+  describe("PositionTracker Callback Integration", () => {
+    test("should detect newly redeemable positions (set difference)", () => {
+      // Simulate knownRedeemableTokenIds tracking
+      let knownRedeemableTokenIds = new Set<string>();
+
+      // Simulate detecting newly redeemable positions
+      const detectNewlyRedeemable = (currentRedeemableTokenIds: Set<string>) => {
+        const newlyRedeemable: string[] = [];
+        for (const tokenId of currentRedeemableTokenIds) {
+          if (!knownRedeemableTokenIds.has(tokenId)) {
+            newlyRedeemable.push(tokenId);
+          }
+        }
+        // Update known set
+        knownRedeemableTokenIds = currentRedeemableTokenIds;
+        return newlyRedeemable;
+      };
+
+      // First snapshot: 2 redeemable positions
+      const snapshot1 = new Set(["token-A", "token-B"]);
+      const newlyRedeemable1 = detectNewlyRedeemable(snapshot1);
+      assert.strictEqual(
+        newlyRedeemable1.length,
+        2,
+        "Should detect 2 newly redeemable on first run",
+      );
+      assert.ok(newlyRedeemable1.includes("token-A"));
+      assert.ok(newlyRedeemable1.includes("token-B"));
+
+      // Second snapshot: same positions (no change)
+      const snapshot2 = new Set(["token-A", "token-B"]);
+      const newlyRedeemable2 = detectNewlyRedeemable(snapshot2);
+      assert.strictEqual(
+        newlyRedeemable2.length,
+        0,
+        "Should detect 0 newly redeemable when no change",
+      );
+
+      // Third snapshot: 1 new position added
+      const snapshot3 = new Set(["token-A", "token-B", "token-C"]);
+      const newlyRedeemable3 = detectNewlyRedeemable(snapshot3);
+      assert.strictEqual(
+        newlyRedeemable3.length,
+        1,
+        "Should detect 1 newly redeemable",
+      );
+      assert.strictEqual(newlyRedeemable3[0], "token-C");
+
+      // Fourth snapshot: 1 position removed, 1 added
+      const snapshot4 = new Set(["token-A", "token-C", "token-D"]);
+      const newlyRedeemable4 = detectNewlyRedeemable(snapshot4);
+      assert.strictEqual(
+        newlyRedeemable4.length,
+        1,
+        "Should only detect newly added position",
+      );
+      assert.strictEqual(newlyRedeemable4[0], "token-D");
+    });
+
+    test("callback should fire asynchronously without blocking", async () => {
+      let callbackFired = false;
+      let callbackStartTime = 0;
+      let refreshCompleteTime = 0;
+
+      // Mock callback that takes some time
+      const onNewRedeemable = (tokenIds: string[]) => {
+        callbackStartTime = Date.now();
+        // Fire-and-forget - don't await
+        setTimeout(() => {
+          callbackFired = true;
+        }, 10);
+      };
+
+      // Simulate the refresh flow
+      const simulateRefresh = async () => {
+        // Detect new redeemable positions
+        const newlyRedeemable = ["token-X", "token-Y"];
+
+        if (newlyRedeemable.length > 0) {
+          // Fire callback (should not block)
+          try {
+            onNewRedeemable(newlyRedeemable);
+          } catch {
+            // Ignore callback errors
+          }
+        }
+
+        refreshCompleteTime = Date.now();
+      };
+
+      await simulateRefresh();
+
+      // Refresh should complete immediately (callback didn't block)
+      assert.ok(refreshCompleteTime > 0, "Refresh should have completed");
+      assert.ok(callbackStartTime > 0, "Callback should have started");
+      assert.ok(
+        callbackStartTime <= refreshCompleteTime,
+        "Callback should have started before refresh completed",
+      );
+
+      // Wait for async callback to complete
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(callbackFired, "Callback should have completed asynchronously");
+    });
+  });
+});

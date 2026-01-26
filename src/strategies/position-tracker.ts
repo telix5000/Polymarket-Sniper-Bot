@@ -552,6 +552,17 @@ export interface PositionTrackerConfig {
   client: ClobClient;
   logger: ConsoleLogger;
   refreshIntervalMs?: number;
+  /**
+   * Optional callback that fires when new on-chain verified redeemable positions are detected.
+   * 
+   * IMMEDIATE REDEMPTION TRIGGER:
+   * When PositionTracker detects new positions with verified on-chain payoutDenominator > 0
+   * that weren't previously marked as redeemable, this callback is invoked immediately.
+   * This allows AutoRedeem to trigger instant redemption without waiting for its interval.
+   * 
+   * @param newRedeemableTokenIds - Array of tokenIds that are newly detected as redeemable
+   */
+  onNewRedeemablePositions?: (newRedeemableTokenIds: string[]) => void;
 }
 
 /**
@@ -826,10 +837,19 @@ export class PositionTracker {
   // Now we derive entry timestamps from the trade history API, which survives restarts.
   private entryMetaResolver: EntryMetaResolver;
 
+  // === IMMEDIATE REDEEM CALLBACK ===
+  // Callback invoked when new on-chain verified redeemable positions are detected.
+  // Allows AutoRedeem to trigger immediately instead of waiting for interval.
+  private onNewRedeemablePositions?: (newRedeemableTokenIds: string[]) => void;
+  
+  // Track previously known redeemable tokenIds to detect NEW redeemable positions
+  private knownRedeemableTokenIds: Set<string> = new Set();
+
   constructor(config: PositionTrackerConfig) {
     this.client = config.client;
     this.logger = config.logger;
     this.refreshIntervalMs = config.refreshIntervalMs ?? 30000; // 30 seconds default
+    this.onNewRedeemablePositions = config.onNewRedeemablePositions;
 
     // Initialize EntryMetaResolver for stateless entry metadata computation
     this.entryMetaResolver = new EntryMetaResolver({
@@ -840,6 +860,19 @@ export class PositionTracker {
       tradesPerPage: 500,
       useLastAcquiredForTimeHeld: false, // Use firstAcquiredAt by default
     });
+  }
+
+  /**
+   * Set the callback for newly detected redeemable positions.
+   * 
+   * This is a setter method that allows wiring up the callback after construction,
+   * which is necessary because the Orchestrator creates PositionTracker before
+   * AutoRedeemStrategy, but needs to wire them together.
+   * 
+   * @param callback Function to call when new on-chain verified redeemable positions are detected
+   */
+  setOnNewRedeemablePositions(callback: (newRedeemableTokenIds: string[]) => void): void {
+    this.onNewRedeemablePositions = callback;
   }
 
   /**
@@ -1559,6 +1592,46 @@ export class PositionTracker {
 
       // === RECOVERY: Mark success and reset backoff ===
       this.handleRefreshSuccess();
+
+      // === IMMEDIATE REDEEM TRIGGER: Detect newly redeemable positions ===
+      // If callback is configured, check for positions that are newly detected as redeemable
+      // and trigger immediate redemption (bypassing AutoRedeem's interval throttle)
+      if (this.onNewRedeemablePositions) {
+        // Get current redeemable tokenIds from the committed snapshot
+        const currentRedeemableTokenIds = new Set(
+          candidateSnapshot.redeemablePositions.map((p) => p.tokenId)
+        );
+
+        // Find newly redeemable positions (in current but not in known set)
+        const newlyRedeemableTokenIds: string[] = [];
+        for (const tokenId of currentRedeemableTokenIds) {
+          if (!this.knownRedeemableTokenIds.has(tokenId)) {
+            newlyRedeemableTokenIds.push(tokenId);
+          }
+        }
+
+        // Update known redeemable set to match current
+        this.knownRedeemableTokenIds = currentRedeemableTokenIds;
+
+        // Trigger callback if there are newly redeemable positions
+        if (newlyRedeemableTokenIds.length > 0) {
+          this.logger.info(
+            `[PositionTracker] 🚨 NEW REDEEMABLE DETECTED: ${newlyRedeemableTokenIds.length} position(s) ` +
+              `[${newlyRedeemableTokenIds.slice(0, 3).map((t) => t.slice(0, 8)).join(", ")}${newlyRedeemableTokenIds.length > 3 ? "..." : ""}] ` +
+              `- triggering immediate redemption`
+          );
+          
+          // Fire callback asynchronously to not block the refresh cycle
+          // The callback is expected to be the Orchestrator's triggerImmediateRedeem()
+          try {
+            this.onNewRedeemablePositions(newlyRedeemableTokenIds);
+          } catch (callbackErr) {
+            this.logger.error(
+              `[PositionTracker] onNewRedeemablePositions callback error: ${callbackErr instanceof Error ? callbackErr.message : String(callbackErr)}`
+            );
+          }
+        }
+      }
     } catch (err) {
       // Refresh failed - use crash-proof recovery
       this.handleRefreshFailure(
