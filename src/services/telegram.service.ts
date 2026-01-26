@@ -250,9 +250,9 @@ export class TelegramService {
 
     // Show entry price and gain for sells
     if (trade.entryPrice !== undefined && trade.entryPrice > 0) {
-      const gainCents = (trade.price - trade.entryPrice) * 100;
-      const gainEmoji = gainCents >= 0 ? "📈" : "📉";
-      message += `${gainEmoji} Entry: ${this.formatPrice(trade.entryPrice)} → ${this.formatPrice(trade.price)} (${gainCents >= 0 ? "+" : ""}${gainCents.toFixed(1)}¢)\n`;
+      const gainDollars = trade.price - trade.entryPrice;
+      const gainEmoji = gainDollars >= 0 ? "📈" : "📉";
+      message += `${gainEmoji} Entry: ${this.formatPrice(trade.entryPrice)} → ${this.formatPrice(trade.price)} (${gainDollars >= 0 ? "+" : ""}$${gainDollars.toFixed(2)})\n`;
     }
 
     if (trade.pnl !== undefined) {
@@ -305,9 +305,9 @@ export class TelegramService {
 
     // Show entry price and gain for sells
     if (trade.entryPrice !== undefined && trade.entryPrice > 0) {
-      const gainCents = (trade.price - trade.entryPrice) * 100;
-      const gainEmoji = gainCents >= 0 ? "📈" : "📉";
-      message += `${gainEmoji} Entry: ${this.formatPrice(trade.entryPrice)} → ${this.formatPrice(trade.price)} (${gainCents >= 0 ? "+" : ""}${gainCents.toFixed(1)}¢)\n`;
+      const gainDollars = trade.price - trade.entryPrice;
+      const gainEmoji = gainDollars >= 0 ? "📈" : "📉";
+      message += `${gainEmoji} Entry: ${this.formatPrice(trade.entryPrice)} → ${this.formatPrice(trade.price)} (${gainDollars >= 0 ? "+" : ""}$${gainDollars.toFixed(2)})\n`;
     }
 
     if (trade.pnl !== undefined) {
@@ -478,7 +478,7 @@ export class TelegramService {
     // Exit strategies
     // sellEarly removed - consolidated into autoSell
     if (enabledStrategies.autoSell) {
-      message += `✅ Auto-Sell (99.9¢+ exits, stale positions, quick wins)\n`;
+      message += `✅ Auto-Sell ($1.00 exits, stale positions, quick wins)\n`;
     }
     if (enabledStrategies.scalpTakeProfit) {
       message += `✅ Scalp Take-Profit (time-based exits)\n`;
@@ -615,7 +615,7 @@ export class TelegramService {
   }
 
   /**
-   * Format price for display - shows $X.XX for >= $0.995, otherwise XX.X¢
+   * Format price for display - always shows $X.XX format for consistency
    */
   private formatPrice(price: number): string {
     return formatPrice(price);
@@ -623,7 +623,7 @@ export class TelegramService {
 }
 
 /**
- * Format price for display - shows $X.XX for prices >= $0.995, otherwise XX.X¢
+ * Format price for display - always shows $X.XX format for consistency
  * Returns "Unknown" for negative prices (sentinel value -1 indicates unknown payout)
  */
 export function formatPrice(price: number): string {
@@ -632,15 +632,8 @@ export function formatPrice(price: number): string {
   if (price < 0 || !Number.isFinite(price) || Number.isNaN(price)) {
     return "Unknown";
   }
-  // Show as dollars if price is essentially $1 or more (handles rounding)
-  if (price >= 0.995) {
-    // Round to avoid floating-point issues (e.g., 0.995.toFixed(2) may yield "0.99")
-    const roundedDollars = Math.round(price * 100) / 100;
-    return `$${roundedDollars.toFixed(2)}`;
-  }
-  // Show as cents for prices below ~$1
-  const roundedCents = Math.round(price * 1000) / 10;
-  return `${roundedCents.toFixed(1)}¢`;
+  // Always show as dollars for consistency with balance displays
+  return `$${price.toFixed(2)}`;
 }
 
 /**
