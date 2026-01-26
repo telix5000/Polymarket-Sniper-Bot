@@ -60,6 +60,15 @@ import {
 } from "../arbitrage/learning/adaptive-learner";
 import { executeOnChainOrder } from "../trading/onchain-executor";
 
+// V2 Features: Profitability Optimizer
+import { 
+  ProfitabilityOptimizer, 
+  createProfitabilityOptimizer,
+  type AnalyzablePosition,
+  type OptimizationResult,
+  type ProfitabilityOptimizerConfig,
+} from "./profitability-optimizer";
+
 // ============ TYPES ============
 
 type Preset = "conservative" | "balanced" | "aggressive";
@@ -208,6 +217,13 @@ interface Config {
     catastrophicLossPct: number; // Loss % for catastrophic-tier reserve
     highWinProbPriceThreshold: number; // Price threshold for high win probability (low reserve)
   };
+  // Profitability Optimizer - Risk-aware decision making for maximizing income
+  profitabilityOptimizer: {
+    enabled: boolean;                  // Enable profitability-guided trading decisions
+    minExpectedValueUsd: number;       // Minimum EV to recommend an action
+    riskTolerance: number;             // Risk tolerance factor (0-1)
+    logRecommendations: boolean;       // Log optimizer recommendations for debugging
+  };
 }
 
 interface TradeSignal {
@@ -334,6 +350,13 @@ const PRESETS: Record<Preset, Config> = {
       catastrophicLossPct: 40,
       highWinProbPriceThreshold: 0.9,
     },
+    // Conservative: Lower risk tolerance for profitability optimizer
+    profitabilityOptimizer: {
+      enabled: true,
+      minExpectedValueUsd: 1.0,
+      riskTolerance: 0.3,
+      logRecommendations: false,
+    },
   },
   balanced: {
     autoSell: {
@@ -439,6 +462,13 @@ const PRESETS: Record<Preset, Config> = {
       hedgeTriggerLossPct: 20,
       catastrophicLossPct: 50,
       highWinProbPriceThreshold: 0.85,
+    },
+    // Balanced: Moderate risk tolerance for profitability optimizer
+    profitabilityOptimizer: {
+      enabled: true,
+      minExpectedValueUsd: 0.5,
+      riskTolerance: 0.5,
+      logRecommendations: false,
     },
   },
   aggressive: {
@@ -546,6 +576,13 @@ const PRESETS: Record<Preset, Config> = {
       catastrophicLossPct: 60,
       highWinProbPriceThreshold: 0.8,
     },
+    // Aggressive: Higher risk tolerance for profitability optimizer
+    profitabilityOptimizer: {
+      enabled: true,
+      minExpectedValueUsd: 0.25,
+      riskTolerance: 0.7,
+      logRecommendations: false,
+    },
   },
 };
 
@@ -636,6 +673,9 @@ const state = {
   >(), // For adaptive learning
   // Initial investment tracking for overall P&L
   initialInvestment: undefined as number | undefined,
+  // V2 Features
+  profitabilityOptimizer: undefined as ProfitabilityOptimizer | undefined,
+  lastProfitOptLog: 0, // Last time we logged profitability optimizer recommendations
 };
 
 // ============ P&L LEDGER ============
@@ -1291,6 +1331,79 @@ function recordTradeForLearning(
     sizeUsd,
     timestamp,
   });
+}
+
+// ============ PROFITABILITY OPTIMIZER HELPERS ============
+
+/**
+ * Convert internal Position to AnalyzablePosition for the profitability optimizer
+ */
+function toAnalyzablePosition(p: Position): AnalyzablePosition {
+  return {
+    tokenId: p.tokenId,
+    marketId: p.conditionId,
+    outcome: p.outcome.toUpperCase() === "YES" ? "YES" : "NO",
+    size: p.size,
+    avgPrice: p.avgPrice,
+    curPrice: p.curPrice,
+    pnlPct: p.pnlPct,
+    value: p.value,
+    minutesToClose: p.marketEndTime ? Math.max(0, (p.marketEndTime - Date.now()) / 60000) : undefined,
+    spreadBps: 50, // Assume default spread if not available
+  };
+}
+
+/**
+ * Run profitability optimizer analysis and log recommendations
+ * 
+ * The optimizer analyzes all positions and suggests the most profitable actions:
+ * - STACK: Double down on winning positions with momentum
+ * - HEDGE_DOWN: Protect against losses by buying the opposite outcome
+ * - HEDGE_UP: Maximize gains on high-probability positions
+ * - SELL: Lock in value when opportunity cost is favorable
+ * 
+ * Returns top recommendations sorted by expected value
+ */
+function analyzePortfolioProfitability(cfg: Config): OptimizationResult[] {
+  if (!cfg.profitabilityOptimizer.enabled || !state.profitabilityOptimizer) {
+    return [];
+  }
+
+  const portfolioValue = state.balance + state.positions.reduce((sum, p) => sum + p.value, 0);
+  const availableCash = getAvailableBalance(cfg);
+  
+  // Convert positions to analyzable format
+  const analyzablePositions = state.positions.map(toAnalyzablePosition);
+  
+  // Get optimizer recommendations
+  const recommendations = state.profitabilityOptimizer.findBestActions(
+    analyzablePositions,
+    [], // No new opportunities in cycle mode (those come from copy trading)
+    availableCash,
+    portfolioValue,
+  );
+  
+  // Filter by minimum EV threshold
+  const minEv = cfg.profitabilityOptimizer.minExpectedValueUsd;
+  const actionableRecs = recommendations.filter(
+    r => r.rankedActions[0]?.expectedValueUsd >= minEv
+  );
+  
+  // Log recommendations if enabled and interval has passed
+  const LOG_INTERVAL_MS = 60_000; // Log every 60 seconds
+  if (cfg.profitabilityOptimizer.logRecommendations && 
+      Date.now() - state.lastProfitOptLog >= LOG_INTERVAL_MS &&
+      actionableRecs.length > 0) {
+    state.lastProfitOptLog = Date.now();
+    
+    log(`📊 [ProfitOptimizer] Top ${Math.min(3, actionableRecs.length)} recommendations:`);
+    for (const rec of actionableRecs.slice(0, 3)) {
+      const action = rec.rankedActions[0];
+      log(`   ${action.action}: EV=${$(action.expectedValueUsd)} | ${rec.summary.slice(0, 80)}`);
+    }
+  }
+  
+  return actionableRecs;
 }
 
 // ============ LOGGING ============
@@ -2792,6 +2905,15 @@ async function cycle(walletAddr: string, cfg: Config) {
     return;
   }
 
+  // Run profitability optimizer analysis and build map for quick lookup
+  // This is used in step 8 for positions that don't match rule-based strategies
+  const profitRecommendations = analyzePortfolioProfitability(cfg);
+  const profitRecMap = new Map<string, OptimizationResult>();
+  for (const rec of profitRecommendations) {
+    const subject = rec.subject as AnalyzablePosition;
+    profitRecMap.set(subject.tokenId, rec);
+  }
+
   // Process each position ONCE based on priority
   // PRIORITY ORDER (matches V1 orchestrator):
   // 1. AutoSell - guaranteed profit near $1
@@ -2800,6 +2922,7 @@ async function cycle(walletAddr: string, cfg: Config) {
   // 4. Scalp - take profits on winners
   // 5. Stack - double down on winners
   // 6. Endgame - ride high-confidence to finish
+  // 8. ProfitabilityOptimizer - catch profitable opportunities that don't fit patterns
 
   for (const p of positions) {
     // Skip if already acted on (sold permanently)
@@ -3225,6 +3348,72 @@ async function cycle(walletAddr: string, cfg: Config) {
           cycleActed.add(p.tokenId);
         }
       }
+      continue;
+    }
+    
+    // 8. PROFITABILITY-GUIDED: If no fixed rule matched, check optimizer recommendations
+    // This is a final optimization pass that uses EV analysis to find profitable opportunities
+    // that don't fit the traditional rule-based patterns
+    if (cfg.profitabilityOptimizer.enabled && state.profitabilityOptimizer) {
+      const profitRec = profitRecMap.get(p.tokenId);
+      if (profitRec && profitRec.recommendedAction !== "HOLD") {
+        const bestAction = profitRec.rankedActions[0];
+        const minEv = cfg.profitabilityOptimizer.minExpectedValueUsd;
+        
+        // Only act if EV exceeds minimum threshold
+        if (bestAction.expectedValueUsd >= minEv) {
+          const recSize = Math.min(profitRec.recommendedSizeUsd, getAvailableBalance(cfg));
+          
+          if (recSize >= 5) { // Minimum trade size
+            switch (profitRec.recommendedAction) {
+              case "STACK":
+                // Optimizer suggests stacking - use optimizer's recommended size
+                if (!state.stacked.has(p.tokenId)) {
+                  log(`📊 [ProfitOptimizer] Stack opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(recSize)}`);
+                  if (await executeBuy(p.tokenId, p.conditionId, p.outcome, recSize, `OptStack (EV:${$(bestAction.expectedValueUsd)})`, cfg, false, p.curPrice)) {
+                    state.stacked.add(p.tokenId);
+                    cycleActed.add(p.tokenId);
+                  }
+                }
+                break;
+                
+              case "HEDGE_DOWN":
+                // Optimizer suggests hedging loss - may be more aggressive than fixed rules
+                if (!state.hedged.has(p.tokenId)) {
+                  const opp = p.outcome === "YES" ? "NO" : "YES";
+                  log(`📊 [ProfitOptimizer] Hedge opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${opp} ${$(recSize)}`);
+                  if (await executeBuy(p.tokenId, p.conditionId, opp, recSize, `OptHedge (EV:${$(bestAction.expectedValueUsd)})`, cfg, true, p.curPrice)) {
+                    state.hedged.add(p.tokenId);
+                    cycleActed.add(p.tokenId);
+                  }
+                }
+                break;
+                
+              case "HEDGE_UP":
+                // Optimizer suggests buying more at high probability
+                if (!state.stacked.has(p.tokenId)) {
+                  log(`📊 [ProfitOptimizer] Hedge-up opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(recSize)}`);
+                  if (await executeBuy(p.tokenId, p.conditionId, p.outcome, recSize, `OptHedgeUp (EV:${$(bestAction.expectedValueUsd)})`, cfg, false, p.curPrice)) {
+                    state.stacked.add(p.tokenId);
+                    cycleActed.add(p.tokenId);
+                  }
+                }
+                break;
+                
+              case "SELL":
+                // Optimizer suggests selling - lock in value
+                if (!state.sold.has(p.tokenId) && p.value >= 5) {
+                  log(`📊 [ProfitOptimizer] Sell opportunity | EV: ${$(bestAction.expectedValueUsd)} | ${p.outcome} ${$(p.value)}`);
+                  if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, `OptSell (EV:${$(bestAction.expectedValueUsd)})`, cfg, p.curPrice)) {
+                    state.sold.add(p.tokenId);
+                    cycleActed.add(p.tokenId);
+                  }
+                }
+                break;
+            }
+          }
+        }
+      }
     }
   }
 
@@ -3568,6 +3757,16 @@ export function loadConfig() {
       "DYNAMIC_RESERVES_HIGH_WIN_PRICE",
     )!;
 
+  // ========== PROFITABILITY OPTIMIZER ==========
+  // PROFITABILITY_OPTIMIZER_ENABLED: Enable EV-based decision optimization
+  // PROFITABILITY_OPTIMIZER_MIN_EV_USD: Minimum expected value to recommend an action
+  // PROFITABILITY_OPTIMIZER_RISK_TOLERANCE: Risk tolerance factor (0-1, higher = more aggressive)
+  // PROFITABILITY_OPTIMIZER_LOG_RECOMMENDATIONS: Log optimizer recommendations
+  if (envBool("PROFITABILITY_OPTIMIZER_ENABLED") !== undefined) cfg.profitabilityOptimizer.enabled = envBool("PROFITABILITY_OPTIMIZER_ENABLED")!;
+  if (envNum("PROFITABILITY_OPTIMIZER_MIN_EV_USD") !== undefined) cfg.profitabilityOptimizer.minExpectedValueUsd = envNum("PROFITABILITY_OPTIMIZER_MIN_EV_USD")!;
+  if (envNum("PROFITABILITY_OPTIMIZER_RISK_TOLERANCE") !== undefined) cfg.profitabilityOptimizer.riskTolerance = envNum("PROFITABILITY_OPTIMIZER_RISK_TOLERANCE")!;
+  if (envBool("PROFITABILITY_OPTIMIZER_LOG_RECOMMENDATIONS") !== undefined) cfg.profitabilityOptimizer.logRecommendations = envBool("PROFITABILITY_OPTIMIZER_LOG_RECOMMENDATIONS")!;
+
   // ========== LIVE TRADING ==========
   // V1: ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS
   // V2: LIVE_TRADING=I_UNDERSTAND_THE_RISKS or LIVE_TRADING=true
@@ -3755,6 +3954,16 @@ export async function startV2() {
         `⚠️ Invalid INITIAL_INVESTMENT_USD: ${initialInvestmentStr} (must be positive number)`,
       );
     }
+  }
+
+  // Initialize profitability optimizer (V2 feature)
+  if (settings.config.profitabilityOptimizer.enabled) {
+    state.profitabilityOptimizer = createProfitabilityOptimizer({
+      enabled: true,
+      minExpectedValueUsd: settings.config.profitabilityOptimizer.minExpectedValueUsd,
+      riskTolerance: settings.config.profitabilityOptimizer.riskTolerance,
+    });
+    log(`📊 Profitability optimizer enabled (minEV: $${settings.config.profitabilityOptimizer.minExpectedValueUsd}, risk: ${settings.config.profitabilityOptimizer.riskTolerance})`);
   }
 
   log(`Preset: ${settings.preset}`);
