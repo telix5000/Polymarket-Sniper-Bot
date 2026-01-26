@@ -45,7 +45,7 @@
 import { JsonRpcProvider, Wallet, Contract, Interface, ZeroHash } from "ethers";
 import { ClobClient } from "@polymarket/clob-client";
 import axios from "axios";
-import { postOrder, type OrderSide, type OrderOutcome } from "../utils/post-order.util";
+import { postOrder, type OrderSide, type OrderOutcome, ABSOLUTE_MIN_TRADEABLE_PRICE } from "../utils/post-order.util";
 import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 
 // V1 Features: Adaptive Learning, On-Chain Exit, On-Chain Trading
@@ -734,7 +734,7 @@ async function preOrderCheck(tokenId: string, side: "BUY" | "SELL", sizeUsd: num
     return { ok: false, reason: `Order too small: ${$(sizeUsd)} < $1.00` };
   }
   
-  // For SELL, verify we have the position
+  // For SELL, verify we have the position and price is tradeable
   if (side === "SELL") {
     const position = state.positions.find(p => p.tokenId === tokenId);
     if (!position) {
@@ -742,6 +742,11 @@ async function preOrderCheck(tokenId: string, side: "BUY" | "SELL", sizeUsd: num
     }
     if (sizeUsd > position.value * 1.1) { // Allow 10% buffer for price changes
       return { ok: false, reason: `Sell size ${$(sizeUsd)} exceeds position value ${$(position.value)}` };
+    }
+    // Skip sell if current price is at or below minimum tradeable price
+    // This prevents spammy ZERO_PRICE warnings in postOrder
+    if (position.curPrice <= ABSOLUTE_MIN_TRADEABLE_PRICE) {
+      return { ok: false, reason: `Price ${(position.curPrice * 100).toFixed(2)}¢ <= min ${(ABSOLUTE_MIN_TRADEABLE_PRICE * 100).toFixed(2)}¢` };
     }
   }
   
@@ -1948,6 +1953,12 @@ async function cycle(walletAddr: string, cfg: Config) {
   for (const p of positions) {
     // Skip if already acted on (sold permanently)
     if (state.sold.has(p.tokenId)) continue;
+    
+    // Skip positions with untradeable prices (at or below absolute minimum)
+    // These cannot be sold on the market - avoids spammy ZERO_PRICE warnings
+    if (p.curPrice <= ABSOLUTE_MIN_TRADEABLE_PRICE) {
+      continue;
+    }
     
     // Track position entry time and price history
     trackPositionEntry(p.tokenId);
