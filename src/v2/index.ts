@@ -1592,6 +1592,12 @@ async function fetchPositions(wallet: string): Promise<Position[]> {
       offset += POSITIONS_LIMIT;
     }
 
+    if (offset >= MAX_OFFSET) {
+      log(
+        `⚠️ Reached maximum pagination offset (${MAX_OFFSET}). Positions list may be truncated due to API offset limits.`,
+      );
+    }
+
     const rawPositions = allPositionsRaw
       .filter((p: any) => Number(p.size) > 0 && !p.redeemable)
       .map((p: any) => {
@@ -1664,6 +1670,12 @@ async function fetchRedeemable(wallet: string): Promise<RedeemablePosition[]> {
         break;
       }
       offset += POSITIONS_LIMIT;
+    }
+
+    if (offset >= MAX_OFFSET) {
+      log(
+        `⚠️ Reached maximum pagination offset (${MAX_OFFSET}). Redeemable positions list may be truncated due to API offset limits.`,
+      );
     }
 
     if (allPositionsRaw.length === 0) return [];

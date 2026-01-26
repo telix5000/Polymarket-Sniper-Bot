@@ -723,6 +723,12 @@ export class AutoRedeemStrategy {
         offset += POSITIONS_LIMIT;
       }
 
+      if (offset >= MAX_OFFSET) {
+        this.logger.warn(
+          `[AutoRedeem] Reached maximum pagination limit of ${MAX_OFFSET} positions; results may be truncated.`,
+        );
+      }
+
       if (allApiPositions.length === 0) {
         this.logger.debug(
           `[AutoRedeem] Data API returned no positions after pagination`,

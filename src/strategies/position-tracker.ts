@@ -2824,6 +2824,13 @@ export class PositionTracker {
         offset += PositionTracker.POSITIONS_PAGE_LIMIT;
       }
 
+      if (offset >= PositionTracker.POSITIONS_MAX_OFFSET) {
+        this.logger.warn(
+          `[PositionTracker] Reached POSITIONS_MAX_OFFSET (${PositionTracker.POSITIONS_MAX_OFFSET}). ` +
+            `Additional positions may not be fetched; results may be truncated.`,
+        );
+      }
+
       // === STICKY ADDRESS SELECTION WITH SANITY CHECKS (Jan 2025) ===
       // Prevents address flip-flop by keeping address sticky for ADDRESS_STICKY_DURATION_MS
       // unless specific conditions are met for switching
@@ -2903,6 +2910,13 @@ export class PositionTracker {
                 }
 
                 offset += PositionTracker.POSITIONS_PAGE_LIMIT;
+              }
+
+              if (offset >= PositionTracker.POSITIONS_MAX_OFFSET) {
+                console.warn(
+                  `PositionTracker: Reached POSITIONS_MAX_OFFSET (${PositionTracker.POSITIONS_MAX_OFFSET}) ` +
+                  `while fetching positions for address ${address}. Results may be truncated.`
+                );
               }
 
               return allPositions;

@@ -432,6 +432,12 @@ export class PolymarketClient {
         offset += POSITIONS_LIMIT;
       }
 
+      if (offset >= MAX_OFFSET) {
+        this.logger.warn(
+          `[PolymarketClient] Reached maximum pagination limit of ${MAX_OFFSET} positions; results may be truncated.`,
+        );
+      }
+
       // Clear existing cache
       this.activePositions.clear();
 

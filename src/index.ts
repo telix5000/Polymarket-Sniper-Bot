@@ -161,6 +161,12 @@ async function getPositions(
       offset += POSITIONS_LIMIT;
     }
 
+    if (offset >= MAX_OFFSET) {
+      console.warn(
+        `[API] ⚠️ Reached maximum pagination offset (${MAX_OFFSET}). Positions list may be truncated due to API offset limits.`,
+      );
+    }
+
     positionsCache = allPositionsRaw
       .filter((p: any) => {
         const size = Number(p.size) || 0;
