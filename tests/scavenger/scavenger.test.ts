@@ -89,11 +89,15 @@ describe("Scavenger State Management", () => {
     state = setTokenCooldown(state, "token-1", 60000);
     state.deployedCapitalUsd = 100;
     state.monitoredRedPositions.add("token-2");
+    state.volumeSamples.push({ timestamp: Date.now(), volumeUsd: 1000 });
+    state.lowLiquidityDetectedAt = Date.now();
 
     const reset = resetScavengerState(state);
     assert.strictEqual(reset.tokenCooldowns.size, 1); // Preserved
     assert.strictEqual(reset.deployedCapitalUsd, 0); // Reset
     assert.strictEqual(reset.monitoredRedPositions.size, 0); // Reset
+    assert.strictEqual(reset.volumeSamples.length, 0); // Detection history reset
+    assert.strictEqual(reset.lowLiquidityDetectedAt, null); // Detection timestamp reset
   });
 });
 

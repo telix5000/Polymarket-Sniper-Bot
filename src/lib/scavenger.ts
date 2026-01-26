@@ -117,8 +117,9 @@ export const DEFAULT_SCAVENGER_CONFIG: ScavengerConfig = {
 
 /** Trading mode enum */
 export enum TradingMode {
-  NORMAL = "NORMAL",
-  SCAVENGER = "SCAVENGER",
+  // Keep member names concise but preserve legacy serialized values for compatibility
+  NORMAL = "NORMAL_MODE",
+  SCAVENGER = "LOW_LIQUIDITY_SCAVENGE_MODE",
 }
 
 /** Scavenger state */
@@ -181,7 +182,12 @@ export function resetScavengerState(state: ScavengerState): ScavengerState {
     scavengerPositionCount: 0,
     monitoredRedPositions: new Set(),
     scavengerEntryPrices: new Map(),
-    // Keep cooldowns and detection history
+    // Reset detection history to avoid stale data affecting future mode transitions
+    volumeSamples: [],
+    orderBookSnapshots: [],
+    targetActivitySamples: [],
+    lowLiquidityDetectedAt: null,
+    highLiquidityDetectedAt: null,
   };
 }
 
@@ -396,6 +402,20 @@ export function recordTargetActivity(state: ScavengerState, activeCount: number,
   };
 }
 
+/** Check if order book is stagnant (no meaningful price changes) */
+function isOrderBookStagnant(snapshots: Array<{ timestamp: number; bidDepth: number; askDepth: number; bestBid: number; bestAsk: number }>, thresholdMs: number): boolean {
+  const cutoff = Date.now() - thresholdMs;
+  const recent = snapshots.filter((s) => s.timestamp > cutoff);
+  if (recent.length < 2) return false;
+
+  const first = recent[0];
+  const last = recent[recent.length - 1];
+  const bidChange = Math.abs(last.bestBid - first.bestBid) / (first.bestBid || 1);
+  const askChange = Math.abs(last.bestAsk - first.bestAsk) / (first.bestAsk || 1);
+
+  return bidChange < MIN_PRICE_CHANGE_THRESHOLD && askChange < MIN_PRICE_CHANGE_THRESHOLD;
+}
+
 /** Analyze market conditions */
 export function analyzeMarketConditions(
   state: ScavengerState,
@@ -413,6 +433,7 @@ export function analyzeMarketConditions(
   const bookCutoff = now - config.detection.stagnantBookThresholdMs;
   const recentBooks = state.orderBookSnapshots.filter((s) => s.timestamp > bookCutoff);
   const avgDepth = recentBooks.length > 0 ? recentBooks.reduce((s, b) => s + b.bidDepth + b.askDepth, 0) / recentBooks.length : 0;
+  const orderBookStagnant = isOrderBookStagnant(state.orderBookSnapshots, config.detection.stagnantBookThresholdMs);
 
   const latestActivity = state.targetActivitySamples[state.targetActivitySamples.length - 1];
   const activeTargets = latestActivity?.activeCount ?? 0;
@@ -426,13 +447,25 @@ export function analyzeMarketConditions(
     reasons.push(`Thin book: $${avgDepth.toFixed(0)} < $${config.detection.minOrderBookDepthUsd}`);
     lowLiquidityCount++;
   }
+  if (orderBookStagnant) {
+    reasons.push("Orderbook stagnant - no meaningful bid/ask changes");
+    lowLiquidityCount++;
+  }
   if (activeTargets < config.detection.minActiveTargets) {
     reasons.push(`Few targets: ${activeTargets} < ${config.detection.minActiveTargets}`);
     lowLiquidityCount++;
   }
 
   const isLowLiquidity = lowLiquidityCount >= MIN_LOW_LIQUIDITY_CONDITIONS;
-  let newState = { ...state };
+
+  // Create deep copy of state to avoid shared mutable references
+  let newState: ScavengerState = {
+    ...state,
+    tokenCooldowns: new Map(state.tokenCooldowns),
+    priceHistory: new Map(state.priceHistory),
+    monitoredRedPositions: new Set(state.monitoredRedPositions),
+    scavengerEntryPrices: new Map(state.scavengerEntryPrices),
+  };
 
   // Update detection timestamps
   if (isLowLiquidity && state.lowLiquidityDetectedAt === null) {
@@ -449,7 +482,8 @@ export function analyzeMarketConditions(
   let newMode = state.mode;
 
   if (!inScavenger && isLowLiquidity) {
-    const duration = state.lowLiquidityDetectedAt ? now - state.lowLiquidityDetectedAt : 0;
+    // Use newState timestamp for correct duration calculation after first detection
+    const duration = newState.lowLiquidityDetectedAt ? now - newState.lowLiquidityDetectedAt : 0;
     if (duration >= config.detection.sustainedConditionMs) {
       shouldSwitch = true;
       newMode = TradingMode.SCAVENGER;
@@ -460,7 +494,8 @@ export function analyzeMarketConditions(
       recentVolume >= config.reversion.volumeRecoveryThresholdUsd ||
       avgDepth >= config.reversion.depthRecoveryThresholdUsd ||
       activeTargets >= config.reversion.minActiveTargetsForReversion;
-    const duration = state.highLiquidityDetectedAt ? now - state.highLiquidityDetectedAt : 0;
+    // Use newState timestamp for correct duration calculation after first detection
+    const duration = newState.highLiquidityDetectedAt ? now - newState.highLiquidityDetectedAt : 0;
     if (recovered && duration >= config.reversion.sustainedRecoveryMs) {
       shouldSwitch = true;
       newMode = TradingMode.NORMAL;
