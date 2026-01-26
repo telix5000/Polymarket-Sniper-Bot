@@ -2217,6 +2217,17 @@ async function executeSell(
       return false;
     }
 
+    // Handle NO_LIQUIDITY_AT_PRICE: No orderbook depth at acceptable price level
+    // This happens when all bids are below our minimum acceptable price (after slippage)
+    // Add to cooldown list to prevent repeated attempts
+    if (result.reason === "NO_LIQUIDITY_AT_PRICE") {
+      state.zeroPriceTokens.set(tokenId, Date.now());
+      log(
+        `⚠️ SELL | ${reason} | No liquidity at acceptable price - skipping for 1h (redeem only) | ${outcome} ${$(sizeUsd)}`,
+      );
+      return false;
+    }
+
     await alertTrade(
       "SELL",
       reason,
