@@ -216,6 +216,8 @@ export class Orchestrator {
         minOrderUsd: config.maxPositionUsd * 0.01, // 1% of max position as min order
         ...config.autoSellConfig,
       },
+      collateralTokenAddress: this.collateralTokenAddress,
+      collateralTokenDecimals: this.collateralTokenDecimals,
     });
 
     // 2. OnChainExit - Route NOT_TRADABLE positions to on-chain redemption
@@ -320,6 +322,8 @@ export class Orchestrator {
         hedgingMaxEntryPrice: hedgingConfig.maxEntryPrice,
         ...config.stopLossConfig,
       },
+      collateralTokenAddress: this.collateralTokenAddress,
+      collateralTokenDecimals: this.collateralTokenDecimals,
     });
 
     // 6. Endgame Sweep - Buy high-confidence positions
@@ -332,6 +336,8 @@ export class Orchestrator {
         maxPositionUsd: config.maxPositionUsd,
         ...config.endgameConfig,
       },
+      collateralTokenAddress: this.collateralTokenAddress,
+      collateralTokenDecimals: this.collateralTokenDecimals,
     });
 
     // 7. Scalp Take-Profit - Time-and-momentum-based profit taking
@@ -346,6 +352,8 @@ export class Orchestrator {
         ...DEFAULT_SCALP_TRADE_CONFIG,
         ...config.scalpConfig,
       },
+      collateralTokenAddress: this.collateralTokenAddress,
+      collateralTokenDecimals: this.collateralTokenDecimals,
     });
 
     // 8. Position Stacking - Double down on winning positions
@@ -360,6 +368,8 @@ export class Orchestrator {
         maxStackUsd: config.maxPositionUsd,
         ...config.positionStackingConfig,
       },
+      collateralTokenAddress: this.collateralTokenAddress,
+      collateralTokenDecimals: this.collateralTokenDecimals,
     });
 
     // 9. Arbitrage - Scan markets for yes+no < $1 opportunities

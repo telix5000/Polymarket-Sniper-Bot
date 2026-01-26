@@ -139,6 +139,10 @@ export class PositionStackingStrategy {
   private logger: ConsoleLogger;
   private config: PositionStackingConfig;
   private positionTracker?: PositionTracker;
+  /** Collateral token address - required for balance/allowance checks */
+  private collateralTokenAddress: string;
+  /** Collateral token decimals - required for balance formatting */
+  private collateralTokenDecimals: number;
 
   // === SINGLE-FLIGHT GUARD ===
   private inFlight = false;
@@ -169,11 +173,17 @@ export class PositionStackingStrategy {
     logger: ConsoleLogger;
     config: PositionStackingConfig;
     positionTracker?: PositionTracker;
+    /** Collateral token address - required for balance/allowance checks */
+    collateralTokenAddress: string;
+    /** Collateral token decimals - required for balance formatting */
+    collateralTokenDecimals: number;
   }) {
     this.client = config.client;
     this.logger = config.logger;
     this.config = config.config;
     this.positionTracker = config.positionTracker;
+    this.collateralTokenAddress = config.collateralTokenAddress;
+    this.collateralTokenDecimals = config.collateralTokenDecimals;
 
     this.logger.info(
       `[PositionStacking] Initialized: enabled=${this.config.enabled}, ` +
@@ -638,6 +648,8 @@ export class PositionStackingStrategy {
         // Use buySlippagePct to compute maxAcceptablePrice from FRESH orderbook data.
         // This ensures we don't overpay based on stale cached position.currentPrice.
         buySlippagePct: 2, // Allow 2% slippage above fresh best ask
+        collateralTokenAddress: this.collateralTokenAddress,
+        collateralTokenDecimals: this.collateralTokenDecimals,
         logger: this.logger,
       });
 

@@ -778,6 +778,10 @@ export class ScalpTradeStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: ScalpTradeConfig;
+  /** Collateral token address - required for balance/allowance checks */
+  private collateralTokenAddress: string;
+  /** Collateral token decimals - required for balance formatting */
+  private collateralTokenDecimals: number;
 
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
@@ -857,11 +861,17 @@ export class ScalpTradeStrategy {
     logger: ConsoleLogger;
     positionTracker: PositionTracker;
     config: ScalpTradeConfig;
+    /** Collateral token address - required for balance/allowance checks */
+    collateralTokenAddress: string;
+    /** Collateral token decimals - required for balance formatting */
+    collateralTokenDecimals: number;
   }) {
     this.client = config.client;
     this.logger = config.logger;
     this.positionTracker = config.positionTracker;
     this.config = config.config;
+    this.collateralTokenAddress = config.collateralTokenAddress;
+    this.collateralTokenDecimals = config.collateralTokenDecimals;
 
     this.logger.info(
       `[ProfitTaker] Initialized: ` +
@@ -2016,6 +2026,8 @@ export class ScalpTradeStrategy {
         // Use sellSlippagePct to compute minAcceptablePrice from FRESH orderbook best bid.
         // This ensures price protection is based on actual market conditions, not stale cached data.
         sellSlippagePct: DEFAULT_SELL_SLIPPAGE_PCT,
+        collateralTokenAddress: this.collateralTokenAddress,
+        collateralTokenDecimals: this.collateralTokenDecimals,
         logger: this.logger,
         skipDuplicatePrevention: true,
       });

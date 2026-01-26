@@ -69,6 +69,10 @@ export interface StopLossStrategyConfig {
   logger: ConsoleLogger;
   positionTracker: PositionTracker;
   config: StopLossConfig;
+  /** Collateral token address - required for balance/allowance checks */
+  collateralTokenAddress: string;
+  /** Collateral token decimals - required for balance formatting */
+  collateralTokenDecimals: number;
 }
 
 /**
@@ -102,6 +106,10 @@ export class StopLossStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: StopLossConfig;
+  /** Collateral token address - required for balance/allowance checks */
+  private collateralTokenAddress: string;
+  /** Collateral token decimals - required for balance formatting */
+  private collateralTokenDecimals: number;
 
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
@@ -140,6 +148,8 @@ export class StopLossStrategy {
     this.logger = strategyConfig.logger;
     this.positionTracker = strategyConfig.positionTracker;
     this.config = strategyConfig.config;
+    this.collateralTokenAddress = strategyConfig.collateralTokenAddress;
+    this.collateralTokenDecimals = strategyConfig.collateralTokenDecimals;
   }
 
   /**
@@ -537,6 +547,8 @@ export class StopLossStrategy {
         side: "SELL",
         sizeUsd,
         sellSlippagePct: FALLING_KNIFE_SLIPPAGE_PCT,
+        collateralTokenAddress: this.collateralTokenAddress,
+        collateralTokenDecimals: this.collateralTokenDecimals,
         logger: this.logger,
         priority: true, // High priority for stop-loss
         skipDuplicatePrevention: true, // Stop-loss must bypass duplicate prevention

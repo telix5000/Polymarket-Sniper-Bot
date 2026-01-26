@@ -110,6 +110,10 @@ export class StackingStrategy {
   private logger: ConsoleLogger;
   private config: StackingConfig;
   private walletAddress: string;
+  /** Collateral token address - required for balance/allowance checks */
+  private collateralTokenAddress: string;
+  /** Collateral token decimals - required for balance formatting */
+  private collateralTokenDecimals: number;
 
   // === SINGLE-FLIGHT GUARD ===
   private inFlight = false;
@@ -137,11 +141,17 @@ export class StackingStrategy {
     logger: ConsoleLogger;
     config: StackingConfig;
     walletAddress: string;
+    /** Collateral token address - required for balance/allowance checks */
+    collateralTokenAddress: string;
+    /** Collateral token decimals - required for balance formatting */
+    collateralTokenDecimals: number;
   }) {
     this.client = config.client;
     this.logger = config.logger;
     this.config = config.config;
     this.walletAddress = config.walletAddress;
+    this.collateralTokenAddress = config.collateralTokenAddress;
+    this.collateralTokenDecimals = config.collateralTokenDecimals;
 
     // Create API client for direct data access
     this.apiClient = new PolymarketClient({ logger: this.logger });
@@ -446,6 +456,8 @@ export class StackingStrategy {
         side: "BUY",
         sizeUsd,
         buySlippagePct: 2,
+        collateralTokenAddress: this.collateralTokenAddress,
+        collateralTokenDecimals: this.collateralTokenDecimals,
         logger: this.logger,
       });
 

@@ -142,6 +142,10 @@ export interface AutoSellStrategyConfig {
   logger: ConsoleLogger;
   positionTracker: PositionTracker;
   config: AutoSellConfig;
+  /** Collateral token address - required for balance/allowance checks */
+  collateralTokenAddress: string;
+  /** Collateral token decimals - required for balance formatting */
+  collateralTokenDecimals: number;
 }
 
 /**
@@ -175,6 +179,10 @@ export class AutoSellStrategy {
   private logger: ConsoleLogger;
   private positionTracker: PositionTracker;
   private config: AutoSellConfig;
+  /** Collateral token address - required for balance/allowance checks */
+  private collateralTokenAddress: string;
+  /** Collateral token decimals - required for balance formatting */
+  private collateralTokenDecimals: number;
   private soldPositions: Set<string> = new Set();
   private positionFirstSeen: Map<string, number> = new Map();
   // Track tokens with no liquidity to suppress repeated warnings
@@ -191,6 +199,8 @@ export class AutoSellStrategy {
     this.logger = strategyConfig.logger;
     this.positionTracker = strategyConfig.positionTracker;
     this.config = strategyConfig.config;
+    this.collateralTokenAddress = strategyConfig.collateralTokenAddress;
+    this.collateralTokenDecimals = strategyConfig.collateralTokenDecimals;
 
     if (this.config.enabled) {
       const disputeInfo = this.config.disputeWindowExitEnabled
@@ -777,6 +787,8 @@ export class AutoSellStrategy {
         sizeUsd,
         // FALLING_KNIFE_SLIPPAGE_PCT (25%) for reliable fills, computed from fresh orderbook
         sellSlippagePct: FALLING_KNIFE_SLIPPAGE_PCT,
+        collateralTokenAddress: this.collateralTokenAddress,
+        collateralTokenDecimals: this.collateralTokenDecimals,
         logger: this.logger,
         skipDuplicatePrevention: true, // Required for exits
       });

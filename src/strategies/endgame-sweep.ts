@@ -57,6 +57,10 @@ export class EndgameSweepStrategy {
   private logger: ConsoleLogger;
   private config: EndgameSweepConfig;
   private positionTracker?: PositionTracker;
+  /** Collateral token address - required for balance/allowance checks */
+  private collateralTokenAddress: string;
+  /** Collateral token decimals - required for balance formatting */
+  private collateralTokenDecimals: number;
 
   // === SINGLE-FLIGHT GUARD ===
   // Prevents concurrent execution if called multiple times
@@ -82,11 +86,17 @@ export class EndgameSweepStrategy {
     logger: ConsoleLogger;
     config: EndgameSweepConfig;
     positionTracker?: PositionTracker;
+    /** Collateral token address - required for balance/allowance checks */
+    collateralTokenAddress: string;
+    /** Collateral token decimals - required for balance formatting */
+    collateralTokenDecimals: number;
   }) {
     this.client = config.client;
     this.logger = config.logger;
     this.config = config.config;
     this.positionTracker = config.positionTracker;
+    this.collateralTokenAddress = config.collateralTokenAddress;
+    this.collateralTokenDecimals = config.collateralTokenDecimals;
 
     this.logger.info(
       `[EndgameSweep] Initialized: price range ${(this.config.minPrice * 100).toFixed(0)}-${(this.config.maxPrice * 100).toFixed(0)}¢, maxPosition=$${this.config.maxPositionUsd}`,
@@ -330,6 +340,8 @@ export class EndgameSweepStrategy {
         // Use buySlippagePct to compute maxAcceptablePrice from FRESH orderbook data.
         // This ensures we don't overpay based on stale cached prices in hot markets.
         buySlippagePct: 2, // Allow 2% slippage above fresh best ask
+        collateralTokenAddress: this.collateralTokenAddress,
+        collateralTokenDecimals: this.collateralTokenDecimals,
         logger: this.logger,
       });
 
