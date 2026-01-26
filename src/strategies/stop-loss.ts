@@ -294,12 +294,17 @@ export class StopLossStrategy {
         // Use helper method to check for catastrophic loss
         const isCatastrophic = this.isCatastrophicLoss(position);
         
-        // Check minimum hold time before allowing stop-loss
-        // Use PositionTracker's entry time as single source of truth
-        const entryTime = this.positionTracker.getPositionEntryTime(
-          position.marketId,
-          position.tokenId,
-        );
+        // === USE ACTUAL ACQUISITION TIME FROM POSITION DATA ===
+        // CRITICAL FIX: Use position.firstAcquiredAt (from trade history API) instead of
+        // the in-memory positionEntryTimes map. The position object has the REAL acquisition
+        // timestamp that survives container restarts.
+        //
+        // The old code used getPositionEntryTime() which:
+        // 1. Uses an in-memory map that resets on restart
+        // 2. Falls back to "first seen" time if historical loading fails
+        // 3. Could cause stop-loss to skip positions because it thinks they're "new"
+        const entryTime = position.firstAcquiredAt;
+        const timeHeldSec = position.timeHeldSec;
 
         // CRITICAL FIX (Jan 2025): For CATASTROPHIC losses, skip entry time and hold time checks.
         // If Data API says we're down 25%+, we should act immediately.
@@ -321,15 +326,14 @@ export class StopLossStrategy {
           }
         }
 
-        // Check hold time (but skip for catastrophic losses)
-        if (entryTime && !isCatastrophic) {
-          const holdTimeSeconds = (now - entryTime) / 1000;
-
-          if (holdTimeSeconds < minHoldSeconds) {
+        // Check hold time using position.timeHeldSec (from trade history, survives restarts)
+        // Skip for catastrophic losses
+        if (timeHeldSec !== undefined && !isCatastrophic) {
+          if (timeHeldSec < minHoldSeconds) {
             // Position hasn't been held long enough - skip stop-loss for now
             // This prevents selling positions immediately after buying due to bid-ask spread
             this.logger.debug(
-              `[StopLoss] ⏳ Position at ${position.pnlPct.toFixed(2)}% loss (threshold: -${stopLossPct}%) held for ${holdTimeSeconds.toFixed(0)}s, need ${minHoldSeconds}s before stop-loss can trigger`,
+              `[StopLoss] ⏳ Position at ${position.pnlPct.toFixed(2)}% loss (threshold: -${stopLossPct}%) held for ${timeHeldSec.toFixed(0)}s, need ${minHoldSeconds}s before stop-loss can trigger`,
             );
             continue;
           }

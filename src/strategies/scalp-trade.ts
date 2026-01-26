@@ -1513,38 +1513,26 @@ export class ScalpTradeStrategy {
     // CRITICAL FIX: Use timeHeldSec from trade history API (stateless, survives restarts)
     // Falls back to container uptime only if trade history is unavailable
     let holdMinutes: number;
-    let hasTradeHistoryTime = false;
 
+    // === USE ACTUAL TRADE HISTORY AS SOURCE OF TRUTH ===
+    // CRITICAL: This system is STATELESS. We cannot rely on any in-memory tracking
+    // because container restarts reset all in-memory state. The ONLY reliable source
+    // of truth for when a position was acquired is the trade history API.
+    //
+    // position.timeHeldSec comes from actual BUY trade history on-chain and survives
+    // container restarts. If it's not available, we treat the position as "old enough"
+    // rather than using unreliable in-memory fallbacks.
     if (position.timeHeldSec !== undefined) {
-      // Use stateless timeHeldSec from trade history API (preferred)
+      // Use stateless timeHeldSec from trade history API (survives restarts)
       holdMinutes = position.timeHeldSec / 60;
-      hasTradeHistoryTime = true;
     } else {
-      // Fallback to legacy container uptime-based tracking
-      // WHY THIS IS WRONG: After container restart, this clock resets to 0.
-      // We only use this as fallback when trade history API is unavailable.
-      const entryTime = this.positionTracker.getPositionEntryTime(
-        position.marketId,
-        position.tokenId,
-      );
-
-      if (entryTime) {
-        holdMinutes = (now - entryTime) / (60 * 1000);
-      } else {
-        // If no entry time at all, treat position as "old enough" (assume external purchase)
-        // Use a very large holdMinutes value so all hold time checks pass
-        holdMinutes = ScalpTradeStrategy.NO_ENTRY_TIME_HOLD_MINUTES;
-      }
-    }
-
-    // Log if we couldn't get trade history time (important diagnostic)
-    if (
-      !hasTradeHistoryTime &&
-      holdMinutes < ScalpTradeStrategy.NO_ENTRY_TIME_HOLD_MINUTES
-    ) {
+      // No trade history available - treat position as "old enough" to pass hold checks
+      // This is safer than using unreliable in-memory tracking that resets on restart
+      // The position may be externally acquired or trade history API unavailable
+      holdMinutes = ScalpTradeStrategy.NO_ENTRY_TIME_HOLD_MINUTES;
       this.logger.debug(
-        `[ProfitTaker] Position ${position.tokenId.slice(0, 8)}... using FALLBACK entry time (container uptime). ` +
-          `Trade history not available - timeHeldSec may be inaccurate after restarts.`,
+        `[ProfitTaker] Position ${position.tokenId.slice(0, 8)}... has no trade history timestamp. ` +
+          `Treating as old enough (${holdMinutes} min) to avoid blocking legitimate sells.`,
       );
     }
 
@@ -2783,30 +2771,18 @@ export class ScalpTradeStrategy {
     this.stats.scalpCount++;
     this.stats.totalProfitUsd += position.pnlUsd;
 
-    // Prefer stateless timeHeldSec from trade history API
-    let holdMinutes: number | undefined;
-
+    // Use stateless timeHeldSec from trade history API (survives restarts)
+    // CRITICAL: This system is STATELESS - we cannot rely on in-memory tracking
     if (position.timeHeldSec !== undefined) {
-      // Use stateless timeHeldSec from trade history API (survives restarts)
-      holdMinutes = position.timeHeldSec / 60;
-    } else {
-      // Fallback to container uptime-based tracking
-      const entryTime = this.positionTracker.getPositionEntryTime(
-        position.marketId,
-        position.tokenId,
-      );
-      if (entryTime) {
-        holdMinutes = (Date.now() - entryTime) / (60 * 1000);
-      }
-    }
-
-    if (holdMinutes !== undefined) {
+      const holdMinutes = position.timeHeldSec / 60;
       // Running average of hold time
       this.stats.avgHoldMinutes =
         (this.stats.avgHoldMinutes * (this.stats.scalpCount - 1) +
           holdMinutes) /
         this.stats.scalpCount;
     }
+    // If no timeHeldSec, we simply don't update avgHoldMinutes for this position
+    // This is better than using unreliable in-memory fallback data
   }
 
   /**

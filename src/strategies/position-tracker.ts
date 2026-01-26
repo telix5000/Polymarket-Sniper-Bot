@@ -2433,17 +2433,14 @@ export class PositionTracker {
           }
 
           // Must have been held for minimum time (prevent immediate sells on new positions)
-          const entryTime = this.getPositionEntryTime(
-            pos.marketId,
-            pos.tokenId,
-          );
-          if (entryTime) {
-            const holdSeconds = (now - entryTime) / 1000;
-            if (holdSeconds < minHoldSeconds) {
+          // CRITICAL FIX: Use position.timeHeldSec from actual trade history instead of
+          // the in-memory positionEntryTimes map. This survives container restarts.
+          if (pos.timeHeldSec !== undefined) {
+            if (pos.timeHeldSec < minHoldSeconds) {
               return false;
             }
           }
-          // If no entry time, be conservative and include it (may be externally acquired)
+          // If no timeHeldSec, be conservative and include it (may be externally acquired)
 
           return true;
         })
@@ -2526,17 +2523,14 @@ export class PositionTracker {
           }
 
           // Must have been held for minimum time (prevent immediate sells on new positions)
-          const entryTime = this.getPositionEntryTime(
-            pos.marketId,
-            pos.tokenId,
-          );
-          if (entryTime) {
-            const holdSeconds = (now - entryTime) / 1000;
-            if (holdSeconds < minHoldSeconds) {
+          // CRITICAL FIX: Use position.timeHeldSec from actual trade history instead of
+          // the in-memory positionEntryTimes map. This survives container restarts.
+          if (pos.timeHeldSec !== undefined) {
+            if (pos.timeHeldSec < minHoldSeconds) {
               return false;
             }
           }
-          // If no entry time, be conservative and include it (may be externally acquired)
+          // If no timeHeldSec, be conservative and include it (may be externally acquired)
 
           return true;
         })

@@ -438,7 +438,19 @@ export class HedgingStrategy {
    * SINGLE-FLIGHT: Skips if already running (returns 0)
    */
   async execute(): Promise<number> {
+    // === CRITICAL DIAGNOSTIC: Log every time execute() is called ===
+    // This helps diagnose if hedging is even being invoked by the orchestrator
+    if (this.logDeduper.shouldLog("Hedging:execute_called", 30_000)) {
+      this.logger.info(
+        `[Hedging] 🔄 execute() called - enabled=${this.config.enabled}, direction=${this.config.direction}, ` +
+          `trigger=${this.config.triggerLossPct}%, inFlight=${this.inFlight}`,
+      );
+    }
+
     if (!this.config.enabled) {
+      if (this.logDeduper.shouldLog("Hedging:disabled_warning", 300_000)) {
+        this.logger.warn("[Hedging] ⚠️ Strategy is DISABLED - check HEDGING_ENABLED env var");
+      }
       return 0;
     }
 
@@ -472,21 +484,84 @@ export class HedgingStrategy {
     const now = Date.now();
     this.cycleCount++;
 
-    // === DIAGNOSTIC: Log high-loss positions that could be hedged ===
+    // === CRITICAL DIAGNOSTIC: Show all positions being analyzed ===
+    // Log every 30 seconds to show what positions hedging sees
+    if (this.logDeduper.shouldLog("Hedging:positions_overview", 30_000)) {
+      const losing = positions.filter(p => p.pnlPct < 0);
+      const winning = positions.filter(p => p.pnlPct > 0);
+      this.logger.info(
+        `[Hedging] 📋 POSITIONS OVERVIEW (cycle=${this.cycleCount}): ` +
+          `total=${positions.length}, losing=${losing.length}, winning=${winning.length}, ` +
+          `budget=$${this.cycleHedgeBudgetRemaining?.toFixed(2) ?? "null"}`,
+      );
+      
+      // Show ALL losing positions regardless of threshold
+      if (losing.length > 0) {
+        for (const pos of losing) {
+          const lossPct = Math.abs(pos.pnlPct);
+          const meetsThreshold = lossPct >= this.config.triggerLossPct;
+          this.logger.info(
+            `[Hedging] 📉 Losing: ${pos.side ?? "?"} ${pos.tokenId.slice(0, 12)}... ` +
+              `loss=${lossPct.toFixed(1)}% (threshold=${this.config.triggerLossPct}%, meets=${meetsThreshold}), ` +
+              `pnlTrusted=${pos.pnlTrusted}, status=${pos.executionStatus ?? "UNKNOWN"}`,
+          );
+        }
+      }
+    }
+
+    // === DIAGNOSTIC: Log ALL positions that SHOULD trigger hedging ===
     // This helps diagnose why hedging might not be acting on losses
-    const highLossPositions = positions.filter(
-      (p) => p.pnlPct < 0 && Math.abs(p.pnlPct) >= this.config.forceLiquidationPct
+    const hedgeCandidates = positions.filter(
+      (p) => p.pnlPct < 0 && Math.abs(p.pnlPct) >= this.config.triggerLossPct
     );
-    if (highLossPositions.length > 0) {
-      // Rate limit this log to once per minute
-      const logKey = `diagnostic_high_loss:${highLossPositions.length}`;
-      if (this.logDeduper.shouldLog(logKey, 60_000)) {
+    
+    if (hedgeCandidates.length > 0) {
+      // Rate limit this log to once per 30 seconds for better visibility
+      const logKey = `diagnostic_hedge_candidates:${hedgeCandidates.length}`;
+      if (this.logDeduper.shouldLog(logKey, 30_000)) {
+        // Categorize positions by loss severity
+        const catastrophic = hedgeCandidates.filter(p => Math.abs(p.pnlPct) >= this.config.forceLiquidationPct);
+        const significant = hedgeCandidates.filter(p => Math.abs(p.pnlPct) >= this.config.emergencyLossPct && Math.abs(p.pnlPct) < this.config.forceLiquidationPct);
+        const moderate = hedgeCandidates.filter(p => Math.abs(p.pnlPct) >= this.config.triggerLossPct && Math.abs(p.pnlPct) < this.config.emergencyLossPct);
+        
         this.logger.info(
-          `[Hedging] 🔍 Diagnostic: Found ${highLossPositions.length} catastrophic loss position(s) ` +
-            `(>=${this.config.forceLiquidationPct}% loss). Direction=${this.config.direction}, ` +
-            `Budget=$${this.cycleHedgeBudgetRemaining?.toFixed(2) ?? "null"}, ` +
-            `Hedged=${this.hedgedPositions.size}, Cooldowns=${this.failedLiquidationCooldowns.size}`,
+          `[Hedging] 🔍 HEDGE CANDIDATES: ${hedgeCandidates.length} position(s) at >=${this.config.triggerLossPct}% loss ` +
+            `[catastrophic(>=${this.config.forceLiquidationPct}%)=${catastrophic.length}, ` +
+            `significant(>=${this.config.emergencyLossPct}%)=${significant.length}, ` +
+            `moderate(>=${this.config.triggerLossPct}%)=${moderate.length}] ` +
+            `| Direction=${this.config.direction}, Budget=$${this.cycleHedgeBudgetRemaining?.toFixed(2) ?? "null"}, ` +
+            `AlreadyHedged=${this.hedgedPositions.size}, Cooldowns=${this.failedLiquidationCooldowns.size}`,
         );
+        
+        // Log each candidate with details for visibility
+        for (const pos of hedgeCandidates) {
+          // Use position.timeHeldSec from actual trade history, not in-memory map
+          const timeHeldSec = pos.timeHeldSec ?? 0;
+          const key = `${pos.marketId}-${pos.tokenId}`;
+          const alreadyHedged = this.hedgedPositions.has(key);
+          const inCooldown = this.failedLiquidationCooldowns.has(key) && now < (this.failedLiquidationCooldowns.get(key) ?? 0);
+          
+          this.logger.info(
+            `[Hedging] 📊 Candidate: ${pos.side ?? "?"} ${pos.tokenId.slice(0, 12)}... ` +
+              `loss=${Math.abs(pos.pnlPct).toFixed(1)}% ($${Math.abs(pos.pnlUsd).toFixed(2)}), ` +
+              `held=${timeHeldSec}s/${this.config.minHoldSeconds}s (from trade history), ` +
+              `pnlTrusted=${pos.pnlTrusted}, tradable=${pos.executionStatus !== "NOT_TRADABLE_ON_CLOB"}, ` +
+              `hedged=${alreadyHedged}, cooldown=${inCooldown}`,
+          );
+        }
+      }
+    } else {
+      // Log when there are no hedge candidates (once per minute)
+      const noHedgeKey = "diagnostic_no_hedge_candidates";
+      if (this.logDeduper.shouldLog(noHedgeKey, 60_000)) {
+        const losingPositions = positions.filter(p => p.pnlPct < 0);
+        if (losingPositions.length > 0) {
+          const maxLoss = Math.max(...losingPositions.map(p => Math.abs(p.pnlPct)));
+          this.logger.info(
+            `[Hedging] 📋 No hedge candidates: ${losingPositions.length} losing position(s), ` +
+              `max loss=${maxLoss.toFixed(1)}% (trigger=${this.config.triggerLossPct}%)`,
+          );
+        }
       }
     }
 
@@ -769,22 +844,38 @@ export class HedgingStrategy {
       // CRITICAL: Check minimum hold time before ANY action (hedge or sell)
       // This prevents immediate sell/hedge after buying due to bid-ask spread
       //
-      // EXCEPTION: For CATASTROPHIC losses (>= forceLiquidationPct), skip these checks.
-      // If Data API says we're down 50%+, we should act immediately - the price IS the truth.
+      // HOLD TIME BYPASS: ALL positions at or beyond the trigger threshold (triggerLossPct, default 20%)
+      // bypass the hold time check entirely. This is intentional behavior, not an exception.
+      //
+      // WHY: By the time we reach this code, line 788 has already filtered out positions below
+      // the trigger threshold. So ALL hedge candidates here will bypass hold time.
+      //
+      // RATIONALE: The hold time was meant to prevent selling due to temporary bid-ask spread,
+      // but a 20%+ loss is NOT a temporary spread issue - it's a real loss that needs immediate action.
+      // Waiting 2 minutes while the loss grows worse is counterproductive.
       const lossPct = Math.abs(position.pnlPct);
-      const isCatastrophicLoss = position.pnlPct < 0 && lossPct >= this.config.forceLiquidationPct;
+      const shouldBypassHoldTime = position.pnlPct < 0 && lossPct >= this.config.triggerLossPct;
       
-      const entryTime = this.positionTracker.getPositionEntryTime(
-        position.marketId,
-        position.tokenId,
-      );
+      // === USE ACTUAL ACQUISITION TIME FROM POSITION DATA ===
+      // CRITICAL FIX: Use position.firstAcquiredAt (from trade history API) instead of
+      // the in-memory positionEntryTimes map. The position object has the REAL acquisition
+      // timestamp that survives container restarts.
+      //
+      // The old code used getPositionEntryTime() which:
+      // 1. Uses an in-memory map that resets on restart
+      // 2. Falls back to "first seen" time if historical loading fails
+      // 3. Could cause hedging to skip positions because it thinks they're "new"
+      //
+      // The position.firstAcquiredAt comes from actual BUY trade history on-chain.
+      const entryTime = position.firstAcquiredAt;
+      const timeHeldSec = position.timeHeldSec;
       
       if (!entryTime) {
-        if (isCatastrophicLoss) {
-          // CATASTROPHIC LOSS with no entry time - ACT ANYWAY
-          // The Data API price is telling us we're losing badly - don't wait for entry time verification
+        if (shouldBypassHoldTime) {
+          // Loss at trigger threshold with no entry time - ACT ANYWAY
+          // The Data API price is telling us we're losing - don't wait for entry time verification
           this.logger.warn(
-            `[Hedging] 🚨 CATASTROPHIC LOSS (${lossPct.toFixed(1)}%) with no entry time - PROCEEDING ANYWAY (Data API is source of truth)`,
+            `[Hedging] 🚨 LOSS (${lossPct.toFixed(1)}% >= ${this.config.triggerLossPct}%) with no entry time - PROCEEDING ANYWAY (Data API is source of truth)`,
           );
           // Fall through to continue processing
         } else {
@@ -794,10 +885,10 @@ export class HedgingStrategy {
         }
       }
 
-      // Check hold time (but skip for catastrophic losses)
-      if (entryTime && !isCatastrophicLoss) {
-        const holdSeconds = (now - entryTime) / 1000;
-        if (holdSeconds < this.config.minHoldSeconds) {
+      // Check hold time (but bypass for losses at trigger threshold that need immediate action)
+      // Use position.timeHeldSec which is pre-computed from actual trade history
+      if (timeHeldSec !== undefined && !shouldBypassHoldTime) {
+        if (timeHeldSec < this.config.minHoldSeconds) {
           skipAggregator.add(tokenIdShort, "hold_time_short");
           continue;
         }
@@ -865,9 +956,12 @@ export class HedgingStrategy {
         }
       }
 
-      // ALWAYS try to hedge FIRST, even for catastrophic losses
+      // ALWAYS try to hedge FIRST, even for significant losses
       // Only liquidate as a last resort if hedge fails
-      // NOTE: isCatastrophicLoss is already computed above at the entry time check
+      // 
+      // Compute isCatastrophicLoss for the liquidation decision (uses forceLiquidationPct = 50%)
+      // This is separate from shouldBypassHoldTime (triggerLossPct = 20%) used for hold time bypass
+      const isCatastrophicLoss = position.pnlPct < 0 && lossPct >= this.config.forceLiquidationPct;
 
       // === HEDGE OPERATION LOCK ===
       // Acquire a lock on this market to prevent incoming BUY orders during the hedge operation.
@@ -886,8 +980,9 @@ export class HedgingStrategy {
 
       try {
         // Try to hedge
+        const lossLabel = isCatastrophicLoss ? " (catastrophic)" : "";
         this.logger.info(
-          `[Hedging] 🎯 Position losing ${lossPct.toFixed(1)}%${isCatastrophicLoss ? " (catastrophic)" : ""}${isNearResolutionHedge ? " (near-resolution)" : ""} - attempting hedge FIRST`,
+          `[Hedging] 🎯 Position losing ${lossPct.toFixed(1)}%${lossLabel}${isNearResolutionHedge ? " (near-resolution)" : ""} - attempting hedge FIRST`,
         );
 
         const hedgeResult = await this.executeHedge(position, lossPct, isNearResolutionHedge);
@@ -1378,22 +1473,28 @@ export class HedgingStrategy {
     }
 
     // === HEDGE UP SIZING ===
+    // CRITICAL: Hedge up should use FULL available wallet balance, ignoring reserves.
+    // This is an opportunistic move on a high-probability winning position - we want to 
+    // maximize our gains. Reserves are for protecting against losses, not limiting wins.
+    //
     // When HEDGING_ALLOW_EXCEED_MAX=true: Use absoluteMaxUsd (from HEDGING_ABSOLUTE_MAX_USD)
-    // for single large orders. When false: Use hedgeUpMaxUsd / maxHedgeUsd as the cap.
+    // or full available cash, whichever is smaller.
+    // When false: Use hedgeUpMaxUsd / maxHedgeUsd as the cap.
     let buyUsd: number;
     
     // Determine target size based on allowExceedMax setting
     const targetBuySize = this.config.allowExceedMax
-      // allowExceedMax: rely on absoluteMaxUsd (still constrained by cycleHedgeBudgetRemaining below)
+      // allowExceedMax: use absoluteMaxUsd as max
       ? this.config.absoluteMaxUsd
       // default: respect both hedgeUpMaxUsd and maxHedgeUsd
       : Math.min(this.config.hedgeUpMaxUsd, this.config.maxHedgeUsd);
     
     if (this.cycleHedgeBudgetRemaining !== null) {
-      // Use the smaller of target size and available cash
+      // HEDGE UP: Use FULL available cash (no reserve constraint)
+      // Take the smaller of target size and available cash
       buyUsd = Math.min(targetBuySize, this.cycleHedgeBudgetRemaining);
       this.logger.info(
-        `[Hedging] 📈 HEDGE UP SIZING: targeting $${buyUsd.toFixed(2)} ` +
+        `[Hedging] 📈 HEDGE UP SIZING (FULL WALLET): targeting $${buyUsd.toFixed(2)} ` +
           `(${this.config.allowExceedMax ? "absoluteMax" : "hedgeUpMax/maxHedge"}=$${targetBuySize.toFixed(2)}, available=$${this.cycleHedgeBudgetRemaining.toFixed(2)})`,
       );
     } else {
@@ -1404,13 +1505,16 @@ export class HedgingStrategy {
       );
     }
 
-    // === BUDGET-AWARE SIZING ===
-    // Apply sizing using per-cycle hedge budget (available cash)
-    const reserveSizing = this.applyReserveAwareSizing(buyUsd, "HEDGE UP");
-    if (reserveSizing.skip) {
-      return { success: false, reason: reserveSizing.reason };
-    }
-    buyUsd = reserveSizing.cappedUsd;
+    // NOTE: For hedge up, we SKIP applyReserveAwareSizing() because we want to use
+    // the full wallet balance. Reserves are for protecting against losses, not limiting
+    // opportunistic wins on high-probability positions.
+    //
+    // RISK WARNING: This means hedge up can use the entire available balance, potentially
+    // leaving no reserves for hedging losses on other positions. This is intentional:
+    // - High-probability wins (85%+ price) are near-certain to resolve to $1
+    // - Missing the opportunity to maximize a win is worse than temporary reserve depletion
+    // - Reserves will be replenished when the position resolves
+    // - The absoluteMaxUsd config still caps individual hedge up amounts
 
     // Check minimum
     if (buyUsd < this.config.minHedgeUsd) {
