@@ -778,7 +778,7 @@ export class AutoSellStrategy {
    * METHODOLOGY NOTE:
    * Uses the SAME sell approach as Hedging and Stop-Loss strategies:
    * - postOrder() handles orderbook validation internally (single source of truth)
-   * - Uses position's currentBidPrice from PositionTracker (Data API validated)
+   * - Uses position's price data from PositionTracker (Data API validated)
    * - FOK (Fill-or-Kill) order type for immediate execution
    * - FALLING_KNIFE_SLIPPAGE_PCT (25%) slippage tolerance for reliability
    * - skipMinOrderSizeCheck: true (same as Hedging)
@@ -789,7 +789,7 @@ export class AutoSellStrategy {
    * @param marketId - The market ID
    * @param tokenId - The token ID
    * @param size - Number of shares to sell
-   * @param currentBidPrice - Current bid price from PositionTracker (same as Hedging uses position.currentPrice)
+   * @param currentBidPrice - Current bid price from PositionTracker (currentBidPrice ?? currentPrice fallback)
    * @returns true if order was submitted successfully, false if skipped/no liquidity
    */
   private async sellPosition(
@@ -803,7 +803,7 @@ export class AutoSellStrategy {
       const { postOrder } = await import("../utils/post-order.util");
 
       // Calculate sell value using position's current bid price from PositionTracker
-      // This matches how Hedging calculates sizeUsd (position.size * position.currentPrice)
+      // Similar to how Hedging calculates sizeUsd (position.size * position.currentPrice)
       const sizeUsd = size * currentBidPrice;
 
       // Log info for small positions but allow selling them to liquidate
