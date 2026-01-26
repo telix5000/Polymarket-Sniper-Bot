@@ -16,6 +16,11 @@ import {
 import { ensureTradingReady } from "../polymarket/preflight";
 import { getContextAwareWarnings } from "../utils/auth-diagnostic.util";
 import { isLiveTradingEnabled } from "../utils/live-trading.util";
+import {
+  createTelegramService,
+  TelegramService,
+} from "../services/telegram.service";
+import { initTradeNotificationService } from "../services/trade-notification.service";
 import type { ClobClient } from "@polymarket/clob-client";
 import type { Wallet } from "ethers";
 
@@ -164,6 +169,27 @@ export async function startArbitrageEngine(
     logger.info(
       "=====================================================================",
     );
+  }
+
+  // === TELEGRAM INITIALIZATION FOR ARB MODE ===
+  // Initialize Telegram trade notifications for standalone ARB mode.
+  // When running MODE=arb (standalone), this ensures ARB BUY notifications are sent.
+  // When running MODE=both, the main orchestrator already initializes Telegram,
+  // and the idempotency guard in initTradeNotificationService prevents duplicates.
+  //
+  // NOTE: We don't need a reference to TelegramService here - the notification
+  // singleton is global, and strategies call notifyBuy() directly.
+  if (!preAuthenticatedClient) {
+    // Standalone ARB mode - initialize Telegram ourselves
+    const telegramService: TelegramService = createTelegramService(logger);
+    if (telegramService.isEnabled()) {
+      initTradeNotificationService(telegramService, logger);
+      logger.info("📱 Telegram notifications initialized for ARB mode");
+    }
+  } else {
+    // MODE=both - Telegram was already initialized by main.ts
+    // The idempotent initTradeNotificationService will skip if already initialized
+    logger.debug("[ARB] Using pre-initialized Telegram service from main");
   }
 
   const stateStore = new InMemoryStateStore(

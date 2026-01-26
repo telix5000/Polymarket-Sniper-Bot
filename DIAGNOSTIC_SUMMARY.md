@@ -3,16 +3,18 @@
 ## Quick Summary
 
 ### Issue 1: RPC Rate Limit Blocking All Redemptions ⚠️
+
 **Status:** CRITICAL - 15 positions stuck  
 **Root Cause:** RPC provider's "in-flight transaction limit" for delegated accounts  
 **Impact:** All redemption attempts fail, positions accumulate, capital locked  
-**Fix Complexity:** LOW - Add error detection + extended cooldown  
+**Fix Complexity:** LOW - Add error detection + extended cooldown
 
 ### Issue 2: Profitable Positions Showing 0% P&L ⚠️
+
 **Status:** HIGH - User can't see actual profit  
 **Root Cause:** `fetchMarketOutcome()` API failures causing fallback to entryPrice  
 **Impact:** Positions worth 95-100¢ show 0% profit (actually 50-90%+ profit)  
-**Fix Complexity:** LOW - Use orderbook/price API instead of entryPrice  
+**Fix Complexity:** LOW - Use orderbook/price API instead of entryPrice
 
 ---
 
@@ -21,13 +23,14 @@
 ### Issue 1: RPC Rate Limit Error
 
 #### What the logs show:
+
 ```
-[WARN] [AutoRedeem] Failed to redeem market 0xcfd9ada8573ab0e09b2fc3988fbeacb957d6f4b6c5d515a20336f68e46167f52: 
+[WARN] [AutoRedeem] Failed to redeem market 0xcfd9ada8573ab0e09b2fc3988fbeacb957d6f4b6c5d515a20336f68e46167f52:
 could not coalesce error (error={ "code": -32000, "message": "in-flight transaction limit reached for delegated accounts" }, payload={...}
 
-[INFO] [AutoRedeem] ⚠️ 15 redeemable but 14 skipped: 
-  0 already redeemed, 
-  0 in cooldown, 
+[INFO] [AutoRedeem] ⚠️ 15 redeemable but 14 skipped:
+  0 already redeemed,
+  0 in cooldown,
   14 max failures
 ```
 
@@ -55,6 +58,7 @@ could not coalesce error (error={ "code": -32000, "message": "in-flight transact
    - No throttling or queuing
 
 #### Code locations:
+
 - **Error thrown:** `auto-redeem.ts:681` - `ctfContract.redeemPositions()`
 - **Generic catch:** `auto-redeem.ts:722` - catches all errors equally
 - **Failure tracking:** `auto-redeem.ts:426` - increments failure count
@@ -65,11 +69,13 @@ could not coalesce error (error={ "code": -32000, "message": "in-flight transact
 ### Issue 2: Zero Profit Display
 
 #### What the logs show:
+
 ```
 [SimpleQuickFlip] 📊 Positions: 26 total, 0 any profit, 0 at target (>=10%), 15 redeemable
 ```
 
 But user has:
+
 - Pistons: 27.5 shares @ 55¢ → now 95¢ = **73.45% profit** ✅
 - Counter-Strike: 9.7 shares @ 52¢ → now 100¢ = **92.28% profit** ✅
 - Kennesaw State: 9.7 shares @ 52¢ → now 100¢ = **92.31% profit** ✅
@@ -78,25 +84,27 @@ But user has:
 #### Why this happens:
 
 1. **Resolved Market Pricing Logic**
+
    ```typescript
    // position-tracker.ts:444-454
    if (!winningOutcome) {
-     currentPrice = entryPrice;  // <-- BUG: Makes P&L = 0%
+     currentPrice = entryPrice; // <-- BUG: Makes P&L = 0%
      resolvedCount++;
    }
    ```
 
 2. **P&L Calculation**
+
    ```typescript
    // position-tracker.ts:562-563
    const pnlUsd = (currentPrice - entryPrice) * size;
    const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
    ```
-   
+
    If `currentPrice = entryPrice`:
    - `pnlUsd = (0.55 - 0.55) * 27.5 = 0`
    - `pnlPct = 0%`
-   
+
    Should be:
    - `pnlUsd = (0.95 - 0.55) * 27.5 = 11.00`
    - `pnlPct = 72.7%`
@@ -108,6 +116,7 @@ But user has:
    - API rate limits
 
 4. **Circular Dependency Problem**
+
    ```
    Quick Flip ──(redeemable?)──> Skip ──> Auto-Redeem
         ↑                                      ↓
@@ -115,10 +124,11 @@ But user has:
         │                                      ↓
         └────────────────────────────────── BLOCKED
    ```
-   
+
    Result: Positions stuck showing 0% profit, can't be sold OR redeemed
 
 #### Code locations:
+
 - **Fallback bug:** `position-tracker.ts:444` - sets `currentPrice = entryPrice`
 - **P&L calc:** `position-tracker.ts:562-563`
 - **Quick Flip skip:** `quick-flip-simple.ts:135` - skips redeemable positions
@@ -156,6 +166,7 @@ RESULT:
 4. Use extended cooldown for RPC errors
 
 **Changes:**
+
 - Line 722: Add RPC error check
 - Line 90: Add `RPC_RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1000`
 - Line 336: Check `isRpcRateLimit` flag for cooldown
@@ -173,6 +184,7 @@ RESULT:
 3. Add warning logs for unknown outcomes
 
 **Changes:**
+
 - Line 444-454: Replace entryPrice fallback with orderbook/price API
 
 **Risk:** MEDIUM - Might show stale prices if APIs lag  
@@ -195,16 +207,19 @@ RESULT:
 ## Testing Plan
 
 ### Test 1: RPC Rate Limit Detection
+
 1. Simulate -32000 error in test
 2. Verify extended cooldown applied
 3. Verify log shows "RPC rate limit" message
 
 ### Test 2: Resolved Position Pricing
+
 1. Mock `fetchMarketOutcome()` to return null
 2. Verify orderbook price used
 3. Verify correct P&L calculated
 
 ### Test 3: End-to-End
+
 1. Run with actual resolved positions
 2. Verify profit shows correctly
 3. Verify redemption succeeds after cooldown
@@ -214,12 +229,14 @@ RESULT:
 ## Expected Outcomes After Fixes
 
 ### Before:
+
 ```
 [SimpleQuickFlip] 📊 Positions: 26 total, 0 any profit, 0 at target
 [AutoRedeem] ⚠️ 15 redeemable but 14 skipped: 14 max failures
 ```
 
 ### After:
+
 ```
 [SimpleQuickFlip] 📊 Positions: 26 total, 4 any profit (avg +78%), 0 at target, 15 redeemable
 [AutoRedeem] Found 15 redeemable position(s)
@@ -233,13 +250,16 @@ RESULT:
 ## Implementation Priority
 
 ### Priority 1 (CRITICAL - Do immediately):
+
 ✅ Fix 1: RPC rate limit detection + extended cooldown  
-✅ Fix 2: Better resolved position pricing  
+✅ Fix 2: Better resolved position pricing
 
 ### Priority 2 (RECOMMENDED - Do soon):
+
 ⭕ Fix 3: Transaction queue
 
 ### Priority 3 (NICE TO HAVE):
+
 ⭕ Add structured error logging
 ⭕ Add Prometheus metrics for RPC errors
 ⭕ Add alert for consecutive RPC rate limits
@@ -260,6 +280,7 @@ RESULT:
 ---
 
 ## Estimated Time
+
 - Analysis: 30 minutes ✅ (Complete)
 - Fix 1 implementation: 15 minutes
 - Fix 2 implementation: 20 minutes

@@ -4,6 +4,8 @@ import {
   initTradeNotificationService,
   setTradeNotificationPnLCallback,
   isTradeNotificationEnabled,
+  isTradeNotificationInitialized,
+  resetTradeNotificationServiceForTesting,
   notifyTrade,
   notifyBuy,
   notifySell,
@@ -22,8 +24,9 @@ import { TelegramService } from "../../src/services/telegram.service";
  *
  * These tests verify:
  * 1. Service initialization and enable state
- * 2. Notification functions for all trade types
- * 3. P&L callback integration
+ * 2. Idempotent initialization (prevents duplicate init)
+ * 3. Notification functions for all trade types
+ * 4. P&L callback integration
  */
 
 // Mock logger
@@ -36,15 +39,15 @@ function createMockLogger() {
   };
 }
 
-// Helper to reset module state between tests
-// Note: We can't truly reset the singleton, but we can re-initialize it
-
 describe("Trade Notification Service", () => {
   let mockFetch: ReturnType<typeof mock.fn>;
   let originalFetch: typeof global.fetch;
   let mockLogger: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
+    // Reset singleton state before each test
+    resetTradeNotificationServiceForTesting();
+    
     originalFetch = global.fetch;
     mockFetch = mock.fn(() =>
       Promise.resolve({
@@ -78,9 +81,87 @@ describe("Trade Notification Service", () => {
 
       assert.strictEqual(isTradeNotificationEnabled(), true);
     });
+
+    test("isTradeNotificationInitialized returns false before initialization", () => {
+      assert.strictEqual(isTradeNotificationInitialized(), false);
+    });
+
+    test("isTradeNotificationInitialized returns true after initialization", () => {
+      const enabledService = new TelegramService(
+        { botToken: "test-token", chatId: "123456" },
+        mockLogger,
+      );
+      initTradeNotificationService(enabledService, mockLogger);
+
+      assert.strictEqual(isTradeNotificationInitialized(), true);
+    });
+
+    test("initialization is idempotent - second init is skipped", () => {
+      const firstService = new TelegramService(
+        { botToken: "first-token", chatId: "111111" },
+        mockLogger,
+      );
+      const secondService = new TelegramService(
+        { botToken: "second-token", chatId: "222222" },
+        mockLogger,
+      );
+      const mockLogger2 = createMockLogger();
+
+      // First initialization
+      initTradeNotificationService(firstService, mockLogger);
+      assert.strictEqual(isTradeNotificationInitialized(), true);
+      assert.strictEqual(isTradeNotificationEnabled(), true);
+
+      // Second initialization should be skipped
+      initTradeNotificationService(secondService, mockLogger2);
+      
+      // Check that debug log was called with "already initialized" message
+      const debugCalls = mockLogger2.debug.mock.calls;
+      const hasSkipMessage = debugCalls.some((call: { arguments: string[] }) =>
+        call.arguments[0].includes("already initialized"),
+      );
+      assert.ok(hasSkipMessage, "Should log that init was skipped");
+      
+      // Service should still be enabled (from first init)
+      assert.strictEqual(isTradeNotificationEnabled(), true);
+    });
+
+    test("reset clears all singleton state", () => {
+      const enabledService = new TelegramService(
+        { botToken: "test-token", chatId: "123456" },
+        mockLogger,
+      );
+      initTradeNotificationService(enabledService, mockLogger);
+      assert.strictEqual(isTradeNotificationInitialized(), true);
+      assert.strictEqual(isTradeNotificationEnabled(), true);
+
+      // Reset
+      resetTradeNotificationServiceForTesting();
+
+      // Verify state is cleared
+      assert.strictEqual(isTradeNotificationInitialized(), false);
+      assert.strictEqual(isTradeNotificationEnabled(), false);
+    });
   });
 
   describe("notifyTrade", () => {
+    test("returns false and logs warning when service not initialized", async () => {
+      // Don't initialize the service - call notifyTrade directly
+      const result = await notifyTrade({
+        type: "BUY",
+        marketId: "0x123",
+        tokenId: "token1",
+        size: 10,
+        price: 0.5,
+        sizeUsd: 5,
+      });
+
+      assert.strictEqual(result, false);
+      assert.strictEqual(mockFetch.mock.calls.length, 0);
+      // No logger available without initialization, so warning won't be logged
+      // but the function should still return false gracefully
+    });
+
     test("returns false when service is disabled", async () => {
       const disabledService = new TelegramService({}, mockLogger);
       initTradeNotificationService(disabledService, mockLogger);

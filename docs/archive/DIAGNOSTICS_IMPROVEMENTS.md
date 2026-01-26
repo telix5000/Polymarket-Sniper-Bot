@@ -13,6 +13,7 @@ The bot was functioning correctly but logged confusing `UNKNOWN_ERROR` warnings 
 ## Root Cause Analysis
 
 The `UNKNOWN_ERROR` case occurs when:
+
 - The API client returns a response without a standard HTTP status field
 - This typically happens when the client returns a successful result object rather than an HTTP response wrapper
 - The response contains valid data but `status` is `undefined`
@@ -25,6 +26,7 @@ The `UNKNOWN_ERROR` case occurs when:
 ### 1. Enhanced Diagnostic Logging in `src/clob/diagnostics.ts` (lines 1009-1060)
 
 **Before**: Logged confusing "UNKNOWN_ERROR" with minimal context
+
 ```typescript
 params.logger.warn(
   `[CLOB][Preflight] UNKNOWN_ERROR status=${status} severity=${severity} issue=${issue}`,
@@ -32,14 +34,17 @@ params.logger.warn(
 ```
 
 **After**: Added diagnostic context and clarified this is benign behavior
+
 ```typescript
 // Added diagnostic variables
 const responseType = typeof response;
 const hasData = response && typeof response === "object" && "data" in response;
-const hasError = response && typeof response === "object" && "error" in response;
-const responseKeys = response && typeof response === "object"
-  ? Object.keys(response).join(",")
-  : "none";
+const hasError =
+  response && typeof response === "object" && "error" in response;
+const responseKeys =
+  response && typeof response === "object"
+    ? Object.keys(response).join(",")
+    : "none";
 
 // Improved log message (single combined statement)
 params.logger.warn(
@@ -50,6 +55,7 @@ params.logger.warn(
 ```
 
 **Benefits**:
+
 - Operators now see "BENIGN" instead of alarming "UNKNOWN_ERROR"
 - Additional diagnostic info helps understand the response structure
 - Clear message that credentials are valid and trading continues
@@ -57,16 +63,19 @@ params.logger.warn(
 ### 2. Clarified Warning Message in `src/polymarket/preflight.ts` (line 341)
 
 **Before**: Ambiguous "failed but allowing" message
+
 ```typescript
-`[CLOB] Auth preflight check failed (NON_FATAL) but credentials appear valid; allowing trading. status=${preflight.status}`
+`[CLOB] Auth preflight check failed (NON_FATAL) but credentials appear valid; allowing trading. status=${preflight.status}`;
 ```
 
 **After**: Clear, positive framing
+
 ```typescript
-`[CLOB] Auth preflight NON_FATAL issue detected - credentials are valid, trading continues normally. status=${preflight.status ?? "undefined"}`
+`[CLOB] Auth preflight NON_FATAL issue detected - credentials are valid, trading continues normally. status=${preflight.status ?? "undefined"}`;
 ```
 
 **Benefits**:
+
 - Reduces alarm for operators
 - Makes it clear this is expected/normal behavior
 - Handles undefined status gracefully with `?? "undefined"`
@@ -74,11 +83,13 @@ params.logger.warn(
 ### 3. Improved Auth Story Context (lines 344-354)
 
 **Before**: Generic "Non-fatal: Unknown" message
+
 ```typescript
 errorTextShort: `Non-fatal: ${preflight.reason ?? "Unknown"}`,
 ```
 
 **After**: Specific explanation for undefined status case
+
 ```typescript
 errorTextShort:
   preflight.status === undefined
@@ -87,6 +98,7 @@ errorTextShort:
 ```
 
 **Benefits**:
+
 - Auth Story now clearly documents what happened
 - Operators understand this is about response format, not auth failure
 - One-line summary per attempt remains clean and actionable
@@ -94,6 +106,7 @@ errorTextShort:
 ## Expected Output
 
 ### Before
+
 ```
 [WARN] [CLOB][Preflight] FAIL stage=auth status=none code=none message=unknown_error
 [WARN] [CLOB][Preflight] UNKNOWN_ERROR status=undefined severity=NON_FATAL issue=UNKNOWN
@@ -101,6 +114,7 @@ errorTextShort:
 ```
 
 ### After
+
 ```
 [WARN] [CLOB][Preflight] FAIL stage=auth status=none code=none message=unknown_error
 [WARN] [CLOB][Preflight] BENIGN: response without HTTP status - credentials OK, trading allowed. Details: status=undefined severity=NON_FATAL issue=UNKNOWN responseType=object hasData=true hasError=false keys=data,allowance
@@ -108,6 +122,7 @@ errorTextShort:
 ```
 
 **Auth Story Output**:
+
 ```json
 {
   "attempt": 1,
@@ -130,12 +145,14 @@ errorTextShort:
 ## Impact
 
 ### Positive
+
 - **Reduced operator confusion**: Clear "BENIGN" messaging instead of alarming "UNKNOWN_ERROR"
 - **Better diagnostics**: Response structure info helps debugging if real issues arise
 - **Clearer Auth Story**: One-line summary explains what happened
 - **No false alarms**: Operators understand this is expected behavior
 
 ### No Negative Impact
+
 - No functional changes to authentication
 - No changes to trading logic
 - No new error states introduced
