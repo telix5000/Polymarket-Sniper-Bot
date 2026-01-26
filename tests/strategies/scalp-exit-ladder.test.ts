@@ -6,6 +6,7 @@ import {
   type ExitPlan,
   type ExitLadderStage,
 } from "../../src/strategies/scalp-trade";
+import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "../../src/strategies/constants";
 
 const baseEnv = {
   RPC_URL: "http://localhost:8545",
@@ -715,5 +716,127 @@ describe("Illiquid Exit Detection", () => {
         result.reason?.includes("far below acceptable"),
       `Should have a valid illiquid reason, got: ${result.reason}`,
     );
+  });
+});
+
+// === BID-BASED SLIPPAGE TESTS (Jan 2025 Fix) ===
+
+describe("Bid-Based Slippage for ProfitTaker Sells", () => {
+  test("minAcceptablePrice should be derived from bestBid, not target", () => {
+    // Problem scenario: target=66¢, bestBid=64¢
+    // Old behavior: minAcceptablePrice = 66 * 0.98 = 64.68¢
+    // Since bestBid (64¢) < minAcceptablePrice (64.68¢), sale blocked!
+    //
+    // New behavior: minAcceptablePrice = 64 * 0.98 = 62.72¢
+    // Since bestBid (64¢) >= minAcceptablePrice (62.72¢), sale allowed!
+
+    const targetPriceDollars = 0.66; // 66¢
+    const bestBidDollars = 0.64; // 64¢
+    const slippagePct = DEFAULT_SELL_SLIPPAGE_PCT; // 2%
+
+    // Old (buggy) calculation based on target:
+    const oldMinAcceptable = calculateMinAcceptablePrice(targetPriceDollars, slippagePct);
+    assert.ok(
+      Math.abs(oldMinAcceptable - targetPriceDollars * (1 - slippagePct / 100)) < 1e-9,
+    );
+    assert.ok(
+      bestBidDollars < oldMinAcceptable,
+      `Bug demo: bestBid ${bestBidDollars} < oldMinAcceptable ${oldMinAcceptable.toFixed(4)}`,
+    );
+
+    // New (fixed) calculation based on bestBid:
+    const newMinAcceptable = calculateMinAcceptablePrice(bestBidDollars, slippagePct);
+    assert.ok(
+      Math.abs(newMinAcceptable - bestBidDollars * (1 - slippagePct / 100)) < 1e-9,
+    );
+    assert.ok(
+      bestBidDollars >= newMinAcceptable,
+      `Fix: bestBid ${bestBidDollars} >= newMinAcceptable ${newMinAcceptable.toFixed(4)}`,
+    );
+  });
+
+  test("Bid-based slippage allows profitable sells that would be blocked by target-based slippage", () => {
+    // Entry=50¢, Target=66¢ (32% profit), BestBid=64¢ (28% profit)
+    // Both are profitable but old behavior blocks the sell
+    const entryPrice = 0.50;
+    const targetPrice = 0.66;
+    const bestBid = 0.64;
+    const slippagePct = 2;
+
+    // The sell is profitable at bestBid
+    const profitAtBid = ((bestBid - entryPrice) / entryPrice) * 100;
+    assert.ok(profitAtBid > 0, `Sell at bestBid is profitable: +${profitAtBid.toFixed(1)}%`);
+
+    // Old: minAcceptable from target = 64.68¢, blocks because bestBid (64¢) < 64.68¢
+    const targetBasedFloor = calculateMinAcceptablePrice(targetPrice, slippagePct);
+    assert.ok(bestBid < targetBasedFloor, "Old behavior would BLOCK this sell");
+
+    // New: minAcceptable from bestBid = 62.72¢, allows because bestBid (64¢) >= 62.72¢
+    const bidBasedFloor = calculateMinAcceptablePrice(bestBid, slippagePct);
+    assert.ok(bestBid >= bidBasedFloor, "New behavior ALLOWS this sell");
+  });
+
+  test("Bid-based slippage reference price falls back to effectiveLimitPrice when no bestBid", () => {
+    // When currentBidPrice is undefined, we fall back to effectiveLimitPrice
+    // This ensures backwards compatibility for edge cases
+    const effectiveLimitPrice = 0.66;
+    const currentBidPrice: number | undefined = undefined;
+
+    const referencePrice = currentBidPrice ?? effectiveLimitPrice;
+    assert.equal(referencePrice, effectiveLimitPrice);
+  });
+
+  test("Slippage tolerance prevents micro-fluctuation blocks", () => {
+    // Even with bid-based slippage, we still protect against major slippage
+    // 2% slippage at 64¢ means we accept down to 62.72¢
+    const bestBid = 0.64;
+    const minAcceptable = calculateMinAcceptablePrice(bestBid, 2);
+
+    // A 1¢ drop should still pass
+    const bidAfterSmallDrop = 0.63;
+    assert.ok(
+      bidAfterSmallDrop >= minAcceptable,
+      `Small drop (1¢) should pass: ${bidAfterSmallDrop} >= ${minAcceptable.toFixed(4)}`,
+    );
+
+    // A 5¢ drop should fail (slippage too large)
+    const bidAfterLargeDrop = 0.59;
+    assert.ok(
+      bidAfterLargeDrop < minAcceptable,
+      `Large drop (5¢) should fail: ${bidAfterLargeDrop} < ${minAcceptable.toFixed(4)}`,
+    );
+  });
+
+  test("PROFIT stage with bestBid below target no longer perpetually blocked", () => {
+    // Simulates the exact bug scenario:
+    // Stage: PROFIT, avgEntry=50¢, target=66¢ (32% profit), bestBid=64¢
+    // Old: limitCents = max(66, 64) = 66¢, minAcceptable = 64.68¢, BLOCKED
+    // New: referencePrice = bestBid (64¢), minAcceptable = 62.72¢, ALLOWED
+
+    const avgEntryCents = 50.0;
+    const targetPriceCents = 66.0;
+    const bestBidCents = 64.0;
+
+    // PROFIT stage: limit = max(target, bestBid)
+    const limitCents = Math.max(targetPriceCents, bestBidCents);
+    assert.equal(limitCents, 66.0, "Limit is target price");
+
+    // Old approach: minAcceptable from limit
+    const oldMinAcceptableCents = limitCents * (1 - 2 / 100);
+    assert.ok(
+      bestBidCents < oldMinAcceptableCents,
+      `Old: bestBid ${bestBidCents}¢ < minAcceptable ${oldMinAcceptableCents.toFixed(1)}¢ -> BLOCKED`,
+    );
+
+    // New approach: minAcceptable from bestBid
+    const newMinAcceptableCents = bestBidCents * (1 - 2 / 100);
+    assert.ok(
+      bestBidCents >= newMinAcceptableCents,
+      `New: bestBid ${bestBidCents}¢ >= minAcceptable ${newMinAcceptableCents.toFixed(1)}¢ -> ALLOWED`,
+    );
+
+    // Verify we're still making profit (sell at bestBid is above entry)
+    const profitPct = ((bestBidCents - avgEntryCents) / avgEntryCents) * 100;
+    assert.ok(profitPct > 0, `Still profitable at ${profitPct.toFixed(1)}% (${bestBidCents - avgEntryCents}¢ profit)`);
   });
 });

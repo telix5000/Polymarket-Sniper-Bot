@@ -1868,7 +1868,10 @@ export class HedgingStrategy {
       // where we need to exit and salvage whatever capital remains.
       // FALLING_KNIFE_SLIPPAGE_PCT (25%) is more liberal than normal sells but
       // still recovers meaningful value rather than accepting near-zero prices.
-      const minPrice = calculateMinAcceptablePrice(position.currentPrice, FALLING_KNIFE_SLIPPAGE_PCT);
+      // FIX: Use currentBidPrice (actual executable price) instead of currentPrice
+      // to prevent "Sale blocked" errors when bid < currentPrice - slippage.
+      const referencePrice = position.currentBidPrice ?? position.currentPrice;
+      const minPrice = calculateMinAcceptablePrice(referencePrice, FALLING_KNIFE_SLIPPAGE_PCT);
 
       const result = await postOrder({
         client: this.client,
