@@ -1,14 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-// Mock logger
-const mockLogger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  debug: () => {},
-};
-
 // Mock the API client for unit testing
 describe("PolymarketClient", () => {
   describe("Position Caching", () => {
@@ -35,7 +27,7 @@ describe("PolymarketClient", () => {
     });
 
     test("should identify position as complete when size is zero", () => {
-      const isComplete = (size: number, currentValue: number, redeemable: boolean) =>
+      const isComplete = (size: number, currentValue: number) =>
         size <= 0 || currentValue <= 0;
 
       assert.equal(isComplete(0, 50, false), true, "Zero size = complete");

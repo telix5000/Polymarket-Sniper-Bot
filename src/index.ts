@@ -10,7 +10,7 @@
  *   INTERVAL_MS    - Optional (default: 5000)
  */
 
-import { JsonRpcProvider, Wallet, Contract, Interface } from "ethers";
+import { JsonRpcProvider, Wallet } from "ethers";
 import axios from "axios";
 
 // === TYPES ===
@@ -114,7 +114,6 @@ async function alert(title: string, message: string) {
 // === API CLIENT ===
 
 const API_BASE = "https://data-api.polymarket.com";
-const CLOB_BASE = "https://clob.polymarket.com";
 
 let positionsCache: Position[] = [];
 let lastFetch = 0;
@@ -191,14 +190,15 @@ async function placeOrder(
   sizeUsd: number
 ): Promise<boolean> {
   // ⚠️ PLACEHOLDER - Real implementation needs @polymarket/clob-client integration
-  console.log(`[Order] ⚠️ SIMULATION: ${side} ${outcome} $${sizeUsd.toFixed(2)} on ${tokenId.slice(0, 8)}...`);
+  // This file is NOT the main entrypoint - use src/v2/index.ts instead
+  console.log(`[Order] ⚠️ SIMULATION ONLY: ${side} ${outcome} $${sizeUsd.toFixed(2)} on ${tokenId.slice(0, 8)}...`);
+  console.log(`[Order] ⚠️ This entrypoint is NOT connected to real trading. Use USE_V2=true to run V2.`);
   
-  // For now, just log - actual order execution requires CLOB client
-  // In production, integrate with @polymarket/clob-client
-  await alert("Trade", `${side} ${outcome} $${sizeUsd.toFixed(2)}`);
-  invalidateCache();
+  // DO NOT execute real orders - this is a simulation placeholder
+  // Return false to indicate no order was placed
+  await alert("Simulation", `Would ${side} ${outcome} $${sizeUsd.toFixed(2)} (NOT EXECUTED)`);
   
-  return true;
+  return false;
 }
 
 // === STRATEGIES ===
@@ -284,9 +284,18 @@ async function cycle(wallet: Wallet, walletAddr: string, config: PresetConfig) {
   const positions = await getPositions(walletAddr);
   if (!positions.length) return;
 
+  // Priority order (as documented):
+  // 1. AutoSell (near $1) - guaranteed profit
+  // 2. Hedge (moderate loss) - try to recover
+  // 3. StopLoss (severe loss AND hedge disabled) - exit
+  // 4. Scalp (in profit) - take profits
+  // 5. Stack (winning) - add to winners
   await runAutoSell(wallet, positions, config);
-  await runStopLoss(wallet, positions, config);
   await runHedge(wallet, walletAddr, positions, config);
+  // Stop-loss is only useful if hedging is disabled
+  if (!config.hedge.enabled) {
+    await runStopLoss(wallet, positions, config);
+  }
   await runScalp(wallet, positions, config);
   await runStack(wallet, walletAddr, positions, config);
 }
@@ -306,14 +315,26 @@ async function main() {
   initAlerts(cfg.telegram);
   await alert("Bot Started", `Preset: ${cfg.preset}\nWallet: ${walletAddr.slice(0, 10)}...`);
   
-  // Run immediately then on interval
-  await cycle(wallet, walletAddr, cfg.config);
+  // Run immediately then on interval with in-flight guard
+  let cycleRunning = false;
   
-  setInterval(() => {
-    cycle(wallet, walletAddr, cfg.config).catch(err => {
+  const runCycle = async () => {
+    if (cycleRunning) {
+      console.log("[Cycle] Skipping - previous cycle still running");
+      return;
+    }
+    cycleRunning = true;
+    try {
+      await cycle(wallet, walletAddr, cfg.config);
+    } catch (err) {
       console.error(`[Error] ${err}`);
-    });
-  }, cfg.intervalMs);
+    } finally {
+      cycleRunning = false;
+    }
+  };
+  
+  await runCycle();
+  setInterval(runCycle, cfg.intervalMs);
   
   // Handle shutdown
   process.on("SIGINT", () => {

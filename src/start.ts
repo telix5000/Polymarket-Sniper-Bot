@@ -6,6 +6,9 @@
  *   USE_V2=false - Use old system (default)
  */
 
+// Load environment variables from .env file
+import "dotenv/config";
+
 async function main() {
   const useV2 = process.env.USE_V2?.toLowerCase() === "true";
   
