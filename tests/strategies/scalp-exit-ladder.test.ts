@@ -6,6 +6,7 @@ import {
   type ExitPlan,
   type ExitLadderStage,
 } from "../../src/strategies/scalp-trade";
+import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "../../src/strategies/constants";
 
 const baseEnv = {
   RPC_URL: "http://localhost:8545",
@@ -720,8 +721,6 @@ describe("Illiquid Exit Detection", () => {
 
 // === BID-BASED SLIPPAGE TESTS (Jan 2025 Fix) ===
 
-import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "../../src/strategies/constants";
-
 describe("Bid-Based Slippage for ProfitTaker Sells", () => {
   test("minAcceptablePrice should be derived from bestBid, not target", () => {
     // Problem scenario: target=66¢, bestBid=64¢
@@ -737,7 +736,9 @@ describe("Bid-Based Slippage for ProfitTaker Sells", () => {
 
     // Old (buggy) calculation based on target:
     const oldMinAcceptable = calculateMinAcceptablePrice(targetPriceDollars, slippagePct);
-    assert.equal(oldMinAcceptable, targetPriceDollars * (1 - slippagePct / 100));
+    assert.ok(
+      Math.abs(oldMinAcceptable - targetPriceDollars * (1 - slippagePct / 100)) < 1e-9,
+    );
     assert.ok(
       bestBidDollars < oldMinAcceptable,
       `Bug demo: bestBid ${bestBidDollars} < oldMinAcceptable ${oldMinAcceptable.toFixed(4)}`,
@@ -745,7 +746,9 @@ describe("Bid-Based Slippage for ProfitTaker Sells", () => {
 
     // New (fixed) calculation based on bestBid:
     const newMinAcceptable = calculateMinAcceptablePrice(bestBidDollars, slippagePct);
-    assert.equal(newMinAcceptable, bestBidDollars * (1 - slippagePct / 100));
+    assert.ok(
+      Math.abs(newMinAcceptable - bestBidDollars * (1 - slippagePct / 100)) < 1e-9,
+    );
     assert.ok(
       bestBidDollars >= newMinAcceptable,
       `Fix: bestBid ${bestBidDollars} >= newMinAcceptable ${newMinAcceptable.toFixed(4)}`,
