@@ -62,6 +62,33 @@ The reserve system keeps a percentage of your balance protected from regular tra
 - Protective trades (hedge, sell signal protection) CAN dip into reserves
 - Example: With $100 balance and 20% reserve → Regular trades can use $80, hedging can use full $100
 
+### POL Reserve System
+
+The POL reserve system automatically maintains a minimum POL (Polygon native token) balance for gas fees. When POL drops below the minimum threshold, it automatically swaps USDC to POL via QuickSwap.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POL_RESERVE_ENABLED` | `true` | Enable/disable automatic POL rebalancing |
+| `POL_RESERVE_TARGET` | `50` | Target POL balance to maintain |
+| `MIN_POL_RESERVE` | `50` | Alias for POL_RESERVE_TARGET |
+| `POL_RESERVE_MIN` | `10` | Minimum POL before triggering rebalance |
+| `POL_RESERVE_MAX_SWAP_USD` | `100` | Maximum USDC to swap per rebalance |
+| `POL_RESERVE_CHECK_INTERVAL_MIN` | `5` | How often to check POL balance (minutes) |
+| `POL_RESERVE_SLIPPAGE_PCT` | `1` | Slippage tolerance for swap (%) |
+
+**How it works:**
+- Every 5 minutes (configurable), the bot checks your POL balance
+- If POL < `POL_RESERVE_MIN` (default: 10), it triggers a rebalance
+- The bot calculates how much USDC to swap to reach `POL_RESERVE_TARGET` (default: 50)
+- Uses QuickSwap DEX to swap USDC → POL with slippage protection
+- Alerts via Telegram when rebalancing occurs
+
+**Example:** With 5 POL remaining (< 10 min threshold):
+1. Bot detects low POL: "⚠️ POL Low | Current: 5.00 POL | Target: 50 POL"
+2. Gets swap quote from QuickSwap
+3. Executes swap: "💱 POL Rebalance | Swapping $50 USDC → ~45 POL"
+4. Confirms: "✅ POL Swap | Confirmed"
+
 ### Optional
 
 | Variable | Default | Description | V1 Alias |

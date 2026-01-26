@@ -165,6 +165,15 @@ interface Config {
   adaptiveLearning: { enabled: boolean };  // Learn from trade outcomes, avoid bad markets
   onChainExit: { enabled: boolean; priceThreshold: number };  // Exit NOT_TRADABLE positions on-chain
   tradeMode: "clob" | "onchain";  // Trade via CLOB API or direct on-chain
+  // POL Reserve - auto-swap USDC to POL to maintain minimum POL balance for gas
+  polReserve: {
+    enabled: boolean;           // Enable automatic POL rebalancing
+    targetPol: number;          // Target POL balance (default: 50)
+    minPol: number;             // Minimum POL before triggering rebalance (default: 10)
+    maxSwapUsd: number;         // Max USDC to swap per rebalance (default: 100)
+    checkIntervalMin: number;   // How often to check POL balance (default: 5 minutes)
+    slippagePct: number;        // Slippage tolerance for swap (default: 1%)
+  };
 }
 
 interface TradeSignal {
@@ -217,6 +226,7 @@ const PRESETS: Record<Preset, Config> = {
     adaptiveLearning: { enabled: false },
     onChainExit: { enabled: true, priceThreshold: 0.99 },
     tradeMode: "clob",
+    polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
   },
   balanced: {
     autoSell: { 
@@ -249,6 +259,7 @@ const PRESETS: Record<Preset, Config> = {
     adaptiveLearning: { enabled: false },
     onChainExit: { enabled: true, priceThreshold: 0.99 },
     tradeMode: "clob",
+    polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
   },
   aggressive: {
     autoSell: { 
@@ -281,6 +292,7 @@ const PRESETS: Record<Preset, Config> = {
     adaptiveLearning: { enabled: false },
     onChainExit: { enabled: true, priceThreshold: 0.99 },
     tradeMode: "clob",
+    polReserve: { enabled: true, targetPol: 50, minPol: 10, maxSwapUsd: 100, checkIntervalMin: 5, slippagePct: 1 },
   },
 };
 
@@ -290,9 +302,17 @@ const API = "https://data-api.polymarket.com";
 const GAMMA_API = "https://gamma-api.polymarket.com";
 const CTF_ADDRESS = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
 const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+const WMATIC_ADDRESS = "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"; // Wrapped POL (WMATIC) on Polygon
+const QUICKSWAP_ROUTER = "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff"; // QuickSwap Router V2
 const INDEX_SETS: number[] = [1, 2];
 const PROXY_ABI = ["function proxy(address dest, bytes calldata data) external returns (bytes memory)"];
 const CTF_ABI = ["function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets) external"];
+
+// Uniswap V2 Router ABI (QuickSwap uses the same interface)
+const ROUTER_ABI = [
+  "function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, uint256 deadline) external returns (uint256[] memory amounts)",
+  "function getAmountsOut(uint256 amountIn, address[] calldata path) external view returns (uint256[] memory amounts)",
+];
 const ASSUMED_MARKET_DURATION_HOURS = 24; // Used for hold-time fallback when market end time is unavailable
 
 // Cache TTL configuration
@@ -310,8 +330,10 @@ const state = {
   lastFetch: 0,
   lastRedeem: 0,
   lastBalanceCheck: 0,
+  lastPolCheck: 0, // Last time we checked/rebalanced POL
   lastOrderTime: 0,
   balance: 0,
+  polBalance: 0, // POL balance in wallet
   sessionStartBalance: 0,
   dailyStartBalance: 0,
   dailyStartTime: 0,
@@ -1128,6 +1150,189 @@ function canSpend(amount: number, cfg: Config, allowReserve = false): boolean {
   return getAvailableBalance(cfg) >= amount;
 }
 
+// ============ POL RESERVE MANAGEMENT ============
+
+/**
+ * Fetch current POL balance
+ */
+async function fetchPolBalance(): Promise<number> {
+  if (!state.provider || !state.wallet) return 0;
+  
+  try {
+    const balance = await state.provider.getBalance(state.wallet.address);
+    state.polBalance = Number(balance) / 1e18; // POL has 18 decimals
+    return state.polBalance;
+  } catch (e) {
+    log(`⚠️ POL balance check failed: ${e}`);
+    return state.polBalance || 0;
+  }
+}
+
+/**
+ * Get quote for USDC -> POL swap via QuickSwap
+ * Returns the amount of POL we would receive for a given USDC amount
+ */
+async function getSwapQuote(usdcAmount: number): Promise<{ polAmount: number; path: string[] }> {
+  if (!state.provider) throw new Error("No provider");
+  
+  const router = new Contract(QUICKSWAP_ROUTER, ROUTER_ABI, state.provider);
+  const path = [USDC_ADDRESS, WMATIC_ADDRESS];
+  const usdcAmountWei = BigInt(Math.floor(usdcAmount * 1e6)); // USDC has 6 decimals
+  
+  const amounts = await router.getAmountsOut(usdcAmountWei, path);
+  const polAmount = Number(amounts[1]) / 1e18; // POL has 18 decimals
+  
+  return { polAmount, path };
+}
+
+/**
+ * Execute USDC -> POL swap via QuickSwap
+ * Uses swapExactTokensForETH to get native POL (not WMATIC)
+ */
+async function swapUsdcToPol(usdcAmount: number, minPolOut: number, cfg: Config): Promise<boolean> {
+  if (!state.wallet || !state.provider) {
+    log("❌ POL Swap | No wallet/provider");
+    return false;
+  }
+  
+  if (!state.liveTrading) {
+    log(`🔸 POL Swap [SIM] | ${$(usdcAmount)} USDC → ~${minPolOut.toFixed(2)} POL`);
+    return true;
+  }
+  
+  try {
+    const usdcAmountWei = BigInt(Math.round(usdcAmount * 1e6));
+    const minPolOutWei = BigInt(Math.round(minPolOut * 1e18));
+    const path = [USDC_ADDRESS, WMATIC_ADDRESS];
+    const deadline = Math.floor(Date.now() / 1000) + 300; // 5 minute deadline
+    
+    // First, approve USDC spending by the router
+    const usdcContract = new Contract(USDC_ADDRESS, [
+      "function approve(address spender, uint256 amount) returns (bool)",
+      "function allowance(address owner, address spender) view returns (uint256)",
+    ], state.wallet);
+    
+    // Use max uint256 approval to avoid repeated approval transactions
+    const MAX_UINT256 = (1n << 256n) - 1n;
+    
+    // Check current allowance
+    const currentAllowance = await usdcContract.allowance(state.wallet.address, QUICKSWAP_ROUTER);
+    if (currentAllowance < usdcAmountWei) {
+      log(`🔄 POL Swap | Approving USDC for QuickSwap...`);
+      const approveTx = await usdcContract.approve(QUICKSWAP_ROUTER, MAX_UINT256);
+      await approveTx.wait();
+      log(`✅ POL Swap | USDC approval confirmed`);
+    }
+    
+    // Execute swap
+    const router = new Contract(QUICKSWAP_ROUTER, ROUTER_ABI, state.wallet);
+    log(`🔄 POL Swap | Swapping ${$(usdcAmount)} USDC → min ${minPolOut.toFixed(2)} POL...`);
+    
+    const swapTx = await router.swapExactTokensForETH(
+      usdcAmountWei,
+      minPolOutWei,
+      path,
+      state.wallet.address,
+      deadline
+    );
+    
+    const receipt = await swapTx.wait();
+    log(`✅ POL Swap | Confirmed in tx ${receipt.hash.slice(0, 10)}...`);
+    
+    // Refresh balances (bypass cached USDC balance after swap)
+    state.lastBalanceCheck = 0;
+    await fetchBalance();
+    await fetchPolBalance();
+    
+    await alertStatus(`💱 POL Rebalance | Swapped ${$(usdcAmount)} USDC → POL | New POL: ${state.polBalance.toFixed(2)}`);
+    return true;
+  } catch (e: any) {
+    log(`❌ POL Swap failed: ${e.message}`);
+    return false;
+  }
+}
+
+/**
+ * Check POL balance and rebalance if below minimum
+ * Called periodically from the main cycle
+ */
+async function checkAndRebalancePol(cfg: Config): Promise<void> {
+  if (!cfg.polReserve.enabled) return;
+  
+  // Check interval (default: every 5 minutes)
+  const checkIntervalMs = cfg.polReserve.checkIntervalMin * 60 * 1000;
+  if (Date.now() - state.lastPolCheck < checkIntervalMs) return;
+  
+  state.lastPolCheck = Date.now();
+  
+  // Fetch current POL balance
+  const polBalance = await fetchPolBalance();
+  
+  // If above minimum, no action needed
+  if (polBalance >= cfg.polReserve.minPol) {
+    return;
+  }
+  
+  log(`⚠️ POL Low | Current: ${polBalance.toFixed(2)} POL | Target: ${cfg.polReserve.targetPol} POL`);
+  
+  // Calculate how much POL we need
+  const polNeeded = cfg.polReserve.targetPol - polBalance;
+  
+  // Get swap quote to determine USDC needed
+  try {
+    // POL price estimate for initial calculation (actual price comes from DEX quote)
+    // POL typically trades between $0.30-$1.50 - we use a conservative estimate
+    const POL_PRICE_ESTIMATE_USD = 1.5;
+    const MIN_SWAP_USD = 5; // Minimum swap to avoid dust transactions
+    const AVAILABLE_USDC_BUFFER = 0.9; // Use 90% of available USDC to leave buffer
+    const MIN_POL_QUOTE_THRESHOLD = 0.5; // Require at least 50% of needed POL from quote
+    const MIN_POL_RETRY_THRESHOLD = 0.3; // On retry, accept 30% of needed POL
+    
+    // Start with a reasonable estimate based on current POL price
+    let usdcToSwap = Math.min(polNeeded * POL_PRICE_ESTIMATE_USD, cfg.polReserve.maxSwapUsd);
+    
+    // Ensure we have enough USDC, respecting dynamic reserve percentage
+    const dynamicReservePct = getDynamicReservePct(cfg);
+    const availableUsdc = state.balance - (state.balance * dynamicReservePct / 100);
+    if (usdcToSwap > availableUsdc) {
+      log(`⚠️ POL Rebalance | Insufficient USDC (need ~${$(usdcToSwap)}, have ${$(availableUsdc)} available)`);
+      // Try with available amount, leaving a small buffer
+      usdcToSwap = Math.max(availableUsdc * AVAILABLE_USDC_BUFFER, 0);
+    }
+    
+    if (usdcToSwap < MIN_SWAP_USD) {
+      log(`⚠️ POL Rebalance | Swap amount too small (${$(usdcToSwap)}), skipping`);
+      return;
+    }
+    
+    // Get actual quote from DEX
+    let quote = await getSwapQuote(usdcToSwap);
+    
+    // Check if we'll get enough POL from this swap
+    if (quote.polAmount < polNeeded * MIN_POL_QUOTE_THRESHOLD) {
+      log(`⚠️ POL Rebalance | Quote too low: ${quote.polAmount.toFixed(2)} POL for ${$(usdcToSwap)}`);
+      // Increase swap amount and try again
+      usdcToSwap = Math.min(usdcToSwap * 2, cfg.polReserve.maxSwapUsd, availableUsdc);
+      quote = await getSwapQuote(usdcToSwap);
+      if (quote.polAmount < polNeeded * MIN_POL_RETRY_THRESHOLD) {
+        log(`❌ POL Rebalance | Cannot get enough POL, skipping`);
+        return;
+      }
+    }
+    
+    // Calculate minimum POL out with slippage protection
+    const minPolOut = quote.polAmount * (1 - cfg.polReserve.slippagePct / 100);
+    
+    log(`💱 POL Rebalance | Swapping ${$(usdcToSwap)} USDC → ~${quote.polAmount.toFixed(2)} POL (min: ${minPolOut.toFixed(2)})`);
+    
+    // Execute swap
+    await swapUsdcToPol(usdcToSwap, minPolOut, cfg);
+    
+  } catch (e: any) {
+    log(`❌ POL Rebalance failed: ${e.message}`);
+  }
+}
+
 // ============ ORDER EXECUTION ============
 
 const logLevel = process.env.LOG_LEVEL || "info";
@@ -1686,6 +1891,12 @@ async function cycle(walletAddr: string, cfg: Config) {
   // Refresh balance periodically
   await fetchBalance();
   
+  // Check and rebalance POL if needed (maintains minimum POL for gas)
+  await checkAndRebalancePol(cfg);
+  
+  // After potential POL rebalance (which may spend USDC), refresh balance again
+  await fetchBalance();
+  
   // Copy BUY trades from tracked traders
   await copyTrades(cfg);
   
@@ -2095,6 +2306,39 @@ export function loadConfig() {
   if (tradeModeVal === "clob") cfg.tradeMode = "clob";
   if (tradeModeVal === "onchain") cfg.tradeMode = "onchain";
 
+  // ========== POL RESERVE ==========
+  // Auto-swap USDC to POL to maintain minimum POL balance for gas
+  // POL_RESERVE_ENABLED: Enable/disable the feature (default: true)
+  // POL_RESERVE_TARGET: Target POL balance (default: 50)
+  // MIN_POL_RESERVE: Legacy alias for POL_RESERVE_TARGET (sets targetPol, not minPol)
+  // POL_RESERVE_MIN: Minimum POL before triggering rebalance (default: 10)
+  // POL_RESERVE_MAX_SWAP_USD: Max USDC to swap per rebalance (default: 100)
+  // POL_RESERVE_CHECK_INTERVAL_MIN: How often to check (default: 5 minutes)
+  // POL_RESERVE_SLIPPAGE_PCT: Slippage tolerance (default: 1%)
+  if (envBool("POL_RESERVE_ENABLED") !== undefined) cfg.polReserve.enabled = envBool("POL_RESERVE_ENABLED")!;
+  if (envNum("POL_RESERVE_TARGET") !== undefined) cfg.polReserve.targetPol = envNum("POL_RESERVE_TARGET")!;
+  // NOTE: MIN_POL_RESERVE is a legacy/V1 compatibility alias for POL_RESERVE_TARGET.
+  // Despite the "MIN" prefix, it configures the target POL balance (targetPol), not minPol.
+  if (envNum("MIN_POL_RESERVE") !== undefined) cfg.polReserve.targetPol = envNum("MIN_POL_RESERVE")!;
+  if (envNum("POL_RESERVE_MIN") !== undefined) cfg.polReserve.minPol = envNum("POL_RESERVE_MIN")!;
+  if (envNum("POL_RESERVE_MAX_SWAP_USD") !== undefined) cfg.polReserve.maxSwapUsd = envNum("POL_RESERVE_MAX_SWAP_USD")!;
+  if (envNum("POL_RESERVE_CHECK_INTERVAL_MIN") !== undefined) cfg.polReserve.checkIntervalMin = envNum("POL_RESERVE_CHECK_INTERVAL_MIN")!;
+  if (envNum("POL_RESERVE_SLIPPAGE_PCT") !== undefined) cfg.polReserve.slippagePct = envNum("POL_RESERVE_SLIPPAGE_PCT")!;
+
+  // Validate POL reserve configuration: targetPol must be greater than minPol
+  if (
+    cfg.polReserve.enabled &&
+    cfg.polReserve.targetPol !== undefined &&
+    cfg.polReserve.minPol !== undefined &&
+    cfg.polReserve.targetPol <= cfg.polReserve.minPol
+  ) {
+    console.warn(
+      `[config] Invalid POL reserve configuration: POL_RESERVE_TARGET (${cfg.polReserve.targetPol}) ` +
+      `must be greater than POL_RESERVE_MIN (${cfg.polReserve.minPol}). Disabling POL reserve rebalancing.`
+    );
+    cfg.polReserve.enabled = false;
+  }
+
   // ========== LIVE TRADING ==========
   // V1: ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS
   // V2: LIVE_TRADING=I_UNDERSTAND_THE_RISKS or LIVE_TRADING=true
@@ -2236,6 +2480,9 @@ export async function startV2() {
 
   // Fetch initial balance
   await fetchBalance();
+  
+  // Fetch initial POL balance for display
+  await fetchPolBalance();
 
   // Initialize adaptive learner (V1 feature)
   if (settings.config.adaptiveLearning.enabled) {
@@ -2258,10 +2505,12 @@ export async function startV2() {
   log(`Preset: ${settings.preset}`);
   log(`Wallet: ${addr.slice(0, 10)}...`);
   log(`Balance: ${$(state.balance)} (${settings.config.reservePct}% reserved)`);
+  log(`POL: ${state.polBalance.toFixed(2)} (target: ${settings.config.polReserve.targetPol}, min: ${settings.config.polReserve.minPol})`);
   log(`Trading: ${state.liveTrading ? "🟢 LIVE" : "🔸 SIMULATED"}`);
   log(`Mode: ${settings.config.tradeMode === "onchain" ? "⛓️ ON-CHAIN" : "📡 CLOB API"}`);
   if (state.proxyAddress) log(`Proxy: ${state.proxyAddress.slice(0, 10)}...`);
   if (settings.config.copy.enabled) log(`👀 Copying ${settings.config.copy.addresses.length} trader(s)`);
+  if (settings.config.polReserve.enabled) log(`⛽ POL Reserve enabled (target: ${settings.config.polReserve.targetPol} POL)`);
   
   await alertStatus(`Bot Started | ${settings.preset} | ${state.liveTrading ? "LIVE" : "SIM"} | ${$(state.balance)}`);
 
