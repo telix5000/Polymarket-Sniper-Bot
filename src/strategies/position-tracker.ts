@@ -11,6 +11,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
   TRACKER_HEARTBEAT_MS,
   TOKEN_ID_DISPLAY_LENGTH,
+  PORTFOLIO_STATUS_INTERVAL_MS,
 } from "../utils/log-deduper.util";
 import {
   formatCents,
@@ -811,6 +812,11 @@ export class PositionTracker {
     redeemable: 0,
   };
   private static readonly PNL_SUMMARY_LOG_INTERVAL_MS = 60_000; // Log at most once per minute
+
+  // === PORTFOLIO STATUS UPDATE TRACKING ===
+  // Periodic detailed portfolio status showing P&L for each position with emoticons
+  // This gives users visibility into price changes without spamming logs
+  private lastPortfolioStatusLogAt = 0;
 
   // === P&L CONSISTENCY THRESHOLDS ===
   // Used to detect and handle discrepancies between Data-API P&L and price-derived P&L.
@@ -4182,6 +4188,94 @@ export class PositionTracker {
               .join(", ");
             this.logger.info(
               `[PositionTracker] 🎯 Redeemable (${redeemablePositions.length}): ${redeemSummary}${redeemablePositions.length > 5 ? "..." : ""}`,
+            );
+          }
+
+          // === PERIODIC PORTFOLIO STATUS UPDATE ===
+          // Show detailed P&L for each position with emoticons at a configurable interval
+          // This gives users visibility into price changes without spamming logs
+          const portfolioStatusNow = Date.now();
+          const shouldLogPortfolioStatus =
+            portfolioStatusNow - this.lastPortfolioStatusLogAt >=
+            PORTFOLIO_STATUS_INTERVAL_MS;
+
+          if (shouldLogPortfolioStatus && activePositions.length > 0) {
+            this.lastPortfolioStatusLogAt = portfolioStatusNow;
+
+            // Calculate totals
+            const totalPnlUsd = activePositions.reduce(
+              (sum, p) => sum + (p.pnlUsd || 0),
+              0,
+            );
+            const winCount = activeProfitable.length;
+            const loseCount = activeLosing.length;
+
+            // Format header with totals
+            const totalEmoji = totalPnlUsd >= 0 ? "🟢" : "🔴";
+            const totalPnlStr = totalPnlUsd >= 0
+              ? `+$${totalPnlUsd.toFixed(2)}`
+              : `-$${Math.abs(totalPnlUsd).toFixed(2)}`;
+
+            this.logger.info(
+              `[PositionTracker] ═══════════════════════════════════════════════════`,
+            );
+            this.logger.info(
+              `[PositionTracker] 📊 PORTFOLIO STATUS UPDATE ${totalEmoji} ${totalPnlStr} total`,
+            );
+            this.logger.info(
+              `[PositionTracker] 📈 Winners: ${winCount} | 📉 Losers: ${loseCount} | ⚪ Neutral: ${activeNeutral.length}`,
+            );
+            this.logger.info(
+              `[PositionTracker] ───────────────────────────────────────────────────`,
+            );
+
+            // Log winning positions (sorted by P&L descending)
+            if (activeProfitable.length > 0) {
+              const sortedWinners = [...activeProfitable].sort(
+                (a, b) => b.pnlUsd - a.pnlUsd,
+              );
+              for (const pos of sortedWinners.slice(0, 10)) {
+                const priceCents = (pos.currentPrice * 100).toFixed(1);
+                const pnlStr = `+$${pos.pnlUsd.toFixed(2)} (+${pos.pnlPct.toFixed(1)}%)`;
+                this.logger.info(
+                  `[PositionTracker] 🟢📈 ${pos.side} @ ${priceCents}¢ → ${pnlStr} [${pos.tokenId.slice(0, 12)}...]`,
+                );
+              }
+              if (sortedWinners.length > 10) {
+                this.logger.info(
+                  `[PositionTracker] 🟢   ... and ${sortedWinners.length - 10} more winning positions`,
+                );
+              }
+            }
+
+            // Log losing positions (sorted by P&L ascending - biggest losses first)
+            if (activeLosing.length > 0) {
+              const sortedLosers = [...activeLosing].sort(
+                (a, b) => a.pnlUsd - b.pnlUsd,
+              );
+              for (const pos of sortedLosers.slice(0, 10)) {
+                const priceCents = (pos.currentPrice * 100).toFixed(1);
+                const pnlStr = `-$${Math.abs(pos.pnlUsd).toFixed(2)} (${pos.pnlPct.toFixed(1)}%)`;
+                this.logger.info(
+                  `[PositionTracker] 🔴📉 ${pos.side} @ ${priceCents}¢ → ${pnlStr} [${pos.tokenId.slice(0, 12)}...]`,
+                );
+              }
+              if (sortedLosers.length > 10) {
+                this.logger.info(
+                  `[PositionTracker] 🔴   ... and ${sortedLosers.length - 10} more losing positions`,
+                );
+              }
+            }
+
+            // Log neutral positions if any
+            if (activeNeutral.length > 0) {
+              this.logger.info(
+                `[PositionTracker] ⚪ Neutral: ${activeNeutral.length} position(s) at breakeven`,
+              );
+            }
+
+            this.logger.info(
+              `[PositionTracker] ═══════════════════════════════════════════════════`,
             );
           }
         }

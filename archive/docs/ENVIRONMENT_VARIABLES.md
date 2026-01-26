@@ -664,6 +664,7 @@ ORDER_DUPLICATE_PREVENTION_SECONDS=300
 | `SKIP_LOG_TTL_MS` | Duplicate log suppression | - |
 | `MONITOR_HEARTBEAT_MS` | Monitor heartbeat interval | - |
 | `TRACKER_HEARTBEAT_MS` | Tracker heartbeat interval | - |
+| `PORTFOLIO_STATUS_INTERVAL_MINUTES` | Interval for detailed portfolio status updates with P&L per position | `5` |
 
 ### History Loading
 
