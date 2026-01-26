@@ -17,10 +17,11 @@
  *   COPY_MAX_USD         - Max trade size (default: 100)
  *
  * RISK MANAGEMENT (⚠️ Important for API limits):
- *   MAX_OPEN_POSITIONS   - Max concurrent positions (default: 1000, provides 500 normal + 500 hedge slots)
+ *   MAX_OPEN_POSITIONS   - Max concurrent positions (default: 1000, auto-scales to 90% normal + 10% hedge slots)
  *                          ⚠️ Higher values = more API calls. If hitting rate limits, reduce to 50-100.
  *                          Recommended: 50-100 for free API tiers, 500-1000 for high-volume trading.
- *   HEDGE_BUFFER         - Reserve this many position slots for protective hedges (default: 500)
+ *   HEDGE_BUFFER         - Reserve this many position slots for protective hedges
+ *                          Auto-scales to 10% of MAX_OPEN_POSITIONS (min 3) if not explicitly set.
  *                          ⚠️ IMPORTANT: Normal trades stop at (MAX_OPEN_POSITIONS - HEDGE_BUFFER)
  *                          so you can ALWAYS hedge when losing. Must be < MAX_OPEN_POSITIONS.
  *   SCALE_DOWN_THRESHOLD - Start scaling bets when positions >= this % of effective max (default: 0.7 = 70%)
@@ -189,7 +190,7 @@ interface Config {
     scaleDownThreshold: number; // Start scaling when positions >= this % of max (default: 70%)
     scaleDownMinPct: number; // Minimum scale factor (default: 25% = 0.25x base size)
     // Hedge buffer - ALWAYS reserve slots for protective hedges
-    hedgeBuffer: number; // Reserve this many position slots for hedges (default: 500)
+    hedgeBuffer: number; // Reserve this many position slots for hedges (auto-scales to 10% of maxOpenPositions if not set)
   };
   maxPositionUsd: number;
   reservePct: number;
@@ -617,6 +618,10 @@ const ZERO_PRICE_BLOCK_TTL_MS = 60 * 60 * 1000; // 1 hour - how long to block se
 
 // Arbitrage configuration
 const DEFAULT_ARBITRAGE_ACTIVE_MARKET_LIMIT = 100; // Matches V1 endgame-sweep
+
+// Hedge buffer auto-scaling configuration
+const HEDGE_BUFFER_AUTO_SCALE_PCT = 0.10; // Scale hedge buffer to 10% of maxOpenPositions when not explicitly set
+const HEDGE_BUFFER_MIN_SLOTS = 3; // Minimum hedge buffer slots to ensure basic hedging capability
 
 // ============ STATE ============
 
@@ -3708,8 +3713,27 @@ export function loadConfig() {
   if (envNum("SCALE_DOWN_MIN_PCT") !== undefined)
     cfg.risk.scaleDownMinPct = envNum("SCALE_DOWN_MIN_PCT")!;
   // Hedge buffer - reserve slots for protective hedges
-  if (envNum("HEDGE_BUFFER") !== undefined)
-    cfg.risk.hedgeBuffer = envNum("HEDGE_BUFFER")!;
+  // If explicitly set via env var, use that value
+  const explicitHedgeBuffer = envNum("HEDGE_BUFFER");
+  if (explicitHedgeBuffer !== undefined) {
+    cfg.risk.hedgeBuffer = explicitHedgeBuffer;
+  } else {
+    // Auto-scale hedgeBuffer based on maxOpenPositions if not explicitly set
+    // This prevents the common issue where users set MAX_OPEN_POSITIONS=30 but get blocked
+    // because the preset default hedgeBuffer=500 is way too high
+    const autoHedgeBuffer = Math.max(
+      HEDGE_BUFFER_MIN_SLOTS,
+      Math.floor(cfg.risk.maxOpenPositions * HEDGE_BUFFER_AUTO_SCALE_PCT)
+    );
+    if (autoHedgeBuffer !== cfg.risk.hedgeBuffer) {
+      console.log(
+        `⚙️ Auto-scaling HEDGE_BUFFER: ${cfg.risk.hedgeBuffer} → ${autoHedgeBuffer} ` +
+          `(${HEDGE_BUFFER_AUTO_SCALE_PCT * 100}% of MAX_OPEN_POSITIONS=${cfg.risk.maxOpenPositions}). ` +
+          `Set HEDGE_BUFFER env var to override.`
+      );
+      cfg.risk.hedgeBuffer = autoHedgeBuffer;
+    }
+  }
 
   // Validate hedge buffer vs max open positions
   if (cfg.risk.hedgeBuffer >= cfg.risk.maxOpenPositions) {
