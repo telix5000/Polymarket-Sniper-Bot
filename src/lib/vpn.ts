@@ -217,12 +217,60 @@ function generateWireguardConfig(logger?: Logger): string | null {
   const presharedKey = process.env.WIREGUARD_PEER_PRESHARED_KEY;
   const persistentKeepalive = process.env.WIREGUARD_PERSISTENT_KEEPALIVE;
 
+  // Detect container environment - Alpine containers often have resolvconf installed
+  // but it requires an init system (systemd/OpenRC) to manage DNS state, which
+  // containers typically lack. In containers, use PostUp/PostDown scripts to manage DNS directly.
+  const isContainer =
+    existsSync("/.dockerenv") ||
+    process.env.container?.toLowerCase() === "docker" ||
+    process.env.container?.toLowerCase() === "podman" ||
+    !!process.env.container;
+
   // Build config
   let config = "[Interface]\n";
   config += `PrivateKey = ${privateKey}\n`;
   config += `Address = ${address}\n`;
   if (mtu) config += `MTU = ${mtu}\n`;
-  if (dns) config += `DNS = ${dns}\n`;
+
+  // DNS handling: In containers, use PostUp/PostDown to write DNS directly to /etc/resolv.conf
+  // instead of the DNS directive which relies on resolvconf (fails in Alpine containers).
+  // On bare metal/VM, use the standard DNS directive which works with resolvconf.
+  if (dns) {
+    if (isContainer) {
+      // Container workaround: Use PostUp/PostDown scripts to manage DNS directly
+      // This avoids resolvconf which fails with "could not detect a useable init system"
+      const dnsServers = dns.split(",").map((s) => s.trim()).filter(Boolean);
+      // Validate each DNS server to prevent shell injection attacks
+      const validDnsServers = dnsServers.filter((server) => {
+        if (!isValidIp(server)) {
+          logger?.warn?.(`Invalid DNS server IP skipped: ${server}`);
+          return false;
+        }
+        return true;
+      });
+      if (validDnsServers.length > 0) {
+        const nameserverLines = validDnsServers
+          .map((s) => `nameserver ${s}`)
+          .join("\\n");
+        // Use interface-specific backup file to avoid conflicts with multiple WireGuard interfaces
+        const backupPath = `/etc/resolv.conf.${interfaceName}-backup`;
+        // Preserve existing DNS entries by prepending VPN DNS servers to the original resolv.conf
+        config += `PostUp = cp /etc/resolv.conf ${backupPath} 2>/dev/null || true; (printf '${nameserverLines}\\n'; cat ${backupPath} 2>/dev/null || cat /etc/resolv.conf) > /etc/resolv.conf.tmp && mv /etc/resolv.conf.tmp /etc/resolv.conf\n`;
+        // Restore backup if it exists, otherwise fall back to a default DNS server
+        config += `PostDown = if [ -f ${backupPath} ]; then cp ${backupPath} /etc/resolv.conf 2>/dev/null || true; else echo 'nameserver 8.8.8.8' > /etc/resolv.conf; fi\n`;
+        logger?.info?.(
+          `WIREGUARD_DNS detected in container - using PostUp/PostDown scripts instead of resolvconf`
+        );
+      } else {
+        logger?.warn?.(
+          `WIREGUARD_DNS specified but no valid IP addresses found, skipping DNS config`
+        );
+      }
+    } else {
+      // Non-container: Use standard DNS directive (resolvconf should work)
+      config += `DNS = ${dns}\n`;
+    }
+  }
 
   config += "\n[Peer]\n";
   config += `PublicKey = ${peerPublicKey}\n`;
@@ -570,14 +618,16 @@ export async function setupRpcBypass(
 }
 
 /**
- * Setup Polymarket API bypass for reads (orderbooks, markets, balances)
- * Routes read traffic outside VPN for speed while auth/orders go through VPN.
+ * Setup Polymarket API bypass for reads (gamma API, strapi)
+ * Routes read-only API traffic outside VPN for speed.
+ *
+ * NOTE: clob.polymarket.com is NOT bypassed because it handles both
+ * read operations (orderbooks, markets) AND write operations (orders, auth).
+ * Write operations require VPN protection to avoid geo-blocking, and
+ * IP-level routing cannot differentiate between reads and writes.
  *
  * Enabled by default. Set VPN_BYPASS_POLYMARKET_READS=false to route all
  * Polymarket traffic through VPN.
- *
- * Note: This only affects read endpoints. Auth and order endpoints still
- * route through VPN for geo-blocking avoidance.
  */
 export async function setupPolymarketReadBypass(
   logger?: Logger,
@@ -602,11 +652,15 @@ export async function setupPolymarketReadBypass(
     return;
   }
 
-  // Polymarket API hosts for reads
+  // Polymarket API hosts for reads ONLY
+  // NOTE: clob.polymarket.com is intentionally EXCLUDED because it handles
+  // both reads (orderbooks) AND writes (order submissions, auth).
+  // Order submissions require VPN to avoid geo-blocking, and IP-level routing
+  // cannot differentiate between read and write requests to the same host.
   const hosts = [
-    "clob.polymarket.com", // CLOB API (orderbooks, markets)
-    "gamma-api.polymarket.com", // Gamma API
-    "strapi-matic.poly.market", // Strapi API
+    // "clob.polymarket.com" - EXCLUDED: handles orders which need VPN protection
+    "gamma-api.polymarket.com", // Gamma API (reads only)
+    "strapi-matic.poly.market", // Strapi API (reads only)
   ];
 
   for (const host of hosts) {
