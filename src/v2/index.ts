@@ -2330,6 +2330,23 @@ const simpleLogger = {
  * - In live mode: requires explicit LIVE_TRADING to be set
  */
 
+/**
+ * Check if an error message indicates a network/DNS connectivity issue.
+ * Used to distinguish network failures from actual liquidity/API issues.
+ */
+function isNetworkError(errorMsg: string): boolean {
+  return (
+    errorMsg.includes("EAI_AGAIN") ||
+    errorMsg.includes("ENOTFOUND") ||
+    errorMsg.includes("ECONNREFUSED") ||
+    errorMsg.includes("ETIMEDOUT") ||
+    errorMsg.includes("ECONNRESET") ||
+    errorMsg.includes("getaddrinfo") ||
+    errorMsg.includes("network") ||
+    errorMsg.includes("socket")
+  );
+}
+
 // Test sell threshold constants
 const TEST_SELL_MIN_RED_PNL_PCT = -1; // Position must be at least 1% in the red
 const TEST_SELL_MAX_RED_PNL_PCT = -15; // Prefer positions not too deep in red (up to 15%)
@@ -2480,18 +2497,10 @@ async function executeTestSellRedPosition(
   } catch (e: any) {
     const elapsed = Date.now() - startTime;
     const errorMsg = e.message || String(e);
-    const isNetworkError =
-      errorMsg.includes("EAI_AGAIN") ||
-      errorMsg.includes("ENOTFOUND") ||
-      errorMsg.includes("ECONNREFUSED") ||
-      errorMsg.includes("ETIMEDOUT") ||
-      errorMsg.includes("ECONNRESET") ||
-      errorMsg.includes("getaddrinfo") ||
-      errorMsg.includes("network") ||
-      errorMsg.includes("socket");
+    const networkError = isNetworkError(errorMsg);
 
     log("🧪 [TestSell] ========================================");
-    if (isNetworkError) {
+    if (networkError) {
       log(`🧪 [TestSell] ❌ NETWORK ERROR DETECTED`);
       log(`🧪 [TestSell] Error: ${errorMsg}`);
       log(`🧪 [TestSell] This is a DNS/network connectivity issue, NOT a liquidity problem.`);
@@ -2501,7 +2510,7 @@ async function executeTestSellRedPosition(
       log(`🧪 [TestSell] Error: ${errorMsg}`);
     }
     log(`🧪 [TestSell] Execution time: ${elapsed}ms`);
-    if (e.stack && !isNetworkError) {
+    if (e.stack && !networkError) {
       log(`🧪 [TestSell] Stack: ${e.stack.split("\n").slice(0, 3).join("\n")}`);
     }
     log("🧪 [TestSell] ========================================");
@@ -2702,15 +2711,9 @@ async function executeSell(
     return false;
   } catch (e: any) {
     const errorMsg = e.message || String(e);
-    const isNetworkError =
-      errorMsg.includes("EAI_AGAIN") ||
-      errorMsg.includes("ENOTFOUND") ||
-      errorMsg.includes("ECONNREFUSED") ||
-      errorMsg.includes("ETIMEDOUT") ||
-      errorMsg.includes("ECONNRESET") ||
-      errorMsg.includes("getaddrinfo");
+    const networkError = isNetworkError(errorMsg);
 
-    if (isNetworkError) {
+    if (networkError) {
       log(`🌐 SELL | ${reason} | Network error: ${errorMsg.slice(0, 50)} | ${outcome} ${$(sizeUsd)}`);
     }
 
@@ -2721,7 +2724,7 @@ async function executeSell(
       sizeUsd,
       curPrice,
       false,
-      isNetworkError ? "NETWORK_ERROR" : e.message?.slice(0, 30),
+      networkError ? "NETWORK_ERROR" : e.message?.slice(0, 30),
     );
     recordTrade("SELL", outcome, reason, sizeUsd, curPrice || 0, false);
     return false;
