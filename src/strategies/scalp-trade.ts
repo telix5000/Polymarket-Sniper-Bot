@@ -1994,6 +1994,14 @@ export class ScalpTradeStrategy {
         return false;
       }
 
+      // FIX: Compute minAcceptablePrice from the current best bid (executable price),
+      // NOT from effectiveLimitPrice (which can be the PROFIT target).
+      // This prevents "Sale blocked: best bid is X but minimum acceptable is Y" errors
+      // when the target is higher than the current bid (e.g., target=66¢, bestBid=64¢).
+      // Using bid-based slippage ensures bestBid >= minAcceptablePrice always passes
+      // as long as there's a valid bid, matching the behavior in sell-early.ts and auto-sell.ts.
+      const referencePrice = position.currentBidPrice ?? effectiveLimitPrice;
+
       const result = await postOrder({
         client: this.client,
         wallet,
@@ -2002,9 +2010,10 @@ export class ScalpTradeStrategy {
         outcome: (position.side?.toUpperCase() as "YES" | "NO") || "YES",
         side: "SELL",
         sizeUsd: notionalUsd,
-        // Apply 2% slippage tolerance to ensure profitable trades execute
-        // Without slippage, a 1 cent bid/ask difference can block a +42% profitable exit
-        minAcceptablePrice: calculateMinAcceptablePrice(effectiveLimitPrice, DEFAULT_SELL_SLIPPAGE_PCT),
+        // Apply 2% slippage tolerance from the current bid price to ensure profitable trades execute.
+        // Previously this used effectiveLimitPrice (target), which could block sells when
+        // bestBid < target - slippage (e.g., target=66¢, bestBid=64¢ blocked because 64 < 64.68).
+        minAcceptablePrice: calculateMinAcceptablePrice(referencePrice, DEFAULT_SELL_SLIPPAGE_PCT),
         logger: this.logger,
         skipDuplicatePrevention: true,
         // Pass minOrderUsd so preflight and submission settings match
