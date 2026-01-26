@@ -947,18 +947,25 @@ async function postOrderClobInner(
       orderSize = orderValue / levelPrice;
       orderPrice = levelPrice;
     } else {
-      // SELL: Compute cumulative bid depth at/above the limit price (effectiveMinAcceptablePrice)
-      // This allows orders to fill across multiple bid levels, not just the top level.
-      // Submit at the limit price so the exchange can match against all levels >= limit.
-      // Use effectiveMinAcceptablePrice which accounts for sellSlippagePct if provided.
-      const limitPrice =
-        effectiveMinAcceptablePrice ?? parseFloat(currentLevels[0].price);
+      // SELL: Use top bid level pricing (same approach as upstream original code)
+      // This ensures sells execute at the best available bid price rather than
+      // failing due to overly restrictive limit price calculations.
+      //
+      // The original upstream approach is simple and reliable:
+      // - Get top bid from orderbook
+      // - Size the order based on available liquidity at that level
+      // - Submit at the top bid price
+      //
+      // This avoids the NO_LIQUIDITY_AT_PRICE errors that occurred when using
+      // calculated limit prices that exceeded actual market bids.
+      const level = currentLevels[0];
+      const levelPrice = parseFloat(level.price);
 
       // HARD GUARD: Reject zero-price levels - you can't sell something for $0
       // This applies regardless of any settings - selling at $0 is always invalid
-      if (limitPrice <= ABSOLUTE_MIN_TRADEABLE_PRICE) {
+      if (levelPrice <= ABSOLUTE_MIN_TRADEABLE_PRICE) {
         logger.warn(
-          `[CLOB] 🚫 Order blocked (ZERO_PRICE): Cannot SELL at ${(limitPrice * 100).toFixed(2)}¢ - price must be > ${(ABSOLUTE_MIN_TRADEABLE_PRICE * 100).toFixed(2)}¢. Token: ${tokenId.slice(0, 16)}...`,
+          `[CLOB] 🚫 Order blocked (ZERO_PRICE): Cannot SELL at ${(levelPrice * 100).toFixed(2)}¢ - price must be > ${(ABSOLUTE_MIN_TRADEABLE_PRICE * 100).toFixed(2)}¢. Token: ${tokenId.slice(0, 16)}...`,
         );
         return {
           status: "skipped",
@@ -966,55 +973,31 @@ async function postOrderClobInner(
         };
       }
 
-      // Calculate cumulative depth at/above limit price
-      let cumulativeDepthUsd = 0;
-      for (const level of currentLevels) {
-        const levelPrice = parseFloat(level.price);
-        // Bids are sorted descending, so stop when we go below limit price
-        if (levelPrice < limitPrice) {
-          break;
-        }
-        const levelSize = parseFloat(level.size);
-        cumulativeDepthUsd += levelSize * levelPrice;
+      // Optional price floor check: if minAcceptablePrice was provided/computed,
+      // log a warning when the top bid is below that floor, but proceed with the
+      // sell anyway (informational warning only, not a blocking guard).
+      if (
+        effectiveMinAcceptablePrice !== undefined &&
+        levelPrice < effectiveMinAcceptablePrice
+      ) {
+        logger.warn(
+          `[CLOB] SELL price warning: Top bid ${(levelPrice * 100).toFixed(1)}¢ is below ` +
+            `min acceptable ${(effectiveMinAcceptablePrice * 100).toFixed(1)}¢ ` +
+            `(slippage beyond tolerance). Proceeding with sell anyway. Token: ${tokenId.slice(0, 16)}...`,
+        );
       }
 
-      // Log cumulative depth for debugging SKIP_MIN_ORDER_SIZE issues
+      const levelSize = parseFloat(level.size);
+      const levelValue = levelSize * levelPrice;
+      orderValue = Math.min(remaining, levelValue);
+      orderSize = orderValue / levelPrice;
+      orderPrice = levelPrice;
+
+      // Log for debugging
       logger.debug(
-        `[CLOB] SELL depth analysis: limitPrice=${(limitPrice * 100).toFixed(1)}¢ cumulativeDepthUsd=$${cumulativeDepthUsd.toFixed(2)} remaining=$${remaining.toFixed(2)} tokenId=${tokenId.slice(0, 12)}...`,
+        `[CLOB] SELL using top bid: price=${(levelPrice * 100).toFixed(1)}¢ size=${levelSize.toFixed(2)} ` +
+          `orderValue=$${orderValue.toFixed(2)} remaining=$${remaining.toFixed(2)} tokenId=${tokenId.slice(0, 16)}...`,
       );
-
-      // FIX (Jan 2026): If no bids at/above limit price, skip early with clear reason
-      // Previously, this would proceed with orderValue=0 and hit SKIP_MIN_ORDER_SIZE,
-      // which was confusing. Now we return a clear NO_LIQUIDITY_AT_PRICE skip.
-      if (cumulativeDepthUsd <= 0) {
-        logger.warn(
-          `[CLOB] SELL skipped (NO_LIQUIDITY_AT_PRICE): No bids at or above limit price ${(limitPrice * 100).toFixed(1)}¢. ` +
-            `Cannot sell at desired price. Token: ${tokenId.slice(0, 16)}...`,
-        );
-        return {
-          status: "skipped",
-          reason: "NO_LIQUIDITY_AT_PRICE",
-        };
-      }
-
-      // Size the order based on cumulative depth and remaining amount
-      orderValue = Math.min(remaining, cumulativeDepthUsd);
-      // Use limit price for order submission so it can fill across multiple levels
-      orderPrice = limitPrice;
-      orderSize = orderValue / orderPrice;
-
-      // Early exit if no liquidity at acceptable price level
-      // This prevents the confusing SKIP_MIN_ORDER_SIZE error when the real issue
-      // is that there's no orderbook depth at the limit price
-      if (cumulativeDepthUsd <= ORDER_EXECUTION.MIN_REMAINING_USD) {
-        logger.warn(
-          `[CLOB] No liquidity at acceptable price: limitPrice=${(limitPrice * 100).toFixed(1)}¢ depth=$${cumulativeDepthUsd.toFixed(2)} tokenId=${tokenId.slice(0, 12)}...`,
-        );
-        return {
-          status: "skipped",
-          reason: "NO_LIQUIDITY_AT_PRICE",
-        };
-      }
     }
 
     const orderArgs = {
