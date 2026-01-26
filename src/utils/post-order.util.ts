@@ -422,13 +422,6 @@ export type PostOrderInput = {
    * Example: 0.20 means you can buy at 20¢ or below, and those positions get instant profit.
    */
   scalpLowPriceThreshold?: number;
-  /**
-   * Skip the minimum order size check.
-   * Use for liquidations/sells where we need to sell whatever position
-   * size we have, even if it's below the normal minimum order size.
-   * Default: false - enforce minimum order size
-   */
-  skipMinOrderSizeCheck?: boolean;
   logger: Logger;
   orderConfig?: OrderSubmissionConfig;
   now?: number;
@@ -1035,7 +1028,6 @@ async function postOrderClobInner(
       side, // Pass side for duplicate prevention
       orderFingerprint,
       skipDuplicatePrevention: input.skipDuplicatePrevention,
-      skipMinOrderSizeCheck: input.skipMinOrderSizeCheck,
       logger,
       now: input.now,
       skipRateLimit: retryCount > 0,

@@ -2367,7 +2367,6 @@ export class HedgingStrategy {
         sellSlippagePct: FALLING_KNIFE_SLIPPAGE_PCT,
         logger: this.logger,
         skipDuplicatePrevention: true,
-        skipMinOrderSizeCheck: true, // Allow selling small positions during liquidation
       });
 
       if (result.status === "submitted") {
