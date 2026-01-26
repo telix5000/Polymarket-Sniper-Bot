@@ -13,7 +13,7 @@
  *
  * Environment Variables for VPN bypass:
  * - VPN_BYPASS_RPC: Set to "false" to route RPC through VPN (default: true)
- * - VPN_BYPASS_POLYMARKET_READS: Set to "false" to route reads through VPN (default: true)
+ * - VPN_BYPASS_POLYMARKET_READS: Set to "true" to bypass VPN for reads (default: false)
  *
  * WireGuard configuration (either file or env vars):
  * - WG_CONFIG: Path to existing WireGuard config file (legacy; use this if you have a .conf file to mount)
@@ -44,7 +44,7 @@
  */
 
 import { execSync, spawn } from "child_process";
-import { existsSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, writeFileSync, mkdirSync, readFileSync } from "fs";
 import { dirname } from "path";
 import type { Logger } from "./types";
 
@@ -167,7 +167,7 @@ function applyDnsFallback(dns: string | undefined, logger?: Logger): boolean {
     let existingContent = "";
     try {
       existingContent = existsSync(RESOLV_CONF)
-        ? require("fs").readFileSync(RESOLV_CONF, "utf-8")
+        ? readFileSync(RESOLV_CONF, "utf-8")
         : "";
     } catch {
       // File not found or unreadable is ok
@@ -652,14 +652,14 @@ export async function setupRpcBypass(
  * Write operations require VPN protection to avoid geo-blocking, and
  * IP-level routing cannot differentiate between reads and writes.
  *
- * Enabled by default. Set VPN_BYPASS_POLYMARKET_READS=false to route all
- * Polymarket traffic through VPN.
+ * Disabled by default to prevent DNS leaks. Set VPN_BYPASS_POLYMARKET_READS=true
+ * to bypass VPN for Polymarket read-only APIs (gamma-api, strapi).
  */
 export async function setupPolymarketReadBypass(
   logger?: Logger,
 ): Promise<void> {
-  // Check if bypass is disabled
-  if (process.env.VPN_BYPASS_POLYMARKET_READS === "false") {
+  // Check if bypass is enabled (disabled by default to prevent DNS leaks)
+  if (process.env.VPN_BYPASS_POLYMARKET_READS?.toLowerCase() !== "true") {
     logger?.info?.(
       "Polymarket read bypass disabled - all traffic through VPN",
     );
