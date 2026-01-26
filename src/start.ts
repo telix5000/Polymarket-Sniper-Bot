@@ -26,6 +26,7 @@ import {
   type PresetConfig,
   type OrderResult,
   type Logger,
+  type PolReserveConfig,
   // Auth
   createClobClient,
   isLiveTradingEnabled,
@@ -53,6 +54,9 @@ import {
   startWireguard,
   startOpenvpn,
   setupRpcBypass,
+  // POL Reserve
+  loadPolReserveConfig,
+  runPolReserve,
 } from "./lib";
 
 // ============ STATE ============
@@ -62,6 +66,7 @@ interface State {
   wallet?: Wallet;
   address: string;
   config: PresetConfig;
+  polReserveConfig: PolReserveConfig;
   presetName: string;
   maxPositionUsd: number;
   liveTrading: boolean;
@@ -77,11 +82,13 @@ interface State {
   // Timing
   lastRedeem: number;
   lastSummary: number;
+  lastPolReserveCheck: number;
 }
 
 const state: State = {
   address: "",
   config: {} as PresetConfig,
+  polReserveConfig: {} as PolReserveConfig,
   presetName: "balanced",
   maxPositionUsd: 25,
   liveTrading: false,
@@ -94,6 +101,7 @@ const state: State = {
   hedgedTokens: new Set(),
   lastRedeem: 0,
   lastSummary: 0,
+  lastPolReserveCheck: 0,
 };
 
 // ============ LOGGER ============
@@ -344,6 +352,36 @@ async function runRedeem(): Promise<void> {
   }
 }
 
+async function runPolReserveCheck(): Promise<void> {
+  const cfg = state.polReserveConfig;
+  if (!cfg.enabled || !state.wallet || !state.liveTrading) return;
+
+  const now = Date.now();
+  if (now - state.lastPolReserveCheck < cfg.checkIntervalMin * 60 * 1000) return;
+
+  state.lastPolReserveCheck = now;
+
+  // Get current balances
+  const currentPol = await getPolBalance(state.wallet, state.address);
+  const availableUsdc = await getUsdcBalance(state.wallet, state.address);
+
+  // Run POL reserve check and rebalance if needed
+  const result = await runPolReserve(
+    state.wallet,
+    state.address,
+    currentPol,
+    availableUsdc,
+    cfg,
+    logger,
+  );
+
+  if (result?.success) {
+    await sendTelegram("💱 POL Rebalance", `Swapped $${result.usdcSwapped?.toFixed(2)} USDC → ${result.polReceived?.toFixed(2)} POL`);
+  } else if (result?.error) {
+    await sendTelegram("❌ POL Rebalance Failed", result.error);
+  }
+}
+
 // ============ MAIN CYCLE ============
 
 async function runCycle(): Promise<void> {
@@ -360,6 +398,7 @@ async function runCycle(): Promise<void> {
   await runStack(positions);
   await runEndgame(positions);
   await runRedeem();
+  await runPolReserveCheck();
 }
 
 // ============ SUMMARY ============
@@ -394,12 +433,14 @@ async function main(): Promise<void> {
   const { name, config } = loadPreset();
   state.presetName = name;
   state.config = config;
+  state.polReserveConfig = loadPolReserveConfig(config);
   state.maxPositionUsd = getMaxPositionUsd(config);
   state.liveTrading = isLiveTradingEnabled();
 
   logger.info(`Preset: ${name}`);
   logger.info(`Max Position: ${$(state.maxPositionUsd)}`);
   logger.info(`Live Trading: ${state.liveTrading ? "ENABLED" : "DISABLED"}`);
+  logger.info(`POL Reserve: ${state.polReserveConfig.enabled ? `ON (target: ${state.polReserveConfig.targetPol} POL)` : "OFF"}`);
 
   // Telegram
   initTelegram();
