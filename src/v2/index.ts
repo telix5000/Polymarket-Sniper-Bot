@@ -17,12 +17,12 @@
  *   COPY_MAX_USD         - Max trade size (default: 100)
  * 
  * RISK MANAGEMENT (⚠️ Important for API limits):
- *   MAX_OPEN_POSITIONS   - Max concurrent positions (default: 10-30 based on preset)
- *                          ⚠️ More positions = more API calls. Keep low to avoid throttling.
- *                          Recommended: 10-20 for free API tiers, 30-50 for paid.
- *   HEDGE_BUFFER         - Reserve this many position slots for protective hedges (default: 2-5)
+ *   MAX_OPEN_POSITIONS   - Max concurrent positions (default: 1000, provides 500 normal + 500 hedge slots)
+ *                          ⚠️ Higher values = more API calls. If hitting rate limits, reduce to 50-100.
+ *                          Recommended: 50-100 for free API tiers, 500-1000 for high-volume trading.
+ *   HEDGE_BUFFER         - Reserve this many position slots for protective hedges (default: 500)
  *                          ⚠️ IMPORTANT: Normal trades stop at (MAX_OPEN_POSITIONS - HEDGE_BUFFER)
- *                          so you can ALWAYS hedge when losing. Don't set to 0!
+ *                          so you can ALWAYS hedge when losing. Must be < MAX_OPEN_POSITIONS.
  *   SCALE_DOWN_THRESHOLD - Start scaling bets when positions >= this % of effective max (default: 0.7 = 70%)
  *   SCALE_DOWN_MIN_PCT   - Minimum bet scale at max positions (default: 0.25 = 25% of normal)
  *   MAX_DRAWDOWN_PCT     - Stop trading if session drawdown exceeds this (default: 15-30%)
@@ -157,7 +157,7 @@ interface Config {
     scaleDownThreshold: number;    // Start scaling when positions >= this % of max (default: 70%)
     scaleDownMinPct: number;       // Minimum scale factor (default: 25% = 0.25x base size)
     // Hedge buffer - ALWAYS reserve slots for protective hedges
-    hedgeBuffer: number;           // Reserve this many position slots for hedges (default: 3)
+    hedgeBuffer: number;           // Reserve this many position slots for hedges (default: 500)
   };
   maxPositionUsd: number;
   reservePct: number;
@@ -220,7 +220,7 @@ const PRESETS: Record<Preset, Config> = {
     copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 50, maxUsd: 50, minBuyPrice: 0.50 },
     arbitrage: { enabled: true, maxUsd: 15, minEdgeBps: 300, minBuyPrice: 0.05 },
     sellSignal: { enabled: true, minLossPctToAct: 15, profitThresholdToSkip: 20, severeLossPct: 40, cooldownMs: 60000 },
-    risk: { maxDrawdownPct: 15, maxDailyLossUsd: 50, maxOpenPositions: 10, orderCooldownMs: 2000, maxOrdersPerHour: 100, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 2 },
+    risk: { maxDrawdownPct: 15, maxDailyLossUsd: 50, maxOpenPositions: 1000, orderCooldownMs: 2000, maxOrdersPerHour: 100, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 500 },
     maxPositionUsd: 15,
     reservePct: 25,
     adaptiveLearning: { enabled: false },
@@ -253,7 +253,7 @@ const PRESETS: Record<Preset, Config> = {
     copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 1, maxUsd: 100, minBuyPrice: 0.50 },
     arbitrage: { enabled: true, maxUsd: 25, minEdgeBps: 200, minBuyPrice: 0.05 },
     sellSignal: { enabled: true, minLossPctToAct: 15, profitThresholdToSkip: 20, severeLossPct: 40, cooldownMs: 60000 },
-    risk: { maxDrawdownPct: 20, maxDailyLossUsd: 100, maxOpenPositions: 20, orderCooldownMs: 1000, maxOrdersPerHour: 200, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 3 },
+    risk: { maxDrawdownPct: 20, maxDailyLossUsd: 100, maxOpenPositions: 1000, orderCooldownMs: 1000, maxOrdersPerHour: 200, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 500 },
     maxPositionUsd: 25,
     reservePct: 20,
     adaptiveLearning: { enabled: false },
@@ -286,7 +286,7 @@ const PRESETS: Record<Preset, Config> = {
     copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 5, maxUsd: 200, minBuyPrice: 0.50 },
     arbitrage: { enabled: true, maxUsd: 100, minEdgeBps: 200, minBuyPrice: 0.05 },
     sellSignal: { enabled: true, minLossPctToAct: 10, profitThresholdToSkip: 25, severeLossPct: 35, cooldownMs: 30000 },
-    risk: { maxDrawdownPct: 30, maxDailyLossUsd: 200, maxOpenPositions: 30, orderCooldownMs: 500, maxOrdersPerHour: 500, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 5 },
+    risk: { maxDrawdownPct: 30, maxDailyLossUsd: 200, maxOpenPositions: 1000, orderCooldownMs: 500, maxOrdersPerHour: 500, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 500 },
     maxPositionUsd: 100,
     reservePct: 15,
     adaptiveLearning: { enabled: false },
@@ -2330,6 +2330,17 @@ export function loadConfig() {
   // SCALE_DOWN_MIN_PCT: Minimum scale factor (default: 25% = 0.25x base size)
   if (envNum("SCALE_DOWN_THRESHOLD") !== undefined) cfg.risk.scaleDownThreshold = envNum("SCALE_DOWN_THRESHOLD")!;
   if (envNum("SCALE_DOWN_MIN_PCT") !== undefined) cfg.risk.scaleDownMinPct = envNum("SCALE_DOWN_MIN_PCT")!;
+  // Hedge buffer - reserve slots for protective hedges
+  if (envNum("HEDGE_BUFFER") !== undefined) cfg.risk.hedgeBuffer = envNum("HEDGE_BUFFER")!;
+
+  // Validate hedge buffer vs max open positions
+  if (cfg.risk.hedgeBuffer >= cfg.risk.maxOpenPositions) {
+    throw new Error(
+      `Invalid risk configuration: HEDGE_BUFFER (${cfg.risk.hedgeBuffer}) must be less than MAX_OPEN_POSITIONS ` +
+      `(${cfg.risk.maxOpenPositions}). This would make effectiveMax = maxOpenPositions - hedgeBuffer <= 0 and ` +
+      `block all normal trading. Please adjust MAX_OPEN_POSITIONS and/or HEDGE_BUFFER.`
+    );
+  }
   
   // ========== ARBITRAGE ==========
   // V1: ARB_ENABLED, ARB_DRY_RUN, ARB_MIN_EDGE_BPS, ARB_MIN_BUY_PRICE
