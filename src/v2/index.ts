@@ -733,13 +733,13 @@ function getLedgerSummary(): string {
 async function maybeSendSummary() {
   if (Date.now() - ledger.lastSummary < ledger.summaryIntervalMs) return;
 
-  // Always send summaries if user has positions or balance, even without trades
-  // This gives users a "portfolio status" update
+  // Always send summaries if user has positions, any balance, or completed trades
+  // This gives users a "portfolio status" update even when balance is depleted
   const hasPositions = state.positions.length > 0;
-  const hasBalance = state.balance > 0;
+  const hasAnyBalance = state.balance >= 0 && state.sessionStartBalance > 0;
   const hasTrades = ledger.buyCount + ledger.sellCount > 0;
 
-  if (!hasPositions && !hasBalance && !hasTrades) {
+  if (!hasPositions && !hasAnyBalance && !hasTrades) {
     return; // Nothing to report
   }
 
@@ -2583,12 +2583,12 @@ async function redeem(walletAddr: string, cfg: Config) {
       }
       log(`✅ Redeem: ${tx.hash.slice(0, 10)}... | $${pos.value.toFixed(2)}`);
       // Send Telegram alert for successful redemption
+      // Note: Redemptions are not recorded as trades to avoid skewing P&L statistics
       await alert(
         "REDEEM ✅",
         `${$(pos.value)} redeemed | Tx: ${tx.hash.slice(0, 10)}...`,
         true,
       );
-      recordTrade("SELL", "Redeemed", "AutoRedeem", pos.value, 1, true);
       await tx.wait();
     } catch (e: any) {
       log(`❌ Redeem: ${e.message?.slice(0, 40)}`);
