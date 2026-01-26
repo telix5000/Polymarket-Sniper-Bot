@@ -138,25 +138,46 @@ If not set, values come from the selected preset.
 | Priority | Strategy | Condition | Action | Why this priority? |
 |----------|----------|-----------|--------|-------------------|
 | 1 | **AutoSell** | price >= $0.99 | SELL | Guaranteed profit, free capital |
-| 2 | **StopLoss** | loss >= max% | SELL | Protect capital first |
-| 3 | **Scalp** | profit >= min% | SELL | Lock in gains |
-| 4 | **Hedge** | loss >= trigger% | BUY opposite | Protect recoverable positions |
+| 2 | **Hedge** | loss >= trigger% | BUY opposite | Try to RECOVER before giving up |
+| 3 | **StopLoss** | loss >= max% AND hedge disabled | SELL | Only if NOT hedging |
+| 4 | **Scalp** | profit >= min% | SELL | Lock in gains |
 | 5 | **Stack** | gain >= minCents | BUY more | Add to winners |
 | 6 | **Endgame** | price 85-99¢ | BUY more | Ride to finish |
 
+**Key insight:** Hedge runs BEFORE stop-loss because:
+- **Hedge** = try to RECOVER (buy opposite side, wait for resolution)  
+- **Stop-loss** = SURRENDER (sell at a loss and exit)
+- If hedging is enabled, stop-loss is redundant (hedge guarantees recovery)
+
 **Example:** Position is down 25% and at $0.99 price
 - AutoSell triggers first (price >= threshold) → SELLS
-- StopLoss, Hedge never evaluate this position
+- Hedge, StopLoss never evaluate this position
 
-**Example:** Position is down 30% (below hedge trigger)
+**Example:** Position is down 30% with hedge enabled
 - AutoSell: No (price not near $1)
-- StopLoss: Yes (30% > 25% max) → SELLS
-- Hedge: Skipped (position already sold)
+- Hedge: Yes (30% > 20% trigger) → BUYS opposite side
+- StopLoss: Skipped (hedge already acting)
 
 This prevents conflicting actions like:
 - ❌ StopLoss selling what Hedge would have protected
 - ❌ Scalp and AutoSell both trying to sell
 - ❌ Stack buying right before StopLoss sells
+
+---
+
+## What V2 Removes (Redundant)
+
+V2 removes complexity that wasn't needed:
+
+| Removed | Why | Replacement |
+|---------|-----|-------------|
+| **Sell Signal Protection** | Hedge already monitors P&L every cycle | Hedge strategy |
+| **OnChainExit** | Same as Redeem | Redeem strategy |
+| **Mempool Monitor** | Unreliable, API polling works better | API polling |
+| **PositionTracker caching** | Caused stale data bugs | Fresh API with 30s cache |
+| **Orchestrator** | Overly complex | Simple main() loop |
+
+---
 
 ### AutoSell - Sell positions near $1
 
@@ -283,37 +304,6 @@ Override with your own addresses:
 
 **V1 Aliases:** `TRADE_MULTIPLIER`, `MIN_TRADE_SIZE_USD`, `COPY_MIN_BUY_PRICE`
 
-### Sell Signal Monitor
-
-When a tracked trader SELLS a position you also hold, V2 monitors and takes protective action:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SELL_SIGNAL_ENABLED` | true | Enable sell signal monitoring |
-| `SELL_SIGNAL_MIN_LOSS_PCT` | 15 | Min loss % to trigger any action |
-| `SELL_SIGNAL_PROFIT_SKIP_PCT` | 20 | Skip if profit >= this ("knee deep in positive") |
-| `SELL_SIGNAL_SEVERE_PCT` | 40 | Trigger stop-loss if loss >= this |
-| `SELL_SIGNAL_COOLDOWN_MS` | 60000 | Cooldown per position (ms) |
-
-**V1 Aliases:** `SELL_SIGNAL_MIN_LOSS_PCT_TO_ACT`, `SELL_SIGNAL_PROFIT_THRESHOLD_TO_SKIP`, `SELL_SIGNAL_SEVERE_LOSS_PCT`
-
-**How it works:**
-1. Tracked trader sells a position we also hold
-2. We check our P&L on that position:
-   - **Profitable (>= 20%):** Ignore - we're "knee deep in positive"
-   - **Small loss (< 15%):** Alert only - just monitoring
-   - **Moderate loss (15-40%):** HEDGE - buy opposite side
-   - **Severe loss (>= 40%):** STOP-LOSS - sell immediately
-3. Cooldown prevents repeated actions on same position
-
-**Alert Format:**
-```
-📊 SellSignal | Trader sold but we're +25.3% - holding
-📊 SellSignal | Trader sold, we're -8.2% - monitoring  
-⚠️ SELL SIGNAL | Trader sold | We're -22.5% | HEDGE
-⚠️ SELL SIGNAL | Trader sold | We're -45.0% | STOP-LOSS
-```
-
 ---
 
 ## Preset Comparison
@@ -379,15 +369,14 @@ npm run start:v2
 Strategies run in this order each cycle:
 
 1. **Copy Trades** - Check for new trades from tracked addresses
-2. **Sell Signal Protection** - React to tracked trader sells
-3. **AutoSell** - Free capital from near-$1 positions
-4. **StopLoss** - Protect from catastrophic losses  
-5. **Hedge** - Protect from moderate losses
-6. **Scalp** - Take profits on winners
-7. **Stack** - Double down on winners
-8. **Endgame** - Buy high-confidence positions
-9. **Arbitrage** - Buy when YES + NO < $1
-10. **Redeem** - Claim resolved positions (runs on separate interval)
+2. **AutoSell** - Free capital from near-$1 positions
+3. **Hedge** - Protect from losses (before giving up with stop-loss)
+4. **StopLoss** - Exit if hedge disabled and loss too large
+5. **Scalp** - Take profits on winners
+6. **Stack** - Double down on winners
+7. **Endgame** - Buy high-confidence positions
+8. **Arbitrage** - Buy when YES + NO < $1
+9. **Redeem** - Claim resolved positions
 
 ---
 
