@@ -839,18 +839,18 @@ async function alertStatus(msg: string) {
 async function alertPositionSummary() {
   if (!state.telegram || state.positions.length === 0) return;
   
-  const totalValue = state.positions.reduce((sum, p) => sum + p.value, 0);
+  const holdingsValue = state.positions.reduce((sum, p) => sum + p.value, 0);
   const totalPnl = state.positions.reduce((sum, p) => sum + (p.value * p.pnlPct / 100), 0);
   const winning = state.positions.filter(p => p.pnlPct > 0).length;
   const losing = state.positions.filter(p => p.pnlPct < 0).length;
   
   // Calculate total portfolio value (balance + holdings)
-  const portfolioValue = state.balance + totalValue;
+  const portfolioValue = state.balance + holdingsValue;
   
   const lines = [
     `📊 *Position Summary*`,
     `Positions: ${state.positions.length} (${winning}↑ ${losing}↓)`,
-    `Holdings Value: ${$(totalValue)}`,
+    `Holdings Value: ${$(holdingsValue)}`,
     `Unrealized P&L: ${$(totalPnl)}`,
     `Balance: ${$(state.balance)}`,
     `Total Value: ${$(portfolioValue)}`,
