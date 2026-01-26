@@ -24,6 +24,10 @@ import { startArbitrageEngine } from "../arbitrage/runtime";
 import { suppressClobOrderbookErrors } from "../utils/console-filter.util";
 import { startWireguard } from "../utils/wireguard.util";
 import { startOpenvpn } from "../utils/openvpn.util";
+import {
+  capturePreVpnRouting,
+  setupRpcVpnBypass,
+} from "../utils/vpn-rpc-bypass.util";
 import { formatClobCredsChecklist } from "../utils/clob-credentials.util";
 import { ensureTradingReady } from "../polymarket/preflight";
 import { getContextAwareWarnings } from "../utils/auth-diagnostic.util";
@@ -39,10 +43,21 @@ let sellSignalMonitor: SellSignalMonitorService | undefined;
 async function main(): Promise<void> {
   const logger = new ConsoleLogger();
   suppressClobOrderbookErrors(logger);
+
+  // Capture default gateway/interface BEFORE VPN starts (needed for RPC bypass)
+  const preVpnRouting = await capturePreVpnRouting();
+
+  // Start VPN (OpenVPN takes priority over WireGuard)
   const openvpnStarted = await startOpenvpn(logger);
   if (!openvpnStarted) {
     await startWireguard(logger);
   }
+
+  // Setup RPC VPN bypass AFTER VPN starts (uses pre-VPN gateway)
+  // By default, RPC traffic bypasses VPN for better speed.
+  // Set VPN_BYPASS_RPC=false to route RPC through VPN if needed.
+  await setupRpcVpnBypass(logger, preVpnRouting.gateway, preVpnRouting.iface);
+
   const cliOverrides = parseCliOverrides(process.argv.slice(2));
 
   // Populate TARGET_ADDRESSES from leaderboard if not set via env
