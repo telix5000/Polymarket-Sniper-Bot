@@ -78,3 +78,7 @@ eslint.config.mjs
 # Misc
 *.pem
 .cache/
+
+# Legacy code (V1 - not used in Docker build)
+legacy/
+archive/
