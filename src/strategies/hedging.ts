@@ -1379,13 +1379,14 @@ export class HedgingStrategy {
 
     // === HEDGE UP SIZING ===
     // When HEDGING_ALLOW_EXCEED_MAX=true: Use absoluteMaxUsd (from HEDGING_ABSOLUTE_MAX_USD)
-    // for single large orders. When false: Use maxHedgeUsd as the cap.
+    // for single large orders. When false: Use hedgeUpMaxUsd / maxHedgeUsd as the cap.
     let buyUsd: number;
     
     // Determine target size based on allowExceedMax setting
-    // For hedge up, also respect hedgeUpMaxUsd as an additional cap
-    const targetBuySize = this.config.allowExceedMax 
-      ? Math.min(this.config.hedgeUpMaxUsd, this.config.absoluteMaxUsd)
+    const targetBuySize = this.config.allowExceedMax
+      // allowExceedMax: rely on absoluteMaxUsd (still constrained by cycleHedgeBudgetRemaining below)
+      ? this.config.absoluteMaxUsd
+      // default: respect both hedgeUpMaxUsd and maxHedgeUsd
       : Math.min(this.config.hedgeUpMaxUsd, this.config.maxHedgeUsd);
     
     if (this.cycleHedgeBudgetRemaining !== null) {
@@ -1393,13 +1394,13 @@ export class HedgingStrategy {
       buyUsd = Math.min(targetBuySize, this.cycleHedgeBudgetRemaining);
       this.logger.info(
         `[Hedging] 📈 HEDGE UP SIZING: targeting $${buyUsd.toFixed(2)} ` +
-          `(${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"} capped at $${targetBuySize}, available=$${this.cycleHedgeBudgetRemaining.toFixed(2)})`,
+          `(${this.config.allowExceedMax ? "absoluteMax" : "hedgeUpMax/maxHedge"}=$${targetBuySize.toFixed(2)}, available=$${this.cycleHedgeBudgetRemaining.toFixed(2)})`,
       );
     } else {
       // Fallback when no budget tracking: use target size directly
       buyUsd = targetBuySize;
       this.logger.info(
-        `[Hedging] 📈 HEDGE UP SIZING: fallback to ${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"} $${buyUsd.toFixed(2)}`,
+        `[Hedging] 📈 HEDGE UP SIZING: fallback to ${this.config.allowExceedMax ? "absoluteMax" : "hedgeUpMax/maxHedge"} $${buyUsd.toFixed(2)}`,
       );
     }
 
@@ -1680,16 +1681,25 @@ export class HedgingStrategy {
     
     // Determine target hedge size based on allowExceedMax setting
     let targetHedgeSize: number;
+    let limitLabel: string; // Track which limit was applied for logging
     if (this.config.allowExceedMax) {
       // Use absoluteMaxUsd for single large orders
       targetHedgeSize = this.config.absoluteMaxUsd;
+      limitLabel = "absoluteMax";
     } else if (isEmergencyHedge) {
       // Emergency: use maxHedgeUsd as the cap
       targetHedgeSize = this.config.maxHedgeUsd;
+      limitLabel = "maxHedge";
     } else {
       // Normal hedge: cap at the smaller of profitableHedgeUsd and maxHedgeUsd
       // to avoid hedging more than what's profitable
-      targetHedgeSize = Math.min(profitableHedgeUsd, this.config.maxHedgeUsd);
+      if (profitableHedgeUsd < this.config.maxHedgeUsd) {
+        targetHedgeSize = profitableHedgeUsd;
+        limitLabel = "profitableHedge";
+      } else {
+        targetHedgeSize = this.config.maxHedgeUsd;
+        limitLabel = "maxHedge";
+      }
     }
     
     if (this.cycleHedgeBudgetRemaining !== null) {
@@ -1698,12 +1708,12 @@ export class HedgingStrategy {
       if (isEmergencyHedge) {
         this.logger.warn(
           `[Hedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss): targeting $${hedgeUsd.toFixed(2)} ` +
-            `(${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"}=$${targetHedgeSize.toFixed(2)}, available=$${this.cycleHedgeBudgetRemaining.toFixed(2)})`,
+            `(${limitLabel}=$${targetHedgeSize.toFixed(2)}, available=$${this.cycleHedgeBudgetRemaining.toFixed(2)})`,
         );
       } else {
         this.logger.info(
           `[Hedging] 📊 HEDGE SIZING: loss=${lossPct?.toFixed(1) ?? "?"}%, targeting $${hedgeUsd.toFixed(2)} ` +
-            `(${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"}=$${targetHedgeSize.toFixed(2)}, available=$${this.cycleHedgeBudgetRemaining.toFixed(2)})`,
+            `(${limitLabel}=$${targetHedgeSize.toFixed(2)}, available=$${this.cycleHedgeBudgetRemaining.toFixed(2)})`,
         );
       }
     } else {
@@ -1711,11 +1721,11 @@ export class HedgingStrategy {
       hedgeUsd = targetHedgeSize;
       if (isEmergencyHedge) {
         this.logger.warn(
-          `[Hedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss): fallback to ${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"} $${hedgeUsd.toFixed(2)}`,
+          `[Hedging] 🚨 EMERGENCY HEDGE (${lossPct.toFixed(1)}% loss): fallback to ${limitLabel} $${hedgeUsd.toFixed(2)}`,
         );
       } else {
         this.logger.info(
-          `[Hedging] 📊 HEDGE SIZING: loss=${lossPct?.toFixed(1) ?? "?"}%, fallback to ${this.config.allowExceedMax ? "absoluteMax" : "maxHedge"} $${hedgeUsd.toFixed(2)}`,
+          `[Hedging] 📊 HEDGE SIZING: loss=${lossPct?.toFixed(1) ?? "?"}%, fallback to ${limitLabel} $${hedgeUsd.toFixed(2)}`,
         );
       }
     }
