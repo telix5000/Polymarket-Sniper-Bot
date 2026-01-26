@@ -2746,13 +2746,18 @@ export async function startV2() {
 
   // ============ MAIN LOOP WITH IN-FLIGHT GUARD ============
   let cycleRunning = false;
+  let skippedLogged = false;
   
   const runCycle = async () => {
     if (cycleRunning) {
-      log("⏳ Skipping cycle - previous still running");
+      if (!skippedLogged) {
+        log("⏳ Skipping cycle - previous still running");
+        skippedLogged = true;
+      }
       return;
     }
     cycleRunning = true;
+    skippedLogged = false;
     try {
       await cycle(addr, settings.config);
     } catch (e) {

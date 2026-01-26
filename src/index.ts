@@ -317,13 +317,18 @@ async function main() {
   
   // Run immediately then on interval with in-flight guard
   let cycleRunning = false;
+  let skippedLogged = false;
   
   const runCycle = async () => {
     if (cycleRunning) {
-      console.log("[Cycle] Skipping - previous cycle still running");
+      if (!skippedLogged) {
+        console.log("[Cycle] Skipping - previous cycle still running");
+        skippedLogged = true;
+      }
       return;
     }
     cycleRunning = true;
+    skippedLogged = false;
     try {
       await cycle(wallet, walletAddr, cfg.config);
     } catch (err) {
