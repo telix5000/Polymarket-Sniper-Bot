@@ -398,8 +398,9 @@ export type FundsAllowanceParams = {
    * Order side: BUY or SELL.
    * For SELL orders, we skip the collateral balance check since we're
    * selling conditional tokens (position), not spending collateral.
+   * Required to ensure correct behavior - BUY and SELL have different checks.
    */
-  side?: "BUY" | "SELL";
+  side: "BUY" | "SELL";
   balanceBufferBps?: number;
   collateralTokenAddress?: string;
   collateralTokenDecimals?: number;
@@ -716,11 +717,12 @@ const fetchApprovedForAll = async (params: {
   client: ClobClient;
   owner: string;
   logger: Logger;
+  forceRefresh?: boolean;
 }): Promise<boolean> => {
   const cacheKey = `approved:${params.owner}`;
   const cached = approvalForAllCache.get(cacheKey);
   const now = Date.now();
-  if (cached && now - cached.fetchedAt < APPROVAL_FOR_ALL_CACHE_TTL_MS) {
+  if (!params.forceRefresh && cached && now - cached.fetchedAt < APPROVAL_FOR_ALL_CACHE_TTL_MS) {
     return cached.approved;
   }
   const wallet = (params.client as { wallet?: Wallet }).wallet;
@@ -810,6 +812,7 @@ export const checkFundsAndAllowance = async (
                 client: params.client,
                 owner: tradingAddress,
                 logger: params.logger,
+                forceRefresh: true, // Bypass cache after ensureApprovals() to get fresh on-chain state
               });
               if (!refreshedApproval) {
                 return {
@@ -847,8 +850,8 @@ export const checkFundsAndAllowance = async (
     return {
       ok: true,
       requiredUsd,
-      balanceUsd: Infinity, // Not relevant for SELL
-      allowanceUsd: Infinity, // Not relevant for SELL
+      balanceUsd: requiredUsd, // Not relevant for SELL; use finite sentinel to avoid Infinity
+      allowanceUsd: requiredUsd, // Not relevant for SELL; use finite sentinel to avoid Infinity
     };
   }
 
@@ -1094,6 +1097,7 @@ export const checkFundsAndAllowance = async (
                 client: params.client,
                 owner: tradingAddress,
                 logger: params.logger,
+                forceRefresh: true, // Bypass cache after ensureApprovals() to get fresh on-chain state
               });
               if (!refreshedApproval) {
                 return {
