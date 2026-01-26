@@ -221,6 +221,10 @@ async function main(): Promise<void> {
         quickWinEnabled: strategyConfig.autoSellQuickWinEnabled,
         quickWinMaxHoldMinutes: strategyConfig.autoSellQuickWinMaxHoldMinutes,
         quickWinProfitPct: strategyConfig.autoSellQuickWinProfitPct,
+        oversizedExitEnabled: strategyConfig.autoSellOversizedExitEnabled,
+        oversizedExitThresholdUsd: strategyConfig.autoSellOversizedExitThresholdUsd,
+        oversizedExitHoursBeforeEvent: strategyConfig.autoSellOversizedExitHoursBeforeEvent,
+        oversizedExitBreakevenTolerancePct: strategyConfig.autoSellOversizedExitBreakevenTolerancePct,
       },
       // Pass position stacking config for doubling down on winners
       positionStackingConfig: {

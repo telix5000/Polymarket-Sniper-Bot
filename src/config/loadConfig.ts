@@ -1574,6 +1574,37 @@ export type StrategyConfig = {
    * Default: 90%
    */
   autoSellQuickWinProfitPct: number;
+  // === OVERSIZED POSITION EXIT SETTINGS ===
+  // Handles positions where invested USD exceeds a threshold (e.g., HEDGING_ABSOLUTE_MAX_USD)
+  // Implements tiered exit strategy: profit → breakeven → force exit before event
+  /**
+   * Enable oversized position exit strategy
+   * When positions have invested value > threshold and are losing, implements exit strategy:
+   * 1. If profitable (green), sell immediately
+   * 2. If near breakeven, sell to exit at minimal loss
+   * 3. If event is approaching (within hoursBeforeEvent), force exit
+   * Default: false (opt-in feature)
+   */
+  autoSellOversizedExitEnabled: boolean;
+  /**
+   * USD threshold for "oversized" positions
+   * Positions with invested value (size * entryPrice) > this are considered oversized.
+   * Typically set to align with HEDGING_ABSOLUTE_MAX_USD, but configurable independently.
+   * Default: 25
+   */
+  autoSellOversizedExitThresholdUsd: number;
+  /**
+   * Hours before event to force exit oversized losing positions
+   * When event is within this many hours and position is still losing, force exit.
+   * Default: 1 hour
+   */
+  autoSellOversizedExitHoursBeforeEvent: number;
+  /**
+   * P&L percentage tolerance for "breakeven" exits
+   * Positions with |pnlPct| <= this value are considered near breakeven.
+   * Default: 2 (meaning -2% to +2% P&L is treated as breakeven)
+   */
+  autoSellOversizedExitBreakevenTolerancePct: number;
   // === ON-CHAIN EXIT STRATEGY SETTINGS ===
   // Handles positions that are NOT_TRADABLE_ON_CLOB but have high price (≥99¢)
   // Routes to on-chain redemption when market is resolved
@@ -2220,6 +2251,37 @@ export function loadStrategyConfig(
         ? (preset as { AUTO_SELL_QUICK_WIN_PROFIT_PCT: number }).AUTO_SELL_QUICK_WIN_PROFIT_PCT
         : undefined) ??
       90, // Default: 90% profit
+    // === OVERSIZED POSITION EXIT SETTINGS ===
+    // AUTO_SELL_OVERSIZED_EXIT_ENABLED: Enable oversized position exit strategy
+    // Positions with invested value > threshold get tiered exit: profit → breakeven → force exit
+    autoSellOversizedExitEnabled:
+      parseBool(readEnv("AUTO_SELL_OVERSIZED_EXIT_ENABLED", overrides) ?? "") ??
+      ("AUTO_SELL_OVERSIZED_EXIT_ENABLED" in preset
+        ? (preset as { AUTO_SELL_OVERSIZED_EXIT_ENABLED: boolean }).AUTO_SELL_OVERSIZED_EXIT_ENABLED
+        : undefined) ??
+      false, // Default: disabled - opt-in feature
+    // AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD: USD threshold for "oversized" positions
+    // Typically set to match HEDGING_ABSOLUTE_MAX_USD
+    autoSellOversizedExitThresholdUsd:
+      parseNumber(readEnv("AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD", overrides) ?? "") ??
+      ("AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD" in preset
+        ? (preset as { AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD: number }).AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD
+        : undefined) ??
+      25, // Default: $25 (matches default HEDGING_ABSOLUTE_MAX_USD)
+    // AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT: Hours before event to force exit
+    autoSellOversizedExitHoursBeforeEvent:
+      parseNumber(readEnv("AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT", overrides) ?? "") ??
+      ("AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT" in preset
+        ? (preset as { AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT: number }).AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT
+        : undefined) ??
+      1, // Default: 1 hour before event
+    // AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT: P&L % tolerance for breakeven exits
+    autoSellOversizedExitBreakevenTolerancePct:
+      parseNumber(readEnv("AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT", overrides) ?? "") ??
+      ("AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT" in preset
+        ? (preset as { AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT: number }).AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT
+        : undefined) ??
+      2, // Default: 2% tolerance (-2% to +2%)
     // === ON-CHAIN EXIT STRATEGY (routes NOT_TRADABLE positions to redemption) ===
     // ON_CHAIN_EXIT_ENABLED: Enable on-chain exit for positions that cannot trade on CLOB
     onChainExitEnabled:

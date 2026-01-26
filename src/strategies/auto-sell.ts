@@ -84,6 +84,28 @@ export interface AutoSellConfig {
   quickWinEnabled?: boolean; // Enable quick win exit (default: false)
   quickWinMaxHoldMinutes?: number; // Max hold time for quick win (default: 60 minutes)
   quickWinProfitPct?: number; // Profit % threshold for quick win (default: 90%)
+  /**
+   * OVERSIZED POSITION EXIT SETTINGS
+   * Positions where invested USD exceeds a threshold (e.g., HEDGING_ABSOLUTE_MAX_USD)
+   * are "oversized" and should be managed carefully to minimize losses or lock in gains.
+   *
+   * Strategy (in priority order):
+   * 1. If position is now profitable (green), sell immediately to lock in gains
+   * 2. If position is near breakeven (within tolerance), sell to exit at minimal loss
+   * 3. If still losing and event is approaching (< N hours), force exit to avoid total loss
+   *
+   * When enabled, the strategy will:
+   * 1. Find positions where invested USD exceeds oversizedExitThresholdUsd
+   * 2. Check if position has turned profitable -> sell immediately
+   * 3. Check if position is near breakeven (within tolerance %) -> sell to exit
+   * 4. Check time to event (marketEndTime) -> if within hoursBeforeEvent and still losing, force exit
+   *
+   * Default: Disabled (false) - opt-in feature via ENV variable
+   */
+  oversizedExitEnabled?: boolean; // Enable oversized position exit (default: false)
+  oversizedExitThresholdUsd?: number; // USD threshold - positions with invested value > this are "oversized" (default: uses HEDGING_ABSOLUTE_MAX_USD or 25)
+  oversizedExitHoursBeforeEvent?: number; // Hours before event to force exit if still losing (default: 1)
+  oversizedExitBreakevenTolerancePct?: number; // P&L % tolerance for "breakeven" sell (default: 2 = -2% to +2%)
 }
 
 /**
@@ -94,6 +116,7 @@ export interface AutoSellConfig {
  * - Stale position exit at 24 hours for profitable positions
  * - Expiry-aware holding: hold if event expires within 48 hours
  * - Quick win exit disabled by default (opt-in feature)
+ * - Oversized exit disabled by default (opt-in feature)
  */
 export const DEFAULT_AUTO_SELL_CONFIG: AutoSellConfig = {
   enabled: true,
@@ -107,6 +130,10 @@ export const DEFAULT_AUTO_SELL_CONFIG: AutoSellConfig = {
   quickWinEnabled: false, // Disabled by default - opt-in via ENV
   quickWinMaxHoldMinutes: 60, // Quick win window: 1 hour
   quickWinProfitPct: 90, // Quick win threshold: 90% profit
+  oversizedExitEnabled: false, // Disabled by default - opt-in via ENV
+  oversizedExitThresholdUsd: 25, // Default: 25 USD (chosen to align with dynamic reserves hedgeCapUsd=25)
+  oversizedExitHoursBeforeEvent: 1, // Default: exit 1 hour before event
+  oversizedExitBreakevenTolerancePct: 2, // Default: +/- 2% considered breakeven
 };
 
 export interface AutoSellStrategyConfig {
@@ -176,8 +203,11 @@ export class AutoSellStrategy {
       const quickWinInfo = this.config.quickWinEnabled
         ? ` quickWin=${this.config.quickWinMaxHoldMinutes}m@${this.config.quickWinProfitPct}%`
         : "";
+      const oversizedInfo = this.config.oversizedExitEnabled
+        ? ` oversizedExit=$${this.config.oversizedExitThresholdUsd}@${this.config.oversizedExitHoursBeforeEvent}h`
+        : "";
       this.logger.info(
-        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}${staleInfo}${expiryHoldInfo}${quickWinInfo}`,
+        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}${staleInfo}${quickWinInfo}${oversizedInfo}`,
       );
     }
   }
@@ -306,11 +336,32 @@ export class AutoSellStrategy {
       }
     }
 
+    // === OVERSIZED POSITION EXIT ===
+    // Sell positions where invested USD exceeds oversizedExitThresholdUsd
+    // Priority: 1) Sell if profitable, 2) Sell at breakeven, 3) Force exit before event
+    // This prevents positions from exceeding HEDGING_ABSOLUTE_MAX_USD limits
+    let oversizedSoldCount = 0;
+    if (this.config.oversizedExitEnabled) {
+      const oversizedPositions = this.getOversizedPositions(
+        this.config.oversizedExitThresholdUsd ?? 25,
+      );
+
+      for (const position of oversizedPositions) {
+        scannedCount++;
+        const sold = await this.processOversizedPosition(position);
+        if (sold) {
+          soldCount++;
+          oversizedSoldCount++;
+        }
+      }
+    }
+
     // Log once-per-cycle summary
     const staleInfo = staleHours > 0 ? ` stale_sold=${staleSoldCount}` : "";
     const quickWinInfo = this.config.quickWinEnabled ? ` quick_win_sold=${quickWinSoldCount}` : "";
+    const oversizedInfo = this.config.oversizedExitEnabled ? ` oversized_sold=${oversizedSoldCount}` : "";
     this.logger.info(
-      `[AutoSell] scanned=${scannedCount} sold=${soldCount}${staleInfo}${quickWinInfo} skipped_redeemable=${skipReasons.redeemable} skipped_not_tradable=${skipReasons.notTradable} skipped_no_bid=${skipReasons.noBid}`,
+      `[AutoSell] scanned=${scannedCount} sold=${soldCount}${staleInfo}${quickWinInfo}${oversizedInfo} skipped_redeemable=${skipReasons.redeemable} skipped_not_tradable=${skipReasons.notTradable} skipped_no_bid=${skipReasons.noBid}`,
     );
 
     // Log aggregated skip summary (rate-limited DEBUG)
@@ -972,6 +1023,196 @@ export class AutoSellStrategy {
     } catch (err) {
       this.logger.error(
         `[AutoSell] Failed to sell quick win position ${position.marketId.slice(0, 16)}...`,
+        err as Error,
+      );
+    }
+
+    return false;
+  }
+
+  /**
+   * Get positions that are "oversized" - invested USD exceeds threshold
+   * These are positions we want to evaluate for potential exit based on
+   * their P&L status and time to event.
+   *
+   * Note: Returns ALL oversized positions regardless of P&L status.
+   * The exit decision (profit/breakeven/event-approaching) is made by
+   * processOversizedPosition() using getOversizedExitReason().
+   *
+   * @param thresholdUsd - USD threshold - positions with invested value > this are "oversized"
+   * @returns Array of oversized positions (both profitable and losing)
+   */
+  private getOversizedPositions(thresholdUsd: number): Position[] {
+    const positions = this.positionTracker.getPositions();
+    const filtered: Position[] = [];
+
+    for (const pos of positions) {
+      const posKey = `${pos.marketId}-${pos.tokenId}`;
+
+      // Skip already sold positions
+      if (this.soldPositions.has(posKey)) {
+        continue;
+      }
+
+      // Skip if not tradable
+      const tradabilityIssue = this.checkTradability(pos);
+      if (tradabilityIssue) {
+        continue;
+      }
+
+      // Must have a valid bid price to sell
+      if (pos.currentBidPrice === undefined) {
+        continue;
+      }
+
+      // Calculate invested value (what we paid for the position)
+      // size * entryPrice gives us the original investment in USD
+      const investedUsd = pos.size * pos.entryPrice;
+
+      // Check if position is "oversized" - invested value exceeds threshold
+      if (investedUsd <= thresholdUsd) {
+        continue;
+      }
+
+      // P&L must be trusted to make decisions
+      if (!pos.pnlTrusted) {
+        this.logger.debug(
+          `[AutoSell] Oversized: Skipping ${posKey.slice(0, 20)}... - P&L not trusted`,
+        );
+        continue;
+      }
+
+      filtered.push(pos);
+    }
+
+    return filtered;
+  }
+
+  /**
+   * Determine the exit strategy for an oversized position
+   *
+   * Returns the reason for exit or null if should not exit yet:
+   * - "PROFITABLE": Position is now profitable (green) - sell immediately
+   * - "BREAKEVEN": Position is near breakeven - sell to exit at minimal loss
+   * - "EVENT_APPROACHING": Event is approaching and still losing - force exit
+   * - null: Don't exit yet (wait for better opportunity)
+   */
+  private getOversizedExitReason(position: Position): "PROFITABLE" | "BREAKEVEN" | "EVENT_APPROACHING" | null {
+    const tolerancePct = this.config.oversizedExitBreakevenTolerancePct ?? 2;
+    const hoursBeforeEvent = this.config.oversizedExitHoursBeforeEvent ?? 1;
+
+    // Priority 1: If profitable (green), sell immediately
+    if (position.pnlPct > 0) {
+      return "PROFITABLE";
+    }
+
+    // Priority 2: If near breakeven (within tolerance), sell to exit
+    if (Math.abs(position.pnlPct) <= tolerancePct) {
+      return "BREAKEVEN";
+    }
+
+    // Priority 3: Check if event is approaching
+    // If we're still red but event is within hoursBeforeEvent, force exit
+    const now = Date.now();
+    if (position.marketEndTime && position.marketEndTime > now) {
+      const msBeforeEvent = position.marketEndTime - now;
+      const hoursRemaining = msBeforeEvent / (60 * 60 * 1000);
+
+      if (hoursRemaining <= hoursBeforeEvent) {
+        return "EVENT_APPROACHING";
+      }
+    }
+
+    // Don't exit yet - wait for better opportunity
+    return null;
+  }
+
+  /**
+   * Process an oversized position for selling
+   * Uses tiered exit strategy based on position state:
+   * 1. Profitable -> sell immediately
+   * 2. Breakeven -> sell to minimize loss
+   * 3. Event approaching -> force exit
+   *
+   * @param position - The oversized position to potentially sell
+   * @returns true if position was sold
+   */
+  private async processOversizedPosition(position: Position): Promise<boolean> {
+    const positionKey = `${position.marketId}-${position.tokenId}`;
+    const tokenIdShort = position.tokenId.slice(0, 12);
+
+    // Calculate invested value
+    const investedUsd = position.size * position.entryPrice;
+
+    // Determine exit reason
+    const exitReason = this.getOversizedExitReason(position);
+    if (!exitReason) {
+      // Not time to exit yet - wait for better opportunity
+      this.logger.debug(
+        `[AutoSell] Oversized: ${tokenIdShort}... invested=$${investedUsd.toFixed(2)} P&L=${position.pnlPct.toFixed(1)}% - waiting for better exit opportunity`,
+      );
+      return false;
+    }
+
+    // Calculate time to event for logging
+    const now = Date.now();
+    let timeToEventStr = "unknown";
+    if (position.marketEndTime && position.marketEndTime > now) {
+      const hoursRemaining = (position.marketEndTime - now) / (60 * 60 * 1000);
+      timeToEventStr = hoursRemaining >= 1 
+        ? `${hoursRemaining.toFixed(1)}h`
+        : `${(hoursRemaining * 60).toFixed(0)}m`;
+    }
+
+    // Log the exit decision
+    const exitReasonLabel = {
+      PROFITABLE: "💚 PROFITABLE",
+      BREAKEVEN: "⚪ BREAKEVEN", 
+      EVENT_APPROACHING: "🚨 EVENT_APPROACHING",
+    }[exitReason];
+
+    this.logger.info(
+      `[AutoSell] OVERSIZED_EXIT ${exitReasonLabel}: tokenId=${tokenIdShort}... invested=$${investedUsd.toFixed(2)} P&L=${position.pnlPct.toFixed(1)}% timeToEvent=${timeToEventStr}`,
+    );
+
+    try {
+      // Use unified executeSell method
+      const sold = await this.executeSell(position, `AutoSell (Oversized ${exitReason})`);
+
+      if (sold) {
+        this.soldPositions.add(positionKey);
+
+        // Calculate realized P&L for logging
+        const currentPrice = position.currentBidPrice ?? position.currentPrice;
+        const tradePnl = (currentPrice - position.entryPrice) * position.size;
+        const freedCapital = position.size * currentPrice;
+
+        // Send notification
+        void notifySell(
+          position.marketId,
+          position.tokenId,
+          position.size,
+          currentPrice,
+          freedCapital,
+          {
+            strategy: `AutoSell (Oversized ${exitReason})`,
+            entryPrice: position.entryPrice,
+            pnl: tradePnl,
+            outcome: position.side,
+          },
+        ).catch(() => {
+          // Ignore notification errors
+        });
+
+        const pnlSign = tradePnl >= 0 ? "+" : "";
+        this.logger.info(
+          `[AutoSell] ✅ OVERSIZED_EXIT: ${exitReasonLabel} exit completed, P&L: ${pnlSign}$${tradePnl.toFixed(2)}, freed $${freedCapital.toFixed(2)} capital`,
+        );
+        return true;
+      }
+    } catch (err) {
+      this.logger.error(
+        `[AutoSell] Failed to sell oversized position ${position.marketId.slice(0, 16)}...`,
         err as Error,
       );
     }

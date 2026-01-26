@@ -89,6 +89,49 @@ The POL reserve system automatically maintains a minimum POL (Polygon native tok
 3. Executes swap: "💱 POL Rebalance | Swapping $50 USDC → ~45 POL"
 4. Confirms: "✅ POL Swap | Confirmed"
 
+### Dynamic Reserves (Risk-Aware Capital Allocation)
+
+The dynamic reserves system automatically scales your reserve requirements based on position risk analysis. This ensures you always have adequate funds available to cover hedges or handle forced liquidations.
+
+| Variable | Conservative | Balanced | Aggressive | Description |
+|----------|--------------|----------|------------|-------------|
+| `DYNAMIC_RESERVES_ENABLED` | true | true | true | Enable risk-aware reserve scaling |
+| `DYNAMIC_RESERVES_BASE_FLOOR_USD` | 25 | 20 | 15 | Minimum reserve floor in USD |
+| `DYNAMIC_RESERVES_EQUITY_PCT` | 8 | 5 | 3 | Reserve as % of equity (input as whole number, e.g., 5 for 5%) |
+| `DYNAMIC_RESERVES_MAX_USD` | 250 | 200 | 150 | Maximum reserve cap in USD |
+| `DYNAMIC_RESERVES_HEDGE_CAP_USD` | 25 | 50 | 100 | Max per-position reserve (aligns with hedge max) |
+| `DYNAMIC_RESERVES_HEDGE_TRIGGER_PCT` | 15 | 20 | 25 | Loss % to trigger hedge-tier reserve |
+| `DYNAMIC_RESERVES_CATASTROPHIC_PCT` | 40 | 50 | 60 | Loss % for catastrophic-tier reserve |
+| `DYNAMIC_RESERVES_HIGH_WIN_PRICE` | 0.90 | 0.85 | 0.80 | Price threshold for high win probability (low reserve) |
+
+**How it works:**
+
+The system calculates reserves using BOTH percentage-based reserves (existing) AND risk-aware position analysis:
+
+1. **Percentage Reserve**: Scales with drawdown (existing V1 feature)
+   - Base: `RESERVE_PCT` of balance
+   - +5% at 5% drawdown, +15% at 10% drawdown, +25% at 20% drawdown
+
+2. **Risk-Aware Reserve**: Analyzes each position for risk
+   - **Near Resolution (≥99¢)**: No reserve needed - high probability of payout
+   - **High Win Probability (≥threshold)**: Minimal reserve (2% of notional, capped at $0.50)
+   - **Normal**: Small buffer (10% of notional, capped at $2)
+   - **Hedge Trigger (loss ≥ trigger%)**: 50% of notional, capped at hedge cap
+   - **Catastrophic (loss ≥ catastrophic%)**: 100% of notional, capped at hedge cap
+
+3. **Effective Reserve**: Takes the HIGHER of percentage-based and risk-aware reserves
+
+**Risk Modes:**
+- **RISK_ON**: Balance exceeds effective reserve - normal trading allowed
+- **RISK_OFF**: Reserve shortfall - BUY orders blocked (hedging and protective actions still allowed)
+
+**Example:**
+With $100 balance, 20% base reserve, and one position at -30% loss (hedge tier):
+- Percentage reserve: $20 (20% of $100)
+- Risk-aware reserve: $25 base + $12.50 position reserve = $37.50
+- Effective reserve: $37.50 (higher of the two)
+- Available for regular trades: $62.50
+
 ### Optional
 
 | Variable | Default | Description | V1 Alias |

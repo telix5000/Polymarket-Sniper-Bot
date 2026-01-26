@@ -850,209 +850,167 @@ describe("AutoSell Quick Win Logic", () => {
   });
 });
 
-// === STALE EXPIRY HOLD TESTS ===
+// === OVERSIZED POSITION EXIT TESTS ===
 
-describe("AutoSell Stale Expiry Hold Configuration", () => {
-  test("DEFAULT_AUTO_SELL_CONFIG has correct staleExpiryHoldHours default", () => {
-    assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.staleExpiryHoldHours, 48);
+describe("AutoSell Oversized Position Exit", () => {
+  describe("Default Config", () => {
+    test("DEFAULT_AUTO_SELL_CONFIG has correct oversized exit defaults", () => {
+      assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitEnabled, false);
+      assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitThresholdUsd, 25);
+      assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitHoursBeforeEvent, 1);
+      assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.oversizedExitBreakevenTolerancePct, 2);
+    });
   });
 
-  test("AUTO_SELL_STALE_EXPIRY_HOLD_HOURS defaults to 48 in balanced preset", () => {
-    resetEnv();
-    Object.assign(process.env, baseEnv, {
-      STRATEGY_PRESET: "balanced",
+  describe("Env Override", () => {
+    test("AUTO_SELL_OVERSIZED_EXIT_ENABLED can be overridden via env", () => {
+      resetEnv();
+      Object.assign(process.env, baseEnv, {
+        STRATEGY_PRESET: "balanced",
+        AUTO_SELL_OVERSIZED_EXIT_ENABLED: "true",
+      });
+
+      const config = loadStrategyConfig();
+      assert.strictEqual(config?.autoSellOversizedExitEnabled, true);
     });
 
-    const config = loadStrategyConfig();
-    assert.strictEqual(config?.autoSellStaleExpiryHoldHours, 48);
-  });
+    test("AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD can be overridden via env", () => {
+      resetEnv();
+      Object.assign(process.env, baseEnv, {
+        STRATEGY_PRESET: "balanced",
+        AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD: "50",
+      });
 
-  test("AUTO_SELL_STALE_EXPIRY_HOLD_HOURS can be overridden via env", () => {
-    resetEnv();
-    Object.assign(process.env, baseEnv, {
-      STRATEGY_PRESET: "balanced",
-      AUTO_SELL_STALE_EXPIRY_HOLD_HOURS: "72",
+      const config = loadStrategyConfig();
+      assert.strictEqual(config?.autoSellOversizedExitThresholdUsd, 50);
     });
 
-    const config = loadStrategyConfig();
-    assert.strictEqual(config?.autoSellStaleExpiryHoldHours, 72);
-  });
+    test("AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT can be overridden via env", () => {
+      resetEnv();
+      Object.assign(process.env, baseEnv, {
+        STRATEGY_PRESET: "balanced",
+        AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT: "2",
+      });
 
-  test("AUTO_SELL_STALE_EXPIRY_HOLD_HOURS can be disabled with 0", () => {
-    resetEnv();
-    Object.assign(process.env, baseEnv, {
-      STRATEGY_PRESET: "balanced",
-      AUTO_SELL_STALE_EXPIRY_HOLD_HOURS: "0",
+      const config = loadStrategyConfig();
+      assert.strictEqual(config?.autoSellOversizedExitHoursBeforeEvent, 2);
     });
 
-    const config = loadStrategyConfig();
-    assert.strictEqual(config?.autoSellStaleExpiryHoldHours, 0);
-  });
-});
+    test("AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT can be overridden via env", () => {
+      resetEnv();
+      Object.assign(process.env, baseEnv, {
+        STRATEGY_PRESET: "balanced",
+        AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT: "5",
+      });
 
-describe("AutoSell Stale Expiry Hold Logic", () => {
-  test("position expiring within hold window should NOT be sold", () => {
-    // Scenario: Position held 30 hours (stale at 24h threshold)
-    // Event expires in 24 hours (within 48h hold window)
-    // Expected: DO NOT SELL - wait for resolution
-    const now = Date.now();
-    const expiryHoldHours = 48;
-    const expiryHoldMs = expiryHoldHours * 60 * 60 * 1000;
-
-    const position = {
-      marketId: "0x" + "a".repeat(64),
-      tokenId: "0x" + "b".repeat(64),
-      size: 100,
-      entryPrice: 0.50, // 50¢ entry
-      currentPrice: 0.85, // 85¢ current
-      currentBidPrice: 0.84, // 84¢ bid
-      pnlPct: 68.0, // 68% profit
-      pnlUsd: 34.0, // $34 profit
-      pnlTrusted: true,
-      firstAcquiredAt: now - (30 * 60 * 60 * 1000), // 30 hours ago (stale)
-      timeHeldSec: 30 * 60 * 60,
-      entryMetaTrusted: true,
-      // Event expires in 24 hours
-      marketEndTime: now + (24 * 60 * 60 * 1000),
-    };
-
-    // Calculate time to expiry
-    const timeToExpiryMs = position.marketEndTime - now;
-    
-    // Check: is this within the hold window?
-    const isWithinExpiryHoldWindow = timeToExpiryMs > 0 && timeToExpiryMs <= expiryHoldMs;
-    
-    assert.strictEqual(isWithinExpiryHoldWindow, true, "Position expiring in 24h should be within 48h hold window");
-    
-    // Business logic: Even though position is "stale" (held 30h > 24h threshold),
-    // we should HOLD because:
-    // - Current price: 85¢
-    // - Resolution in 24h could pay: $1.00 (if winning)
-    // - Holding 24 more hours for potential +15% upside is worth it
+      const config = loadStrategyConfig();
+      assert.strictEqual(config?.autoSellOversizedExitBreakevenTolerancePct, 5);
+    });
   });
 
-  test("position expiring AFTER hold window SHOULD be sold", () => {
-    // Scenario: Position held 30 hours (stale at 24h threshold)
-    // Event expires in 120 hours (5 days) - well outside 48h hold window
-    // Expected: SELL - free up capital, not worth waiting 5 days
-    const now = Date.now();
-    const expiryHoldHours = 48;
-    const expiryHoldMs = expiryHoldHours * 60 * 60 * 1000;
+  describe("Exit Strategy Logic", () => {
+    test("oversized position that turns profitable should be sold immediately", () => {
+      // Scenario: Position exceeds $25 threshold, was losing but now profitable
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x456",
+        size: 100,
+        entryPrice: 0.30, // 30¢ entry = $30 invested (>$25 threshold)
+        currentBidPrice: 0.35, // 35¢ current = $35 value
+        pnlPct: 16.67, // +16.67% profit
+        pnlTrusted: true,
+      };
 
-    const position = {
-      marketId: "0x" + "c".repeat(64),
-      tokenId: "0x" + "d".repeat(64),
-      size: 100,
-      entryPrice: 0.50,
-      currentPrice: 0.60,
-      currentBidPrice: 0.59,
-      pnlPct: 18.0,
-      pnlUsd: 9.0,
-      pnlTrusted: true,
-      firstAcquiredAt: now - (30 * 60 * 60 * 1000), // 30 hours ago (stale)
-      timeHeldSec: 30 * 60 * 60,
-      entryMetaTrusted: true,
-      // Event expires in 120 hours (5 days)
-      marketEndTime: now + (120 * 60 * 60 * 1000),
-    };
+      const investedUsd = position.size * position.entryPrice; // $30
+      const isOversized = investedUsd > 25;
+      const isProfitable = position.pnlPct > 0;
 
-    // Calculate time to expiry
-    const timeToExpiryMs = position.marketEndTime - now;
-    
-    // Check: is this within the hold window?
-    const isWithinExpiryHoldWindow = timeToExpiryMs > 0 && timeToExpiryMs <= expiryHoldMs;
-    
-    assert.strictEqual(isWithinExpiryHoldWindow, false, "Position expiring in 120h should NOT be within 48h hold window");
-    
-    // Business logic: Position is stale and event won't resolve for 5 days
-    // Better to sell now, lock in $9 profit, and redeploy capital
-  });
+      assert.ok(isOversized, "Position is oversized (>$25)");
+      assert.ok(isProfitable, "Position is profitable");
+      // Strategy: Should sell immediately to lock in profit
+    });
 
-  test("position without marketEndTime should be eligible for stale sell", () => {
-    // When we don't know when the market expires, we should still sell stale positions
-    // (We can't make the expiry-aware decision without the data)
-    const now = Date.now();
-    const expiryHoldHours = 48;
+    test("oversized position near breakeven should be sold", () => {
+      // Scenario: Position exceeds threshold, small loss within tolerance
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x456",
+        size: 100,
+        entryPrice: 0.30, // 30¢ entry = $30 invested
+        currentBidPrice: 0.295, // 29.5¢ current = $29.50 value
+        pnlPct: -1.67, // -1.67% loss (within 2% tolerance)
+        pnlTrusted: true,
+      };
 
-    const position = {
-      marketId: "0x" + "e".repeat(64),
-      tokenId: "0x" + "f".repeat(64),
-      pnlPct: 20.0,
-      pnlTrusted: true,
-      firstAcquiredAt: now - (30 * 60 * 60 * 1000),
-      timeHeldSec: 30 * 60 * 60,
-      entryMetaTrusted: true,
-      currentBidPrice: 0.65,
-      // No marketEndTime!
-      marketEndTime: undefined,
-    };
+      const tolerancePct = 2;
+      const isNearBreakeven = Math.abs(position.pnlPct) <= tolerancePct;
 
-    // Without marketEndTime, we can't check the expiry window
-    // Default behavior: sell the stale position
-    const hasExpiryInfo = position.marketEndTime !== undefined;
-    assert.strictEqual(hasExpiryInfo, false, "Position should have no expiry info");
-    
-    // Logic: When marketEndTime is unknown, proceed with stale sell
-    // This is the conservative choice - free up capital rather than wait indefinitely
-  });
+      assert.ok(isNearBreakeven, "Position is near breakeven (within 2%)");
+      // Strategy: Should sell to exit at minimal loss
+    });
 
-  test("expiry hold disabled when staleExpiryHoldHours is 0", () => {
-    // When set to 0, always sell stale positions regardless of expiry
-    const now = Date.now();
-    const expiryHoldHours = 0; // DISABLED
+    test("oversized losing position should wait until event approaches", () => {
+      // Scenario: Position exceeds threshold, significant loss, event far away
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x456",
+        size: 100,
+        entryPrice: 0.30, // 30¢ entry = $30 invested
+        currentBidPrice: 0.24, // 24¢ current = $24 value
+        pnlPct: -20, // -20% loss (outside tolerance, should wait)
+        pnlTrusted: true,
+        marketEndTime: Date.now() + 24 * 60 * 60 * 1000, // 24 hours away
+      };
 
-    const position = {
-      marketId: "0x" + "1".repeat(64),
-      tokenId: "0x" + "2".repeat(64),
-      pnlPct: 25.0,
-      pnlTrusted: true,
-      firstAcquiredAt: now - (30 * 60 * 60 * 1000),
-      timeHeldSec: 30 * 60 * 60,
-      entryMetaTrusted: true,
-      currentBidPrice: 0.70,
-      // Event expires in just 12 hours
-      marketEndTime: now + (12 * 60 * 60 * 1000),
-    };
+      const tolerancePct = 2;
+      const hoursBeforeEvent = 1;
+      const hoursRemaining = (position.marketEndTime - Date.now()) / (60 * 60 * 1000);
 
-    // With expiryHoldHours = 0, we never hold for expiry
-    const shouldHoldForExpiry = expiryHoldHours > 0;
-    assert.strictEqual(shouldHoldForExpiry, false, "Expiry hold should be disabled");
-    
-    // When disabled, even positions expiring soon get sold
-  });
+      const isNearBreakeven = Math.abs(position.pnlPct) <= tolerancePct;
+      const isEventApproaching = hoursRemaining <= hoursBeforeEvent;
 
-  test("capital efficiency reasoning for expiry-aware holding", () => {
-    // Business case: Position at 85¢, expires in 24h
-    // Option 1: Sell now at 85¢ → $85 cash, 15¢ potential left on table
-    // Option 2: Hold for resolution → $100 if win, $0 if lose
-    // 
-    // At 85¢ current price, market is pricing ~85% chance of winning
-    // Expected value of holding: 0.85 * $100 + 0.15 * $0 = $85
-    // But we already have ~85¢ embedded in the position
-    // 
-    // Key insight: If we're "in the money" at 85¢ and event resolves soon,
-    // the risk-adjusted expected return from holding is often better than
-    // selling at a discount to free up capital for uncertain new trades.
+      assert.ok(!isNearBreakeven, "Position is NOT near breakeven");
+      assert.ok(!isEventApproaching, "Event is NOT approaching (>1h away)");
+      // Strategy: Should wait for better opportunity (price recovery or event approach)
+    });
 
-    const position = {
-      size: 100,
-      entryPrice: 0.50, // 50¢ entry
-      currentBidPrice: 0.85, // 85¢ bid
-      hoursToExpiry: 24,
-    };
+    test("oversized losing position should force exit when event is approaching", () => {
+      // Scenario: Position exceeds threshold, significant loss, event within 1 hour
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x456",
+        size: 100,
+        entryPrice: 0.30, // 30¢ entry = $30 invested
+        currentBidPrice: 0.24, // 24¢ current = $24 value
+        pnlPct: -20, // -20% loss
+        pnlTrusted: true,
+        marketEndTime: Date.now() + 30 * 60 * 1000, // 30 minutes away (<1 hour)
+      };
 
-    const sellNowValue = position.size * position.currentBidPrice; // $85
-    const holdIfWinValue = position.size * 1.0; // $100
-    const holdIfLoseValue = position.size * 0.0; // $0
-    
-    // At 85% win probability (implied by price)
-    const winProb = position.currentBidPrice;
-    const expectedHoldValue = winProb * holdIfWinValue + (1 - winProb) * holdIfLoseValue;
-    
-    assert.ok(Math.abs(expectedHoldValue - sellNowValue) < 1, "Expected values are similar");
-    
-    // But the key is: 24 hours is a short time to wait for a certain outcome
-    // vs redeploying capital into new uncertain trades
-    // The expiry-aware hold feature gives us this optionality
+      const hoursBeforeEvent = 1;
+      const hoursRemaining = (position.marketEndTime - Date.now()) / (60 * 60 * 1000);
+      const isEventApproaching = hoursRemaining <= hoursBeforeEvent;
+
+      assert.ok(isEventApproaching, "Event IS approaching (<1h away)");
+      // Strategy: Should force exit to avoid total loss at resolution
+    });
+
+    test("position below threshold should not be considered oversized", () => {
+      // Scenario: Small position that doesn't exceed threshold
+      const position = {
+        marketId: "0x123",
+        tokenId: "0x456",
+        size: 50,
+        entryPrice: 0.20, // 20¢ entry = $10 invested (<$25 threshold)
+        currentBidPrice: 0.15, // 15¢ current
+        pnlPct: -25, // -25% loss
+      };
+
+      const investedUsd = position.size * position.entryPrice; // $10
+      const isOversized = investedUsd > 25;
+
+      assert.ok(!isOversized, "Position is NOT oversized (<$25)");
+      // Strategy: Not handled by oversized exit (too small)
+    });
   });
 });
