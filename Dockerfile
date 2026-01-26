@@ -28,11 +28,11 @@ RUN npm run build
 FROM node:20-alpine AS prod-deps
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-COPY patches ./patches
-
-# Install only production dependencies
-RUN npm ci --prefer-offline --no-audit --no-fund --omit=dev
+# Reuse fully installed (and patched) dependencies from the deps stage,
+# then prune devDependencies to produce a runtime-only node_modules.
+COPY --from=deps /app/package.json /app/package-lock.json ./
+COPY --from=deps /app/node_modules ./node_modules
+RUN npm prune --omit=dev
 
 # Stage 4: Final runtime image
 FROM node:20-alpine AS runtime
