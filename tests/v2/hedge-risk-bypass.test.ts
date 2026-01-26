@@ -147,8 +147,8 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
     let minutesToClose: number | undefined;
     let usedFallback = false;
 
-    if (marketEndTime && marketEndTime > now) {
-      // Use real market close time
+    if (marketEndTime && marketEndTime >= now) {
+      // Use real market close time (>= handles edge case where market is closing exactly now)
       minutesToClose = (marketEndTime - now) / (60 * 1000);
       inNoHedgeWindow = minutesToClose <= noHedgeWindowMinutes;
     }
@@ -195,6 +195,18 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
       const result = computeNoHedgeWindow(marketEndTime, now, 0, noHedgeWindowMinutes);
 
       assert.strictEqual(result.inNoHedgeWindow, true, "Should be in no-hedge window at boundary");
+    });
+
+    test("Market closing exactly now (marketEndTime == now) should use real time, not fallback", () => {
+      const now = Date.now();
+      const marketEndTime = now; // Closing exactly now
+      const noHedgeWindowMinutes = 5;
+
+      const result = computeNoHedgeWindow(marketEndTime, now, 0, noHedgeWindowMinutes);
+
+      assert.strictEqual(result.usedFallback, false, "Should use real market time when market closing now");
+      assert.strictEqual(result.minutesToClose, 0, "Minutes to close should be 0");
+      assert.strictEqual(result.inNoHedgeWindow, true, "Should be in no-hedge window when market is closing");
     });
   });
 

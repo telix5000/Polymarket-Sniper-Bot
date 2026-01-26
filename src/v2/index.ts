@@ -295,6 +295,14 @@ const PROXY_ABI = ["function proxy(address dest, bytes calldata data) external r
 const CTF_ABI = ["function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets) external"];
 const ASSUMED_MARKET_DURATION_HOURS = 24; // Used for hold-time fallback when market end time is unavailable
 
+// Cache TTL configuration
+const MARKET_END_TIME_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes for successful lookups
+const MARKET_END_TIME_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for failed lookups
+const MARKET_END_TIME_CACHE_MAX_SIZE = 500;
+
+// Arbitrage configuration
+const DEFAULT_ARBITRAGE_ACTIVE_MARKET_LIMIT = 100; // Matches V1 endgame-sweep
+
 // ============ STATE ============
 
 const state = {
@@ -317,7 +325,9 @@ const state = {
   positionEntryTime: new Map<string, number>(),
   positionPriceHistory: new Map<string, { price: number; time: number }[]>(), // For momentum tracking
   positionMomentum: new Map<string, number>(), // tokenId -> momentum score (-1 to +1)
-  marketEndTimeCache: new Map<string, number>(), // tokenId -> market end time (Unix timestamp ms)
+  // Market end time cache with TTL support
+  // Value: { endTime: number (-1 = not available), cachedAt: number (timestamp) }
+  marketEndTimeCache: new Map<string, { endTime: number; cachedAt: number }>(),
   telegram: undefined as { token: string; chatId: string } | undefined,
   proxyAddress: undefined as string | undefined,
   copyLastCheck: new Map<string, number>(),
@@ -891,14 +901,21 @@ async function fetchPositions(wallet: string): Promise<Position[]> {
         };
       });
     
-    // Fetch market end times for all positions in parallel
-    // Uses cache to avoid redundant API calls - only fresh positions need network requests
-    const positionsWithEndTime = await Promise.all(
-      rawPositions.map(async (p: Omit<Position, 'marketEndTime'>) => {
-        const marketEndTime = await fetchMarketEndTime(p.tokenId);
-        return { ...p, marketEndTime };
-      })
-    );
+    // Fetch market end times in batches to avoid overwhelming the Gamma API
+    // Cache helps on subsequent cycles, but first fetch or cache misses need rate limiting
+    const BATCH_SIZE = 10;
+    const positionsWithEndTime: Position[] = [];
+    
+    for (let i = 0; i < rawPositions.length; i += BATCH_SIZE) {
+      const batch = rawPositions.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map(async (p: Omit<Position, 'marketEndTime'>) => {
+          const marketEndTime = await fetchMarketEndTime(p.tokenId);
+          return { ...p, marketEndTime };
+        })
+      );
+      positionsWithEndTime.push(...batchResults);
+    }
     
     state.positions = positionsWithEndTime;
     state.lastFetch = Date.now();
@@ -917,44 +934,67 @@ async function fetchRedeemable(wallet: string): Promise<string[]> {
 /**
  * Fetch market end time from Gamma API
  * Returns Unix timestamp in milliseconds, or undefined if not available
- * Uses cache to avoid redundant API calls
+ * Uses cache with TTL to avoid redundant API calls
+ * Caches both successful and failed lookups (with different TTLs)
  */
 async function fetchMarketEndTime(tokenId: string): Promise<number | undefined> {
-  // Check cache first
+  const now = Date.now();
+  
+  // Check cache first (with TTL validation)
   const cached = state.marketEndTimeCache.get(tokenId);
   if (cached !== undefined) {
-    return cached;
+    const isNegativeCache = cached.endTime === -1;
+    const ttl = isNegativeCache ? MARKET_END_TIME_NEGATIVE_CACHE_TTL_MS : MARKET_END_TIME_CACHE_TTL_MS;
+    
+    // Return cached value if not expired
+    if (now - cached.cachedAt < ttl) {
+      return cached.endTime === -1 ? undefined : cached.endTime;
+    }
+    // Cache expired - remove and fetch fresh
+    state.marketEndTimeCache.delete(tokenId);
   }
+  
+  // Helper to cache result with size limit enforcement
+  const cacheResult = (endTime: number) => {
+    if (state.marketEndTimeCache.size >= MARKET_END_TIME_CACHE_MAX_SIZE) {
+      // Remove oldest entry (FIFO eviction)
+      const firstKey = state.marketEndTimeCache.keys().next().value;
+      if (firstKey) {
+        state.marketEndTimeCache.delete(firstKey);
+      }
+    }
+    state.marketEndTimeCache.set(tokenId, { endTime, cachedAt: now });
+  };
 
   try {
     // Gamma API endpoint for token/market info
     const { data } = await axios.get(`${GAMMA_API}/markets?clob_token_ids=${tokenId}`, { timeout: 5000 });
     
     const market = data?.[0];
-    if (!market) return undefined;
-    
-    // Try to get end date from various fields
-    const endDateStr = market.end_date_iso || market.endDate || market.end_date;
-    if (!endDateStr) return undefined;
-    
-    // Parse the date string to Unix timestamp (milliseconds)
-    const endTime = new Date(endDateStr).getTime();
-    if (!Number.isFinite(endTime) || endTime <= 0) {
+    if (!market) {
+      cacheResult(-1); // Cache negative result
       return undefined;
     }
     
-    // Cache the result (limit cache size to 500 entries)
-    if (state.marketEndTimeCache.size >= 500) {
-      // Remove oldest entry
-      const firstKey = state.marketEndTimeCache.keys().next().value;
-      if (firstKey) {
-        state.marketEndTimeCache.delete(firstKey);
-      }
+    // Try to get end date from various fields
+    const endDateStr = market.end_date_iso || market.endDate || market.end_date;
+    if (!endDateStr) {
+      cacheResult(-1); // Cache negative result
+      return undefined;
     }
-    state.marketEndTimeCache.set(tokenId, endTime);
     
+    // Parse the date string to Unix timestamp (milliseconds)
+    const endTime = new Date(endDateStr).getTime();
+    if (Number.isNaN(endTime) || !Number.isFinite(endTime) || endTime <= 0) {
+      cacheResult(-1); // Cache negative result
+      return undefined;
+    }
+    
+    // Cache successful result
+    cacheResult(endTime);
     return endTime;
   } catch {
+    cacheResult(-1); // Cache negative result on error
     return undefined;
   }
 }
@@ -1487,8 +1527,14 @@ async function arbitrage(cfg: Config, scanActiveMarkets = true) {
   // 2. Optionally scan active markets for additional opportunities (V1 parity)
   if (scanActiveMarkets) {
     try {
+      // Configurable market limit (env var or default)
+      const activeMarketLimitEnv = process.env.ARBITRAGE_ACTIVE_MARKET_LIMIT;
+      const activeMarketLimit = activeMarketLimitEnv && !Number.isNaN(Number(activeMarketLimitEnv))
+        ? Number(activeMarketLimitEnv)
+        : DEFAULT_ARBITRAGE_ACTIVE_MARKET_LIMIT;
+      
       // Fetch active markets from Gamma API (same as V1's endgame-sweep)
-      const { data } = await axios.get(`${GAMMA_API}/markets?closed=false&limit=50`, { timeout: 10000 });
+      const { data } = await axios.get(`${GAMMA_API}/markets?closed=false&limit=${activeMarketLimit}`, { timeout: 10000 });
       
       if (Array.isArray(data)) {
         for (const market of data) {
@@ -1536,9 +1582,24 @@ async function processArbitrageOpportunity(cid: string, cfg: Config): Promise<bo
       if (scaledArbUsd < 1) return true; // Processed, but too small
       
       log(`💎 Arb | YES ${$price(yesPrice)} + NO ${$price(noPrice)} = ${profitPct.toFixed(1)}% profit`);
-      // Arbitrage respects reserves (normal trade)
-      await executeBuy(yes.token_id, cid, "YES", scaledArbUsd, "Arb", cfg, false, yesPrice);
-      await executeBuy(no.token_id, cid, "NO", scaledArbUsd, "Arb", cfg, false, noPrice);
+      
+      // Execute first leg (YES)
+      const firstLegSuccess = await executeBuy(yes.token_id, cid, "YES", scaledArbUsd, "Arb", cfg, false, yesPrice);
+      
+      if (firstLegSuccess) {
+        // Execute second leg (NO) with retry logic
+        let secondLegSuccess = await executeBuy(no.token_id, cid, "NO", scaledArbUsd, "Arb", cfg, false, noPrice);
+        
+        if (!secondLegSuccess) {
+          log(`⚠️ Arb WARNING | Second leg (NO) failed for market ${cid.slice(0, 8)}... | Retrying...`);
+          // Single retry for transient failures
+          secondLegSuccess = await executeBuy(no.token_id, cid, "NO", scaledArbUsd, "Arb", cfg, false, noPrice);
+          
+          if (!secondLegSuccess) {
+            log(`⚠️ Arb WARNING | Retry failed | Position may be unhedged for market ${cid.slice(0, 8)}... | YES filled but NO failed`);
+          }
+        }
+      }
     }
     return true;
   } catch { return false; }
@@ -1661,7 +1722,7 @@ async function cycle(walletAddr: string, cfg: Config) {
     let inNoHedgeWindow = false;
     let minutesToClose: number | undefined;
     
-    if (p.marketEndTime && p.marketEndTime > now) {
+    if (p.marketEndTime && p.marketEndTime >= now) {
       // Use real market close time
       minutesToClose = (p.marketEndTime - now) / (60 * 1000);
       inNoHedgeWindow = minutesToClose <= cfg.hedge.noHedgeWindowMinutes;
