@@ -1537,15 +1537,13 @@ function pct(value: number): string {
 /**
  * Escape special characters for Telegram Markdown
  * Telegram's Markdown parser requires escaping: _ * [ ] ( ) ~ ` > # + - = | { } . !
- * For MarkdownV2, all need escaping; for legacy Markdown, main ones are: _ * [ ` 
+ * For MarkdownV2, all need escaping; for legacy Markdown, main ones are: \ _ * [ ` 
  */
 function escapeMarkdown(text: string): string {
   // Escape characters that break Telegram's legacy Markdown parser
-  return text
-    .replace(/\*/g, "\\*")
-    .replace(/_/g, "\\_")
-    .replace(/\[/g, "\\[")
-    .replace(/`/g, "\\`");
+  // Backslashes must be escaped first to avoid double-escaping the escape characters we add
+  // Using a single regex replace with character class for better performance
+  return text.replace(/[\\*_[`]/g, "\\$&");
 }
 
 // ============ API ============
