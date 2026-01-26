@@ -509,3 +509,52 @@ V2 uses simple, direct logic. If condition is met → execute action:
 | Redeem | position resolved | REDEEM |
 
 No complex internal logic or cross-strategy dependencies. What you set is what it does.
+
+## VPN Configuration (Geo-Blocked Regions)
+
+If you're in a geo-blocked region, you'll need a VPN to access Polymarket APIs. The bot supports both WireGuard and OpenVPN.
+
+### ⚠️ CRITICAL: WireGuard DNS Issue in Docker
+
+**DO NOT SET `WIREGUARD_DNS` when running in Docker containers.** This causes WireGuard to fail with:
+```
+resolvconf: could not detect a useable init system
+resolvconf: signature mismatch: /etc/resolv.conf
+```
+
+**Why:** Alpine Linux containers don't have an init system (systemd/OpenRC) that `resolvconf` requires. When you set DNS in your WireGuard config, `wg-quick` tries to use `resolvconf` to update DNS, which fails and tears down the entire VPN connection.
+
+**Solution:** Simply omit `WIREGUARD_DNS` from your environment variables. Docker manages DNS automatically via `/etc/resolv.conf`, and your container will work fine without it.
+
+### WireGuard Setup
+
+```bash
+# Minimal WireGuard config (NO DNS!)
+WIREGUARD_ENABLED=true
+WIREGUARD_ADDRESS=10.0.0.2/24
+WIREGUARD_PRIVATE_KEY=your_private_key
+WIREGUARD_PEER_PUBLIC_KEY=peer_public_key  
+WIREGUARD_PEER_ENDPOINT=vpn.example.com:51820
+WIREGUARD_ALLOWED_IPS=0.0.0.0/0
+# WIREGUARD_DNS=1.1.1.1  # ❌ DO NOT SET THIS IN DOCKER!
+```
+
+### OpenVPN Setup
+
+```bash
+OPENVPN_ENABLED=true
+OPENVPN_CONFIG="<full .ovpn config content>"
+# Or mount a config file:
+OVPN_CONFIG=/path/to/client.ovpn
+```
+
+### VPN Bypass Options
+
+By default, RPC traffic bypasses VPN for speed:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VPN_BYPASS_RPC` | `true` | Route blockchain RPC outside VPN |
+| `VPN_BYPASS_POLYMARKET_READS` | `true` | Route read-only Polymarket APIs outside VPN |
+
+**Note:** Order submissions always go through VPN to avoid geo-blocking.

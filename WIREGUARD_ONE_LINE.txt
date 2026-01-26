@@ -1,1 +1,0 @@
-WireGuard fails at DNS config step: Alpine container lacks init system for resolvconf. Fix: Remove DNS directive from WireGuard config (or add container detection to skip DNS in vpn.ts:225). Container will use Docker-managed DNS.
