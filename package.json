@@ -9,7 +9,7 @@
     "url": "https://github.com/telix5000"
   },
   "type": "commonjs",
-  "main": "dist/app/main.js",
+  "main": "dist/start.js",
   "engines": {
     "node": ">=18"
   },
@@ -23,7 +23,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "start": "node dist/app/main.js",
+    "start": "node dist/start.js",
     "dev": "ts-node src/app/main.ts",
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
@@ -54,7 +54,10 @@
     "wallet:check": "ts-node scripts/check_wallet_status.ts",
     "wallet:detect": "ts-node scripts/detect_wallet_type.ts",
     "onchain:status": "[ -f dist/cli/onchain-status.command.js ] && node dist/cli/onchain-status.command.js || ts-node src/cli/onchain-status.command.ts",
-    "print-targets": "ts-node scripts/printTargets.ts"
+    "print-targets": "ts-node scripts/printTargets.ts",
+    "start:v2": "USE_V2=true node dist/start.js",
+    "start:v1": "USE_V2=false node dist/start.js",
+    "dev:v2": "USE_V2=true npx ts-node src/start.ts"
   },
   "keywords": [
     "polymarket",
@@ -91,7 +94,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
-    "@types/node": "^25.0.9",
+    "@types/node": "^25.0.10",
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
     "eslint": "^9.39.2",
