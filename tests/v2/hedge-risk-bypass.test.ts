@@ -336,3 +336,170 @@ describe("V2 No-Hedge Window with Real Market Close Time", () => {
     });
   });
 });
+
+/**
+ * Unit tests for V2 Protective Hedge Duplicate Prevention Bypass
+ *
+ * These tests verify that:
+ * 1. Protective hedges (Hedge, EmergencyHedge, SellSignal Hedge) should bypass duplicate prevention
+ *    (BUY_COOLDOWN, in-flight checks) to ensure loss recovery operations execute
+ * 2. Speculative trades (HedgeUp, Copy, etc.) should respect duplicate prevention checks
+ *
+ * This tests the logic that determines skipDuplicatePrevention: isProtectiveHedge
+ * in executeBuy() when calling postOrder().
+ */
+
+describe("V2 Protective Hedge Duplicate Prevention Bypass", () => {
+  // Helper function that mirrors the V2 isProtectiveHedge logic from executeBuy()
+  // True hedges: "Hedge (X%)", "EmergencyHedge (X%)", "SellSignal Hedge (X%)"
+  function isProtectiveHedge(reason: string): boolean {
+    return (
+      reason.startsWith("Hedge (") ||
+      reason.startsWith("EmergencyHedge") ||
+      reason.startsWith("SellSignal Hedge")
+    );
+  }
+
+  /**
+   * Helper function that determines if duplicate prevention should be skipped.
+   * This mirrors the logic in executeBuy() where skipDuplicatePrevention: isProtectiveHedge
+   * is passed to postOrder().
+   */
+  function shouldSkipDuplicatePrevention(reason: string): boolean {
+    return isProtectiveHedge(reason);
+  }
+
+  describe("Protective Hedges SHOULD Bypass Duplicate Prevention (BUY_COOLDOWN)", () => {
+    test("'Hedge (-25%)' should bypass BUY_COOLDOWN to ensure loss recovery executes", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("Hedge (-25%)"),
+        true,
+        "Hedge orders must bypass cooldowns for loss recovery",
+      );
+    });
+
+    test("'EmergencyHedge (-35%)' should bypass BUY_COOLDOWN for critical protection", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("EmergencyHedge (-35%)"),
+        true,
+        "EmergencyHedge must bypass cooldowns for critical protection",
+      );
+    });
+
+    test("'SellSignal Hedge (-20%)' should bypass BUY_COOLDOWN when tracked trader sells", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("SellSignal Hedge (-20%)"),
+        true,
+        "SellSignal Hedge must bypass cooldowns for timely response",
+      );
+    });
+
+    test("'SellSignal Hedge (-5%)' should bypass BUY_COOLDOWN for small losses too", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("SellSignal Hedge (-5%)"),
+        true,
+        "SellSignal Hedge bypasses cooldowns regardless of loss percentage",
+      );
+    });
+  });
+
+  describe("Speculative Trades MUST Respect Duplicate Prevention (BUY_COOLDOWN)", () => {
+    test("'HedgeUp (0.85)' should NOT bypass BUY_COOLDOWN - speculative doubling down", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("HedgeUp (0.85)"),
+        false,
+        "HedgeUp is speculative and must respect cooldowns to prevent stacking",
+      );
+    });
+
+    test("'HedgeUp (0.90)' should NOT bypass BUY_COOLDOWN at any price", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("HedgeUp (0.90)"),
+        false,
+        "HedgeUp at high prices must still respect cooldowns",
+      );
+    });
+
+    test("'Copy' should NOT bypass BUY_COOLDOWN - copy trades must prevent stacking", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("Copy"),
+        false,
+        "Copy trades must respect cooldowns to prevent buy stacking",
+      );
+    });
+
+    test("'Arb' should NOT bypass BUY_COOLDOWN - arbitrage trades follow normal rules", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("Arb"),
+        false,
+        "Arbitrage trades must respect cooldowns",
+      );
+    });
+
+    test("'Stack (+15%)' should NOT bypass BUY_COOLDOWN - stacking must be rate-limited", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("Stack (+15%)"),
+        false,
+        "Stack trades must respect cooldowns to prevent rapid stacking",
+      );
+    });
+
+    test("'Endgame' should NOT bypass BUY_COOLDOWN", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("Endgame"),
+        false,
+        "Endgame trades must respect cooldowns",
+      );
+    });
+
+    test("'OptStack (EV:$5.00)' should NOT bypass BUY_COOLDOWN", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("OptStack (EV:$5.00)"),
+        false,
+        "Optimizer stack trades must respect cooldowns",
+      );
+    });
+
+    test("'OptHedgeUp (EV:$3.00)' should NOT bypass BUY_COOLDOWN", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("OptHedgeUp (EV:$3.00)"),
+        false,
+        "Optimizer hedge-up trades must respect cooldowns",
+      );
+    });
+  });
+
+  describe("Edge Cases for Duplicate Prevention Bypass", () => {
+    test("Empty reason should NOT bypass BUY_COOLDOWN", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention(""),
+        false,
+        "Empty reason should not bypass cooldowns",
+      );
+    });
+
+    test("'Hedge' alone (no parentheses) should NOT bypass - incomplete format", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("Hedge"),
+        false,
+        "Incomplete 'Hedge' format should not bypass cooldowns",
+      );
+    });
+
+    test("'HedgeUpSomething' should NOT bypass - any HedgeUp variant is speculative", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("HedgeUpSomething"),
+        false,
+        "HedgeUp variants should not bypass cooldowns",
+      );
+    });
+
+    test("'SellSignalHedge' (no space) should NOT bypass - format matters", () => {
+      assert.strictEqual(
+        shouldSkipDuplicatePrevention("SellSignalHedge (-20%)"),
+        false,
+        "SellSignalHedge without space doesn't match expected format",
+      );
+    });
+  });
+});

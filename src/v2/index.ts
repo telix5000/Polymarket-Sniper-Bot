@@ -2489,9 +2489,10 @@ async function executeBuy(
       sizeUsd,
       buySlippagePct: 3,
       logger: simpleLogger as any,
-      // Skip duplicate prevention (BUY_COOLDOWN, market-level cooldowns, in-flight checks)
+      // Skip token-level duplicate prevention (e.g. BUY_COOLDOWN and in-flight duplicate checks)
       // for protective hedges to ensure they execute regardless of recent buys on the same token.
-      // Protective hedges are recovery operations that must not be blocked by anti-stacking logic.
+      // Note: this path does not pass a marketId into postOrder(), so market-level cooldowns are
+      // not applied here; this flag only affects token-level / in-flight duplicate-prevention logic.
       skipDuplicatePrevention: isProtectiveHedge,
     });
 
