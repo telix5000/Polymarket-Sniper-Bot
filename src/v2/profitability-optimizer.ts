@@ -510,8 +510,10 @@ export class ProfitabilityOptimizer {
     const expectedValueUsd = baseEv * stackingBonus;
 
     // Apply spread penalty (spreadBps is in basis points, i.e. 1/10,000)
-    // 50 bps spread on $100 trade = 0.5% = $0.50 penalty
-    const spreadPenalty = ((position.spreadBps ?? 0) / 10000) * proposedStackUsd;
+    // Base cost is (spreadBps / 10000) * size, multiplied by configurable penalty factor
+    // Default spreadPenaltyPerBps=0.001 makes this 0.1% of base spread cost
+    const baseSpreadCost = ((position.spreadBps ?? 0) / 10000) * proposedStackUsd;
+    const spreadPenalty = baseSpreadCost * (this.config.spreadPenaltyPerBps * 1000);
     const adjustedEv = expectedValueUsd - spreadPenalty;
 
     const confidence = this.computeConfidence(winProbability, position.spreadBps);
@@ -739,8 +741,9 @@ export class ProfitabilityOptimizer {
       winProbability * maxGainUsd - (1 - winProbability) * maxLossUsd;
 
     // Apply spread penalty (spreadBps is in basis points, i.e. 1/10,000)
-    // 50 bps spread on $100 trade = 0.5% = $0.50 penalty
-    const spreadPenalty = ((opportunity.spreadBps ?? 0) / 10000) * proposedSizeUsd;
+    // Base cost is (spreadBps / 10000) * size, multiplied by configurable penalty factor
+    const baseSpreadCost = ((opportunity.spreadBps ?? 0) / 10000) * proposedSizeUsd;
+    const spreadPenalty = baseSpreadCost * (this.config.spreadPenaltyPerBps * 1000);
     const expectedValueUsd = baseEv - spreadPenalty;
 
     const confidence = this.computeConfidence(
