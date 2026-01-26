@@ -148,6 +148,8 @@ async function main(): Promise<void> {
         | "conservative"
         | "balanced"
         | "aggressive",
+      collateralTokenAddress: strategyConfig.collateralTokenAddress,
+      collateralTokenDecimals: strategyConfig.collateralTokenDecimals,
       // Provide wallet balance fetcher for dynamic reserves to work
       // This enables the reserve system to track USDC balance and gate BUY orders
       getWalletBalances: async () => ({

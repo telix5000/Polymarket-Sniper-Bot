@@ -29,6 +29,7 @@ import type { ClobClient } from "@polymarket/clob-client";
 import type { ConsoleLogger } from "../utils/logger.util";
 import { PositionTracker } from "./position-tracker";
 import { LogDeduper, HEARTBEAT_INTERVAL_MS } from "../utils/log-deduper.util";
+import { POLYGON_USDC_ADDRESS } from "../constants/polymarket.constants";
 import {
   HedgingStrategy,
   type HedgingConfig,
@@ -102,6 +103,10 @@ export interface OrchestratorConfig {
   arbitrageConfig?: Partial<ArbitrageStrategyConfig>;
   /** Wallet balance fetcher for dynamic reserves (optional - if not provided, reserves are disabled) */
   getWalletBalances?: () => Promise<WalletBalances>;
+  /** Collateral token address - required for balance/allowance checks (e.g., USDC on Polygon) */
+  collateralTokenAddress: string;
+  /** Collateral token decimals - required for balance formatting (e.g., 6 for USDC) */
+  collateralTokenDecimals: number;
 }
 
 export class Orchestrator {
@@ -112,6 +117,10 @@ export class Orchestrator {
   private pnlLedger: PnLLedger;
   private dynamicReserves: DynamicReservesController;
   private getWalletBalances?: () => Promise<WalletBalances>;
+  /** Collateral token address - required for balance/allowance checks */
+  private collateralTokenAddress: string;
+  /** Collateral token decimals - required for balance formatting */
+  private collateralTokenDecimals: number;
 
   // All strategies
   // sellEarlyStrategy removed - consolidated into autoSellStrategy
@@ -156,6 +165,8 @@ export class Orchestrator {
   constructor(config: OrchestratorConfig) {
     this.client = config.client;
     this.logger = config.logger;
+    this.collateralTokenAddress = config.collateralTokenAddress;
+    this.collateralTokenDecimals = config.collateralTokenDecimals;
 
     // Generate unique boot ID to detect multiple orchestrator instances
     this.bootId = randomUUID().slice(0, 8);
@@ -286,6 +297,8 @@ export class Orchestrator {
       logger: config.logger,
       positionTracker: this.positionTracker,
       config: hedgingConfig,
+      collateralTokenAddress: this.collateralTokenAddress,
+      collateralTokenDecimals: this.collateralTokenDecimals,
       // Inject reserve plan getter for reserve-aware hedging
       getReservePlan: () => this.currentReservePlan,
     });
@@ -855,5 +868,7 @@ export function createOrchestrator(
     logger,
     maxPositionUsd,
     riskPreset,
+    collateralTokenAddress: POLYGON_USDC_ADDRESS,
+    collateralTokenDecimals: 6,
   });
 }

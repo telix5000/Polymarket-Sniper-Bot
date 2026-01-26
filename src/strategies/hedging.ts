@@ -310,6 +310,10 @@ export class HedgingStrategy {
   private config: HedgingConfig;
   /** Optional getter for the current reserve plan (injected by orchestrator) */
   private getReservePlan?: () => ReservePlan | null;
+  /** Collateral token address - required for balance/allowance checks */
+  private collateralTokenAddress: string;
+  /** Collateral token decimals - required for balance formatting */
+  private collateralTokenDecimals: number;
 
   // === API CLIENT FOR STATELESS HEDGE UP DETECTION ===
   // Uses PolymarketClient to check trade history and detect if a position has
@@ -366,6 +370,10 @@ export class HedgingStrategy {
     logger: ConsoleLogger;
     positionTracker: PositionTracker;
     config: HedgingConfig;
+    /** Collateral token address - required for balance/allowance checks */
+    collateralTokenAddress: string;
+    /** Collateral token decimals - required for balance formatting */
+    collateralTokenDecimals: number;
     /** Optional getter for the current reserve plan (for reserve-aware hedging) */
     getReservePlan?: () => ReservePlan | null;
   }) {
@@ -373,6 +381,8 @@ export class HedgingStrategy {
     this.logger = config.logger;
     this.positionTracker = config.positionTracker;
     this.config = config.config;
+    this.collateralTokenAddress = config.collateralTokenAddress;
+    this.collateralTokenDecimals = config.collateralTokenDecimals;
     this.getReservePlan = config.getReservePlan;
 
     // Initialize API client for stateless hedge up detection
@@ -1864,6 +1874,8 @@ export class HedgingStrategy {
         outcome: orderOutcome,
         side: "BUY",
         sizeUsd: buyUsd,
+        collateralTokenAddress: this.collateralTokenAddress,
+        collateralTokenDecimals: this.collateralTokenDecimals,
         // Use buySlippagePct to compute maxAcceptablePrice from FRESH orderbook data.
         // This ensures we don't overpay based on stale cached askPrice in hot markets.
         buySlippagePct: 2, // Allow 2% slippage above fresh best ask
@@ -2233,6 +2245,8 @@ export class HedgingStrategy {
         outcome: orderOutcome,
         side: "BUY",
         sizeUsd: hedgeUsd,
+        collateralTokenAddress: this.collateralTokenAddress,
+        collateralTokenDecimals: this.collateralTokenDecimals,
         // Use buySlippagePct to compute maxAcceptablePrice from FRESH orderbook data.
         // This ensures we don't overpay based on stale cached oppositePrice in hot markets.
         buySlippagePct: 2, // Allow 2% slippage above fresh best ask
@@ -2363,6 +2377,8 @@ export class HedgingStrategy {
         outcome: orderOutcome,
         side: "SELL",
         sizeUsd: currentValue,
+        collateralTokenAddress: this.collateralTokenAddress,
+        collateralTokenDecimals: this.collateralTokenDecimals,
         // Use falling knife slippage (25%) for graceful exit, computed from fresh orderbook
         sellSlippagePct: FALLING_KNIFE_SLIPPAGE_PCT,
         logger: this.logger,
