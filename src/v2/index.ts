@@ -70,6 +70,7 @@ interface Position {
   entryTime?: number;      // When position was first seen
   lastPrice?: number;      // Previous price for spike detection
   priceHistory?: number[]; // Recent prices for momentum
+  marketEndTime?: number;  // Market close time (Unix timestamp ms) - for near-close hedging
 }
 
 interface Config {
@@ -314,6 +315,7 @@ const state = {
   positionEntryTime: new Map<string, number>(),
   positionPriceHistory: new Map<string, { price: number; time: number }[]>(), // For momentum tracking
   positionMomentum: new Map<string, number>(), // tokenId -> momentum score (-1 to +1)
+  marketEndTimeCache: new Map<string, number>(), // tokenId -> market end time (Unix timestamp ms)
   telegram: undefined as { token: string; chatId: string } | undefined,
   proxyAddress: undefined as string | undefined,
   copyLastCheck: new Map<string, number>(),
@@ -874,7 +876,7 @@ async function fetchPositions(wallet: string): Promise<Position[]> {
 
   try {
     const { data } = await axios.get(`${API}/positions?user=${wallet}`);
-    state.positions = (data || [])
+    const rawPositions = (data || [])
       .filter((p: any) => Number(p.size) > 0 && !p.redeemable)
       .map((p: any) => {
         const size = Number(p.size), avgPrice = Number(p.avgPrice), curPrice = Number(p.curPrice);
@@ -886,6 +888,16 @@ async function fetchPositions(wallet: string): Promise<Position[]> {
           gainCents: (curPrice - avgPrice) * 100,
         };
       });
+    
+    // Fetch market end times for all positions (in parallel, with batching to avoid rate limits)
+    // This is needed for the near-close hedging behavior
+    const positions: Position[] = [];
+    for (const p of rawPositions) {
+      const marketEndTime = await fetchMarketEndTime(p.tokenId);
+      positions.push({ ...p, marketEndTime });
+    }
+    
+    state.positions = positions;
     state.lastFetch = Date.now();
     log(`📊 ${state.positions.length} positions`);
   } catch (e) { log(`❌ API: ${e}`); }
@@ -897,6 +909,51 @@ async function fetchRedeemable(wallet: string): Promise<string[]> {
     const { data } = await axios.get(`${API}/positions?user=${wallet}&redeemable=true`);
     return [...new Set((data || []).map((p: any) => p.conditionId))] as string[];
   } catch { return []; }
+}
+
+/**
+ * Fetch market end time from Gamma API
+ * Returns Unix timestamp in milliseconds, or undefined if not available
+ * Uses cache to avoid redundant API calls
+ */
+async function fetchMarketEndTime(tokenId: string): Promise<number | undefined> {
+  // Check cache first
+  const cached = state.marketEndTimeCache.get(tokenId);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  try {
+    // Gamma API endpoint for token/market info
+    const { data } = await axios.get(`https://gamma-api.polymarket.com/markets?clob_token_ids=${tokenId}`, { timeout: 5000 });
+    
+    const market = data?.[0];
+    if (!market) return undefined;
+    
+    // Try to get end date from various fields
+    const endDateStr = market.end_date_iso || market.endDate || market.end_date;
+    if (!endDateStr) return undefined;
+    
+    // Parse the date string to Unix timestamp (milliseconds)
+    const endTime = new Date(endDateStr).getTime();
+    if (!Number.isFinite(endTime) || endTime <= 0) {
+      return undefined;
+    }
+    
+    // Cache the result (limit cache size to 500 entries)
+    if (state.marketEndTimeCache.size >= 500) {
+      // Remove oldest entry
+      const firstKey = state.marketEndTimeCache.keys().next().value;
+      if (firstKey) {
+        state.marketEndTimeCache.delete(firstKey);
+      }
+    }
+    state.marketEndTimeCache.set(tokenId, endTime);
+    
+    return endTime;
+  } catch {
+    return undefined;
+  }
 }
 
 async function fetchProxy(wallet: string): Promise<string | undefined> {
@@ -1100,23 +1157,25 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
 async function executeBuy(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string, cfg: Config, allowReserve = false, price?: number): Promise<boolean> {
   const priceStr = price ? ` @ ${$price(price)}` : "";
   
-  // Risk check (Hedge orders bypass some checks)
-  const isHedge = reason.includes("Hedge");
+  // Risk check - only TRUE protective hedges bypass risk checks
+  // HedgeUp is NOT a protective hedge (it's doubling down on winners), so it MUST respect risk limits
+  // True hedges: "Hedge (X%)", "EmergencyHedge (X%)", "SellSignal Hedge (X%)"
+  const isProtectiveHedge = reason.startsWith("Hedge (") || reason.startsWith("EmergencyHedge") || reason.startsWith("SellSignal Hedge");
   const riskCheck = checkRiskLimits(cfg);
-  if (!riskCheck.allowed && !isHedge) {
+  if (!riskCheck.allowed && !isProtectiveHedge) {
     log(`⚠️ BUY blocked | ${riskCheck.reason}`);
     return false;
   }
   
   // Pre-execution checks (V1 feature)
   const preCheck = await preOrderCheck(tokenId, "BUY", sizeUsd, cfg);
-  if (!preCheck.ok && !isHedge) {
+  if (!preCheck.ok && !isProtectiveHedge) {
     log(`⚠️ BUY pre-check failed | ${preCheck.reason}`);
     return false;
   }
   
-  // Adaptive learning check (V1 feature) - skip for hedges
-  if (cfg.adaptiveLearning.enabled && state.adaptiveLearner && !isHedge) {
+  // Adaptive learning check (V1 feature) - skip for protective hedges
+  if (cfg.adaptiveLearning.enabled && state.adaptiveLearner && !isProtectiveHedge) {
     const evalResult = evaluateTradeWithLearning(conditionId, sizeUsd, 50, cfg);
     if (!evalResult.shouldTrade) {
       log(`🧠 BUY blocked by learning | ${evalResult.reason}`);
@@ -1398,42 +1457,88 @@ async function redeem(walletAddr: string, cfg: Config) {
 
 // ============ ARBITRAGE ============
 
-async function arbitrage(cfg: Config) {
+/**
+ * Arbitrage scanner - finds markets where YES + NO < 98% (guaranteed profit)
+ * 
+ * V2 IMPROVEMENT: Now scans BOTH current positions AND active markets
+ * V1 parity: Scanning active markets is what V1 does to find opportunities
+ * 
+ * @param cfg Configuration
+ * @param scanActiveMarkets If true, also scan active markets beyond current positions (default: true)
+ */
+async function arbitrage(cfg: Config, scanActiveMarkets = true) {
   if (!cfg.arbitrage.enabled) return;
   
-  const conditionIds = [...new Set(state.positions.map(p => p.conditionId))];
+  // Track already-processed condition IDs to avoid duplicates
+  const processedConditionIds = new Set<string>();
   
-  for (const cid of conditionIds) {
-    try {
-      const { data } = await axios.get(`https://clob.polymarket.com/markets/${cid}`);
-      if (!data?.tokens?.length) continue;
-      
-      const yes = data.tokens.find((t: any) => t.outcome === "Yes");
-      const no = data.tokens.find((t: any) => t.outcome === "No");
-      if (!yes || !no) continue;
-      
-      const yesPrice = Number(yes.price) || 0;
-      const noPrice = Number(no.price) || 0;
-      const total = yesPrice + noPrice;
-      
-      // Check minBuyPrice - skip if either side is below threshold (likely loser)
-      if (yesPrice < cfg.arbitrage.minBuyPrice || noPrice < cfg.arbitrage.minBuyPrice) {
-        continue;
-      }
-      
-      if (total < 0.98 && total > 0.5) {
-        const profitPct = (1 - total) * 100;
-        // Apply bet scaling when approaching position cap
-        const scaledArbUsd = scaleBetSize(cfg.arbitrage.maxUsd / 2, cfg, "Arb");
-        if (scaledArbUsd < 1) continue; // Skip if too small
-        
-        log(`💎 Arb | YES ${$price(yesPrice)} + NO ${$price(noPrice)} = ${profitPct.toFixed(1)}% profit`);
-        // Arbitrage respects reserves (normal trade)
-        await executeBuy(yes.token_id, cid, "YES", scaledArbUsd, "Arb", cfg, false, yesPrice);
-        await executeBuy(no.token_id, cid, "NO", scaledArbUsd, "Arb", cfg, false, noPrice);
-      }
-    } catch { /* skip */ }
+  // 1. First scan current positions (original behavior)
+  const positionConditionIds = [...new Set(state.positions.map(p => p.conditionId))];
+  
+  for (const cid of positionConditionIds) {
+    if (await processArbitrageOpportunity(cid, cfg)) {
+      processedConditionIds.add(cid);
+    }
   }
+  
+  // 2. Optionally scan active markets for additional opportunities (V1 parity)
+  if (scanActiveMarkets) {
+    try {
+      // Fetch active markets from Gamma API (same as V1's endgame-sweep)
+      const { data } = await axios.get("https://gamma-api.polymarket.com/markets?closed=false&limit=50", { timeout: 10000 });
+      
+      if (Array.isArray(data)) {
+        for (const market of data) {
+          // Skip markets we already processed from positions
+          const cid = market.condition_id || market.conditionId;
+          if (!cid || processedConditionIds.has(cid)) continue;
+          
+          // Skip closed or non-accepting markets
+          if (market.closed || !market.accepting_orders) continue;
+          
+          await processArbitrageOpportunity(cid, cfg);
+          processedConditionIds.add(cid);
+        }
+      }
+    } catch { /* skip active market scan errors silently */ }
+  }
+}
+
+/**
+ * Process a single market for arbitrage opportunity
+ * Returns true if processed (whether opportunity found or not), false if skipped
+ */
+async function processArbitrageOpportunity(cid: string, cfg: Config): Promise<boolean> {
+  try {
+    const { data } = await axios.get(`https://clob.polymarket.com/markets/${cid}`, { timeout: 5000 });
+    if (!data?.tokens?.length) return false;
+    
+    const yes = data.tokens.find((t: any) => t.outcome === "Yes");
+    const no = data.tokens.find((t: any) => t.outcome === "No");
+    if (!yes || !no) return false;
+    
+    const yesPrice = Number(yes.price) || 0;
+    const noPrice = Number(no.price) || 0;
+    const total = yesPrice + noPrice;
+    
+    // Check minBuyPrice - skip if either side is below threshold (likely loser)
+    if (yesPrice < cfg.arbitrage.minBuyPrice || noPrice < cfg.arbitrage.minBuyPrice) {
+      return true; // Processed, but no opportunity
+    }
+    
+    if (total < 0.98 && total > 0.5) {
+      const profitPct = (1 - total) * 100;
+      // Apply bet scaling when approaching position cap
+      const scaledArbUsd = scaleBetSize(cfg.arbitrage.maxUsd / 2, cfg, "Arb");
+      if (scaledArbUsd < 1) return true; // Processed, but too small
+      
+      log(`💎 Arb | YES ${$price(yesPrice)} + NO ${$price(noPrice)} = ${profitPct.toFixed(1)}% profit`);
+      // Arbitrage respects reserves (normal trade)
+      await executeBuy(yes.token_id, cid, "YES", scaledArbUsd, "Arb", cfg, false, yesPrice);
+      await executeBuy(no.token_id, cid, "NO", scaledArbUsd, "Arb", cfg, false, noPrice);
+    }
+    return true;
+  } catch { return false; }
 }
 
 // ============ MAIN CYCLE ============
@@ -1546,8 +1651,24 @@ async function cycle(walletAddr: string, cfg: Config) {
     // Only hedge if: losing >= triggerPct AND not already hedged AND held long enough
     // Also check: entry price below maxEntryPrice (only hedge risky positions)
     // Also check: NOT in no-hedge window (too close to market close)
-    const holdMinutesForHedge = holdTime / 60;
-    const inNoHedgeWindow = holdMinutesForHedge >= (24 * 60 - cfg.hedge.noHedgeWindowMinutes); // Assuming 24h markets
+    
+    // Compute no-hedge window using REAL market close time if available
+    // This is more accurate than the hold-time-based heuristic (which assumed 24h markets)
+    const now = Date.now();
+    let inNoHedgeWindow = false;
+    let minutesToClose: number | undefined;
+    
+    if (p.marketEndTime && p.marketEndTime > now) {
+      // Use real market close time
+      minutesToClose = (p.marketEndTime - now) / (60 * 1000);
+      inNoHedgeWindow = minutesToClose <= cfg.hedge.noHedgeWindowMinutes;
+    }
+    // Fallback: If no market close time, use hold-time-based heuristic
+    // This preserves backward compatibility for positions without end time data
+    if (minutesToClose === undefined) {
+      const holdMinutesForHedge = holdTime / 60;
+      inNoHedgeWindow = holdMinutesForHedge >= (24 * 60 - cfg.hedge.noHedgeWindowMinutes); // Assuming 24h markets
+    }
     
     if (cfg.hedge.enabled && !state.hedged.has(p.tokenId) && p.pnlPct <= -cfg.hedge.triggerPct && holdTime >= cfg.hedge.minHoldSeconds && !inNoHedgeWindow) {
       // Check if entry price qualifies for hedging
