@@ -18,10 +18,11 @@
  * 
  * RISK MANAGEMENT (⚠️ Important for API limits):
  *   MAX_OPEN_POSITIONS   - Max concurrent positions (default: 1000, provides 500 normal + 500 hedge slots)
- *                          ⚠️ More positions = more API calls. Keep low to avoid throttling.
+ *                          ⚠️ Higher values = more API calls. If hitting rate limits, reduce to 50-100.
+ *                          Recommended: 50-100 for free API tiers, 500-1000 for high-volume trading.
  *   HEDGE_BUFFER         - Reserve this many position slots for protective hedges (default: 500)
  *                          ⚠️ IMPORTANT: Normal trades stop at (MAX_OPEN_POSITIONS - HEDGE_BUFFER)
- *                          so you can ALWAYS hedge when losing. Don't set to 0!
+ *                          so you can ALWAYS hedge when losing. Must be < MAX_OPEN_POSITIONS.
  *   SCALE_DOWN_THRESHOLD - Start scaling bets when positions >= this % of effective max (default: 0.7 = 70%)
  *   SCALE_DOWN_MIN_PCT   - Minimum bet scale at max positions (default: 0.25 = 25% of normal)
  *   MAX_DRAWDOWN_PCT     - Stop trading if session drawdown exceeds this (default: 15-30%)
@@ -156,7 +157,7 @@ interface Config {
     scaleDownThreshold: number;    // Start scaling when positions >= this % of max (default: 70%)
     scaleDownMinPct: number;       // Minimum scale factor (default: 25% = 0.25x base size)
     // Hedge buffer - ALWAYS reserve slots for protective hedges
-    hedgeBuffer: number;           // Reserve this many position slots for hedges (default: 3)
+    hedgeBuffer: number;           // Reserve this many position slots for hedges (default: 500)
   };
   maxPositionUsd: number;
   reservePct: number;
@@ -2077,6 +2078,15 @@ export function loadConfig() {
   if (envNum("SCALE_DOWN_MIN_PCT") !== undefined) cfg.risk.scaleDownMinPct = envNum("SCALE_DOWN_MIN_PCT")!;
   // Hedge buffer - reserve slots for protective hedges
   if (envNum("HEDGE_BUFFER") !== undefined) cfg.risk.hedgeBuffer = envNum("HEDGE_BUFFER")!;
+
+  // Validate hedge buffer vs max open positions
+  if (cfg.risk.hedgeBuffer >= cfg.risk.maxOpenPositions) {
+    throw new Error(
+      `Invalid risk configuration: HEDGE_BUFFER (${cfg.risk.hedgeBuffer}) must be less than MAX_OPEN_POSITIONS ` +
+      `(${cfg.risk.maxOpenPositions}). This would make effectiveMax = maxOpenPositions - hedgeBuffer <= 0 and ` +
+      `block all normal trading. Please adjust MAX_OPEN_POSITIONS and/or HEDGE_BUFFER.`
+    );
+  }
   
   // ========== ARBITRAGE ==========
   // V1: ARB_ENABLED, ARB_DRY_RUN, ARB_MIN_EDGE_BPS, ARB_MIN_BUY_PRICE
