@@ -166,6 +166,30 @@ describe("Telegram Service Configuration", () => {
 
     assert.strictEqual(config.silent, false);
   });
+
+  test("should enable silent mode with leading whitespace", () => {
+    process.env.TELEGRAM_SILENT = "  true";
+
+    const config = loadTelegramConfig();
+
+    assert.strictEqual(config.silent, true);
+  });
+
+  test("should enable silent mode with trailing whitespace", () => {
+    process.env.TELEGRAM_SILENT = "true  ";
+
+    const config = loadTelegramConfig();
+
+    assert.strictEqual(config.silent, true);
+  });
+
+  test("should enable silent mode with leading and trailing whitespace", () => {
+    process.env.TELEGRAM_SILENT = "  true  ";
+
+    const config = loadTelegramConfig();
+
+    assert.strictEqual(config.silent, true);
+  });
 });
 
 describe("Telegram Service Message Formatting - escapeHtml", () => {
