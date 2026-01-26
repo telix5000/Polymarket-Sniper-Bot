@@ -611,7 +611,7 @@ export class AutoSellStrategy {
         if (timeToExpiryMs > 0 && timeToExpiryMs <= expiryHoldMs) {
           // Event expires soon - hold for resolution
           const hoursToExpiry = timeToExpiryMs / (60 * 60 * 1000);
-          const posKey = `${pos.marketId}-${pos.tokenId}`.slice(0, 30);
+          const posKey = `${pos.marketId}-${pos.tokenId}`;
           // Log once per position per expiry window (rate-limited by LogDeduper)
           if (this.logDeduper.shouldLog(`stale_expiry_hold:${posKey}`, 60 * 60 * 1000)) {
             this.logger.info(
