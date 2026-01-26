@@ -772,6 +772,7 @@ export class HedgingStrategy {
           // even with untrusted P&L - the risk of inaction is greater than the risk of acting
           
           // Calculate expected liquidation value for diagnostic logging
+          // Units: size (shares) * currentPrice (0-1 scale USD) = value in USD
           const positionValueUsd = position.size * position.currentPrice;
           const maxHedgeCap = this.config.allowExceedMax 
             ? this.config.absoluteMaxUsd 
@@ -803,11 +804,11 @@ export class HedgingStrategy {
           const sold = await this.sellPosition(position);
           if (sold) {
             actionsCount++;
-            // Store hedge info for diagnostic logging
+            // Store hedge info for diagnostic logging (estimate - actual proceeds may differ slightly)
             this.hedgedPositions.add(key);
             this.hedgeInfoMap.set(key, {
               hedgedAtMs: now,
-              hedgeSizeUsd: positionValueUsd, // Approximate - actual sell price may differ
+              hedgeSizeUsd: positionValueUsd,
               wasLiquidation: true,
               pnlPctAtHedge: position.pnlPct,
             });
