@@ -24,7 +24,6 @@
 import { JsonRpcProvider, Wallet, Contract, Interface, ZeroHash } from "ethers";
 import { ClobClient } from "@polymarket/clob-client";
 import axios from "axios";
-import { setupRpcVpnBypass } from "../utils/vpn-rpc-bypass.util";
 import { postOrder, type OrderSide, type OrderOutcome } from "../utils/post-order.util";
 
 // ============ TYPES ============
@@ -52,6 +51,7 @@ interface Config {
   endgame: { enabled: boolean; minPrice: number; maxPrice: number; maxUsd: number };
   redeem: { enabled: boolean; intervalMin: number };
   copy: { enabled: boolean; addresses: string[]; multiplier: number; minUsd: number; maxUsd: number };
+  arbitrage: { enabled: boolean; maxUsd: number };
 }
 
 interface TradeSignal {
@@ -77,6 +77,7 @@ const PRESETS: Record<Preset, Config> = {
     endgame: { enabled: true, minPrice: 0.90, maxPrice: 0.98, maxUsd: 15 },
     redeem: { enabled: true, intervalMin: 15 },
     copy: { enabled: false, addresses: [], multiplier: 1.0, minUsd: 5, maxUsd: 50 },
+    arbitrage: { enabled: true, maxUsd: 15 },
   },
   balanced: {
     autoSell: { enabled: true, threshold: 0.99 },
@@ -87,6 +88,7 @@ const PRESETS: Record<Preset, Config> = {
     endgame: { enabled: true, minPrice: 0.85, maxPrice: 0.99, maxUsd: 25 },
     redeem: { enabled: true, intervalMin: 15 },
     copy: { enabled: false, addresses: [], multiplier: 1.0, minUsd: 5, maxUsd: 100 },
+    arbitrage: { enabled: true, maxUsd: 25 },
   },
   aggressive: {
     autoSell: { enabled: true, threshold: 0.995 },
@@ -97,6 +99,7 @@ const PRESETS: Record<Preset, Config> = {
     endgame: { enabled: true, minPrice: 0.80, maxPrice: 0.995, maxUsd: 50 },
     redeem: { enabled: true, intervalMin: 10 },
     copy: { enabled: false, addresses: [], multiplier: 1.5, minUsd: 5, maxUsd: 200 },
+    arbitrage: { enabled: true, maxUsd: 50 },
   },
 };
 
@@ -207,7 +210,13 @@ function invalidate() { state.lastFetch = 0; }
 
 // ============ ORDER EXECUTION ============
 
-const simpleLogger = { info: log, warn: log, error: log, debug: () => {} };
+const logLevel = process.env.LOG_LEVEL || "info";
+const simpleLogger = {
+  info: log,
+  warn: log,
+  error: log,
+  debug: logLevel === "debug" ? log : () => {},
+};
 
 async function executeSell(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string): Promise<boolean> {
   if (!state.liveTrading) {
@@ -413,10 +422,73 @@ async function redeem(walletAddr: string, cfg: Config) {
   }
 }
 
+// ============ ARBITRAGE ============
+
+async function arbitrage(cfg: Config) {
+  if (!cfg.arbitrage.enabled) return;
+  
+  const conditionIds = [...new Set(state.positions.map(p => p.conditionId))];
+  
+  for (const cid of conditionIds) {
+    try {
+      const { data } = await axios.get(`https://clob.polymarket.com/markets/${cid}`);
+      if (!data?.tokens?.length) continue;
+      
+      const yes = data.tokens.find((t: any) => t.outcome === "Yes");
+      const no = data.tokens.find((t: any) => t.outcome === "No");
+      if (!yes || !no) continue;
+      
+      const yesPrice = Number(yes.price) || 0;
+      const noPrice = Number(no.price) || 0;
+      const total = yesPrice + noPrice;
+      
+      if (total < 0.98 && total > 0.5) {
+        const profit = (1 - total) * 100;
+        log(`💎 Arb: YES=${(yesPrice*100).toFixed(0)}¢ + NO=${(noPrice*100).toFixed(0)}¢ = ${profit.toFixed(1)}% profit`);
+        const arbUsd = cfg.arbitrage.maxUsd / 2;
+        await executeBuy(yes.token_id, cid, "YES", arbUsd, "Arb");
+        await executeBuy(no.token_id, cid, "NO", arbUsd, "Arb");
+      }
+    } catch { /* skip */ }
+  }
+}
+
+// ============ SELL SIGNAL PROTECTION ============
+
+async function sellSignalProtection(cfg: Config) {
+  if (!cfg.copy.enabled || !cfg.copy.addresses.length) return;
+  
+  for (const addr of cfg.copy.addresses) {
+    const activities = await fetchActivity(addr);
+    
+    for (const signal of activities) {
+      if (signal.side !== "SELL") continue;
+      
+      const ourPos = state.positions.find(p => p.tokenId === signal.tokenId);
+      if (!ourPos) continue;
+      if (ourPos.pnlPct > 20) continue;
+      
+      if (ourPos.pnlPct < -15 && !state.sold.has(ourPos.tokenId)) {
+        log(`⚠️ Tracked trader sold - we are down ${ourPos.pnlPct.toFixed(1)}%`);
+        
+        if (ourPos.pnlPct < -40) {
+          await executeSell(ourPos.tokenId, ourPos.conditionId, ourPos.outcome, ourPos.value, "SellSignal");
+          state.sold.add(ourPos.tokenId);
+        } else if (!state.hedged.has(ourPos.tokenId)) {
+          const opp = ourPos.outcome === "YES" ? "NO" : "YES";
+          await executeBuy(ourPos.tokenId, ourPos.conditionId, opp, ourPos.value * 0.5, "SellSignal-Hedge");
+          state.hedged.add(ourPos.tokenId);
+        }
+      }
+    }
+  }
+}
+
 // ============ MAIN CYCLE ============
 
 async function cycle(walletAddr: string, cfg: Config) {
   await copyTrades(cfg);
+  await sellSignalProtection(cfg);
   
   const positions = await fetchPositions(state.proxyAddress || walletAddr);
   if (positions.length) {
@@ -426,6 +498,7 @@ async function cycle(walletAddr: string, cfg: Config) {
     await scalp(positions, cfg);
     await stack(walletAddr, positions, cfg);
     await endgame(positions, cfg);
+    await arbitrage(cfg);
   }
   
   await redeem(walletAddr, cfg);
@@ -477,6 +550,10 @@ export function loadConfig() {
   if (envNum("COPY_MULTIPLIER")) cfg.copy.multiplier = envNum("COPY_MULTIPLIER")!;
   if (envNum("COPY_MIN_USD")) cfg.copy.minUsd = envNum("COPY_MIN_USD")!;
   if (envNum("COPY_MAX_USD")) cfg.copy.maxUsd = envNum("COPY_MAX_USD")!;
+  
+  // Arbitrage
+  if (env("ARB_ENABLED")) cfg.arbitrage.enabled = envBool("ARB_ENABLED");
+  if (envNum("ARB_MAX_USD")) cfg.arbitrage.maxUsd = envNum("ARB_MAX_USD")!;
 
   return {
     privateKey, rpcUrl, preset, config: cfg,
@@ -495,7 +572,6 @@ export async function startV2() {
   const settings = loadConfig();
   
   // VPN bypass for fast RPC
-  // VPN bypass: setupRpcVpnBypass can be called if needed
   
   const provider = new JsonRpcProvider(settings.rpcUrl);
   const wallet = new Wallet(settings.privateKey, provider);

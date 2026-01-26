@@ -238,3 +238,23 @@ MONITOR_ADDRESSES=0xabc...,0xdef... npm run start:v2
 ```
 
 The monitor checks for new trades from watched addresses and can trigger copy trades.
+
+---
+
+## Additional Strategies
+
+### Arbitrage - Guaranteed profit when YES + NO < $1
+
+| Variable | Conservative | Balanced | Aggressive | Description |
+|----------|--------------|----------|------------|-------------|
+| `ARB_ENABLED` | true | true | true | Enable/disable |
+| `ARB_MAX_USD` | 15 | 25 | 50 | Max USD per arbitrage |
+
+### Sell Signal Protection
+
+When a tracked trader SELLS a position you hold and you're losing:
+- Loss > 40%: Stop loss (sell immediately)
+- Loss 15-40%: Hedge (buy opposite side)
+- Profitable: Ignore (hold your winner)
+
+This is automatic when `COPY_ADDRESSES` is set.
