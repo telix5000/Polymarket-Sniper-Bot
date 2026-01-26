@@ -453,104 +453,6 @@ async function copyTrades(cfg: Config) {
   }
 }
 
-// ============ STRATEGIES ============
-// Simple rules: if condition met → execute. No cross-strategy logic.
-
-async function autoSell(positions: Position[], cfg: Config) {
-  if (!cfg.autoSell.enabled) return;
-  // Sell when price >= threshold (near $1)
-  for (const p of positions) {
-    if (state.sold.has(p.tokenId)) continue;
-    if (p.curPrice >= cfg.autoSell.threshold) {
-      if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "AutoSell")) {
-        state.sold.add(p.tokenId);
-      }
-    }
-  }
-}
-
-async function stopLoss(positions: Position[], cfg: Config) {
-  if (!cfg.stopLoss.enabled) return;
-  // Sell when loss exceeds threshold
-  for (const p of positions) {
-    if (state.sold.has(p.tokenId)) continue;
-    if (p.pnlPct <= -cfg.stopLoss.maxLossPct) {
-      if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "StopLoss")) {
-        state.sold.add(p.tokenId);
-      }
-    }
-  }
-}
-
-async function hedge(positions: Position[], cfg: Config) {
-  if (!cfg.hedge.enabled) return;
-  // Buy opposite side when down by trigger %
-  for (const p of positions) {
-    if (state.hedged.has(p.tokenId)) continue;
-    if (p.pnlPct <= -cfg.hedge.triggerPct) {
-      const opp = p.outcome === "YES" ? "NO" : "YES";
-      // Use absoluteMaxUsd if allowExceedMax, otherwise use maxUsd
-      const hedgeAmt = cfg.hedge.allowExceedMax ? cfg.hedge.absoluteMaxUsd : cfg.hedge.maxUsd;
-      // Hedging CAN dip into reserves (allowReserve=true) - it's protective
-      if (await executeBuy(p.tokenId, p.conditionId, opp, hedgeAmt, "Hedge", cfg, true)) {
-        state.hedged.add(p.tokenId);
-      }
-    }
-  }
-}
-
-async function scalp(positions: Position[], cfg: Config) {
-  if (!cfg.scalp.enabled) return;
-  // Take profit when up by minProfitPct AND minGainCents
-  for (const p of positions) {
-    if (state.sold.has(p.tokenId)) continue;
-    // Skip low price positions if threshold is set (0 = disabled)
-    if (cfg.scalp.lowPriceThreshold > 0 && p.avgPrice < cfg.scalp.lowPriceThreshold) continue;
-    if (p.pnlPct >= cfg.scalp.minProfitPct && p.gainCents >= cfg.scalp.minGainCents) {
-      if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "Scalp")) {
-        state.sold.add(p.tokenId);
-      }
-    }
-  }
-}
-
-async function stack(walletAddr: string, positions: Position[], cfg: Config) {
-  if (!cfg.stack.enabled) return;
-  // Buy more when position is winning (once per position)
-  for (const p of positions) {
-    if (state.stacked.has(p.tokenId)) continue;
-    if (p.gainCents >= cfg.stack.minGainCents && p.curPrice <= cfg.stack.maxPrice) {
-      // Check if already stacked (2+ buys means we already added)
-      const buys = await countBuys(walletAddr, p.tokenId);
-      if (buys >= 2) {
-        state.stacked.add(p.tokenId);
-        continue;
-      }
-      // Stacking respects reserves (normal trade)
-      if (await executeBuy(p.tokenId, p.conditionId, p.outcome, cfg.stack.maxUsd, "Stack", cfg, false)) {
-        state.stacked.add(p.tokenId);
-      }
-    }
-  }
-}
-
-async function endgame(positions: Position[], cfg: Config) {
-  if (!cfg.endgame.enabled) return;
-  // Buy more of high-confidence positions (price between min and max)
-  for (const p of positions) {
-    if (p.curPrice >= cfg.endgame.minPrice && p.curPrice <= cfg.endgame.maxPrice) {
-      // Only add if position is below 2x max size
-      if (p.value < cfg.endgame.maxUsd * 2) {
-        const addAmt = Math.min(cfg.endgame.maxUsd, cfg.endgame.maxUsd * 2 - p.value);
-        if (addAmt >= 5) {
-          // Endgame respects reserves (normal trade)
-          await executeBuy(p.tokenId, p.conditionId, p.outcome, addAmt, "Endgame", cfg, false);
-        }
-      }
-    }
-  }
-}
-
 // ============ REDEEM ============
 
 async function redeem(walletAddr: string, cfg: Config) {
@@ -646,21 +548,109 @@ async function sellSignalProtection(cfg: Config) {
 
 // ============ MAIN CYCLE ============
 
+/**
+ * CONFLICT RESOLUTION:
+ * Each position gets ONE action per cycle. Priority order:
+ * 1. AutoSell (near $1) - highest priority, guaranteed profit
+ * 2. StopLoss (losing badly) - protect capital
+ * 3. Scalp (in profit) - take profits
+ * 4. Hedge (losing but recoverable) - protect position
+ * 5. Stack (winning) - add to winners
+ * 6. Endgame (high confidence) - ride to finish
+ * 
+ * Once acted, position is skipped by all subsequent strategies in that cycle.
+ */
 async function cycle(walletAddr: string, cfg: Config) {
+  // Track positions acted on THIS cycle (reset each cycle)
+  const cycleActed = new Set<string>();
+  
   await copyTrades(cfg);
   await sellSignalProtection(cfg);
   
   const positions = await fetchPositions(state.proxyAddress || walletAddr);
-  if (positions.length) {
-    await autoSell(positions, cfg);
-    await stopLoss(positions, cfg);
-    await hedge(positions, cfg);
-    await scalp(positions, cfg);
-    await stack(walletAddr, positions, cfg);
-    await endgame(positions, cfg);
-    await arbitrage(cfg);
+  if (!positions.length) {
+    await redeem(walletAddr, cfg);
+    return;
   }
   
+  // Process each position ONCE based on priority
+  for (const p of positions) {
+    // Skip if already acted on (sold/hedged permanently)
+    if (state.sold.has(p.tokenId)) continue;
+    
+    // 1. AUTO-SELL: Near $1 - guaranteed profit
+    if (cfg.autoSell.enabled && p.curPrice >= cfg.autoSell.threshold) {
+      if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "AutoSell")) {
+        state.sold.add(p.tokenId);
+        cycleActed.add(p.tokenId);
+      }
+      continue; // Move to next position
+    }
+    
+    // 2. STOP-LOSS: Losing badly - protect capital
+    if (cfg.stopLoss.enabled && p.pnlPct <= -cfg.stopLoss.maxLossPct) {
+      if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "StopLoss")) {
+        state.sold.add(p.tokenId);
+        cycleActed.add(p.tokenId);
+      }
+      continue;
+    }
+    
+    // 3. SCALP: In profit - take profits (skip low price if threshold set)
+    const skipLowPrice = cfg.scalp.lowPriceThreshold > 0 && p.avgPrice < cfg.scalp.lowPriceThreshold;
+    if (cfg.scalp.enabled && !skipLowPrice && p.pnlPct >= cfg.scalp.minProfitPct && p.gainCents >= cfg.scalp.minGainCents) {
+      // Check min USD profit if configured
+      const profitUsd = p.value * (p.pnlPct / 100);
+      if (profitUsd >= cfg.scalp.minProfitUsd) {
+        if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "Scalp")) {
+          state.sold.add(p.tokenId);
+          cycleActed.add(p.tokenId);
+        }
+        continue;
+      }
+    }
+    
+    // 4. HEDGE: Losing but recoverable - don't hedge if already hedged
+    if (cfg.hedge.enabled && !state.hedged.has(p.tokenId) && p.pnlPct <= -cfg.hedge.triggerPct) {
+      const opp = p.outcome === "YES" ? "NO" : "YES";
+      const hedgeAmt = cfg.hedge.allowExceedMax ? cfg.hedge.absoluteMaxUsd : cfg.hedge.maxUsd;
+      if (await executeBuy(p.tokenId, p.conditionId, opp, hedgeAmt, "Hedge", cfg, true)) {
+        state.hedged.add(p.tokenId);
+        cycleActed.add(p.tokenId);
+      }
+      continue;
+    }
+    
+    // 5. STACK: Winning - add to winners (once per position)
+    if (cfg.stack.enabled && !state.stacked.has(p.tokenId) && p.gainCents >= cfg.stack.minGainCents && p.curPrice <= cfg.stack.maxPrice) {
+      const buys = await countBuys(walletAddr, p.tokenId);
+      if (buys >= 2) {
+        state.stacked.add(p.tokenId);
+        continue;
+      }
+      if (await executeBuy(p.tokenId, p.conditionId, p.outcome, cfg.stack.maxUsd, "Stack", cfg, false)) {
+        state.stacked.add(p.tokenId);
+        cycleActed.add(p.tokenId);
+      }
+      continue;
+    }
+    
+    // 6. ENDGAME: High confidence - ride to finish
+    if (cfg.endgame.enabled && p.curPrice >= cfg.endgame.minPrice && p.curPrice <= cfg.endgame.maxPrice) {
+      if (p.value < cfg.endgame.maxUsd * 2) {
+        const addAmt = Math.min(cfg.endgame.maxUsd, cfg.endgame.maxUsd * 2 - p.value);
+        if (addAmt >= 5) {
+          await executeBuy(p.tokenId, p.conditionId, p.outcome, addAmt, "Endgame", cfg, false);
+          cycleActed.add(p.tokenId);
+        }
+      }
+    }
+  }
+  
+  // Arbitrage runs independently (different position pairs)
+  await arbitrage(cfg);
+  
+  // Redeem resolved positions
   await redeem(walletAddr, cfg);
 }
 

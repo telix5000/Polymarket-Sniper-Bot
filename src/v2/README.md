@@ -129,6 +129,33 @@ LIVE_TRADING=I_UNDERSTAND_THE_RISKS
 All strategies can be enabled/disabled and fine-tuned via ENV variables.
 If not set, values come from the selected preset.
 
+### Strategy Priority (Conflict Resolution)
+
+**Each position gets ONE action per cycle.** Strategies are evaluated in priority order - once a position is acted upon, it's skipped by all other strategies for that cycle.
+
+| Priority | Strategy | Condition | Action | Why this priority? |
+|----------|----------|-----------|--------|-------------------|
+| 1 | **AutoSell** | price >= $0.99 | SELL | Guaranteed profit, free capital |
+| 2 | **StopLoss** | loss >= max% | SELL | Protect capital first |
+| 3 | **Scalp** | profit >= min% | SELL | Lock in gains |
+| 4 | **Hedge** | loss >= trigger% | BUY opposite | Protect recoverable positions |
+| 5 | **Stack** | gain >= minCents | BUY more | Add to winners |
+| 6 | **Endgame** | price 85-99¢ | BUY more | Ride to finish |
+
+**Example:** Position is down 25% and at $0.99 price
+- AutoSell triggers first (price >= threshold) → SELLS
+- StopLoss, Hedge never evaluate this position
+
+**Example:** Position is down 30% (below hedge trigger)
+- AutoSell: No (price not near $1)
+- StopLoss: Yes (30% > 25% max) → SELLS
+- Hedge: Skipped (position already sold)
+
+This prevents conflicting actions like:
+- ❌ StopLoss selling what Hedge would have protected
+- ❌ Scalp and AutoSell both trying to sell
+- ❌ Stack buying right before StopLoss sells
+
 ### AutoSell - Sell positions near $1
 
 Frees up capital from positions that are nearly resolved.
