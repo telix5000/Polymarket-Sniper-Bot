@@ -50,7 +50,7 @@ import { createPolymarketAuthFromEnv } from "../clob/polymarket-auth";
 
 // V1 Features: Adaptive Learning, On-Chain Exit, On-Chain Trading
 import { getAdaptiveLearner, type AdaptiveTradeLearner } from "../arbitrage/learning/adaptive-learner";
-import { executeOnChainOrder, getOnChainStatus } from "../trading/onchain-executor";
+import { executeOnChainOrder } from "../trading/onchain-executor";
 
 // ============ TYPES ============
 
@@ -213,9 +213,9 @@ const PRESETS: Record<Preset, Config> = {
     risk: { maxDrawdownPct: 15, maxDailyLossUsd: 50, maxOpenPositions: 10, orderCooldownMs: 2000, maxOrdersPerHour: 100, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 2 },
     maxPositionUsd: 15,
     reservePct: 25,
-    adaptiveLearning: { enabled: true },
+    adaptiveLearning: { enabled: false },
     onChainExit: { enabled: true, priceThreshold: 0.99 },
-    tradeMode: "onchain",
+    tradeMode: "clob",
   },
   balanced: {
     autoSell: { 
@@ -245,9 +245,9 @@ const PRESETS: Record<Preset, Config> = {
     risk: { maxDrawdownPct: 20, maxDailyLossUsd: 100, maxOpenPositions: 20, orderCooldownMs: 1000, maxOrdersPerHour: 200, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 3 },
     maxPositionUsd: 25,
     reservePct: 20,
-    adaptiveLearning: { enabled: true },
+    adaptiveLearning: { enabled: false },
     onChainExit: { enabled: true, priceThreshold: 0.99 },
-    tradeMode: "onchain",
+    tradeMode: "clob",
   },
   aggressive: {
     autoSell: { 
@@ -277,9 +277,9 @@ const PRESETS: Record<Preset, Config> = {
     risk: { maxDrawdownPct: 30, maxDailyLossUsd: 200, maxOpenPositions: 30, orderCooldownMs: 500, maxOrdersPerHour: 500, scaleDownThreshold: 0.7, scaleDownMinPct: 0.25, hedgeBuffer: 5 },
     maxPositionUsd: 100,
     reservePct: 15,
-    adaptiveLearning: { enabled: true },
+    adaptiveLearning: { enabled: false },
     onChainExit: { enabled: true, priceThreshold: 0.99 },
-    tradeMode: "onchain",
+    tradeMode: "clob",
   },
 };
 
@@ -326,7 +326,7 @@ const state = {
   vpnActive: false, // Track VPN status
   // V1 Features
   adaptiveLearner: undefined as AdaptiveTradeLearner | undefined,
-  pendingTrades: new Map<string, { marketId: string; entryPrice: number; sizeUsd: number; timestamp: number }>(), // For adaptive learning
+  pendingTrades: new Map<string, { marketId: string; tradeId: string; entryPrice: number; sizeUsd: number; timestamp: number }>(), // For adaptive learning
 };
 
 // ============ P&L LEDGER ============
@@ -720,13 +720,15 @@ function evaluateTradeWithLearning(conditionId: string, sizeUsd: number, spreadB
 
 /**
  * Record trade outcome for adaptive learning
+ * Stores tradeId so we can update outcome when position closes
  */
 function recordTradeForLearning(conditionId: string, entryPrice: number, sizeUsd: number, spreadBps = 50) {
   if (!state.adaptiveLearner) return;
   
+  const timestamp = Date.now();
   const tradeId = state.adaptiveLearner.recordTrade({
     marketId: conditionId,
-    timestamp: Date.now(),
+    timestamp,
     entryPrice,
     sizeUsd,
     edgeBps: 100,
@@ -734,30 +736,7 @@ function recordTradeForLearning(conditionId: string, entryPrice: number, sizeUsd
     outcome: "pending",
   });
   
-  state.pendingTrades.set(conditionId, { marketId: conditionId, entryPrice, sizeUsd, timestamp: Date.now() });
-}
-
-// ============ ON-CHAIN EXIT HELPER ============
-
-/**
- * Check for NOT_TRADABLE positions that can be redeemed on-chain (V1 feature)
- * Simple version: just checks if position has high price and might be resolved
- */
-async function checkOnChainExits(cfg: Config): Promise<number> {
-  if (!cfg.onChainExit.enabled) return 0;
-  if (!state.wallet) return 0;
-  
-  let found = 0;
-  for (const p of state.positions) {
-    // Only check high-price positions that might be near resolution
-    if (p.curPrice >= cfg.onChainExit.priceThreshold) {
-      // Position is near $1, likely resolved or close to it
-      // Log it for awareness - actual redemption happens via redeem()
-      log(`🔗 OnChainExit candidate: ${p.outcome} @ ${$price(p.curPrice)} (${$(p.value)})`);
-      found++;
-    }
-  }
-  return found;
+  state.pendingTrades.set(conditionId, { marketId: conditionId, tradeId, entryPrice, sizeUsd, timestamp });
 }
 
 // ============ LOGGING ============
@@ -1047,7 +1026,7 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
   log(`💰 SELL | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
   
   try {
-    // On-chain mode: trade directly with wallet
+    // On-chain mode: try direct wallet trade, fallback to CLOB if not implemented
     if (cfg.tradeMode === "onchain") {
       log(`⛓️ SELL [ONCHAIN] | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
       const result = await executeOnChainOrder({
@@ -1067,9 +1046,16 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
         invalidate();
         return true;
       }
-      await alertTrade("SELL", reason, outcome, sizeUsd, curPrice, false, result.reason);
-      recordTrade("SELL", outcome, reason, sizeUsd, curPrice || 0, false);
-      return false;
+      
+      // Fallback to CLOB if on-chain not implemented yet
+      if (result.reason === "NOT_IMPLEMENTED" && state.clobClient) {
+        log(`⚠️ On-chain not ready, falling back to CLOB`);
+        // Fall through to CLOB logic below
+      } else {
+        await alertTrade("SELL", reason, outcome, sizeUsd, curPrice, false, result.reason);
+        recordTrade("SELL", outcome, reason, sizeUsd, curPrice || 0, false);
+        return false;
+      }
     }
     
     // CLOB mode: use API
@@ -1164,7 +1150,7 @@ async function executeBuy(tokenId: string, conditionId: string, outcome: string,
   log(`🛒 BUY | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
   
   try {
-    // On-chain mode: trade directly with wallet
+    // On-chain mode: try direct wallet trade, fallback to CLOB if not implemented
     if (cfg.tradeMode === "onchain") {
       log(`⛓️ BUY [ONCHAIN] | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
       const result = await executeOnChainOrder({
@@ -1185,9 +1171,16 @@ async function executeBuy(tokenId: string, conditionId: string, outcome: string,
         invalidate();
         return true;
       }
-      await alertTrade("BUY", reason, outcome, sizeUsd, price, false, result.reason);
-      recordTrade("BUY", outcome, reason, sizeUsd, price || 0, false);
-      return false;
+      
+      // Fallback to CLOB if on-chain not implemented yet
+      if (result.reason === "NOT_IMPLEMENTED" && state.clobClient) {
+        log(`⚠️ On-chain not ready, falling back to CLOB`);
+        // Fall through to CLOB logic below
+      } else {
+        await alertTrade("BUY", reason, outcome, sizeUsd, price, false, result.reason);
+        recordTrade("BUY", outcome, reason, sizeUsd, price || 0, false);
+        return false;
+      }
     }
     
     // CLOB mode: use API
