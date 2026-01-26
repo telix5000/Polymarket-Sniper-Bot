@@ -1,15 +1,12 @@
 /**
- * Arbitrage Strategy (Work In Progress)
+ * Arbitrage Strategy
  *
- * Arbitrage strategy module that can scan markets for price inefficiencies
- * (yes + no < $1) and execute profitable arbitrage trades.
+ * Integrated arbitrage strategy that runs within the Orchestrator.
+ * Scans markets for price inefficiencies (yes + no < $1) and executes
+ * profitable arbitrage trades.
  *
- * NOTE: This module is NOT YET integrated into the Orchestrator.
- * Currently, arbitrage runs as a separate engine via startArbitrageEngine().
- * This module provides the foundation for future unified orchestrator integration.
- *
- * EXECUTION MODEL (when integrated):
- * - Will be called by orchestrator every ~2 seconds
+ * EXECUTION MODEL:
+ * - Called by orchestrator every ~2 seconds (after Endgame Sweep)
  * - Scans active markets for arbitrage opportunities
  * - Executes profitable trades (both legs of the arbitrage)
  * - Returns count of trades executed
