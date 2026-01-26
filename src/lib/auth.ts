@@ -25,6 +25,29 @@ const PRIVATE_KEY_LENGTH_WITH_PREFIX = 66;
 const PRIVATE_KEY_HEX_REGEX = /^0x[0-9a-fA-F]{64}$/;
 
 /**
+ * Apply ethers v6 → v5 compatibility shim.
+ *
+ * The @polymarket/clob-client library expects the ethers v5 signer interface
+ * with `_signTypedData`, but ethers v6 uses `signTypedData` instead.
+ * This shim maps the v6 method to the v5 interface.
+ */
+function applyEthersV6Shim(wallet: Wallet): Wallet {
+  const typedWallet = wallet as Wallet & {
+    _signTypedData?: typeof wallet.signTypedData;
+  };
+
+  if (
+    typeof typedWallet._signTypedData !== "function" &&
+    typeof typedWallet.signTypedData === "function"
+  ) {
+    const signTypedDataFn = typedWallet.signTypedData.bind(typedWallet);
+    typedWallet._signTypedData = signTypedDataFn;
+  }
+
+  return wallet;
+}
+
+/**
  * Create authenticated CLOB client
  *
  * Defaults to EOA mode (signatureType=0). The wallet address from PRIVATE_KEY
@@ -58,7 +81,9 @@ export async function createClobClient(
     }
 
     const provider = new JsonRpcProvider(rpcUrl);
-    const wallet = new Wallet(normalizedKey, provider);
+    const rawWallet = new Wallet(normalizedKey, provider);
+    // Apply ethers v6 → v5 compatibility shim for @polymarket/clob-client
+    const wallet = applyEthersV6Shim(rawWallet);
     const address = wallet.address;
 
     // Read signature type from env - default to 0 (EOA)

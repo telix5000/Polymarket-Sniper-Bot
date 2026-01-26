@@ -25,6 +25,29 @@ const CLOB_HOST = "https://clob.polymarket.com";
 const POLYGON_CHAIN_ID = 137;
 const DEFAULT_RPC_URL = "https://polygon-rpc.com";
 
+/**
+ * Apply ethers v6 → v5 compatibility shim.
+ *
+ * The @polymarket/clob-client library expects the ethers v5 signer interface
+ * with `_signTypedData`, but ethers v6 uses `signTypedData` instead.
+ * This shim maps the v6 method to the v5 interface.
+ */
+function applyEthersV6Shim(wallet: Wallet): Wallet {
+  const typedWallet = wallet as Wallet & {
+    _signTypedData?: typeof wallet.signTypedData;
+  };
+
+  if (
+    typeof typedWallet._signTypedData !== "function" &&
+    typeof typedWallet.signTypedData === "function"
+  ) {
+    const signTypedDataFn = typedWallet.signTypedData.bind(typedWallet);
+    typedWallet._signTypedData = signTypedDataFn;
+  }
+
+  return wallet;
+}
+
 export interface ApiKeyCreds {
   key: string;
   secret: string;
@@ -78,7 +101,9 @@ export class PolymarketAuth {
 
     this.rpcUrl = options.rpcUrl || DEFAULT_RPC_URL;
     const provider = new JsonRpcProvider(this.rpcUrl);
-    this.wallet = new Wallet(privateKey, provider);
+    const rawWallet = new Wallet(privateKey, provider);
+    // Apply ethers v6 → v5 compatibility shim for @polymarket/clob-client
+    this.wallet = applyEthersV6Shim(rawWallet);
 
     // Default to EOA mode (0) - user must explicitly set for proxy/Safe
     this.signatureType = options.signatureType ?? 0;
