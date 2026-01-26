@@ -947,11 +947,12 @@ async function postOrderClobInner(
       orderSize = orderValue / levelPrice;
       orderPrice = levelPrice;
     } else {
-      // SELL: Compute cumulative bid depth at/above the limit price (minAcceptablePrice)
+      // SELL: Compute cumulative bid depth at/above the limit price (effectiveMinAcceptablePrice)
       // This allows orders to fill across multiple bid levels, not just the top level.
       // Submit at the limit price so the exchange can match against all levels >= limit.
+      // Use effectiveMinAcceptablePrice which accounts for sellSlippagePct if provided.
       const limitPrice =
-        minAcceptablePrice ?? parseFloat(currentLevels[0].price);
+        effectiveMinAcceptablePrice ?? parseFloat(currentLevels[0].price);
 
       // HARD GUARD: Reject zero-price levels - you can't sell something for $0
       // This applies regardless of any settings - selling at $0 is always invalid
