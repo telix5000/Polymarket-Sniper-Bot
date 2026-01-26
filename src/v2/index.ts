@@ -65,17 +65,9 @@ interface Config {
     maxUsd: number; 
     minBuyPrice: number;  // MIN_BUY_PRICE - don't copy BUYs below this (default: 0.50 = 50¢)
   };
-  sellSignal: {
-    enabled: boolean;
-    minLossPctToAct: number;      // Only act if losing >= this % (default: 15)
-    profitThresholdToSkip: number; // Skip if profit >= this % (default: 20, "knee deep in positive")
-    severeLossPct: number;         // Trigger stop-loss if loss >= this % (default: 40)
-    cooldownMs: number;            // Cooldown per position (default: 60000ms)
-  };
   arbitrage: { enabled: boolean; maxUsd: number; minEdgeBps: number; minBuyPrice: number };
   maxPositionUsd: number; // Global position size limit
-  // Reserve system - keep % of balance for hedging/emergencies
-  reservePct: number; // Percentage of balance to reserve (e.g., 20 = keep 20% reserved)
+  reservePct: number; // Percentage of balance to reserve for hedging
 }
 
 interface TradeSignal {
@@ -87,6 +79,7 @@ interface TradeSignal {
   price: number;
   usdSize: number;
   timestamp: number;
+  txHash: string; // For deduping
 }
 
 // ============ PRESETS ============
@@ -97,78 +90,42 @@ interface TradeSignal {
  */
 const PRESETS: Record<Preset, Config> = {
   conservative: {
-    // AUTO_SELL_THRESHOLD: 0.999, AUTO_SELL_MIN_HOLD_SEC: 60
     autoSell: { enabled: true, threshold: 0.999, minHoldSec: 60 },
-    // STOP_LOSS_MIN_HOLD_SECONDS: 120 (conservative waits 2 min)
     stopLoss: { enabled: true, maxLossPct: 20, minHoldSec: 120 },
-    // HEDGING_TRIGGER_LOSS_PCT: 20, HEDGING_MAX_HEDGE_USD: 10, HEDGING_RESERVE_PCT: 25
     hedge: { enabled: true, triggerPct: 20, maxUsd: 10, allowExceedMax: false, absoluteMaxUsd: 25, reservePct: 25 },
-    // SCALP_MIN_PROFIT_PCT: 8.0, SCALP_MIN_PROFIT_USD: 2.0
     scalp: { enabled: true, minProfitPct: 8, minGainCents: 8, lowPriceThreshold: 0, minProfitUsd: 2.0 },
-    // POSITION_STACKING_MIN_GAIN_CENTS: 25, MAX_CURRENT_PRICE: 0.90
     stack: { enabled: true, minGainCents: 25, maxUsd: 15, maxPrice: 0.90 },
-    // ENDGAME_MIN_PRICE: 0.985, ENDGAME_MAX_PRICE: 0.995
     endgame: { enabled: true, minPrice: 0.985, maxPrice: 0.995, maxUsd: 15 },
     redeem: { enabled: true, intervalMin: 15, minPositionUsd: 0 },
-    // MIN_TRADE_SIZE_USD: 50, TRADE_MULTIPLIER: 0.15, MIN_BUY_PRICE: 0.50
     copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 50, maxUsd: 50, minBuyPrice: 0.50 },
-    // Sell signal: V1 defaults from sell-signal-monitor.service.ts
-    sellSignal: { enabled: true, minLossPctToAct: 15, profitThresholdToSkip: 20, severeLossPct: 40, cooldownMs: 60000 },
-    // ARB_MIN_EDGE_BPS: 300, ARB_MIN_BUY_PRICE: 0.05
     arbitrage: { enabled: true, maxUsd: 15, minEdgeBps: 300, minBuyPrice: 0.05 },
-    // MAX_POSITION_USD: 15
     maxPositionUsd: 15,
-    // HEDGING_RESERVE_PCT: 25
     reservePct: 25,
   },
   balanced: {
-    // AUTO_SELL_THRESHOLD: 0.999, AUTO_SELL_MIN_HOLD_SEC: 60
     autoSell: { enabled: true, threshold: 0.999, minHoldSec: 60 },
-    // STOP_LOSS_MIN_HOLD_SECONDS: 60
     stopLoss: { enabled: true, maxLossPct: 25, minHoldSec: 60 },
-    // HEDGING_TRIGGER_LOSS_PCT: 20, HEDGING_MAX_HEDGE_USD: 15, HEDGING_RESERVE_PCT: 20
     hedge: { enabled: true, triggerPct: 20, maxUsd: 15, allowExceedMax: false, absoluteMaxUsd: 50, reservePct: 20 },
-    // SCALP_MIN_PROFIT_PCT: 5.0, SCALP_MIN_PROFIT_USD: 1.0
     scalp: { enabled: true, minProfitPct: 5, minGainCents: 5, lowPriceThreshold: 0, minProfitUsd: 1.0 },
-    // POSITION_STACKING_MIN_GAIN_CENTS: 20, MAX_CURRENT_PRICE: 0.95
     stack: { enabled: true, minGainCents: 20, maxUsd: 25, maxPrice: 0.95 },
-    // ENDGAME_MIN_PRICE: 0.985, ENDGAME_MAX_PRICE: 0.995
     endgame: { enabled: true, minPrice: 0.985, maxPrice: 0.995, maxUsd: 25 },
     redeem: { enabled: true, intervalMin: 15, minPositionUsd: 0 },
-    // MIN_TRADE_SIZE_USD: 1, TRADE_MULTIPLIER: 0.15, MIN_BUY_PRICE: 0.50
     copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 1, maxUsd: 100, minBuyPrice: 0.50 },
-    // Sell signal: V1 defaults from sell-signal-monitor.service.ts
-    sellSignal: { enabled: true, minLossPctToAct: 15, profitThresholdToSkip: 20, severeLossPct: 40, cooldownMs: 60000 },
-    // ARB_MIN_EDGE_BPS: 200, ARB_MIN_BUY_PRICE: 0.05
     arbitrage: { enabled: true, maxUsd: 25, minEdgeBps: 200, minBuyPrice: 0.05 },
-    // MAX_POSITION_USD: 25
     maxPositionUsd: 25,
-    // HEDGING_RESERVE_PCT: 20
     reservePct: 20,
   },
   aggressive: {
-    // AUTO_SELL_THRESHOLD: 0.999, AUTO_SELL_MIN_HOLD_SEC: 30
     autoSell: { enabled: true, threshold: 0.999, minHoldSec: 30 },
-    // STOP_LOSS_MIN_HOLD_SECONDS: 30
     stopLoss: { enabled: true, maxLossPct: 35, minHoldSec: 30 },
-    // HEDGING_TRIGGER_LOSS_PCT: 20, HEDGING_MAX_HEDGE_USD: 50, HEDGING_RESERVE_PCT: 15
     hedge: { enabled: true, triggerPct: 20, maxUsd: 50, allowExceedMax: true, absoluteMaxUsd: 100, reservePct: 15 },
-    // SCALP_MIN_PROFIT_PCT: 4.0, SCALP_MIN_PROFIT_USD: 0.5
     scalp: { enabled: true, minProfitPct: 4, minGainCents: 3, lowPriceThreshold: 0, minProfitUsd: 0.5 },
-    // POSITION_STACKING_MIN_GAIN_CENTS: 15, MAX_CURRENT_PRICE: 0.95
     stack: { enabled: true, minGainCents: 15, maxUsd: 100, maxPrice: 0.95 },
-    // ENDGAME_MIN_PRICE: 0.85, ENDGAME_MAX_PRICE: 0.94
     endgame: { enabled: true, minPrice: 0.85, maxPrice: 0.94, maxUsd: 100 },
     redeem: { enabled: true, intervalMin: 10, minPositionUsd: 0 },
-    // MIN_TRADE_SIZE_USD: 5, MIN_BUY_PRICE: 0.50 (aggressive keeps 50¢ min)
     copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 5, maxUsd: 200, minBuyPrice: 0.50 },
-    // Sell signal: V1 defaults from sell-signal-monitor.service.ts
-    sellSignal: { enabled: true, minLossPctToAct: 15, profitThresholdToSkip: 20, severeLossPct: 40, cooldownMs: 60000 },
-    // ARB_MIN_EDGE_BPS: 200, ARB_MIN_BUY_PRICE: 0.05 (arb can go lower)
     arbitrage: { enabled: true, maxUsd: 100, minEdgeBps: 200, minBuyPrice: 0.05 },
-    // MAX_POSITION_USD: 100
     maxPositionUsd: 100,
-    // HEDGING_RESERVE_PCT: 15
     reservePct: 15,
   },
 };
@@ -193,17 +150,15 @@ const state = {
   stacked: new Set<string>(),
   hedged: new Set<string>(),
   sold: new Set<string>(),
-  copied: new Set<string>(),
-  positionAcquiredAt: new Map<string, number>(), // tokenId -> timestamp when acquired
-  sellSignalCooldowns: new Map<string, number>(), // tokenId -> cooldown expiry timestamp
+  copied: new Set<string>(), // txHashes of copied trades
   telegram: undefined as { token: string; chatId: string } | undefined,
   proxyAddress: undefined as string | undefined,
-  copyLastCheck: new Map<string, number>(),
+  copyLastCheck: new Map<string, number>(), // address -> last check timestamp
   clobClient: undefined as (ClobClient & { wallet: Wallet }) | undefined,
   wallet: undefined as Wallet | undefined,
   provider: undefined as JsonRpcProvider | undefined,
   liveTrading: false,
-  authOk: false, // Track if CLOB authentication succeeded
+  authOk: false,
 };
 
 // ============ LOGGING ============
@@ -325,13 +280,19 @@ async function fetchProxy(wallet: string): Promise<string | undefined> {
 async function fetchActivity(address: string): Promise<TradeSignal[]> {
   try {
     const { data } = await axios.get(`${API}/activity?user=${address}`);
-    return (data || []).map((a: any) => ({
-      address, conditionId: a.conditionId, tokenId: a.asset,
-      outcome: a.outcomeIndex === 0 ? "YES" : "NO",
-      side: a.side?.toUpperCase() === "BUY" ? "BUY" as const : "SELL" as const,
-      price: Number(a.price) || 0, usdSize: Number(a.usdcSize) || 0,
-      timestamp: Number(a.timestamp) || 0,
-    }));
+    return (data || [])
+      .filter((a: any) => a.type === "TRADE") // Only actual trades, not deposits etc
+      .map((a: any) => ({
+        address, 
+        conditionId: a.conditionId, 
+        tokenId: a.asset,
+        outcome: a.outcomeIndex === 0 ? "YES" : "NO",
+        side: a.side?.toUpperCase() === "BUY" ? "BUY" as const : "SELL" as const,
+        price: Number(a.price) || 0, 
+        usdSize: Number(a.usdcSize) || Number(a.size) * Number(a.price) || 0,
+        timestamp: Number(a.timestamp) || 0,
+        txHash: a.transactionHash || `${a.asset}-${a.timestamp}`, // Use txHash for deduping
+      }));
   } catch { return []; }
 }
 
@@ -503,43 +464,54 @@ async function executeBuy(tokenId: string, conditionId: string, outcome: string,
  * - Skip if price < MIN_BUY_PRICE (default 50¢) - avoids loser positions
  * - Respect position limits (COPY_MAX_USD)
  * - Apply multiplier and clamp to min/max USD
+ * - Only process trades within aggregation window (5 min default)
+ * - Use txHash for reliable deduping
  */
 async function copyTrades(cfg: Config) {
   if (!cfg.copy.enabled || !cfg.copy.addresses.length) return;
 
+  // Aggregation window - only look at trades from last 5 minutes
+  const now = Math.floor(Date.now() / 1000);
+  const cutoffTime = now - 300; // 5 minutes in seconds
+
   for (const addr of cfg.copy.addresses) {
     const activities = await fetchActivity(addr);
-    const lastCheck = state.copyLastCheck.get(addr) || 0;
     
     for (const signal of activities) {
+      // Skip old trades (before cutoff or before last check)
+      const lastCheck = state.copyLastCheck.get(addr) || 0;
+      if (signal.timestamp < cutoffTime) continue;
       if (signal.timestamp <= lastCheck) continue;
-      const key = `${signal.tokenId}-${signal.timestamp}`;
-      if (state.copied.has(key)) continue;
+      
+      // Use txHash for deduping (more reliable than timestamp)
+      if (state.copied.has(signal.txHash)) continue;
       if (signal.side !== "BUY") continue; // Only copy buys (sells handled by sellSignalProtection)
       
       // MIN_BUY_PRICE check - don't buy positions below threshold (default $0.50)
       // This prevents copying into likely loser positions
       if (signal.price < cfg.copy.minBuyPrice) {
         log(`🚫 Copy skip | ${$price(signal.price)} < ${$price(cfg.copy.minBuyPrice)} min`);
-        state.copied.add(key);
+        state.copied.add(signal.txHash);
         continue;
       }
       
       let copyUsd = signal.usdSize * cfg.copy.multiplier;
       copyUsd = Math.max(cfg.copy.minUsd, Math.min(cfg.copy.maxUsd, copyUsd));
       
+      // Don't exceed max position size
       const existing = state.positions.find(p => p.tokenId === signal.tokenId);
-      if (existing && existing.value > cfg.copy.maxUsd) {
-        state.copied.add(key);
+      if (existing && existing.value >= cfg.copy.maxUsd) {
+        log(`🚫 Copy skip | Already at max (${$(existing.value)} >= ${$(cfg.copy.maxUsd)})`);
+        state.copied.add(signal.txHash);
         continue;
       }
       
       log(`👀 Copy | ${addr.slice(0,8)}... | ${signal.outcome} ${$(copyUsd)} @ ${$price(signal.price)}`);
       // Copy trades respect reserves (normal trade)
       await executeBuy(signal.tokenId, signal.conditionId, signal.outcome, copyUsd, "Copy", cfg, false, signal.price);
-      state.copied.add(key);
+      state.copied.add(signal.txHash);
     }
-    state.copyLastCheck.set(addr, Math.floor(Date.now() / 1000));
+    state.copyLastCheck.set(addr, now);
   }
 }
 
@@ -609,101 +581,25 @@ async function arbitrage(cfg: Config) {
   }
 }
 
-// ============ SELL SIGNAL PROTECTION ============
-
-/**
- * Sell Signal Monitor (from V1 sell-signal-monitor.service.ts)
- * 
- * When a tracked trader SELLS a position we also hold:
- * 1. ALERT us (log + telegram) - this is the main purpose
- * 2. Check if WE are losing on this position
- * 3. If profitable (>= profitThresholdToSkip) - ignore, we're "knee deep in positive"
- * 4. If small loss (< minLossPctToAct) - just alert, no action
- * 5. If moderate loss (minLossPctToAct to severeLossPct) - HEDGE (buy opposite)
- * 6. If severe loss (>= severeLossPct) - STOP-LOSS (sell immediately)
- * 7. Cooldown prevents repeated actions on same position
- * 
- * This is NOT copying their sell - it's monitoring for warning signs.
- */
-async function sellSignalProtection(cfg: Config) {
-  if (!cfg.sellSignal.enabled || !cfg.copy.addresses.length) return;
-  
-  for (const addr of cfg.copy.addresses) {
-    const activities = await fetchActivity(addr);
-    
-    for (const signal of activities) {
-      if (signal.side !== "SELL") continue;
-      
-      // Do we hold this position?
-      const ourPos = state.positions.find(p => p.tokenId === signal.tokenId);
-      if (!ourPos) continue;
-      
-      // Check cooldown
-      const now = Date.now();
-      const cooldownExpiry = state.sellSignalCooldowns.get(ourPos.tokenId);
-      if (cooldownExpiry && now < cooldownExpiry) continue;
-      
-      const pnlPct = ourPos.pnlPct;
-      const lossPct = Math.abs(pnlPct);
-      
-      // If profitable >= threshold, we're "knee deep in positive" - ignore
-      if (pnlPct >= cfg.sellSignal.profitThresholdToSkip) {
-        log(`📊 SellSignal | Trader sold but we're ${pct(pnlPct)} - holding`);
-        continue;
-      }
-      
-      // If not losing enough, just alert (no action)
-      if (pnlPct >= 0 || lossPct < cfg.sellSignal.minLossPctToAct) {
-        log(`📊 SellSignal | Trader sold, we're ${pct(pnlPct)} - monitoring`);
-        continue;
-      }
-      
-      // Set cooldown
-      state.sellSignalCooldowns.set(ourPos.tokenId, now + cfg.sellSignal.cooldownMs);
-      
-      // SEVERE LOSS: Stop-loss (sell immediately)
-      if (lossPct >= cfg.sellSignal.severeLossPct) {
-        await alert("⚠️ SELL SIGNAL", `Trader sold | We're ${pct(-lossPct)} | STOP-LOSS`, true);
-        if (await executeSell(ourPos.tokenId, ourPos.conditionId, ourPos.outcome, ourPos.value, "SellSignal-StopLoss", ourPos.curPrice)) {
-          state.sold.add(ourPos.tokenId);
-        }
-        continue;
-      }
-      
-      // MODERATE LOSS: Hedge (buy opposite side)
-      if (!state.hedged.has(ourPos.tokenId)) {
-        await alert("⚠️ SELL SIGNAL", `Trader sold | We're ${pct(-lossPct)} | HEDGE`, true);
-        const opp = ourPos.outcome === "YES" ? "NO" : "YES";
-        const hedgeAmt = ourPos.value * 0.5;
-        // Sell signal hedge CAN dip into reserves (protective action)
-        if (await executeBuy(ourPos.tokenId, ourPos.conditionId, opp, hedgeAmt, "SellSignal-Hedge", cfg, true, ourPos.curPrice)) {
-          state.hedged.add(ourPos.tokenId);
-        }
-      }
-    }
-  }
-}
-
 // ============ MAIN CYCLE ============
 
 /**
- * CONFLICT RESOLUTION:
- * Each position gets ONE action per cycle. Priority order:
- * 1. AutoSell (near $1) - highest priority, guaranteed profit
- * 2. StopLoss (losing badly) - protect capital
- * 3. Scalp (in profit) - take profits
- * 4. Hedge (losing but recoverable) - protect position
+ * STRATEGY PRIORITY ORDER:
+ * 1. AutoSell (near $1) - guaranteed profit, always take it
+ * 2. Hedge (losing) - try to RECOVER before giving up
+ * 3. Stop-Loss - ONLY if hedging disabled (alternative to hedge, not both)
+ * 4. Scalp (in profit) - take profits
  * 5. Stack (winning) - add to winners
  * 6. Endgame (high confidence) - ride to finish
  * 
- * Once acted, position is skipped by all subsequent strategies in that cycle.
+ * Each position gets ONE action per cycle.
+ * Hedge runs BEFORE stop-loss because hedge is recovery, stop-loss is surrender.
  */
 async function cycle(walletAddr: string, cfg: Config) {
   // Track positions acted on THIS cycle (reset each cycle)
   const cycleActed = new Set<string>();
   
   await copyTrades(cfg);
-  await sellSignalProtection(cfg);
   
   const positions = await fetchPositions(state.proxyAddress || walletAddr);
   if (!positions.length) {
@@ -712,11 +608,19 @@ async function cycle(walletAddr: string, cfg: Config) {
   }
   
   // Process each position ONCE based on priority
+  // PRIORITY ORDER (matches V1 orchestrator):
+  // 1. AutoSell - guaranteed profit near $1
+  // 2. Hedge - try to RECOVER losing positions BEFORE giving up
+  // 3. Stop-Loss - only if NOT hedged and loss exceeds threshold
+  // 4. Scalp - take profits on winners
+  // 5. Stack - double down on winners
+  // 6. Endgame - ride high-confidence to finish
+  
   for (const p of positions) {
-    // Skip if already acted on (sold/hedged permanently)
+    // Skip if already acted on (sold permanently)
     if (state.sold.has(p.tokenId)) continue;
     
-    // 1. AUTO-SELL: Near $1 - guaranteed profit
+    // 1. AUTO-SELL: Near $1 - guaranteed profit (highest priority)
     if (cfg.autoSell.enabled && p.curPrice >= cfg.autoSell.threshold) {
       if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, "AutoSell", p.curPrice)) {
         state.sold.add(p.tokenId);
@@ -725,8 +629,37 @@ async function cycle(walletAddr: string, cfg: Config) {
       continue; // Move to next position
     }
     
-    // 2. STOP-LOSS: Losing badly - protect capital
-    if (cfg.stopLoss.enabled && p.pnlPct <= -cfg.stopLoss.maxLossPct) {
+    // 2. HEDGE: Losing - try to RECOVER first (before giving up with stop-loss)
+    // Only hedge if: losing >= triggerPct AND not already hedged
+    // This gives the position a chance to recover via the opposite side
+    if (cfg.hedge.enabled && !state.hedged.has(p.tokenId) && p.pnlPct <= -cfg.hedge.triggerPct) {
+      const opp = p.outcome === "YES" ? "NO" : "YES";
+      const hedgeAmt = cfg.hedge.allowExceedMax ? cfg.hedge.absoluteMaxUsd : cfg.hedge.maxUsd;
+      if (await executeBuy(p.tokenId, p.conditionId, opp, hedgeAmt, `Hedge (${pct(p.pnlPct)})`, cfg, true, p.curPrice)) {
+        state.hedged.add(p.tokenId);
+        cycleActed.add(p.tokenId);
+      }
+      continue; // Don't stop-loss immediately after hedge - give it a chance
+    }
+    
+    // 3. STOP-LOSS: Only applies when hedging is DISABLED
+    // 
+    // WHY: If hedging is enabled, stop-loss is REDUNDANT:
+    //   - Hedge buys the opposite side → you now hold BOTH YES and NO
+    //   - One side WILL win when market resolves → you get paid
+    //   - No need to "cut losses" - the hedge guarantees recovery
+    //
+    // Stop-loss only makes sense as an ALTERNATIVE to hedging:
+    //   - User disables hedging (HEDGING_ENABLED=false)
+    //   - User wants to cut losses without buying opposite side
+    //   - Pure exit strategy vs. hedge & wait strategy
+    //
+    // If you want BOTH hedge and stop-loss, that's contradictory:
+    //   - Hedge says "I believe the market will resolve, protect me"
+    //   - Stop-loss says "I want out now, don't care about resolution"
+    //   - Pick one strategy, not both
+    //
+    if (cfg.stopLoss.enabled && !cfg.hedge.enabled && p.pnlPct <= -cfg.stopLoss.maxLossPct) {
       if (await executeSell(p.tokenId, p.conditionId, p.outcome, p.value, `StopLoss (${pct(p.pnlPct)})`, p.curPrice)) {
         state.sold.add(p.tokenId);
         cycleActed.add(p.tokenId);
@@ -734,7 +667,7 @@ async function cycle(walletAddr: string, cfg: Config) {
       continue;
     }
     
-    // 3. SCALP: In profit - take profits (skip low price if threshold set)
+    // 4. SCALP: In profit - take profits (skip low price if threshold set)
     const skipLowPrice = cfg.scalp.lowPriceThreshold > 0 && p.avgPrice < cfg.scalp.lowPriceThreshold;
     if (cfg.scalp.enabled && !skipLowPrice && p.pnlPct >= cfg.scalp.minProfitPct && p.gainCents >= cfg.scalp.minGainCents) {
       // Check min USD profit if configured
@@ -746,17 +679,6 @@ async function cycle(walletAddr: string, cfg: Config) {
         }
         continue;
       }
-    }
-    
-    // 4. HEDGE: Losing but recoverable - don't hedge if already hedged
-    if (cfg.hedge.enabled && !state.hedged.has(p.tokenId) && p.pnlPct <= -cfg.hedge.triggerPct) {
-      const opp = p.outcome === "YES" ? "NO" : "YES";
-      const hedgeAmt = cfg.hedge.allowExceedMax ? cfg.hedge.absoluteMaxUsd : cfg.hedge.maxUsd;
-      if (await executeBuy(p.tokenId, p.conditionId, opp, hedgeAmt, `Hedge (${pct(p.pnlPct)})`, cfg, true, p.curPrice)) {
-        state.hedged.add(p.tokenId);
-        cycleActed.add(p.tokenId);
-      }
-      continue;
     }
     
     // 5. STACK: Winning - add to winners (once per position)
