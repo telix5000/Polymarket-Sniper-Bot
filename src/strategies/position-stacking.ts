@@ -43,7 +43,6 @@ import { isLiveTradingEnabled } from "../utils/live-trading.util";
 import type { ReservePlan } from "../risk";
 import { LogDeduper } from "../utils/log-deduper.util";
 import { notifyStack } from "../services/trade-notification.service";
-import { POLYGON_USDC_ADDRESS } from "../constants/polymarket.constants";
 
 /**
  * Position Stacking Configuration
@@ -636,8 +635,6 @@ export class PositionStackingStrategy {
         outcome: outcome as "YES" | "NO",
         side: "BUY",
         sizeUsd,
-        collateralTokenAddress: POLYGON_USDC_ADDRESS,
-        collateralTokenDecimals: 6,
         // Use buySlippagePct to compute maxAcceptablePrice from FRESH orderbook data.
         // This ensures we don't overpay based on stale cached position.currentPrice.
         buySlippagePct: 2, // Allow 2% slippage above fresh best ask

@@ -5,7 +5,6 @@ import type { PositionTracker, Position } from "./position-tracker";
 import { getDynamicStopLoss, PRICE_TIERS } from "./trade-quality";
 import { notifyStopLoss } from "../services/trade-notification.service";
 import { FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
-import { POLYGON_USDC_ADDRESS } from "../constants/polymarket.constants";
 
 /**
  * Minimum acceptable price for emergency exit orders (stop-loss, liquidation).
@@ -537,8 +536,6 @@ export class StopLossStrategy {
         outcome: "YES",
         side: "SELL",
         sizeUsd,
-        collateralTokenAddress: POLYGON_USDC_ADDRESS,
-        collateralTokenDecimals: 6,
         sellSlippagePct: FALLING_KNIFE_SLIPPAGE_PCT,
         logger: this.logger,
         priority: true, // High priority for stop-loss

@@ -14,7 +14,6 @@ import {
   postOrder,
   ABSOLUTE_MIN_TRADEABLE_PRICE,
 } from "../utils/post-order.util";
-import { POLYGON_USDC_ADDRESS } from "../constants/polymarket.constants";
 
 export interface AutoSellConfig {
   enabled: boolean;
@@ -776,8 +775,6 @@ export class AutoSellStrategy {
         outcome: this.normalizeOutcomeForOrder(position.side),
         side: "SELL",
         sizeUsd,
-        collateralTokenAddress: POLYGON_USDC_ADDRESS,
-        collateralTokenDecimals: 6,
         // FALLING_KNIFE_SLIPPAGE_PCT (25%) for reliable fills, computed from fresh orderbook
         sellSlippagePct: FALLING_KNIFE_SLIPPAGE_PCT,
         logger: this.logger,

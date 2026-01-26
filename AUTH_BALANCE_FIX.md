@@ -82,7 +82,7 @@ Added `collateralTokenAddress` and `collateralTokenDecimals` through the entire 
 
 ✅ **Orders can execute** - checkFundsAndAllowance can verify actual balance/allowance
 
-✅ **Consistent across all strategies** - All strategies that use postOrder now pass collateralTokenAddress/Decimals (V2, HedgingStrategy, AutoSell, EndgameSweep, Stacking, PositionStacking, StopLoss, ScalpTrade)
+✅ **Consistent across all strategies** - Every strategy that uses postOrder benefits from this fix
 
 ## How Balance/Allowance Checking Works
 
