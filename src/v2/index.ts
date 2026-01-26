@@ -50,15 +50,17 @@ interface Position {
 
 interface Config {
   autoSell: { enabled: boolean; threshold: number; minHoldSec: number };
-  stopLoss: { enabled: boolean; maxLossPct: number };
-  hedge: { enabled: boolean; triggerPct: number; maxUsd: number; allowExceedMax: boolean; absoluteMaxUsd: number };
-  scalp: { enabled: boolean; minProfitPct: number; minGainCents: number; lowPriceThreshold: number };
+  stopLoss: { enabled: boolean; maxLossPct: number; minHoldSec: number };
+  hedge: { enabled: boolean; triggerPct: number; maxUsd: number; allowExceedMax: boolean; absoluteMaxUsd: number; reservePct: number };
+  scalp: { enabled: boolean; minProfitPct: number; minGainCents: number; lowPriceThreshold: number; minProfitUsd: number };
   stack: { enabled: boolean; minGainCents: number; maxUsd: number; maxPrice: number };
   endgame: { enabled: boolean; minPrice: number; maxPrice: number; maxUsd: number };
   redeem: { enabled: boolean; intervalMin: number; minPositionUsd: number };
   copy: { enabled: boolean; addresses: string[]; multiplier: number; minUsd: number; maxUsd: number };
   arbitrage: { enabled: boolean; maxUsd: number; minEdgeBps: number };
   maxPositionUsd: number; // Global position size limit
+  // Reserve system - keep % of balance for hedging/emergencies
+  reservePct: number; // Percentage of balance to reserve (e.g., 20 = keep 20% reserved)
 }
 
 interface TradeSignal {
@@ -74,42 +76,79 @@ interface TradeSignal {
 
 // ============ PRESETS ============
 
+/**
+ * PRESETS - Match V1 presets exactly
+ * Values sourced from src/config/presets.ts STRATEGY_PRESETS
+ */
 const PRESETS: Record<Preset, Config> = {
   conservative: {
-    autoSell: { enabled: true, threshold: 0.98, minHoldSec: 60 },
-    stopLoss: { enabled: true, maxLossPct: 20 },
-    hedge: { enabled: true, triggerPct: 15, maxUsd: 15, allowExceedMax: false, absoluteMaxUsd: 25 },
-    scalp: { enabled: true, minProfitPct: 15, minGainCents: 8, lowPriceThreshold: 0 },
+    // AUTO_SELL_THRESHOLD: 0.999, AUTO_SELL_MIN_HOLD_SEC: 60
+    autoSell: { enabled: true, threshold: 0.999, minHoldSec: 60 },
+    // STOP_LOSS_MIN_HOLD_SECONDS: 120 (conservative waits 2 min)
+    stopLoss: { enabled: true, maxLossPct: 20, minHoldSec: 120 },
+    // HEDGING_TRIGGER_LOSS_PCT: 20, HEDGING_MAX_HEDGE_USD: 10, HEDGING_RESERVE_PCT: 25
+    hedge: { enabled: true, triggerPct: 20, maxUsd: 10, allowExceedMax: false, absoluteMaxUsd: 25, reservePct: 25 },
+    // SCALP_MIN_PROFIT_PCT: 8.0, SCALP_MIN_PROFIT_USD: 2.0
+    scalp: { enabled: true, minProfitPct: 8, minGainCents: 8, lowPriceThreshold: 0, minProfitUsd: 2.0 },
+    // POSITION_STACKING_MIN_GAIN_CENTS: 25, MAX_CURRENT_PRICE: 0.90
     stack: { enabled: true, minGainCents: 25, maxUsd: 15, maxPrice: 0.90 },
-    endgame: { enabled: true, minPrice: 0.90, maxPrice: 0.98, maxUsd: 15 },
-    redeem: { enabled: true, intervalMin: 15, minPositionUsd: 0.10 },
-    copy: { enabled: false, addresses: [], multiplier: 1.0, minUsd: 5, maxUsd: 50 },
-    arbitrage: { enabled: true, maxUsd: 15, minEdgeBps: 50 },
+    // ENDGAME_MIN_PRICE: 0.985, ENDGAME_MAX_PRICE: 0.995
+    endgame: { enabled: true, minPrice: 0.985, maxPrice: 0.995, maxUsd: 15 },
+    redeem: { enabled: true, intervalMin: 15, minPositionUsd: 0 },
+    // MIN_TRADE_SIZE_USD: 50, TRADE_MULTIPLIER: 0.15
+    copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 50, maxUsd: 50 },
+    // ARB_MIN_EDGE_BPS: 300
+    arbitrage: { enabled: true, maxUsd: 15, minEdgeBps: 300 },
+    // MAX_POSITION_USD: 15
     maxPositionUsd: 15,
+    // HEDGING_RESERVE_PCT: 25
+    reservePct: 25,
   },
   balanced: {
-    autoSell: { enabled: true, threshold: 0.99, minHoldSec: 60 },
-    stopLoss: { enabled: true, maxLossPct: 25 },
-    hedge: { enabled: true, triggerPct: 20, maxUsd: 25, allowExceedMax: false, absoluteMaxUsd: 50 },
-    scalp: { enabled: true, minProfitPct: 10, minGainCents: 5, lowPriceThreshold: 0 },
+    // AUTO_SELL_THRESHOLD: 0.999, AUTO_SELL_MIN_HOLD_SEC: 60
+    autoSell: { enabled: true, threshold: 0.999, minHoldSec: 60 },
+    // STOP_LOSS_MIN_HOLD_SECONDS: 60
+    stopLoss: { enabled: true, maxLossPct: 25, minHoldSec: 60 },
+    // HEDGING_TRIGGER_LOSS_PCT: 20, HEDGING_MAX_HEDGE_USD: 15, HEDGING_RESERVE_PCT: 20
+    hedge: { enabled: true, triggerPct: 20, maxUsd: 15, allowExceedMax: false, absoluteMaxUsd: 50, reservePct: 20 },
+    // SCALP_MIN_PROFIT_PCT: 5.0, SCALP_MIN_PROFIT_USD: 1.0
+    scalp: { enabled: true, minProfitPct: 5, minGainCents: 5, lowPriceThreshold: 0, minProfitUsd: 1.0 },
+    // POSITION_STACKING_MIN_GAIN_CENTS: 20, MAX_CURRENT_PRICE: 0.95
     stack: { enabled: true, minGainCents: 20, maxUsd: 25, maxPrice: 0.95 },
-    endgame: { enabled: true, minPrice: 0.85, maxPrice: 0.99, maxUsd: 25 },
-    redeem: { enabled: true, intervalMin: 15, minPositionUsd: 0.10 },
-    copy: { enabled: false, addresses: [], multiplier: 1.0, minUsd: 5, maxUsd: 100 },
-    arbitrage: { enabled: true, maxUsd: 25, minEdgeBps: 30 },
+    // ENDGAME_MIN_PRICE: 0.985, ENDGAME_MAX_PRICE: 0.995
+    endgame: { enabled: true, minPrice: 0.985, maxPrice: 0.995, maxUsd: 25 },
+    redeem: { enabled: true, intervalMin: 15, minPositionUsd: 0 },
+    // MIN_TRADE_SIZE_USD: 1, TRADE_MULTIPLIER: 0.15
+    copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 1, maxUsd: 100 },
+    // ARB_MIN_EDGE_BPS: 200
+    arbitrage: { enabled: true, maxUsd: 25, minEdgeBps: 200 },
+    // MAX_POSITION_USD: 25
     maxPositionUsd: 25,
+    // HEDGING_RESERVE_PCT: 20
+    reservePct: 20,
   },
   aggressive: {
-    autoSell: { enabled: true, threshold: 0.995, minHoldSec: 30 },
-    stopLoss: { enabled: true, maxLossPct: 35 },
-    hedge: { enabled: true, triggerPct: 25, maxUsd: 50, allowExceedMax: true, absoluteMaxUsd: 100 },
-    scalp: { enabled: true, minProfitPct: 5, minGainCents: 3, lowPriceThreshold: 0 },
-    stack: { enabled: true, minGainCents: 15, maxUsd: 50, maxPrice: 0.97 },
-    endgame: { enabled: true, minPrice: 0.80, maxPrice: 0.995, maxUsd: 50 },
-    redeem: { enabled: true, intervalMin: 10, minPositionUsd: 0.01 },
-    copy: { enabled: false, addresses: [], multiplier: 1.5, minUsd: 5, maxUsd: 200 },
-    arbitrage: { enabled: true, maxUsd: 50, minEdgeBps: 20 },
-    maxPositionUsd: 50,
+    // AUTO_SELL_THRESHOLD: 0.999, AUTO_SELL_MIN_HOLD_SEC: 30
+    autoSell: { enabled: true, threshold: 0.999, minHoldSec: 30 },
+    // STOP_LOSS_MIN_HOLD_SECONDS: 30
+    stopLoss: { enabled: true, maxLossPct: 35, minHoldSec: 30 },
+    // HEDGING_TRIGGER_LOSS_PCT: 20, HEDGING_MAX_HEDGE_USD: 50, HEDGING_RESERVE_PCT: 15
+    hedge: { enabled: true, triggerPct: 20, maxUsd: 50, allowExceedMax: true, absoluteMaxUsd: 100, reservePct: 15 },
+    // SCALP_MIN_PROFIT_PCT: 4.0, SCALP_MIN_PROFIT_USD: 0.5
+    scalp: { enabled: true, minProfitPct: 4, minGainCents: 3, lowPriceThreshold: 0, minProfitUsd: 0.5 },
+    // POSITION_STACKING_MIN_GAIN_CENTS: 15, MAX_CURRENT_PRICE: 0.95
+    stack: { enabled: true, minGainCents: 15, maxUsd: 100, maxPrice: 0.95 },
+    // ENDGAME_MIN_PRICE: 0.85, ENDGAME_MAX_PRICE: 0.94
+    endgame: { enabled: true, minPrice: 0.85, maxPrice: 0.94, maxUsd: 100 },
+    redeem: { enabled: true, intervalMin: 10, minPositionUsd: 0 },
+    // MIN_TRADE_SIZE_USD: 5, higher multiplier for aggressive
+    copy: { enabled: false, addresses: [], multiplier: 0.15, minUsd: 5, maxUsd: 200 },
+    // ARB_MIN_EDGE_BPS: 200
+    arbitrage: { enabled: true, maxUsd: 100, minEdgeBps: 200 },
+    // MAX_POSITION_USD: 100
+    maxPositionUsd: 100,
+    // HEDGING_RESERVE_PCT: 15
+    reservePct: 15,
   },
 };
 
@@ -128,15 +167,19 @@ const state = {
   positions: [] as Position[],
   lastFetch: 0,
   lastRedeem: 0,
+  lastBalanceCheck: 0,
+  balance: 0, // USDC balance
   stacked: new Set<string>(),
   hedged: new Set<string>(),
   sold: new Set<string>(),
   copied: new Set<string>(),
+  positionAcquiredAt: new Map<string, number>(), // tokenId -> timestamp when acquired
   telegram: undefined as { token: string; chatId: string } | undefined,
   proxyAddress: undefined as string | undefined,
   copyLastCheck: new Map<string, number>(),
   clobClient: undefined as ClobClient | undefined,
   wallet: undefined as Wallet | undefined,
+  provider: undefined as JsonRpcProvider | undefined,
   liveTrading: false,
 };
 
@@ -239,6 +282,50 @@ async function countBuys(wallet: string, tokenId: string): Promise<number> {
 
 function invalidate() { state.lastFetch = 0; }
 
+// ============ BALANCE & RESERVES ============
+
+const USDC_ABI = ["function balanceOf(address) view returns (uint256)"];
+
+async function fetchBalance(): Promise<number> {
+  // Cache balance for 30s
+  if (Date.now() - state.lastBalanceCheck < 30000 && state.balance > 0) return state.balance;
+  
+  if (!state.provider || !state.wallet) return 0;
+  
+  try {
+    const usdc = new Contract(USDC_ADDRESS, USDC_ABI, state.provider);
+    const bal = await usdc.balanceOf(state.wallet.address);
+    state.balance = Number(bal) / 1e6; // USDC has 6 decimals
+    state.lastBalanceCheck = Date.now();
+    return state.balance;
+  } catch (e) {
+    log(`⚠️ Balance check failed: ${e}`);
+    return state.balance || 0;
+  }
+}
+
+/**
+ * Get available balance after reserves
+ * Reserves are kept for hedging and emergencies
+ */
+function getAvailableBalance(cfg: Config): number {
+  const reserved = state.balance * (cfg.reservePct / 100);
+  return Math.max(0, state.balance - reserved);
+}
+
+/**
+ * Check if we can spend an amount (respects reserves)
+ * Hedging and protective actions can dip into reserves (allowReserve=true)
+ */
+function canSpend(amount: number, cfg: Config, allowReserve = false): boolean {
+  if (allowReserve) {
+    // Hedging can use full balance
+    return state.balance >= amount;
+  }
+  // Normal trades must respect reserve
+  return getAvailableBalance(cfg) >= amount;
+}
+
 // ============ ORDER EXECUTION ============
 
 const logLevel = process.env.LOG_LEVEL || "info";
@@ -287,7 +374,14 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
   }
 }
 
-async function executeBuy(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string): Promise<boolean> {
+async function executeBuy(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string, cfg: Config, allowReserve = false): Promise<boolean> {
+  // Check reserves before buying (hedging can dip into reserves)
+  if (!canSpend(sizeUsd, cfg, allowReserve)) {
+    const avail = allowReserve ? state.balance : getAvailableBalance(cfg);
+    log(`⚠️ ${reason}: Insufficient funds ($${sizeUsd.toFixed(2)} needed, $${avail.toFixed(2)} available)`);
+    return false;
+  }
+
   if (!state.liveTrading) {
     log(`🔸 ${reason}: BUY ${outcome} $${sizeUsd.toFixed(2)} [SIMULATED]`);
     return true;
@@ -351,7 +445,8 @@ async function copyTrades(cfg: Config) {
       }
       
       log(`👀 Copy ${addr.slice(0,8)}...: ${signal.outcome} $${copyUsd.toFixed(0)}`);
-      await executeBuy(signal.tokenId, signal.conditionId, signal.outcome, copyUsd, "Copy");
+      // Copy trades respect reserves (normal trade)
+      await executeBuy(signal.tokenId, signal.conditionId, signal.outcome, copyUsd, "Copy", cfg, false);
       state.copied.add(key);
     }
     state.copyLastCheck.set(addr, Math.floor(Date.now() / 1000));
@@ -396,7 +491,8 @@ async function hedge(positions: Position[], cfg: Config) {
       const opp = p.outcome === "YES" ? "NO" : "YES";
       // Use absoluteMaxUsd if allowExceedMax, otherwise use maxUsd
       const hedgeAmt = cfg.hedge.allowExceedMax ? cfg.hedge.absoluteMaxUsd : cfg.hedge.maxUsd;
-      if (await executeBuy(p.tokenId, p.conditionId, opp, hedgeAmt, "Hedge")) {
+      // Hedging CAN dip into reserves (allowReserve=true) - it's protective
+      if (await executeBuy(p.tokenId, p.conditionId, opp, hedgeAmt, "Hedge", cfg, true)) {
         state.hedged.add(p.tokenId);
       }
     }
@@ -430,7 +526,8 @@ async function stack(walletAddr: string, positions: Position[], cfg: Config) {
         state.stacked.add(p.tokenId);
         continue;
       }
-      if (await executeBuy(p.tokenId, p.conditionId, p.outcome, cfg.stack.maxUsd, "Stack")) {
+      // Stacking respects reserves (normal trade)
+      if (await executeBuy(p.tokenId, p.conditionId, p.outcome, cfg.stack.maxUsd, "Stack", cfg, false)) {
         state.stacked.add(p.tokenId);
       }
     }
@@ -446,7 +543,8 @@ async function endgame(positions: Position[], cfg: Config) {
       if (p.value < cfg.endgame.maxUsd * 2) {
         const addAmt = Math.min(cfg.endgame.maxUsd, cfg.endgame.maxUsd * 2 - p.value);
         if (addAmt >= 5) {
-          await executeBuy(p.tokenId, p.conditionId, p.outcome, addAmt, "Endgame");
+          // Endgame respects reserves (normal trade)
+          await executeBuy(p.tokenId, p.conditionId, p.outcome, addAmt, "Endgame", cfg, false);
         }
       }
     }
@@ -506,8 +604,9 @@ async function arbitrage(cfg: Config) {
         const profit = (1 - total) * 100;
         log(`💎 Arb: YES=${(yesPrice*100).toFixed(0)}¢ + NO=${(noPrice*100).toFixed(0)}¢ = ${profit.toFixed(1)}% profit`);
         const arbUsd = cfg.arbitrage.maxUsd / 2;
-        await executeBuy(yes.token_id, cid, "YES", arbUsd, "Arb");
-        await executeBuy(no.token_id, cid, "NO", arbUsd, "Arb");
+        // Arbitrage respects reserves (normal trade)
+        await executeBuy(yes.token_id, cid, "YES", arbUsd, "Arb", cfg, false);
+        await executeBuy(no.token_id, cid, "NO", arbUsd, "Arb", cfg, false);
       }
     } catch { /* skip */ }
   }
@@ -536,7 +635,8 @@ async function sellSignalProtection(cfg: Config) {
           state.sold.add(ourPos.tokenId);
         } else if (!state.hedged.has(ourPos.tokenId)) {
           const opp = ourPos.outcome === "YES" ? "NO" : "YES";
-          await executeBuy(ourPos.tokenId, ourPos.conditionId, opp, ourPos.value * 0.5, "SellSignal-Hedge");
+          // Sell signal hedge CAN dip into reserves (protective)
+          await executeBuy(ourPos.tokenId, ourPos.conditionId, opp, ourPos.value * 0.5, "SellSignal-Hedge", cfg, true);
           state.hedged.add(ourPos.tokenId);
         }
       }
@@ -604,9 +704,10 @@ export function loadConfig() {
   if (envNum("AUTO_SELL_MIN_HOLD_SEC") !== undefined) cfg.autoSell.minHoldSec = envNum("AUTO_SELL_MIN_HOLD_SEC")!;
   
   // ========== STOP-LOSS ==========
-  // V1: STOP_LOSS_ENABLED, STOP_LOSS_PCT | Also: HEDGING_TRIGGER_LOSS_PCT (alias)
+  // V1: STOP_LOSS_ENABLED, STOP_LOSS_PCT, STOP_LOSS_MIN_HOLD_SECONDS | Also: HEDGING_TRIGGER_LOSS_PCT (alias)
   if (envBool("STOP_LOSS_ENABLED") !== undefined) cfg.stopLoss.enabled = envBool("STOP_LOSS_ENABLED")!;
   if (envNum("STOP_LOSS_PCT") !== undefined) cfg.stopLoss.maxLossPct = envNum("STOP_LOSS_PCT")!;
+  if (envNum("STOP_LOSS_MIN_HOLD_SECONDS") !== undefined) cfg.stopLoss.minHoldSec = envNum("STOP_LOSS_MIN_HOLD_SECONDS")!;
   
   // ========== HEDGING ==========
   // V1: HEDGING_ENABLED, HEDGING_TRIGGER_LOSS_PCT, HEDGING_MAX_HEDGE_USD, HEDGING_ALLOW_EXCEED_MAX, HEDGING_ABSOLUTE_MAX_USD
@@ -619,9 +720,16 @@ export function loadConfig() {
   if (envNum("HEDGE_MAX_USD") !== undefined) cfg.hedge.maxUsd = envNum("HEDGE_MAX_USD")!;
   if (envBool("HEDGING_ALLOW_EXCEED_MAX") !== undefined) cfg.hedge.allowExceedMax = envBool("HEDGING_ALLOW_EXCEED_MAX")!;
   if (envNum("HEDGING_ABSOLUTE_MAX_USD") !== undefined) cfg.hedge.absoluteMaxUsd = envNum("HEDGING_ABSOLUTE_MAX_USD")!;
+  // HEDGING_RESERVE_PCT: % of balance to keep reserved (not spent on normal trades)
+  // Hedge actions can dip into reserves, but normal trades cannot
+  if (envNum("HEDGING_RESERVE_PCT") !== undefined) {
+    cfg.hedge.reservePct = envNum("HEDGING_RESERVE_PCT")!;
+    cfg.reservePct = envNum("HEDGING_RESERVE_PCT")!;
+  }
+  if (envNum("RESERVE_PCT") !== undefined) cfg.reservePct = envNum("RESERVE_PCT")!;
   
   // ========== SCALPING ==========
-  // V1: SCALP_TAKE_PROFIT_ENABLED, SCALP_MIN_PROFIT_PCT, SCALP_LOW_PRICE_THRESHOLD
+  // V1: SCALP_TAKE_PROFIT_ENABLED, SCALP_MIN_PROFIT_PCT, SCALP_LOW_PRICE_THRESHOLD, SCALP_MIN_PROFIT_USD
   // V2: SCALP_ENABLED, SCALP_MIN_PROFIT_PCT, SCALP_MIN_GAIN_CENTS
   if (envBool("SCALP_TAKE_PROFIT_ENABLED") !== undefined) cfg.scalp.enabled = envBool("SCALP_TAKE_PROFIT_ENABLED")!;
   if (envBool("SCALP_ENABLED") !== undefined) cfg.scalp.enabled = envBool("SCALP_ENABLED")!;
@@ -629,6 +737,7 @@ export function loadConfig() {
   if (envNum("SCALP_TARGET_PROFIT_PCT") !== undefined) cfg.scalp.minProfitPct = envNum("SCALP_TARGET_PROFIT_PCT")!;
   if (envNum("SCALP_MIN_GAIN_CENTS") !== undefined) cfg.scalp.minGainCents = envNum("SCALP_MIN_GAIN_CENTS")!;
   if (envNum("SCALP_LOW_PRICE_THRESHOLD") !== undefined) cfg.scalp.lowPriceThreshold = envNum("SCALP_LOW_PRICE_THRESHOLD")!;
+  if (envNum("SCALP_MIN_PROFIT_USD") !== undefined) cfg.scalp.minProfitUsd = envNum("SCALP_MIN_PROFIT_USD")!;
   
   // ========== POSITION STACKING ==========
   // V1: POSITION_STACKING_ENABLED, POSITION_STACKING_MIN_GAIN_CENTS, POSITION_STACKING_MAX_CURRENT_PRICE
@@ -721,18 +830,23 @@ export async function startV2() {
   const clobClient = new ClobClient("https://clob.polymarket.com", 137, wallet as any);
   
   state.wallet = wallet;
+  state.provider = provider;
   state.clobClient = clobClient;
   state.proxyAddress = await fetchProxy(addr);
   state.telegram = settings.telegram;
   state.liveTrading = settings.liveTrading;
 
+  // Fetch initial balance
+  await fetchBalance();
+
   log(`Preset: ${settings.preset}`);
   log(`Wallet: ${addr.slice(0, 10)}...`);
+  log(`Balance: $${state.balance.toFixed(2)} (${settings.config.reservePct}% reserved)`);
   log(`Trading: ${state.liveTrading ? "🟢 LIVE" : "🔸 SIMULATED"}`);
   if (state.proxyAddress) log(`Proxy: ${state.proxyAddress.slice(0, 10)}...`);
   if (settings.config.copy.enabled) log(`👀 Copying ${settings.config.copy.addresses.length} trader(s)`);
   
-  await alert("Bot Started", `${settings.preset} | ${state.liveTrading ? "LIVE" : "SIM"}`);
+  await alert("Bot Started", `${settings.preset} | ${state.liveTrading ? "LIVE" : "SIM"} | $${state.balance.toFixed(2)}`);
 
   await cycle(addr, settings.config);
   setInterval(() => cycle(addr, settings.config).catch(e => log(`❌ ${e}`)), settings.intervalMs);

@@ -48,6 +48,20 @@ TARGET_ADDRESSES=0xabc...,0xdef... PRIVATE_KEY=0x... RPC_URL=https://polygon-rpc
 
 **V1 Alias:** `ARB_MAX_POSITION_USD`
 
+### Reserve System
+
+The reserve system keeps a percentage of your balance protected from regular trades. This ensures you always have funds for hedging and emergencies.
+
+| Variable | Conservative | Balanced | Aggressive | Description |
+|----------|--------------|----------|------------|-------------|
+| `HEDGING_RESERVE_PCT` | 25 | 20 | 15 | % of balance to keep in reserve |
+| `RESERVE_PCT` | 25 | 20 | 15 | Alias for HEDGING_RESERVE_PCT |
+
+**How it works:**
+- Regular trades (stack, endgame, copy, arb) can only use available balance (total - reserved)
+- Protective trades (hedge, sell signal protection) CAN dip into reserves
+- Example: With $100 balance and 20% reserve → Regular trades can use $80, hedging can use full $100
+
 ### Optional
 
 | Variable | Default | Description | V1 Alias |
@@ -72,9 +86,13 @@ Your existing V1 ENV variables will work! Here's the mapping:
 | `HEDGING_MAX_HEDGE_USD` | `HEDGE_MAX_USD` | Both work |
 | `HEDGING_ALLOW_EXCEED_MAX` | `HEDGING_ALLOW_EXCEED_MAX` | ✅ Same |
 | `HEDGING_ABSOLUTE_MAX_USD` | `HEDGING_ABSOLUTE_MAX_USD` | ✅ Same |
+| `HEDGING_RESERVE_PCT` | `RESERVE_PCT` | Both work - keeps % for hedging |
+| `STOP_LOSS_PCT` | `STOP_LOSS_PCT` | ✅ Same |
+| `STOP_LOSS_MIN_HOLD_SECONDS` | `STOP_LOSS_MIN_HOLD_SECONDS` | ✅ Same |
 | `SCALP_TAKE_PROFIT_ENABLED` | `SCALP_ENABLED` | Both work |
 | `SCALP_TARGET_PROFIT_PCT` | `SCALP_MIN_PROFIT_PCT` | Both work |
 | `SCALP_LOW_PRICE_THRESHOLD` | `SCALP_LOW_PRICE_THRESHOLD` | ✅ Same |
+| `SCALP_MIN_PROFIT_USD` | `SCALP_MIN_PROFIT_USD` | ✅ Same |
 | `POSITION_STACKING_ENABLED` | `STACK_ENABLED` | Both work |
 | `POSITION_STACKING_MIN_GAIN_CENTS` | `STACK_MIN_GAIN_CENTS` | Both work |
 | `POSITION_STACKING_MAX_CURRENT_PRICE` | `STACK_MAX_PRICE` | Both work |
@@ -129,6 +147,7 @@ Sells positions when loss exceeds threshold.
 |----------|--------------|----------|------------|-------------|
 | `STOP_LOSS_ENABLED` | true | true | true | Enable/disable |
 | `STOP_LOSS_PCT` | 20 | 25 | 35 | Max loss % before sell |
+| `STOP_LOSS_MIN_HOLD_SECONDS` | 120 | 60 | 30 | Min hold time before stop loss triggers |
 
 ### Hedge - Protect losing positions
 
@@ -154,6 +173,7 @@ Sells winning positions to lock in gains.
 | `SCALP_MIN_PROFIT_PCT` | 15 | 10 | 5 | Min profit % to take |
 | `SCALP_MIN_GAIN_CENTS` | 8 | 5 | 3 | Min gain in cents |
 | `SCALP_LOW_PRICE_THRESHOLD` | 0 | 0 | 0 | Skip positions with entry below this (0=disabled) |
+| `SCALP_MIN_PROFIT_USD` | 2.0 | 1.0 | 0.5 | Min profit in USD to take |
 
 **V1 Aliases:** `SCALP_TAKE_PROFIT_ENABLED`, `SCALP_TARGET_PROFIT_PCT`
 
