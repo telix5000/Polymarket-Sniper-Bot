@@ -620,9 +620,7 @@ const fetchBalanceAllowance = async (
     const trustOnchainApprovals =
       process.env.TRUST_ONCHAIN_APPROVALS?.toLowerCase() !== "false";
     const onchainApprovalsVerified =
-      "onchainApprovalsVerified" in client &&
-      (client as { onchainApprovalsVerified?: boolean })
-        .onchainApprovalsVerified === true;
+      (client as any).onchainApprovalsVerified === true;
     const shouldSkipCooldown =
       trustOnchainApprovals &&
       onchainApprovalsVerified &&
