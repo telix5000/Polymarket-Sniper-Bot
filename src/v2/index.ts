@@ -2475,14 +2475,33 @@ async function executeTestSellRedPosition(
       log("🧪 [TestSell]   - Insufficient liquidity in orderbook");
       log("🧪 [TestSell]   - Position too small to sell");
       log("🧪 [TestSell]   - CLOB API issues or authentication problems");
+      log("🧪 [TestSell]   - Network/DNS errors (EAI_AGAIN, ECONNREFUSED, ETIMEDOUT)");
     }
   } catch (e: any) {
     const elapsed = Date.now() - startTime;
+    const errorMsg = e.message || String(e);
+    const isNetworkError =
+      errorMsg.includes("EAI_AGAIN") ||
+      errorMsg.includes("ENOTFOUND") ||
+      errorMsg.includes("ECONNREFUSED") ||
+      errorMsg.includes("ETIMEDOUT") ||
+      errorMsg.includes("ECONNRESET") ||
+      errorMsg.includes("getaddrinfo") ||
+      errorMsg.includes("network") ||
+      errorMsg.includes("socket");
+
     log("🧪 [TestSell] ========================================");
-    log(`🧪 [TestSell] ❌ TEST SELL THREW EXCEPTION`);
-    log(`🧪 [TestSell] Error: ${e.message}`);
+    if (isNetworkError) {
+      log(`🧪 [TestSell] ❌ NETWORK ERROR DETECTED`);
+      log(`🧪 [TestSell] Error: ${errorMsg}`);
+      log(`🧪 [TestSell] This is a DNS/network connectivity issue, NOT a liquidity problem.`);
+      log(`🧪 [TestSell] Check your internet connection and DNS settings.`);
+    } else {
+      log(`🧪 [TestSell] ❌ TEST SELL THREW EXCEPTION`);
+      log(`🧪 [TestSell] Error: ${errorMsg}`);
+    }
     log(`🧪 [TestSell] Execution time: ${elapsed}ms`);
-    if (e.stack) {
+    if (e.stack && !isNetworkError) {
       log(`🧪 [TestSell] Stack: ${e.stack.split("\n").slice(0, 3).join("\n")}`);
     }
     log("🧪 [TestSell] ========================================");
@@ -2682,6 +2701,19 @@ async function executeSell(
     recordTrade("SELL", outcome, reason, sizeUsd, curPrice || 0, false);
     return false;
   } catch (e: any) {
+    const errorMsg = e.message || String(e);
+    const isNetworkError =
+      errorMsg.includes("EAI_AGAIN") ||
+      errorMsg.includes("ENOTFOUND") ||
+      errorMsg.includes("ECONNREFUSED") ||
+      errorMsg.includes("ETIMEDOUT") ||
+      errorMsg.includes("ECONNRESET") ||
+      errorMsg.includes("getaddrinfo");
+
+    if (isNetworkError) {
+      log(`🌐 SELL | ${reason} | Network error: ${errorMsg.slice(0, 50)} | ${outcome} ${$(sizeUsd)}`);
+    }
+
     await alertTrade(
       "SELL",
       reason,
@@ -2689,7 +2721,7 @@ async function executeSell(
       sizeUsd,
       curPrice,
       false,
-      e.message?.slice(0, 30),
+      isNetworkError ? "NETWORK_ERROR" : e.message?.slice(0, 30),
     );
     recordTrade("SELL", outcome, reason, sizeUsd, curPrice || 0, false);
     return false;
