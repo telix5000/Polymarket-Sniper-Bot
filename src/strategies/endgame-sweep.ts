@@ -383,7 +383,9 @@ export class EndgameSweepStrategy {
    */
   private applyBudgetAwareSizing(
     computedUsd: number,
-  ): { skip: true; reason: string } | { skip: false; cappedUsd: number; isPartial: boolean } {
+  ):
+    | { skip: true; reason: string }
+    | { skip: false; cappedUsd: number; isPartial: boolean } {
     // If no budget tracking, use full computed amount
     if (this.cycleSweepBudgetRemaining === null) {
       return { skip: false, cappedUsd: computedUsd, isPartial: false };
@@ -419,7 +421,10 @@ export class EndgameSweepStrategy {
    */
   private deductFromCycleSweepBudget(amountUsd: number): void {
     if (this.cycleSweepBudgetRemaining !== null && amountUsd > 0) {
-      this.cycleSweepBudgetRemaining = Math.max(0, this.cycleSweepBudgetRemaining - amountUsd);
+      this.cycleSweepBudgetRemaining = Math.max(
+        0,
+        this.cycleSweepBudgetRemaining - amountUsd,
+      );
     }
   }
 

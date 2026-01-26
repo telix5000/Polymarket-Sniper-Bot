@@ -73,12 +73,18 @@ export interface SellSignalMonitorDeps {
    * Callback to trigger a hedge on a position
    * Returns true if hedge was successful
    */
-  onTriggerHedge?: (position: Position, signal: TradeSignal) => Promise<boolean>;
+  onTriggerHedge?: (
+    position: Position,
+    signal: TradeSignal,
+  ) => Promise<boolean>;
   /**
    * Callback to trigger a stop-loss (immediate sell) on a position
    * Returns true if stop-loss was successful
    */
-  onTriggerStopLoss?: (position: Position, signal: TradeSignal) => Promise<boolean>;
+  onTriggerStopLoss?: (
+    position: Position,
+    signal: TradeSignal,
+  ) => Promise<boolean>;
 }
 
 /**
@@ -101,8 +107,14 @@ export class SellSignalMonitorService {
   private readonly logger: Logger;
   private readonly positionTracker: PositionTracker;
   private readonly config: SellSignalMonitorConfig;
-  private readonly onTriggerHedge?: (position: Position, signal: TradeSignal) => Promise<boolean>;
-  private readonly onTriggerStopLoss?: (position: Position, signal: TradeSignal) => Promise<boolean>;
+  private readonly onTriggerHedge?: (
+    position: Position,
+    signal: TradeSignal,
+  ) => Promise<boolean>;
+  private readonly onTriggerStopLoss?: (
+    position: Position,
+    signal: TradeSignal,
+  ) => Promise<boolean>;
 
   // Track cooldowns per position (tokenId -> expiry timestamp)
   private readonly cooldowns: Map<string, number> = new Map();
@@ -307,7 +319,9 @@ export class SellSignalMonitorService {
       }
     }
     if (cleaned > 0) {
-      this.logger.debug(`[SellSignalMonitor] Cleaned up ${cleaned} expired cooldown(s)`);
+      this.logger.debug(
+        `[SellSignalMonitor] Cleaned up ${cleaned} expired cooldown(s)`,
+      );
     }
   }
 

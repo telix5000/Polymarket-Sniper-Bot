@@ -191,7 +191,9 @@ export class ArbitrageStrategy {
 
     // Check detect-only mode
     if (arbConfig.detectOnly) {
-      this.logger.debug("[Arbitrage] Detect-only mode - scanning without executing");
+      this.logger.debug(
+        "[Arbitrage] Detect-only mode - scanning without executing",
+      );
     }
 
     try {

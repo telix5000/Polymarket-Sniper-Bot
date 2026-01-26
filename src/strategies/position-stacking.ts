@@ -214,7 +214,7 @@ export class PositionStackingStrategy {
     // Reserves will be replenished from profits, but missing the opportunity is worse.
     if (reservePlan) {
       this.cycleStackBudgetRemaining = reservePlan.availableCash;
-      
+
       // Log when using reserves for stacking
       if (reservePlan.mode === "RISK_OFF") {
         if (
@@ -521,13 +521,16 @@ export class PositionStackingStrategy {
    */
   private deductFromCycleStackBudget(amountUsd: number): void {
     if (this.cycleStackBudgetRemaining !== null && amountUsd > 0) {
-      this.cycleStackBudgetRemaining = Math.max(0, this.cycleStackBudgetRemaining - amountUsd);
+      this.cycleStackBudgetRemaining = Math.max(
+        0,
+        this.cycleStackBudgetRemaining - amountUsd,
+      );
     }
   }
 
   /**
    * Apply budget-aware sizing to a stack amount.
-   * 
+   *
    * CRITICAL: Stacking is NEVER blocked by RISK_OFF mode or reserve shortfall. Stacking has its own rules
    * and capitalizes on winning momentum - a high-value opportunity that should proceed.
    * It only skips when available cash is below the minimum stack amount.
@@ -537,7 +540,9 @@ export class PositionStackingStrategy {
    */
   private applyBudgetAwareSizing(
     computedUsd: number,
-  ): { skip: true; reason: string } | { skip: false; cappedUsd: number; isPartial: boolean } {
+  ):
+    | { skip: true; reason: string }
+    | { skip: false; cappedUsd: number; isPartial: boolean } {
     // If no budget tracking, use full computed amount
     if (this.cycleStackBudgetRemaining === null) {
       return { skip: false, cappedUsd: computedUsd, isPartial: false };
@@ -609,7 +614,7 @@ export class PositionStackingStrategy {
     if (budgetResult.skip) {
       return false;
     }
-    
+
     const sizeUsd = budgetResult.cappedUsd;
     const outcome = position.side.toUpperCase() === "YES" ? "YES" : "NO";
 
@@ -639,11 +644,12 @@ export class PositionStackingStrategy {
       if (result.status === "submitted") {
         // Deduct from budget after successful stack, accounting for partial fills if available
         const effectiveStackAmountUsd =
-          typeof (result as { filledAmountUsd?: number }).filledAmountUsd === "number"
+          typeof (result as { filledAmountUsd?: number }).filledAmountUsd ===
+          "number"
             ? (result as { filledAmountUsd?: number }).filledAmountUsd!
             : sizeUsd;
         this.deductFromCycleStackBudget(effectiveStackAmountUsd);
-        
+
         // Record the stack in memory
         this.stackedPositions.set(position.tokenId, {
           tokenId: position.tokenId,

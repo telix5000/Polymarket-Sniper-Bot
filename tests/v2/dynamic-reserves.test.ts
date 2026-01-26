@@ -25,14 +25,14 @@ const defaultDynamicReserves = {
 
 /**
  * Simplified mock position type for testing dynamic reserves.
- * 
+ *
  * NOTE: This mock only includes the fields used by computePositionRiskReserve:
  * - tokenId: Position identifier (for reserve breakdown)
  * - size: Position size in shares (for notional calculation)
  * - curPrice: Current price (for tier classification and notional)
  * - pnlPct: P&L percentage (for loss tier classification)
  * - value: Position value in USD (for total reserve calculation)
- * 
+ *
  * The actual Position interface (src/v2/index.ts:59-74) has additional fields
  * (conditionId, outcome, avgPrice, gainCents, entryTime, lastPrice, priceHistory,
  * marketEndTime) that are NOT used by the reserve calculation logic, so they are
@@ -47,7 +47,12 @@ interface MockPosition {
 }
 
 // Reserve tier type
-type ReserveTier = "NONE" | "HIGH_WIN_PROB" | "NORMAL" | "HEDGE" | "CATASTROPHIC";
+type ReserveTier =
+  | "NONE"
+  | "HIGH_WIN_PROB"
+  | "NORMAL"
+  | "HEDGE"
+  | "CATASTROPHIC";
 
 interface PositionRiskReserve {
   tokenId: string;
@@ -62,37 +67,62 @@ interface PositionRiskReserve {
  */
 function computePositionRiskReserve(
   pos: MockPosition,
-  config: typeof defaultDynamicReserves
+  config: typeof defaultDynamicReserves,
 ): PositionRiskReserve {
   const notionalUsd = pos.curPrice * pos.size;
   const lossPct = Math.abs(Math.min(0, pos.pnlPct)); // Only count losses
 
   // Near-resolution positions need no reserve (high probability of payout)
   if (pos.curPrice >= 0.99) {
-    return { tokenId: pos.tokenId, tier: "NONE", reserveUsd: 0, reason: "NEAR_RESOLUTION" };
+    return {
+      tokenId: pos.tokenId,
+      tier: "NONE",
+      reserveUsd: 0,
+      reason: "NEAR_RESOLUTION",
+    };
   }
 
   // HIGH WIN PROBABILITY: When current price is high (e.g., ≥85¢), minimal reserves needed
   if (pos.curPrice >= config.highWinProbPriceThreshold) {
     const reserve = Math.min(0.5, notionalUsd * 0.02);
-    return { tokenId: pos.tokenId, tier: "HIGH_WIN_PROB", reserveUsd: reserve, reason: `HIGH_WIN_PROB_${(pos.curPrice * 100).toFixed(0)}¢` };
+    return {
+      tokenId: pos.tokenId,
+      tier: "HIGH_WIN_PROB",
+      reserveUsd: reserve,
+      reason: `HIGH_WIN_PROB_${(pos.curPrice * 100).toFixed(0)}¢`,
+    };
   }
 
   // CATASTROPHIC LOSS: Position down >= catastrophicLossPct
   if (lossPct >= config.catastrophicLossPct) {
     const reserve = Math.min(config.hedgeCapUsd, notionalUsd * 1.0);
-    return { tokenId: pos.tokenId, tier: "CATASTROPHIC", reserveUsd: reserve, reason: `CATASTROPHIC_LOSS_${lossPct.toFixed(0)}%` };
+    return {
+      tokenId: pos.tokenId,
+      tier: "CATASTROPHIC",
+      reserveUsd: reserve,
+      reason: `CATASTROPHIC_LOSS_${lossPct.toFixed(0)}%`,
+    };
   }
 
   // HEDGE TRIGGER: Position down >= hedgeTriggerLossPct
   if (lossPct >= config.hedgeTriggerLossPct) {
     const reserve = Math.min(config.hedgeCapUsd, notionalUsd * 0.5);
-    return { tokenId: pos.tokenId, tier: "HEDGE", reserveUsd: reserve, reason: `HEDGE_TIER_${lossPct.toFixed(0)}%` };
+    return {
+      tokenId: pos.tokenId,
+      tier: "HEDGE",
+      reserveUsd: reserve,
+      reason: `HEDGE_TIER_${lossPct.toFixed(0)}%`,
+    };
   }
 
   // NORMAL: Small buffer for general volatility protection
   const reserve = Math.min(2, notionalUsd * 0.1);
-  return { tokenId: pos.tokenId, tier: "NORMAL", reserveUsd: reserve, reason: "NORMAL_BUFFER" };
+  return {
+    tokenId: pos.tokenId,
+    tier: "NORMAL",
+    reserveUsd: reserve,
+    reason: "NORMAL_BUFFER",
+  };
 }
 
 /**
@@ -102,8 +132,12 @@ function computePositionRiskReserve(
 function computeRiskAwareReserve(
   positions: MockPosition[],
   balance: number,
-  config: typeof defaultDynamicReserves
-): { totalReserveUsd: number; positionReserves: PositionRiskReserve[]; baseReserveUsd: number } {
+  config: typeof defaultDynamicReserves,
+): {
+  totalReserveUsd: number;
+  positionReserves: PositionRiskReserve[];
+  baseReserveUsd: number;
+} {
   if (!config.enabled) {
     return { totalReserveUsd: 0, positionReserves: [], baseReserveUsd: 0 };
   }
@@ -113,14 +147,25 @@ function computeRiskAwareReserve(
   const equityUsd = balance + positionValue;
 
   // Base reserve: max(floor, equityPct * equity)
-  const baseReserveUsd = Math.max(config.baseReserveFloorUsd, config.baseReserveEquityPct * equityUsd);
+  const baseReserveUsd = Math.max(
+    config.baseReserveFloorUsd,
+    config.baseReserveEquityPct * equityUsd,
+  );
 
   // Per-position reserves based on P&L tier and risk
-  const positionReserves = positions.map(pos => computePositionRiskReserve(pos, config));
-  const totalPositionReserve = positionReserves.reduce((sum, pr) => sum + pr.reserveUsd, 0);
+  const positionReserves = positions.map((pos) =>
+    computePositionRiskReserve(pos, config),
+  );
+  const totalPositionReserve = positionReserves.reduce(
+    (sum, pr) => sum + pr.reserveUsd,
+    0,
+  );
 
   // Total capped at maxReserveUsd
-  const totalReserveUsd = Math.min(baseReserveUsd + totalPositionReserve, config.maxReserveUsd);
+  const totalReserveUsd = Math.min(
+    baseReserveUsd + totalPositionReserve,
+    config.maxReserveUsd,
+  );
 
   return { totalReserveUsd, positionReserves, baseReserveUsd };
 }
@@ -131,7 +176,7 @@ describe("V2 Dynamic Reserves Configuration", () => {
       assert.strictEqual(
         defaultDynamicReserves.baseReserveFloorUsd,
         20,
-        "Default base reserve floor should be $20"
+        "Default base reserve floor should be $20",
       );
     });
 
@@ -139,7 +184,7 @@ describe("V2 Dynamic Reserves Configuration", () => {
       assert.strictEqual(
         defaultDynamicReserves.baseReserveEquityPct,
         0.05,
-        "Default equity percentage should be 5%"
+        "Default equity percentage should be 5%",
       );
     });
 
@@ -147,7 +192,7 @@ describe("V2 Dynamic Reserves Configuration", () => {
       assert.strictEqual(
         defaultDynamicReserves.maxReserveUsd,
         200,
-        "Default max reserve should be $200"
+        "Default max reserve should be $200",
       );
     });
 
@@ -155,7 +200,7 @@ describe("V2 Dynamic Reserves Configuration", () => {
       assert.strictEqual(
         defaultDynamicReserves.hedgeTriggerLossPct,
         20,
-        "Default hedge trigger should be 20%"
+        "Default hedge trigger should be 20%",
       );
     });
 
@@ -163,7 +208,7 @@ describe("V2 Dynamic Reserves Configuration", () => {
       assert.strictEqual(
         defaultDynamicReserves.catastrophicLossPct,
         50,
-        "Default catastrophic threshold should be 50%"
+        "Default catastrophic threshold should be 50%",
       );
     });
 
@@ -171,7 +216,7 @@ describe("V2 Dynamic Reserves Configuration", () => {
       assert.strictEqual(
         defaultDynamicReserves.highWinProbPriceThreshold,
         0.85,
-        "Default high win probability threshold should be 85¢"
+        "Default high win probability threshold should be 85¢",
       );
     });
   });
@@ -212,7 +257,7 @@ describe("V2 Position Risk Tier Classification", () => {
       const pos: MockPosition = {
         tokenId: "token-1",
         size: 100,
-        curPrice: 0.90,
+        curPrice: 0.9,
         pnlPct: 10,
         value: 90,
       };
@@ -251,7 +296,7 @@ describe("V2 Position Risk Tier Classification", () => {
       const pos: MockPosition = {
         tokenId: "token-1",
         size: 100,
-        curPrice: 0.90,
+        curPrice: 0.9,
         pnlPct: -10, // 10% loss
         value: 90,
       };
@@ -266,7 +311,7 @@ describe("V2 Position Risk Tier Classification", () => {
       const pos: MockPosition = {
         tokenId: "token-1",
         size: 100,
-        curPrice: 0.50,
+        curPrice: 0.5,
         pnlPct: 5,
         value: 50,
       };
@@ -280,7 +325,7 @@ describe("V2 Position Risk Tier Classification", () => {
       const pos: MockPosition = {
         tokenId: "token-1",
         size: 100,
-        curPrice: 0.50,
+        curPrice: 0.5,
         pnlPct: -15, // 15% loss, below 20% hedge trigger
         value: 50,
       };
@@ -294,7 +339,7 @@ describe("V2 Position Risk Tier Classification", () => {
       const pos: MockPosition = {
         tokenId: "token-1",
         size: 100,
-        curPrice: 0.50,
+        curPrice: 0.5,
         pnlPct: -25, // 25% loss, above 20% hedge trigger
         value: 50,
       };
@@ -308,7 +353,7 @@ describe("V2 Position Risk Tier Classification", () => {
       const pos: MockPosition = {
         tokenId: "token-1",
         size: 100,
-        curPrice: 0.50,
+        curPrice: 0.5,
         pnlPct: -20, // Exactly at hedge trigger
         value: 50,
       };
@@ -322,7 +367,7 @@ describe("V2 Position Risk Tier Classification", () => {
       const pos: MockPosition = {
         tokenId: "token-1",
         size: 100,
-        curPrice: 0.50,
+        curPrice: 0.5,
         pnlPct: -55, // 55% loss, above 50% catastrophic threshold
         value: 50,
       };
@@ -336,7 +381,7 @@ describe("V2 Position Risk Tier Classification", () => {
       const pos: MockPosition = {
         tokenId: "token-1",
         size: 100,
-        curPrice: 0.50,
+        curPrice: 0.5,
         pnlPct: -50, // Exactly at catastrophic threshold
         value: 50,
       };
@@ -348,7 +393,7 @@ describe("V2 Position Risk Tier Classification", () => {
       const pos: MockPosition = {
         tokenId: "token-1",
         size: 200,
-        curPrice: 0.50,
+        curPrice: 0.5,
         pnlPct: -60,
         value: 100,
       };
@@ -363,7 +408,11 @@ describe("V2 Total Reserve Calculation", () => {
   describe("Base Reserve Calculation", () => {
     test("Base reserve should be floor when equity is low", () => {
       const positions: MockPosition[] = [];
-      const result = computeRiskAwareReserve(positions, 100, defaultDynamicReserves);
+      const result = computeRiskAwareReserve(
+        positions,
+        100,
+        defaultDynamicReserves,
+      );
       // Equity = 100, equityPct = 5, floor = 20
       // max(20, 100 * 0.05) = max(20, 5) = 20
       assert.strictEqual(result.baseReserveUsd, 20);
@@ -371,9 +420,19 @@ describe("V2 Total Reserve Calculation", () => {
 
     test("Base reserve should scale with equity when equity is high", () => {
       const positions: MockPosition[] = [
-        { tokenId: "token-1", size: 1000, curPrice: 1.0, pnlPct: 50, value: 1000 }
+        {
+          tokenId: "token-1",
+          size: 1000,
+          curPrice: 1.0,
+          pnlPct: 50,
+          value: 1000,
+        },
       ];
-      const result = computeRiskAwareReserve(positions, 1000, defaultDynamicReserves);
+      const result = computeRiskAwareReserve(
+        positions,
+        1000,
+        defaultDynamicReserves,
+      );
       // Equity = 2000, equityPct = 100, floor = 20
       // max(20, 2000 * 0.05) = max(20, 100) = 100
       assert.strictEqual(result.baseReserveUsd, 100);
@@ -386,11 +445,15 @@ describe("V2 Total Reserve Calculation", () => {
       const positions: MockPosition[] = Array.from({ length: 10 }, (_, i) => ({
         tokenId: `token-${i}`,
         size: 100,
-        curPrice: 0.50,
+        curPrice: 0.5,
         pnlPct: -55, // Catastrophic
         value: 50,
       }));
-      const result = computeRiskAwareReserve(positions, 100, defaultDynamicReserves);
+      const result = computeRiskAwareReserve(
+        positions,
+        100,
+        defaultDynamicReserves,
+      );
       // Should be capped at maxReserveUsd (200)
       assert.ok(result.totalReserveUsd <= defaultDynamicReserves.maxReserveUsd);
       assert.strictEqual(result.totalReserveUsd, 200);
@@ -401,7 +464,13 @@ describe("V2 Total Reserve Calculation", () => {
     test("Should return 0 when disabled", () => {
       const disabledConfig = { ...defaultDynamicReserves, enabled: false };
       const positions: MockPosition[] = [
-        { tokenId: "token-1", size: 100, curPrice: 0.50, pnlPct: -55, value: 50 }
+        {
+          tokenId: "token-1",
+          size: 100,
+          curPrice: 0.5,
+          pnlPct: -55,
+          value: 50,
+        },
       ];
       const result = computeRiskAwareReserve(positions, 100, disabledConfig);
       assert.strictEqual(result.totalReserveUsd, 0);
@@ -412,21 +481,49 @@ describe("V2 Total Reserve Calculation", () => {
   describe("Combined Reserve Scenarios", () => {
     test("Mixed portfolio should sum individual reserves", () => {
       const positions: MockPosition[] = [
-        { tokenId: "token-good", size: 100, curPrice: 0.90, pnlPct: 20, value: 90 }, // HIGH_WIN_PROB
-        { tokenId: "token-normal", size: 100, curPrice: 0.50, pnlPct: 5, value: 50 }, // NORMAL
-        { tokenId: "token-bad", size: 100, curPrice: 0.30, pnlPct: -30, value: 30 }, // HEDGE
+        {
+          tokenId: "token-good",
+          size: 100,
+          curPrice: 0.9,
+          pnlPct: 20,
+          value: 90,
+        }, // HIGH_WIN_PROB
+        {
+          tokenId: "token-normal",
+          size: 100,
+          curPrice: 0.5,
+          pnlPct: 5,
+          value: 50,
+        }, // NORMAL
+        {
+          tokenId: "token-bad",
+          size: 100,
+          curPrice: 0.3,
+          pnlPct: -30,
+          value: 30,
+        }, // HEDGE
       ];
-      const result = computeRiskAwareReserve(positions, 100, defaultDynamicReserves);
-      
+      const result = computeRiskAwareReserve(
+        positions,
+        100,
+        defaultDynamicReserves,
+      );
+
       // Verify each position is classified correctly
-      const highWinProb = result.positionReserves.find(r => r.tokenId === "token-good");
-      const normal = result.positionReserves.find(r => r.tokenId === "token-normal");
-      const hedge = result.positionReserves.find(r => r.tokenId === "token-bad");
-      
+      const highWinProb = result.positionReserves.find(
+        (r) => r.tokenId === "token-good",
+      );
+      const normal = result.positionReserves.find(
+        (r) => r.tokenId === "token-normal",
+      );
+      const hedge = result.positionReserves.find(
+        (r) => r.tokenId === "token-bad",
+      );
+
       assert.strictEqual(highWinProb?.tier, "HIGH_WIN_PROB");
       assert.strictEqual(normal?.tier, "NORMAL");
       assert.strictEqual(hedge?.tier, "HEDGE");
-      
+
       // Total should include base + all position reserves
       assert.ok(result.totalReserveUsd > result.baseReserveUsd);
     });
@@ -440,7 +537,7 @@ describe("V2 Dynamic Reserves Risk Mode", () => {
    */
   function getRiskMode(
     balance: number,
-    effectiveReserve: number
+    effectiveReserve: number,
   ): "RISK_ON" | "RISK_OFF" {
     return balance >= effectiveReserve ? "RISK_ON" : "RISK_OFF";
   }
@@ -470,7 +567,7 @@ describe("V2 Preset Configuration Differences", () => {
     hedgeCapUsd: 25,
     hedgeTriggerLossPct: 15,
     catastrophicLossPct: 40,
-    highWinProbPriceThreshold: 0.90,
+    highWinProbPriceThreshold: 0.9,
   };
 
   const aggressiveConfig = {
@@ -481,21 +578,27 @@ describe("V2 Preset Configuration Differences", () => {
     hedgeCapUsd: 100,
     hedgeTriggerLossPct: 25,
     catastrophicLossPct: 60,
-    highWinProbPriceThreshold: 0.80,
+    highWinProbPriceThreshold: 0.8,
   };
 
   test("Conservative preset triggers hedge tier earlier", () => {
     const pos: MockPosition = {
       tokenId: "token-1",
       size: 100,
-      curPrice: 0.50,
+      curPrice: 0.5,
       pnlPct: -18, // 18% loss
       value: 50,
     };
-    
-    const conservativeResult = computePositionRiskReserve(pos, conservativeConfig);
-    const balancedResult = computePositionRiskReserve(pos, defaultDynamicReserves);
-    
+
+    const conservativeResult = computePositionRiskReserve(
+      pos,
+      conservativeConfig,
+    );
+    const balancedResult = computePositionRiskReserve(
+      pos,
+      defaultDynamicReserves,
+    );
+
     // Conservative triggers at 15%, balanced at 20%
     // 18% loss should be HEDGE for conservative, NORMAL for balanced
     assert.strictEqual(conservativeResult.tier, "HEDGE");
@@ -510,10 +613,13 @@ describe("V2 Preset Configuration Differences", () => {
       pnlPct: 10,
       value: 82,
     };
-    
+
     const aggressiveResult = computePositionRiskReserve(pos, aggressiveConfig);
-    const balancedResult = computePositionRiskReserve(pos, defaultDynamicReserves);
-    
+    const balancedResult = computePositionRiskReserve(
+      pos,
+      defaultDynamicReserves,
+    );
+
     // Aggressive threshold is 80¢, balanced is 85¢
     // 82¢ should be HIGH_WIN_PROB for aggressive, NORMAL for balanced
     assert.strictEqual(aggressiveResult.tier, "HIGH_WIN_PROB");
@@ -522,11 +628,21 @@ describe("V2 Preset Configuration Differences", () => {
 
   test("Conservative preset has higher base reserve floor", () => {
     const positions: MockPosition[] = [];
-    
-    const conservativeResult = computeRiskAwareReserve(positions, 100, conservativeConfig);
-    const balancedResult = computeRiskAwareReserve(positions, 100, defaultDynamicReserves);
-    
-    assert.ok(conservativeResult.baseReserveUsd > balancedResult.baseReserveUsd);
+
+    const conservativeResult = computeRiskAwareReserve(
+      positions,
+      100,
+      conservativeConfig,
+    );
+    const balancedResult = computeRiskAwareReserve(
+      positions,
+      100,
+      defaultDynamicReserves,
+    );
+
+    assert.ok(
+      conservativeResult.baseReserveUsd > balancedResult.baseReserveUsd,
+    );
     assert.strictEqual(conservativeResult.baseReserveUsd, 25);
     assert.strictEqual(balancedResult.baseReserveUsd, 20);
   });

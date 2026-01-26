@@ -638,9 +638,7 @@ async function postOrderClob(
   if (!input.skipDuplicatePrevention && side === "BUY" && marketId) {
     const hedgeLockStatus = isMarketHedgeLocked(marketId);
     if (hedgeLockStatus.locked) {
-      const remainingSec = Math.ceil(
-        (hedgeLockStatus.remainingMs ?? 0) / 1000,
-      );
+      const remainingSec = Math.ceil((hedgeLockStatus.remainingMs ?? 0) / 1000);
       logger.warn(
         `[CLOB] Order skipped (${hedgeLockStatus.reason}): BUY on market ${marketId.slice(0, 8)}... blocked for ${remainingSec}s ` +
           `(hedge operation "${hedgeLockStatus.operationType}" in progress)`,
@@ -805,7 +803,10 @@ async function postOrderClobInner(
     bestBid !== null &&
     bestBid > 0
   ) {
-    effectiveMinAcceptablePrice = calculateMinAcceptablePrice(bestBid, input.sellSlippagePct);
+    effectiveMinAcceptablePrice = calculateMinAcceptablePrice(
+      bestBid,
+      input.sellSlippagePct,
+    );
     logger.debug(
       `[CLOB] Computed minAcceptablePrice from fresh bestBid: ` +
         `${(effectiveMinAcceptablePrice * 100).toFixed(2)}¢ = ${(bestBid * 100).toFixed(2)}¢ * (1 - ${input.sellSlippagePct}%)`,

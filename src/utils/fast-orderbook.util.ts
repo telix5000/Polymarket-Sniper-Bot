@@ -41,17 +41,17 @@ const CLOB_HOST = POLYMARKET_API.BASE_URL;
 interface RateLimiterState {
   tokens: number;
   lastRefill: number;
-  maxTokens: number;       // Burst capacity
-  refillRate: number;      // Tokens per second
-  backoffUntil: number;    // If throttled, when to resume
+  maxTokens: number; // Burst capacity
+  refillRate: number; // Tokens per second
+  backoffUntil: number; // If throttled, when to resume
   backoffMultiplier: number; // Exponential backoff
 }
 
 const rateLimiter: RateLimiterState = {
-  tokens: 50,              // Start with burst capacity
+  tokens: 50, // Start with burst capacity
   lastRefill: Date.now(),
-  maxTokens: 50,           // Allow bursts of 50 requests
-  refillRate: 100,         // 100 tokens/sec (well under 150 limit)
+  maxTokens: 50, // Allow bursts of 50 requests
+  refillRate: 100, // 100 tokens/sec (well under 150 limit)
   backoffUntil: 0,
   backoffMultiplier: 1,
 };
@@ -62,11 +62,14 @@ let rateLimiterInitialized = false;
 /**
  * Initialize rate limiter with custom settings
  * Call on startup to override defaults
- * 
+ *
  * @param refillRate - Tokens per second (default: 100, min: 10, max safe: 140)
  * @param burstCapacity - Max burst size (default: 50)
  */
-export const initRateLimiter = (refillRate: number, burstCapacity: number = 50): void => {
+export const initRateLimiter = (
+  refillRate: number,
+  burstCapacity: number = 50,
+): void => {
   // Enforce minimum of 10 and maximum of 140 req/sec
   rateLimiter.refillRate = Math.max(10, Math.min(refillRate, 140));
   rateLimiter.maxTokens = burstCapacity;
@@ -83,24 +86,27 @@ export const initRateLimiter = (refillRate: number, burstCapacity: number = 50):
  */
 const tryAcquireToken = (): boolean => {
   const now = Date.now();
-  
+
   // Check if we're in backoff mode (hit rate limit previously)
   if (now < rateLimiter.backoffUntil) {
     return false;
   }
-  
+
   // Refill tokens based on time elapsed
   const elapsed = (now - rateLimiter.lastRefill) / 1000;
   const newTokens = elapsed * rateLimiter.refillRate;
-  rateLimiter.tokens = Math.min(rateLimiter.maxTokens, rateLimiter.tokens + newTokens);
+  rateLimiter.tokens = Math.min(
+    rateLimiter.maxTokens,
+    rateLimiter.tokens + newTokens,
+  );
   rateLimiter.lastRefill = now;
-  
+
   // Try to acquire a token
   if (rateLimiter.tokens >= 1) {
     rateLimiter.tokens -= 1;
     return true;
   }
-  
+
   return false;
 };
 
@@ -111,7 +117,10 @@ const tryAcquireToken = (): boolean => {
 const onRateLimited = (): void => {
   const backoffMs = 1000 * rateLimiter.backoffMultiplier; // Start at 1 sec
   rateLimiter.backoffUntil = Date.now() + backoffMs;
-  rateLimiter.backoffMultiplier = Math.min(rateLimiter.backoffMultiplier * 2, 30); // Max 30 sec
+  rateLimiter.backoffMultiplier = Math.min(
+    rateLimiter.backoffMultiplier * 2,
+    30,
+  ); // Max 30 sec
   rateLimiter.tokens = 0; // Drain tokens
 };
 
@@ -176,7 +185,7 @@ const parseBool = (raw: string | undefined, defaultValue: boolean): boolean => {
  */
 const initRateLimiterFromEnv = (): void => {
   if (rateLimiterInitialized) return;
-  
+
   const envMaxReq = readEnv("CLOB_MAX_REQUESTS_PER_SEC");
   if (envMaxReq) {
     const parsed = parseInt(envMaxReq, 10);
@@ -186,14 +195,14 @@ const initRateLimiterFromEnv = (): void => {
       rateLimiter.refillRate = parsed;
     }
   }
-  
+
   rateLimiterInitialized = true;
 };
 
 export const getFastOrderbookConfig = (): FastOrderbookConfig => {
   // Initialize rate limiter once (no side effects on subsequent calls)
   initRateLimiterFromEnv();
-  
+
   return {
     enabled: parseBool(readEnv("CLOB_BYPASS_VPN_FOR_READS"), true),
     timeoutMs: parseInt(readEnv("CLOB_READ_TIMEOUT_MS") ?? "5000", 10),
@@ -351,7 +360,9 @@ function extractPrices(orderbook: OrderBookSummary): OrderbookPrices {
 
   // Find best bid (highest)
   if (bids.length > 0) {
-    const bidPrices = bids.map((b) => parseFloat(b.price)).filter((p) => !isNaN(p) && p > 0);
+    const bidPrices = bids
+      .map((b) => parseFloat(b.price))
+      .filter((p) => !isNaN(p) && p > 0);
     if (bidPrices.length > 0) {
       bestBid = Math.max(...bidPrices);
     }
@@ -359,7 +370,9 @@ function extractPrices(orderbook: OrderBookSummary): OrderbookPrices {
 
   // Find best ask (lowest)
   if (asks.length > 0) {
-    const askPrices = asks.map((a) => parseFloat(a.price)).filter((p) => !isNaN(p) && p > 0);
+    const askPrices = asks
+      .map((a) => parseFloat(a.price))
+      .filter((p) => !isNaN(p) && p > 0);
     if (askPrices.length > 0) {
       bestAsk = Math.min(...askPrices);
     }
@@ -387,7 +400,11 @@ export async function fetchOrderbookWithFallback(
   tokenId: string,
   vpnFallback: () => Promise<OrderBookSummary>,
   logger?: { debug: (msg: string) => void; warn: (msg: string) => void },
-): Promise<{ orderbook: OrderBookSummary; source: "direct" | "vpn_fallback"; latencyMs: number }> {
+): Promise<{
+  orderbook: OrderBookSummary;
+  source: "direct" | "vpn_fallback";
+  latencyMs: number;
+}> {
   const config = getFastOrderbookConfig();
 
   if (config.enabled) {

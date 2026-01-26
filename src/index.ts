@@ -1,9 +1,9 @@
 /**
  * Polymarket Trading Bot - Simple & Clean
- * 
+ *
  * ENV:
  *   PRIVATE_KEY    - Required
- *   RPC_URL        - Required  
+ *   RPC_URL        - Required
  *   PRESET         - conservative | balanced | aggressive (default: balanced)
  *   TELEGRAM_TOKEN - Optional
  *   TELEGRAM_CHAT  - Optional
@@ -32,7 +32,12 @@ interface Position {
 }
 
 interface PresetConfig {
-  stack: { enabled: boolean; minGainCents: number; maxUsd: number; maxPrice: number };
+  stack: {
+    enabled: boolean;
+    minGainCents: number;
+    maxUsd: number;
+    maxPrice: number;
+  };
   hedge: { enabled: boolean; triggerPct: number; maxUsd: number };
   stopLoss: { enabled: boolean; maxLossPct: number };
   scalp: { enabled: boolean; minProfitPct: number; minGainCents: number };
@@ -43,7 +48,7 @@ interface PresetConfig {
 
 const PRESETS: Record<Preset, PresetConfig> = {
   conservative: {
-    stack: { enabled: true, minGainCents: 25, maxUsd: 15, maxPrice: 0.90 },
+    stack: { enabled: true, minGainCents: 25, maxUsd: 15, maxPrice: 0.9 },
     hedge: { enabled: true, triggerPct: 15, maxUsd: 15 },
     stopLoss: { enabled: true, maxLossPct: 20 },
     scalp: { enabled: true, minProfitPct: 15, minGainCents: 8 },
@@ -70,29 +75,34 @@ const PRESETS: Record<Preset, PresetConfig> = {
 function loadConfig() {
   const privateKey = process.env.PRIVATE_KEY;
   const rpcUrl = process.env.RPC_URL;
-  
+
   if (!privateKey) throw new Error("Missing PRIVATE_KEY");
   if (!rpcUrl) throw new Error("Missing RPC_URL");
-  
+
   const preset = (process.env.PRESET ?? "balanced") as Preset;
   if (!PRESETS[preset]) throw new Error(`Invalid PRESET: ${preset}`);
-  
+
   return {
     privateKey,
     rpcUrl,
     preset,
     config: PRESETS[preset],
     intervalMs: parseInt(process.env.INTERVAL_MS ?? "5000"),
-    telegram: process.env.TELEGRAM_TOKEN && process.env.TELEGRAM_CHAT ? {
-      token: process.env.TELEGRAM_TOKEN,
-      chatId: process.env.TELEGRAM_CHAT,
-    } : undefined,
+    telegram:
+      process.env.TELEGRAM_TOKEN && process.env.TELEGRAM_CHAT
+        ? {
+            token: process.env.TELEGRAM_TOKEN,
+            chatId: process.env.TELEGRAM_CHAT,
+          }
+        : undefined,
   };
 }
 
 // === ALERTS ===
 
-const alertState = { telegram: undefined as { token: string; chatId: string } | undefined };
+const alertState = {
+  telegram: undefined as { token: string; chatId: string } | undefined,
+};
 
 function initAlerts(telegram?: { token: string; chatId: string }) {
   alertState.telegram = telegram;
@@ -100,14 +110,16 @@ function initAlerts(telegram?: { token: string; chatId: string }) {
 
 async function alert(title: string, message: string) {
   console.log(`[${title}] ${message}`);
-  
+
   if (alertState.telegram) {
     const { token, chatId } = alertState.telegram;
-    await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
-      chat_id: chatId,
-      text: `*${title}*\n${message}`,
-      parse_mode: "Markdown",
-    }).catch(() => {});
+    await axios
+      .post(`https://api.telegram.org/bot${token}/sendMessage`, {
+        chat_id: chatId,
+        text: `*${title}*\n${message}`,
+        parse_mode: "Markdown",
+      })
+      .catch(() => {});
   }
 }
 
@@ -119,14 +131,17 @@ let positionsCache: Position[] = [];
 let lastFetch = 0;
 const CACHE_TTL = 30000;
 
-async function getPositions(wallet: string, force = false): Promise<Position[]> {
+async function getPositions(
+  wallet: string,
+  force = false,
+): Promise<Position[]> {
   if (!force && Date.now() - lastFetch < CACHE_TTL && positionsCache.length) {
     return positionsCache;
   }
 
   try {
     const { data } = await axios.get(`${API_BASE}/positions?user=${wallet}`);
-    
+
     positionsCache = (data || [])
       .filter((p: any) => {
         const size = Number(p.size) || 0;
@@ -140,7 +155,7 @@ async function getPositions(wallet: string, force = false): Promise<Position[]> 
         const cost = size * avgPrice;
         const pnlUsd = value - cost;
         const pnlPct = cost > 0 ? (pnlUsd / cost) * 100 : 0;
-        
+
         return {
           tokenId: p.asset,
           conditionId: p.conditionId,
@@ -154,7 +169,7 @@ async function getPositions(wallet: string, force = false): Promise<Position[]> 
           value,
         };
       });
-    
+
     lastFetch = Date.now();
     console.log(`[API] ${positionsCache.length} active positions`);
     return positionsCache;
@@ -167,9 +182,10 @@ async function getPositions(wallet: string, force = false): Promise<Position[]> 
 async function getBuyCount(wallet: string, tokenId: string): Promise<number> {
   try {
     const { data } = await axios.get(
-      `${API_BASE}/trades?user=${wallet}&asset=${tokenId}&limit=50`
+      `${API_BASE}/trades?user=${wallet}&asset=${tokenId}&limit=50`,
     );
-    return (data || []).filter((t: any) => t.side?.toUpperCase() === "BUY").length;
+    return (data || []).filter((t: any) => t.side?.toUpperCase() === "BUY")
+      .length;
   } catch {
     return 0;
   }
@@ -187,17 +203,24 @@ async function placeOrder(
   conditionId: string,
   outcome: string,
   side: Side,
-  sizeUsd: number
+  sizeUsd: number,
 ): Promise<boolean> {
   // ⚠️ PLACEHOLDER - Real implementation needs @polymarket/clob-client integration
   // This file is NOT the main entrypoint - use src/v2/index.ts instead
-  console.log(`[Order] ⚠️ SIMULATION ONLY: ${side} ${outcome} $${sizeUsd.toFixed(2)} on ${tokenId.slice(0, 8)}...`);
-  console.log(`[Order] ⚠️ This entrypoint is NOT connected to real trading. Use USE_V2=true to run V2.`);
-  
+  console.log(
+    `[Order] ⚠️ SIMULATION ONLY: ${side} ${outcome} $${sizeUsd.toFixed(2)} on ${tokenId.slice(0, 8)}...`,
+  );
+  console.log(
+    `[Order] ⚠️ This entrypoint is NOT connected to real trading. Use USE_V2=true to run V2.`,
+  );
+
   // DO NOT execute real orders - this is a simulation placeholder
   // Return false to indicate no order was placed
-  await alert("Simulation", `Would ${side} ${outcome} $${sizeUsd.toFixed(2)} (NOT EXECUTED)`);
-  
+  await alert(
+    "Simulation",
+    `Would ${side} ${outcome} $${sizeUsd.toFixed(2)} (NOT EXECUTED)`,
+  );
+
   return false;
 }
 
@@ -206,74 +229,146 @@ async function placeOrder(
 const stacked = new Set<string>();
 const hedged = new Set<string>();
 
-async function runAutoSell(wallet: Wallet, positions: Position[], config: PresetConfig) {
+async function runAutoSell(
+  wallet: Wallet,
+  positions: Position[],
+  config: PresetConfig,
+) {
   if (!config.autoSell.enabled) return;
-  
-  for (const p of positions.filter(p => p.curPrice >= config.autoSell.threshold)) {
-    console.log(`[AutoSell] ${p.tokenId.slice(0, 8)}... @ ${(p.curPrice * 100).toFixed(0)}¢`);
-    await placeOrder(wallet, p.tokenId, p.conditionId, p.outcome, "SELL", p.value);
+
+  for (const p of positions.filter(
+    (p) => p.curPrice >= config.autoSell.threshold,
+  )) {
+    console.log(
+      `[AutoSell] ${p.tokenId.slice(0, 8)}... @ ${(p.curPrice * 100).toFixed(0)}¢`,
+    );
+    await placeOrder(
+      wallet,
+      p.tokenId,
+      p.conditionId,
+      p.outcome,
+      "SELL",
+      p.value,
+    );
   }
 }
 
-async function runStopLoss(wallet: Wallet, positions: Position[], config: PresetConfig) {
+async function runStopLoss(
+  wallet: Wallet,
+  positions: Position[],
+  config: PresetConfig,
+) {
   if (!config.stopLoss.enabled) return;
-  
-  for (const p of positions.filter(p => p.pnlPct <= -config.stopLoss.maxLossPct)) {
-    console.log(`[StopLoss] ${p.tokenId.slice(0, 8)}... ${p.pnlPct.toFixed(1)}%`);
-    await placeOrder(wallet, p.tokenId, p.conditionId, p.outcome, "SELL", p.value);
+
+  for (const p of positions.filter(
+    (p) => p.pnlPct <= -config.stopLoss.maxLossPct,
+  )) {
+    console.log(
+      `[StopLoss] ${p.tokenId.slice(0, 8)}... ${p.pnlPct.toFixed(1)}%`,
+    );
+    await placeOrder(
+      wallet,
+      p.tokenId,
+      p.conditionId,
+      p.outcome,
+      "SELL",
+      p.value,
+    );
   }
 }
 
-async function runHedge(wallet: Wallet, walletAddr: string, positions: Position[], config: PresetConfig) {
+async function runHedge(
+  wallet: Wallet,
+  walletAddr: string,
+  positions: Position[],
+  config: PresetConfig,
+) {
   if (!config.hedge.enabled) return;
-  
-  const targets = positions.filter(p => 
-    p.pnlPct < 0 &&
-    Math.abs(p.pnlPct) >= config.hedge.triggerPct &&
-    Math.abs(p.pnlPct) < config.stopLoss.maxLossPct &&
-    !hedged.has(p.tokenId)
+
+  const targets = positions.filter(
+    (p) =>
+      p.pnlPct < 0 &&
+      Math.abs(p.pnlPct) >= config.hedge.triggerPct &&
+      Math.abs(p.pnlPct) < config.stopLoss.maxLossPct &&
+      !hedged.has(p.tokenId),
   );
-  
+
   for (const p of targets) {
     const opp = p.outcome.toUpperCase() === "YES" ? "NO" : "YES";
-    console.log(`[Hedge] ${p.tokenId.slice(0, 8)}... ${p.pnlPct.toFixed(1)}% → ${opp}`);
-    await placeOrder(wallet, p.tokenId, p.conditionId, opp, "BUY", Math.min(config.hedge.maxUsd, p.value));
+    console.log(
+      `[Hedge] ${p.tokenId.slice(0, 8)}... ${p.pnlPct.toFixed(1)}% → ${opp}`,
+    );
+    await placeOrder(
+      wallet,
+      p.tokenId,
+      p.conditionId,
+      opp,
+      "BUY",
+      Math.min(config.hedge.maxUsd, p.value),
+    );
     hedged.add(p.tokenId);
   }
 }
 
-async function runScalp(wallet: Wallet, positions: Position[], config: PresetConfig) {
+async function runScalp(
+  wallet: Wallet,
+  positions: Position[],
+  config: PresetConfig,
+) {
   if (!config.scalp.enabled) return;
-  
-  const targets = positions.filter(p => 
-    p.pnlPct >= config.scalp.minProfitPct && 
-    p.gainCents >= config.scalp.minGainCents
+
+  const targets = positions.filter(
+    (p) =>
+      p.pnlPct >= config.scalp.minProfitPct &&
+      p.gainCents >= config.scalp.minGainCents,
   );
-  
+
   for (const p of targets) {
     console.log(`[Scalp] ${p.tokenId.slice(0, 8)}... +${p.pnlPct.toFixed(1)}%`);
-    await placeOrder(wallet, p.tokenId, p.conditionId, p.outcome, "SELL", p.value);
+    await placeOrder(
+      wallet,
+      p.tokenId,
+      p.conditionId,
+      p.outcome,
+      "SELL",
+      p.value,
+    );
   }
 }
 
-async function runStack(wallet: Wallet, walletAddr: string, positions: Position[], config: PresetConfig) {
+async function runStack(
+  wallet: Wallet,
+  walletAddr: string,
+  positions: Position[],
+  config: PresetConfig,
+) {
   if (!config.stack.enabled) return;
-  
-  const targets = positions.filter(p => 
-    p.gainCents >= config.stack.minGainCents &&
-    p.curPrice < config.stack.maxPrice &&
-    !stacked.has(p.tokenId)
+
+  const targets = positions.filter(
+    (p) =>
+      p.gainCents >= config.stack.minGainCents &&
+      p.curPrice < config.stack.maxPrice &&
+      !stacked.has(p.tokenId),
   );
-  
+
   for (const p of targets) {
     const buyCount = await getBuyCount(walletAddr, p.tokenId);
     if (buyCount >= 2) {
       stacked.add(p.tokenId);
       continue;
     }
-    
-    console.log(`[Stack] ${p.tokenId.slice(0, 8)}... +${p.gainCents.toFixed(0)}¢`);
-    await placeOrder(wallet, p.tokenId, p.conditionId, p.outcome, "BUY", config.stack.maxUsd);
+
+    console.log(
+      `[Stack] ${p.tokenId.slice(0, 8)}... +${p.gainCents.toFixed(0)}¢`,
+    );
+    await placeOrder(
+      wallet,
+      p.tokenId,
+      p.conditionId,
+      p.outcome,
+      "BUY",
+      config.stack.maxUsd,
+    );
     stacked.add(p.tokenId);
   }
 }
@@ -302,28 +397,36 @@ async function cycle(wallet: Wallet, walletAddr: string, config: PresetConfig) {
 
 async function main() {
   console.log("=== Polymarket Trading Bot ===");
-  
+
   const cfg = loadConfig();
   console.log(`Preset: ${cfg.preset}`);
-  
+
   const provider = new JsonRpcProvider(cfg.rpcUrl);
   const wallet = new Wallet(cfg.privateKey, provider);
   const walletAddr = wallet.address.toLowerCase();
-  
+
   console.log(`Wallet: ${walletAddr}`);
-  
+
   initAlerts(cfg.telegram);
-  await alert("Bot Started", `Preset: ${cfg.preset}\nWallet: ${walletAddr.slice(0, 10)}...`);
-  
+  await alert(
+    "Bot Started",
+    `Preset: ${cfg.preset}\nWallet: ${walletAddr.slice(0, 10)}...`,
+  );
+
   // Run immediately then on interval with in-flight guard
   let cycleRunning = false;
+  let skippedLogged = false;
   
   const runCycle = async () => {
     if (cycleRunning) {
-      console.log("[Cycle] Skipping - previous cycle still running");
+      if (!skippedLogged) {
+        console.log("[Cycle] Skipping - previous cycle still running");
+        skippedLogged = true;
+      }
       return;
     }
     cycleRunning = true;
+    skippedLogged = false;
     try {
       await cycle(wallet, walletAddr, cfg.config);
     } catch (err) {
@@ -332,10 +435,10 @@ async function main() {
       cycleRunning = false;
     }
   };
-  
+
   await runCycle();
   setInterval(runCycle, cfg.intervalMs);
-  
+
   // Handle shutdown
   process.on("SIGINT", () => {
     console.log("\nShutting down...");
@@ -343,7 +446,7 @@ async function main() {
   });
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error(`Fatal: ${err}`);
   process.exit(1);
 });
