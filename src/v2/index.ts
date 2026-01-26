@@ -10,13 +10,14 @@ import type { Logger } from "../lib/types";
 
 /**
  * Network error patterns to detect DNS/connectivity issues
+ * Pre-computed lowercase patterns for efficient matching
  */
-const NETWORK_ERROR_PATTERNS = [
-  "EAI_AGAIN",
-  "ENOTFOUND",
-  "ECONNREFUSED",
-  "ETIMEDOUT",
-  "ECONNRESET",
+const NETWORK_ERROR_PATTERNS_LOWER = [
+  "eai_again",
+  "enotfound",
+  "econnrefused",
+  "etimedout",
+  "econnreset",
   "getaddrinfo",
   "network",
   "socket",
@@ -30,10 +31,8 @@ const NETWORK_ERROR_PATTERNS = [
  */
 export function isNetworkError(errorMsg: string): boolean {
   const lowerMsg = errorMsg.toLowerCase();
-  return NETWORK_ERROR_PATTERNS.some(
-    (pattern) =>
-      lowerMsg.includes(pattern.toLowerCase()) ||
-      errorMsg.includes(pattern), // Also check original case for error codes
+  return NETWORK_ERROR_PATTERNS_LOWER.some((pattern) =>
+    lowerMsg.includes(pattern),
   );
 }
 
@@ -108,10 +107,12 @@ export async function executeTestSellRedPosition(
     }
 
     const bestBid = parseFloat(bids[0].price);
-    const totalBidLiquidity = bids.reduce(
-      (sum, bid) => sum + parseFloat(bid.size) * parseFloat(bid.price),
-      0,
-    );
+    let totalBidLiquidity = 0;
+    for (const bid of bids) {
+      const size = parseFloat(bid.size);
+      const price = parseFloat(bid.price);
+      totalBidLiquidity += size * price;
+    }
 
     logger?.info?.(
       `[TestSell] ✓ Orderbook available: best bid=${(bestBid * 100).toFixed(1)}¢, ` +
