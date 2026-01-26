@@ -448,7 +448,9 @@ export class HedgingStrategy {
     }
 
     if (!this.config.enabled) {
-      this.logger.warn("[Hedging] ⚠️ Strategy is DISABLED - check HEDGING_ENABLED env var");
+      if (this.logDeduper.shouldLog("Hedging:disabled_warning", 300_000)) {
+        this.logger.warn("[Hedging] ⚠️ Strategy is DISABLED - check HEDGING_ENABLED env var");
+      }
       return 0;
     }
 
@@ -842,12 +844,15 @@ export class HedgingStrategy {
       // CRITICAL: Check minimum hold time before ANY action (hedge or sell)
       // This prevents immediate sell/hedge after buying due to bid-ask spread
       //
-      // EXCEPTION: For losses AT or BEYOND the trigger threshold (triggerLossPct, default 20%),
-      // bypass the hold time check. If Data API says we're down 20%+, we should act immediately
-      // rather than waiting 2 minutes while the loss potentially grows worse.
+      // HOLD TIME BYPASS: ALL positions at or beyond the trigger threshold (triggerLossPct, default 20%)
+      // bypass the hold time check entirely. This is intentional behavior, not an exception.
+      //
+      // WHY: By the time we reach this code, line 788 has already filtered out positions below
+      // the trigger threshold. So ALL hedge candidates here will bypass hold time.
       //
       // RATIONALE: The hold time was meant to prevent selling due to temporary bid-ask spread,
-      // but a 20%+ loss is NOT a temporary spread issue - it's a real loss that needs attention.
+      // but a 20%+ loss is NOT a temporary spread issue - it's a real loss that needs immediate action.
+      // Waiting 2 minutes while the loss grows worse is counterproductive.
       const lossPct = Math.abs(position.pnlPct);
       const shouldBypassHoldTime = position.pnlPct < 0 && lossPct >= this.config.triggerLossPct;
       
