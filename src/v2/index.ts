@@ -350,6 +350,13 @@ const PRESETS: Record<Preset, Config> = {
       catastrophicLossPct: 40,
       highWinProbPriceThreshold: 0.9,
     },
+    // Conservative: Lower risk tolerance for profitability optimizer
+    profitabilityOptimizer: {
+      enabled: true,
+      minExpectedValueUsd: 1.0,
+      riskTolerance: 0.3,
+      logRecommendations: false,
+    },
   },
   balanced: {
     autoSell: {
@@ -456,6 +463,13 @@ const PRESETS: Record<Preset, Config> = {
       catastrophicLossPct: 50,
       highWinProbPriceThreshold: 0.85,
     },
+    // Balanced: Moderate risk tolerance for profitability optimizer
+    profitabilityOptimizer: {
+      enabled: true,
+      minExpectedValueUsd: 0.5,
+      riskTolerance: 0.5,
+      logRecommendations: false,
+    },
   },
   aggressive: {
     autoSell: {
@@ -561,6 +575,13 @@ const PRESETS: Record<Preset, Config> = {
       hedgeTriggerLossPct: 25,
       catastrophicLossPct: 60,
       highWinProbPriceThreshold: 0.8,
+    },
+    // Aggressive: Higher risk tolerance for profitability optimizer
+    profitabilityOptimizer: {
+      enabled: true,
+      minExpectedValueUsd: 0.25,
+      riskTolerance: 0.7,
+      logRecommendations: false,
     },
   },
 };
@@ -1383,52 +1404,6 @@ function analyzePortfolioProfitability(cfg: Config): OptimizationResult[] {
   }
   
   return actionableRecs;
-}
-
-/**
- * Get profitability-adjusted action for a position
- * 
- * Returns the optimizer's recommended action if it has higher EV than the
- * current strategy would suggest, or null to proceed with normal logic.
- */
-function getProfitabilityGuidedAction(
-  p: Position, 
-  cfg: Config
-): { action: "STACK" | "HEDGE_DOWN" | "HEDGE_UP" | "SELL" | null; sizeUsd: number; ev: number } {
-  if (!cfg.profitabilityOptimizer.enabled || !state.profitabilityOptimizer) {
-    return { action: null, sizeUsd: 0, ev: 0 };
-  }
-
-  const portfolioValue = state.balance + state.positions.reduce((sum, pos) => sum + pos.value, 0);
-  const availableCash = getAvailableBalance(cfg);
-  
-  const analyzablePos = toAnalyzablePosition(p);
-  const result = state.profitabilityOptimizer.analyzePosition(
-    analyzablePos,
-    availableCash,
-    portfolioValue,
-  );
-  
-  // Only return actionable recommendations above minimum EV
-  const bestAction = result.rankedActions[0];
-  if (bestAction.expectedValueUsd < cfg.profitabilityOptimizer.minExpectedValueUsd) {
-    return { action: null, sizeUsd: 0, ev: 0 };
-  }
-  
-  // Map optimizer action to tradeable action
-  switch (bestAction.action) {
-    case "STACK":
-    case "HEDGE_DOWN":
-    case "HEDGE_UP":
-    case "SELL":
-      return { 
-        action: bestAction.action, 
-        sizeUsd: result.recommendedSizeUsd,
-        ev: bestAction.expectedValueUsd,
-      };
-    default:
-      return { action: null, sizeUsd: 0, ev: 0 };
-  }
 }
 
 // ============ LOGGING ============
@@ -2911,6 +2886,15 @@ async function cycle(walletAddr: string, cfg: Config) {
     return;
   }
 
+  // Run profitability optimizer analysis and build map for quick lookup
+  // This is used in step 8 for positions that don't match rule-based strategies
+  const profitRecommendations = analyzePortfolioProfitability(cfg);
+  const profitRecMap = new Map<string, OptimizationResult>();
+  for (const rec of profitRecommendations) {
+    const subject = rec.subject as AnalyzablePosition;
+    profitRecMap.set(subject.tokenId, rec);
+  }
+
   // Process each position ONCE based on priority
   // PRIORITY ORDER (matches V1 orchestrator):
   // 1. AutoSell - guaranteed profit near $1
@@ -2919,6 +2903,7 @@ async function cycle(walletAddr: string, cfg: Config) {
   // 4. Scalp - take profits on winners
   // 5. Stack - double down on winners
   // 6. Endgame - ride high-confidence to finish
+  // 8. ProfitabilityOptimizer - catch profitable opportunities that don't fit patterns
 
   for (const p of positions) {
     // Skip if already acted on (sold permanently)

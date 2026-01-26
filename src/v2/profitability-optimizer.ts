@@ -509,8 +509,9 @@ export class ProfitabilityOptimizer {
     const stackingBonus = this.config.stackingBonus;
     const expectedValueUsd = baseEv * stackingBonus;
 
-    // Apply spread penalty
-    const spreadPenalty = (position.spreadBps ?? 0) * this.config.spreadPenaltyPerBps * proposedStackUsd;
+    // Apply spread penalty (spreadBps is in basis points, i.e. 1/10,000)
+    // 50 bps spread on $100 trade = 0.5% = $0.50 penalty
+    const spreadPenalty = ((position.spreadBps ?? 0) / 10000) * proposedStackUsd;
     const adjustedEv = expectedValueUsd - spreadPenalty;
 
     const confidence = this.computeConfidence(winProbability, position.spreadBps);
@@ -585,7 +586,7 @@ export class ProfitabilityOptimizer {
     return {
       action: "HEDGE_DOWN",
       expectedValueUsd: adjustedEv,
-      riskAdjustedEv: adjustedEv * (1 + this.config.riskTolerance), // Hedges get risk bonus
+      riskAdjustedEv: adjustedEv * this.config.riskTolerance, // Consistent with other actions
       confidence,
       maxLossUsd,
       maxGainUsd,
@@ -737,11 +738,9 @@ export class ProfitabilityOptimizer {
     const baseEv =
       winProbability * maxGainUsd - (1 - winProbability) * maxLossUsd;
 
-    // Apply spread penalty
-    const spreadPenalty =
-      (opportunity.spreadBps ?? 0) *
-      this.config.spreadPenaltyPerBps *
-      proposedSizeUsd;
+    // Apply spread penalty (spreadBps is in basis points, i.e. 1/10,000)
+    // 50 bps spread on $100 trade = 0.5% = $0.50 penalty
+    const spreadPenalty = ((opportunity.spreadBps ?? 0) / 10000) * proposedSizeUsd;
     const expectedValueUsd = baseEv - spreadPenalty;
 
     const confidence = this.computeConfidence(
@@ -800,7 +799,12 @@ export class ProfitabilityOptimizer {
     // Kelly criterion-inspired sizing
     // Bet size = (p * b - q) / b where p = win prob, q = 1-p, b = odds
     // Simplified: bet fraction of portfolio proportional to edge
-    const edge = action.riskAdjustedEv / (action.maxLossUsd || 1);
+    // For riskless actions (HOLD/SELL), Kelly doesn't apply
+    const isRisklessAction = action.action === "HOLD" || action.action === "SELL";
+    let edge = 0;
+    if (!isRisklessAction && action.maxLossUsd > 0) {
+      edge = action.riskAdjustedEv / action.maxLossUsd;
+    }
     const kellyFraction = Math.max(0, Math.min(0.25, edge)); // Cap at 25%
 
     const kellySuggested = portfolioValueUsd * kellyFraction;
