@@ -287,3 +287,81 @@ describe("Falling Knife Slippage Scenarios", () => {
     assert.ok(wouldFill >= fallingKnifeMin, "Should fill at 16¢");
   });
 });
+
+describe("sellSlippagePct vs minAcceptablePrice (Jan 2025 fix)", () => {
+  /**
+   * These tests document the fix for the "Sale blocked: best bid is X but minimum acceptable is Y" errors.
+   *
+   * PROBLEM (before fix):
+   * - sellPosition() computed minAcceptablePrice from CACHED position.currentBidPrice
+   * - postOrder() fetched a FRESH orderbook where actual bestBid could be different
+   * - When fresh bestBid < cached-based minAcceptablePrice, sale was blocked
+   *
+   * SOLUTION (after fix):
+   * - Pass sellSlippagePct to postOrder() instead of pre-computed minAcceptablePrice
+   * - postOrder() computes minAcceptablePrice from the FRESH bestBid it fetches
+   * - Price protection is now based on actual current market conditions
+   */
+
+  test("stale cached price vs fresh orderbook - the original problem", () => {
+    // This scenario shows WHY the fix was needed
+    const cachedBid = 0.658; // Cached bid: 65.8¢
+    const freshBid = 0.53; // Fresh bid: 53¢ (market dropped!)
+    const slippagePct = 2;
+
+    // OLD BEHAVIOR (broken):
+    // minAcceptablePrice computed from stale cached bid
+    const oldMinAcceptable = calculateMinAcceptablePrice(cachedBid, slippagePct);
+    // 65.8¢ * 0.98 = 64.48¢
+    assert.equal(oldMinAcceptable.toFixed(4), "0.6448");
+
+    // Result: freshBid (53¢) < oldMinAcceptable (64.48¢) => BLOCKED!
+    const wouldBeBlocked = freshBid < oldMinAcceptable;
+    assert.ok(wouldBeBlocked, "Old behavior would block this sale");
+
+    // NEW BEHAVIOR (fixed):
+    // minAcceptablePrice computed from FRESH orderbook bid
+    const newMinAcceptable = calculateMinAcceptablePrice(freshBid, slippagePct);
+    // 53¢ * 0.98 = 51.94¢
+    assert.equal(newMinAcceptable.toFixed(4), "0.5194");
+
+    // Result: freshBid (53¢) >= newMinAcceptable (51.94¢) => EXECUTES!
+    const wouldExecute = freshBid >= newMinAcceptable;
+    assert.ok(wouldExecute, "New behavior allows the sale to execute");
+  });
+
+  test("fresh bid-based slippage ensures price protection is current", () => {
+    // When using sellSlippagePct, the floor price moves WITH the market
+    const scenarios = [
+      { freshBid: 0.80, slippage: 2, minAcceptable: 0.784 },
+      { freshBid: 0.60, slippage: 2, minAcceptable: 0.588 },
+      { freshBid: 0.40, slippage: 2, minAcceptable: 0.392 },
+      { freshBid: 0.50, slippage: 25, minAcceptable: 0.375 }, // Falling knife
+    ];
+
+    for (const { freshBid, slippage, minAcceptable } of scenarios) {
+      const computed = calculateMinAcceptablePrice(freshBid, slippage);
+      assert.equal(
+        computed.toFixed(3),
+        minAcceptable.toFixed(3),
+        `At ${freshBid * 100}¢ bid with ${slippage}% slippage`,
+      );
+    }
+  });
+
+  test("sellSlippagePct preserves protection against price manipulation", () => {
+    // Even with fresh-bid based slippage, we still get protection
+    // against large price drops during the actual order execution
+    const freshBid = 0.50;
+    const slippagePct = 2;
+    const minAcceptable = calculateMinAcceptablePrice(freshBid, slippagePct);
+
+    // If price drops 3% during execution (more than slippage), order is blocked
+    const executionBid = 0.48; // 4% drop from fresh bid
+    assert.ok(executionBid < minAcceptable, "Large drop during execution is still blocked");
+
+    // If price drops only 1% during execution (within slippage), order executes
+    const smallDropBid = 0.495; // 1% drop
+    assert.ok(smallDropBid >= minAcceptable, "Small drop during execution is allowed");
+  });
+});

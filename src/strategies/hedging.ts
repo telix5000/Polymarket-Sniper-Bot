@@ -32,7 +32,7 @@ import {
   acquireHedgeLock,
   releaseHedgeLock,
 } from "../utils/funds-allowance.util";
-import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR, calculateMinAcceptablePrice, FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
+import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR, FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
 
 /**
  * Hedging Direction - determines when hedging is active
@@ -1900,10 +1900,11 @@ export class HedgingStrategy {
       // where we need to exit and salvage whatever capital remains.
       // FALLING_KNIFE_SLIPPAGE_PCT (25%) is more liberal than normal sells but
       // still recovers meaningful value rather than accepting near-zero prices.
-      // FIX: Use currentBidPrice (actual executable price) instead of currentPrice
-      // to prevent "Sale blocked" errors when bid < currentPrice - slippage.
-      const referencePrice = position.currentBidPrice ?? position.currentPrice;
-      const minPrice = calculateMinAcceptablePrice(referencePrice, FALLING_KNIFE_SLIPPAGE_PCT);
+      //
+      // FIX (Jan 2025): Use sellSlippagePct to compute minAcceptablePrice from FRESH
+      // orderbook data that postOrder fetches, rather than stale cached prices.
+      // This prevents "Sale blocked" errors when the actual market price has dropped
+      // below the cached position.currentBidPrice.
 
       const result = await postOrder({
         client: this.client,
@@ -1913,8 +1914,8 @@ export class HedgingStrategy {
         outcome: orderOutcome,
         side: "SELL",
         sizeUsd: currentValue,
-        // Use falling knife slippage (25%) for graceful exit
-        minAcceptablePrice: minPrice,
+        // Use falling knife slippage (25%) for graceful exit, computed from fresh orderbook
+        sellSlippagePct: FALLING_KNIFE_SLIPPAGE_PCT,
         logger: this.logger,
         skipDuplicatePrevention: true,
         skipMinOrderSizeCheck: true, // Allow selling small positions during liquidation

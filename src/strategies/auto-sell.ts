@@ -11,7 +11,6 @@ import {
 import { notifySell } from "../services/trade-notification.service";
 import {
   FALLING_KNIFE_SLIPPAGE_PCT,
-  calculateMinAcceptablePrice,
 } from "./constants";
 import { postOrder } from "../utils/post-order.util";
 
@@ -617,9 +616,10 @@ export class AutoSellStrategy {
       const expectedProfit = (currentPrice - entryPrice) * position.size;
       const profitPct = entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0;
       
-      // Use FALLING_KNIFE_SLIPPAGE_PCT (25%) for reliable fills
-      // This matches hedging/stop-loss methodology
-      const minAcceptablePrice = calculateMinAcceptablePrice(currentPrice, FALLING_KNIFE_SLIPPAGE_PCT);
+      // FIX (Jan 2025): Use sellSlippagePct to compute minAcceptablePrice from FRESH
+      // orderbook data that postOrder fetches, rather than stale cached prices.
+      // This prevents "Sale blocked" errors when the actual market price has dropped
+      // below the cached position price.
       
       this.logger.info(
         `[AutoSell] Executing ${strategyLabel} sell: ${position.size.toFixed(2)} shares at ~${(currentPrice * 100).toFixed(1)}¢ ` +
@@ -635,8 +635,8 @@ export class AutoSellStrategy {
         outcome: this.normalizeOutcomeForOrder(position.side),
         side: "SELL",
         sizeUsd,
-        // FALLING_KNIFE_SLIPPAGE_PCT (25%) for reliable fills - same as hedging
-        minAcceptablePrice,
+        // FALLING_KNIFE_SLIPPAGE_PCT (25%) for reliable fills, computed from fresh orderbook
+        sellSlippagePct: FALLING_KNIFE_SLIPPAGE_PCT,
         logger: this.logger,
         skipDuplicatePrevention: true, // Required for exits
         skipMinOrderSizeCheck: true, // Allow selling small positions - same as hedging

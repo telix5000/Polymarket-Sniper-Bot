@@ -4,7 +4,7 @@ import type { ConsoleLogger } from "../utils/logger.util";
 import type { PositionTracker, Position } from "./position-tracker";
 import { getDynamicStopLoss, PRICE_TIERS } from "./trade-quality";
 import { notifyStopLoss } from "../services/trade-notification.service";
-import { calculateMinAcceptablePrice, FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
+import { FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
 
 /**
  * Minimum acceptable price for emergency exit orders (stop-loss, liquidation).
@@ -514,6 +514,9 @@ export class StopLossStrategy {
       // Using FALLING_KNIFE_SLIPPAGE_PCT (25%) instead of hardcoded 1¢ floor
       // This is more liberal than normal sells but still recovers meaningful value
       // Example: At 50¢ bid, accepts down to 37.5¢ (still 75% of bid value)
+      //
+      // Note: Using sellSlippagePct ensures the price protection is based on the FRESH
+      // orderbook data that postOrder fetches, avoiding any staleness issues.
       const result = await postOrder({
         client: this.client,
         wallet,
@@ -522,7 +525,7 @@ export class StopLossStrategy {
         outcome: "YES",
         side: "SELL",
         sizeUsd,
-        minAcceptablePrice: calculateMinAcceptablePrice(sellPrice, FALLING_KNIFE_SLIPPAGE_PCT),
+        sellSlippagePct: FALLING_KNIFE_SLIPPAGE_PCT,
         logger: this.logger,
         priority: true, // High priority for stop-loss
         skipDuplicatePrevention: true, // Stop-loss must bypass duplicate prevention

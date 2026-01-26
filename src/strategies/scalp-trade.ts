@@ -73,7 +73,7 @@ import {
   TOKEN_ID_DISPLAY_LENGTH,
 } from "../utils/log-deduper.util";
 import { notifyScalp } from "../services/trade-notification.service";
-import { calculateMinAcceptablePrice, DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
+import { DEFAULT_SELL_SLIPPAGE_PCT } from "./constants";
 
 /**
  * Scalp Take-Profit Configuration
@@ -1994,14 +1994,14 @@ export class ScalpTradeStrategy {
         return false;
       }
 
-      // FIX: Compute minAcceptablePrice from the current best bid (executable price),
-      // NOT from effectiveLimitPrice (which can be the PROFIT target).
-      // This largely prevents "Sale blocked: best bid is X but minimum acceptable is Y" errors
-      // when the target is higher than the current bid (e.g., target=66¢, bestBid=64¢),
-      // and aligns behavior with sell-early.ts and auto-sell.ts. Note: in fast markets the
-      // stored bid can still be stale relative to the preflight orderbook, so the check may
-      // occasionally fail even with bid-based slippage.
-      const referencePrice = position.currentBidPrice ?? effectiveLimitPrice;
+      // FIX (Jan 2025): Use sellSlippagePct to compute minAcceptablePrice from FRESH orderbook data.
+      // Previously, minAcceptablePrice was computed from stale cached position.currentBidPrice,
+      // which caused "Sale blocked: best bid is X but minimum acceptable is Y" errors when
+      // the actual market price dropped below the cached price.
+      //
+      // By passing sellSlippagePct instead of pre-computed minAcceptablePrice, postOrder()
+      // computes the floor price from the FRESH best bid it fetches, ensuring the price
+      // protection is based on actual current market conditions.
 
       const result = await postOrder({
         client: this.client,
@@ -2011,10 +2011,9 @@ export class ScalpTradeStrategy {
         outcome: (position.side?.toUpperCase() as "YES" | "NO") || "YES",
         side: "SELL",
         sizeUsd: notionalUsd,
-        // Apply 2% slippage tolerance from the current bid price to ensure profitable trades execute.
-        // Previously this used effectiveLimitPrice (target), which could block sells when
-        // bestBid < target - slippage (e.g., target=66¢, bestBid=64¢ blocked because 64 < 64.68).
-        minAcceptablePrice: calculateMinAcceptablePrice(referencePrice, DEFAULT_SELL_SLIPPAGE_PCT),
+        // Use sellSlippagePct to compute minAcceptablePrice from FRESH orderbook best bid.
+        // This ensures price protection is based on actual market conditions, not stale cached data.
+        sellSlippagePct: DEFAULT_SELL_SLIPPAGE_PCT,
         logger: this.logger,
         skipDuplicatePrevention: true,
         // Pass minOrderUsd so preflight and submission settings match
