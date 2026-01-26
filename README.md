@@ -15,6 +15,31 @@ STRATEGY_PRESET=aggressive PRIVATE_KEY=0x... RPC_URL=https://polygon-rpc.com npm
 TARGET_ADDRESSES=0xabc...,0xdef... PRIVATE_KEY=0x... RPC_URL=https://polygon-rpc.com npm run start:v2
 ```
 
+## ⚠️ Risk Management
+
+### Position Size Limits
+Set strict limits to prevent oversized positions:
+
+```bash
+ABSOLUTE_MAX_POSITION_USD=25      # Hard cap per position
+MAX_TOTAL_EXPOSURE_USD=200        # Total portfolio limit
+```
+
+### Winner Protection
+Positions at $0.90+ are protected from trimming (about to pay $1.00)
+
+### One Action Per Position
+Each position can only be acted on once per session:
+- Can't stack + hedge same position
+- Can't scalp + endgame same position
+- Prevents runaway position sizing
+
+### Portfolio Rebalancing
+AutoSell automatically rebalances your portfolio:
+- Emergency trim: Immediate for oversized non-winners
+- Regular trim: Every 10min for portfolio health
+- Smart trimming: Sells weakest greens first (lowest profit %, oldest first)
+
 ## Environment Variables
 
 ### Required

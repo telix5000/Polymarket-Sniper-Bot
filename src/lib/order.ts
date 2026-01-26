@@ -48,6 +48,13 @@ export interface PostOrderInput {
 export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
   const { client, tokenId, side, sizeUsd, logger, maxAcceptablePrice } = input;
 
+  // HARD CAP: Absolute maximum position size (overrides ALL strategies)
+  const absoluteMaxUsd = parseFloat(process.env.ABSOLUTE_MAX_POSITION_USD ?? "25");
+  if (sizeUsd > absoluteMaxUsd) {
+    logger?.warn?.(`🚫 ORDER BLOCKED: $${sizeUsd.toFixed(2)} exceeds limit ($${absoluteMaxUsd})`);
+    return { success: false, reason: "EXCEEDS_ABSOLUTE_MAX" };
+  }
+
   // Check live trading
   if (!isLiveTradingEnabled()) {
     logger?.warn?.(`[SIM] ${side} ${sizeUsd.toFixed(2)} USD - live trading disabled`);
