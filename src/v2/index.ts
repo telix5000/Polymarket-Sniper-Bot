@@ -809,8 +809,18 @@ async function maybeSendSummary() {
 
   ledger.lastSummary = Date.now();
   const summary = getLedgerSummary();
-  log(summary.replace(/<[^>]*>/g, "")); // Log without HTML tags
-  queueTelegramMessage(summary);
+  log(stripHtmlForLogging(summary));
+
+  if (state.telegram) {
+    await axios
+      .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
+        chat_id: state.telegram.chatId,
+        text: summary,
+        parse_mode: "HTML",
+        disable_notification: state.telegram.silent,
+      })
+      .catch((e) => log(`⚠️ Telegram summary error: ${e.message}`));
+  }
 }
 
 // ============ RISK MANAGEMENT ============
@@ -1576,8 +1586,18 @@ async function alertTrade(
     msg = `${side} ${icon} | <b>${escapedStrategy}</b>\n${escapedOutcome} ${$(sizeUsd)} | ${escapeHtml(errorMsg || "Failed")}`;
   }
 
-  log(`📢 ${side} ${icon} | ${strategy} | ${outcome} ${$(sizeUsd)}${priceStr}${balanceStr}${pnlStr.replace("&amp;", "&")}`);
-  queueTelegramMessage(msg);
+  log(`📢 ${side} ${icon} | ${strategy} | ${outcome} ${$(sizeUsd)}${priceStr}${balanceStr}${stripHtmlForLogging(pnlStr)}`);
+
+  if (state.telegram) {
+    await axios
+      .post(`https://api.telegram.org/bot${state.telegram.token}/sendMessage`, {
+        chat_id: state.telegram.chatId,
+        text: msg,
+        parse_mode: "HTML",
+        disable_notification: state.telegram.silent,
+      })
+      .catch((e) => log(`⚠️ Telegram error: ${e.message}`));
+  }
 }
 
 /** Send startup/shutdown alerts with rich context */
@@ -1597,6 +1617,18 @@ function escapeHtml(text: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+/**
+ * Strip HTML tags and decode HTML entities for console logging
+ * Inverse of escapeHtml() - converts HTML-formatted text to plain text
+ */
+function stripHtmlForLogging(text: string): string {
+  return text
+    .replace(/<[^>]*>/g, "") // Remove HTML tags
+    .replace(/&amp;/g, "&") // Decode &amp;
+    .replace(/&lt;/g, "<") // Decode &lt;
+    .replace(/&gt;/g, ">"); // Decode &gt;
 }
 
 /** Format USD amount as $1.23 */
@@ -1643,8 +1675,34 @@ async function fetchPositions(wallet: string): Promise<Position[]> {
     return state.positions;
 
   try {
-    const { data } = await axios.get(`${API}/positions?user=${wallet}`);
-    const rawPositions = (data || [])
+    // Fetch all positions using pagination (API default limit is 25, max is 500)
+    const POSITIONS_LIMIT = 500; // Maximum allowed by API
+    const MAX_OFFSET = 10000; // API maximum offset
+    const allPositionsRaw: any[] = [];
+    let offset = 0;
+
+    while (offset < MAX_OFFSET) {
+      const { data } = await axios.get(
+        `${API}/positions?user=${wallet}&limit=${POSITIONS_LIMIT}&offset=${offset}`,
+      );
+      const pageData = data || [];
+      if (!Array.isArray(pageData) || pageData.length === 0) {
+        break; // No more positions
+      }
+      allPositionsRaw.push(...pageData);
+      if (pageData.length < POSITIONS_LIMIT) {
+        break; // Last page (incomplete)
+      }
+      offset += POSITIONS_LIMIT;
+    }
+
+    if (offset >= MAX_OFFSET) {
+      log(
+        `⚠️ Reached maximum pagination offset (${MAX_OFFSET}). Positions list may be truncated due to API offset limits.`,
+      );
+    }
+
+    const rawPositions = allPositionsRaw
       .filter((p: any) => Number(p.size) > 0 && !p.redeemable)
       .map((p: any) => {
         const size = Number(p.size),
@@ -1697,14 +1755,38 @@ interface RedeemablePosition {
 
 async function fetchRedeemable(wallet: string): Promise<RedeemablePosition[]> {
   try {
-    const { data } = await axios.get(
-      `${API}/positions?user=${wallet}&redeemable=true`,
-    );
-    if (!data || !Array.isArray(data)) return [];
+    // Fetch all redeemable positions using pagination (API default limit is 25, max is 500)
+    const POSITIONS_LIMIT = 500;
+    const MAX_OFFSET = 10000;
+    const allPositionsRaw: any[] = [];
+    let offset = 0;
+
+    while (offset < MAX_OFFSET) {
+      const { data } = await axios.get(
+        `${API}/positions?user=${wallet}&redeemable=true&limit=${POSITIONS_LIMIT}&offset=${offset}`,
+      );
+      const pageData = data || [];
+      if (!Array.isArray(pageData) || pageData.length === 0) {
+        break;
+      }
+      allPositionsRaw.push(...pageData);
+      if (pageData.length < POSITIONS_LIMIT) {
+        break;
+      }
+      offset += POSITIONS_LIMIT;
+    }
+
+    if (offset >= MAX_OFFSET) {
+      log(
+        `⚠️ Reached maximum pagination offset (${MAX_OFFSET}). Redeemable positions list may be truncated due to API offset limits.`,
+      );
+    }
+
+    if (allPositionsRaw.length === 0) return [];
 
     // Group by conditionId and sum values (in case of multiple tokens per condition)
     const byCondition = new Map<string, number>();
-    for (const p of data) {
+    for (const p of allPositionsRaw) {
       const cid = p.conditionId;
       if (!cid) continue;
       const size = Number(p.size) || 0;

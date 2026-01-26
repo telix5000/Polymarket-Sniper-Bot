@@ -140,9 +140,34 @@ async function getPositions(
   }
 
   try {
-    const { data } = await axios.get(`${API_BASE}/positions?user=${wallet}`);
+    // Fetch all positions using pagination (API default limit is 25, max is 500)
+    const POSITIONS_LIMIT = 500; // Maximum allowed by API
+    const MAX_OFFSET = 10000; // API maximum offset
+    const allPositionsRaw: any[] = [];
+    let offset = 0;
 
-    positionsCache = (data || [])
+    while (offset < MAX_OFFSET) {
+      const { data } = await axios.get(
+        `${API_BASE}/positions?user=${wallet}&limit=${POSITIONS_LIMIT}&offset=${offset}`,
+      );
+      const pageData = data || [];
+      if (!Array.isArray(pageData) || pageData.length === 0) {
+        break; // No more positions
+      }
+      allPositionsRaw.push(...pageData);
+      if (pageData.length < POSITIONS_LIMIT) {
+        break; // Last page (incomplete)
+      }
+      offset += POSITIONS_LIMIT;
+    }
+
+    if (offset >= MAX_OFFSET) {
+      console.warn(
+        `[API] ⚠️ Reached maximum pagination offset (${MAX_OFFSET}). Positions list may be truncated due to API offset limits.`,
+      );
+    }
+
+    positionsCache = allPositionsRaw
       .filter((p: any) => {
         const size = Number(p.size) || 0;
         return size > 0 && !p.redeemable;
