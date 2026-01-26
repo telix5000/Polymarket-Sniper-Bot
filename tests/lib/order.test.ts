@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it, beforeEach, afterEach, mock } from "node:test";
-import { postOrder, clearCooldowns, PostOrderInput } from "../../src/lib/order";
+import { postOrder, clearCooldowns } from "../../src/lib/order";
 import { ORDER } from "../../src/lib/constants";
 
 // Mock ClobClient

@@ -31,7 +31,8 @@ export interface PostOrderInput {
   logger?: Logger;
   /**
    * Optional: exact number of shares to sell for SELL orders.
-   * When provided, will use the minimum of this value and the calculated shares.
+   * When provided, this is the total share limit across all iterations.
+   * The loop will stop when either sizeUsd is exhausted or shares are exhausted.
    * For BUY orders, this parameter is ignored.
    */
   shares?: number;
@@ -140,11 +141,19 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     // Execute order with retry logic
     const orderSide = isBuy ? Side.BUY : Side.SELL;
     let remaining = sizeUsd;
+    let remainingShares = input.shares; // Track remaining shares for SELL orders
     let totalFilled = 0;
     let weightedPrice = 0;
     let retryCount = 0;
 
-    while (remaining > ORDER.MIN_ORDER_USD && retryCount < ORDER.MAX_RETRIES) {
+    // For SELL orders with shares specified, also check if remainingShares is exhausted
+    const shouldContinue = () => {
+      if (remaining <= ORDER.MIN_ORDER_USD) return false;
+      if (!isBuy && remainingShares !== undefined && remainingShares <= ORDER.MIN_SHARES_THRESHOLD) return false;
+      return retryCount < ORDER.MAX_RETRIES;
+    };
+
+    while (shouldContinue()) {
       // Refresh orderbook for each iteration
       const currentOrderBook = await client.getOrderBook(tokenId);
       const currentLevels = isBuy ? currentOrderBook.asks : currentOrderBook.bids;
@@ -157,17 +166,28 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       const levelPrice = parseFloat(level.price);
       const levelSize = parseFloat(level.size);
 
+      // Enforce maxAcceptablePrice on each iteration to provide price protection across retries
+      if (maxAcceptablePrice !== undefined) {
+        if (isBuy && levelPrice > maxAcceptablePrice) {
+          return { success: false, reason: "PRICE_TOO_HIGH" };
+        }
+        if (!isBuy && levelPrice < maxAcceptablePrice) {
+          return { success: false, reason: "PRICE_TOO_LOW" };
+        }
+      }
+
       // Calculate order size based on available liquidity
       // Convert USD amount to shares using current price
       const levelValue = levelSize * levelPrice;
       const orderValue = Math.min(remaining, levelValue);
       const orderShares = orderValue / levelPrice;
 
-      // For SELL orders, optionally use the provided shares value (capped by available liquidity)
+      // For SELL orders, optionally use the remaining shares value (capped by available liquidity)
       // For BUY orders, always use the calculated shares
-      const amount = !isBuy && input.shares !== undefined
-        ? Math.min(input.shares, orderShares)
-        : orderShares;
+      let amount = orderShares;
+      if (!isBuy && remainingShares !== undefined) {
+        amount = Math.min(remainingShares, orderShares);
+      }
 
       try {
         const signedOrder = await client.createMarketOrder({
@@ -184,6 +204,10 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           remaining -= filledValue;
           totalFilled += filledValue;
           weightedPrice += filledValue * levelPrice;
+          // Decrement remaining shares for SELL orders
+          if (!isBuy && remainingShares !== undefined) {
+            remainingShares -= amount;
+          }
           retryCount = 0; // Reset retry count on success
         } else {
           retryCount++;
