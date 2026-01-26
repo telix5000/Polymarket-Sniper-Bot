@@ -1,5 +1,8 @@
+# Stage 0: Base image to avoid repeated metadata fetches
+FROM node:20-alpine AS base
+
 # Stage 1: Install dependencies
-FROM node:20-alpine AS deps
+FROM base AS deps
 WORKDIR /app
 
 # Copy only package files first for better cache utilization
@@ -10,7 +13,7 @@ COPY patches ./patches
 RUN npm ci --prefer-offline --no-audit --no-fund
 
 # Stage 2: Build TypeScript
-FROM node:20-alpine AS builder
+FROM base AS builder
 WORKDIR /app
 
 # Copy dependencies from deps stage
@@ -25,7 +28,7 @@ COPY src ./src
 RUN npm run build
 
 # Stage 3: Production dependencies only
-FROM node:20-alpine AS prod-deps
+FROM base AS prod-deps
 WORKDIR /app
 
 # Reuse fully installed (and patched) dependencies from the deps stage,
@@ -35,7 +38,7 @@ COPY --from=deps /app/node_modules ./node_modules
 RUN npm prune --omit=dev
 
 # Stage 4: Final runtime image
-FROM node:20-alpine AS runtime
+FROM base AS runtime
 WORKDIR /app
 
 # Install wireguard and networking tools. openresolv provides resolvconf for DNS updates.
