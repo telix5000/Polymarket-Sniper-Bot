@@ -290,7 +290,7 @@ test("postOrder returns skipped with NO_LIQUIDITY_AT_PRICE when orderbook bids d
       return {
         asks: [{ price: "0.60", size: "100" }],
         bids: [
-          { price: "0.40", size: "50" },  // Below limit
+          { price: "0.40", size: "50" }, // Below limit
           { price: "0.35", size: "100" }, // Below limit
         ],
       };
@@ -302,7 +302,9 @@ test("postOrder returns skipped with NO_LIQUIDITY_AT_PRICE when orderbook bids d
     getBalanceAllowance: async () => ({ balance: "100", allowance: "100" }),
     createMarketOrder: async () => ({ signed: true }),
     postOrder: async () => {
-      throw new Error("postOrder should not be called when no liquidity at price");
+      throw new Error(
+        "postOrder should not be called when no liquidity at price",
+      );
     },
   } as unknown as ClobClient;
 

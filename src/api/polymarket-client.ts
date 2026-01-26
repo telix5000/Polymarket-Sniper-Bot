@@ -406,7 +406,9 @@ export class PolymarketClient {
     const POSITIONS_LIMIT = 500; // Maximum allowed by Polymarket API
     const MAX_OFFSET = 10000; // API maximum offset
 
-    this.logger.debug(`[PolymarketClient] 📡 Fetching positions from API (with pagination)...`);
+    this.logger.debug(
+      `[PolymarketClient] 📡 Fetching positions from API (with pagination)...`,
+    );
 
     try {
       // Fetch all positions using pagination
@@ -419,7 +421,11 @@ export class PolymarketClient {
           timeout: this.apiTimeoutMs,
         });
 
-        if (!rawPositions || !Array.isArray(rawPositions) || rawPositions.length === 0) {
+        if (
+          !rawPositions ||
+          !Array.isArray(rawPositions) ||
+          rawPositions.length === 0
+        ) {
           break; // No more positions
         }
 

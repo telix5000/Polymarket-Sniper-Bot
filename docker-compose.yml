@@ -44,6 +44,12 @@ services:
       # - ARB_LIVE_TRADING=I_UNDERSTAND_THE_RISKS
       - ARB_DRY_RUN=true
 
+      # ======== DEBUG/TEST OPTIONS ========
+      # TEST_SELL_RED_POSITION: Set to true to test sell flow at startup
+      # Finds a position slightly in the red and sells it with debug logging
+      # Use to verify sells work, then DELETE or set to false
+      - TEST_SELL_RED_POSITION=${TEST_SELL_RED_POSITION:-false}
+
       # Optional: Builder credentials for gasless approvals
       # - POLY_BUILDER_API_KEY=${POLY_BUILDER_API_KEY}
       # - POLY_BUILDER_API_SECRET=${POLY_BUILDER_API_SECRET}
