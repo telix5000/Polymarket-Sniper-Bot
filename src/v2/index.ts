@@ -772,7 +772,16 @@ function getLedgerSummary(): string {
 /** Send periodic summary if enough time has passed */
 async function maybeSendSummary() {
   if (Date.now() - ledger.lastSummary < ledger.summaryIntervalMs) return;
-  if (ledger.buyCount + ledger.sellCount === 0) return; // No trades yet
+
+  // Always send summaries if user has positions, any balance, or completed trades
+  // This gives users a "portfolio status" update even when balance is depleted
+  const hasPositions = state.positions.length > 0;
+  const hasAnyBalance = state.balance >= 0 && state.sessionStartBalance > 0;
+  const hasTrades = ledger.buyCount + ledger.sellCount > 0;
+
+  if (!hasPositions && !hasAnyBalance && !hasTrades) {
+    return; // Nothing to report
+  }
 
   ledger.lastSummary = Date.now();
   const summary = getLedgerSummary();
@@ -786,7 +795,7 @@ async function maybeSendSummary() {
         parse_mode: "HTML",
         disable_notification: state.telegram.silent,
       })
-      .catch(() => {});
+      .catch((e) => log(`⚠️ Telegram summary error: ${e.message}`));
   }
 }
 
@@ -796,7 +805,10 @@ async function maybeSendSummary() {
  * Check if we can place an order based on risk limits
  * Returns { allowed: boolean, reason?: string }
  */
-function checkRiskLimits(cfg: Config, skipPositionCap = false): { allowed: boolean; reason?: string } {
+function checkRiskLimits(
+  cfg: Config,
+  skipPositionCap = false,
+): { allowed: boolean; reason?: string } {
   if (state.riskHalted) {
     return { allowed: false, reason: "Risk halted - limits exceeded" };
   }
@@ -862,7 +874,10 @@ function checkRiskLimits(cfg: Config, skipPositionCap = false): { allowed: boole
   if (!skipPositionCap) {
     const effectiveMax = cfg.risk.maxOpenPositions - cfg.risk.hedgeBuffer;
     if (state.positions.length >= effectiveMax) {
-      return { allowed: false, reason: `Position cap: ${state.positions.length} >= ${effectiveMax} (${cfg.risk.hedgeBuffer} slots reserved for hedges)` };
+      return {
+        allowed: false,
+        reason: `Position cap: ${state.positions.length} >= ${effectiveMax} (${cfg.risk.hedgeBuffer} slots reserved for hedges)`,
+      };
     }
   }
 
@@ -2119,6 +2134,14 @@ async function executeSell(
 
   if (!state.liveTrading) {
     log(`🔸 SELL [SIM] | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
+    await alertTrade(
+      "SELL",
+      `${reason} [SIM]`,
+      outcome,
+      sizeUsd,
+      curPrice,
+      true,
+    );
     recordTrade("SELL", outcome, reason, sizeUsd, curPrice || 0, true);
     recordOrderPlaced();
     return true;
@@ -2315,6 +2338,7 @@ async function executeBuy(
 
   if (!state.liveTrading) {
     log(`🔸 BUY [SIM] | ${reason} | ${outcome} ${$(sizeUsd)}${priceStr}`);
+    await alertTrade("BUY", `${reason} [SIM]`, outcome, sizeUsd, price, true);
     recordTrade("BUY", outcome, reason, sizeUsd, price || 0, true);
     recordOrderPlaced();
     // Record for adaptive learning
@@ -2691,10 +2715,23 @@ async function redeem(walletAddr: string, cfg: Config) {
           state.wallet,
         ).redeemPositions(USDC_ADDRESS, ZeroHash, pos.conditionId, INDEX_SETS);
       }
-      log(`✅ Redeem: ${tx.hash.slice(0, 10)}... | $${pos.value.toFixed(2)}`);
+      log(`⏳ Redeem: ${tx.hash.slice(0, 10)}... | $${pos.value.toFixed(2)} (confirming...)`);
       await tx.wait();
+      log(`✅ Redeem confirmed: ${tx.hash.slice(0, 10)}...`);
+      // Send Telegram alert for successful redemption after confirmation
+      // Note: Redemptions are not recorded as trades to avoid skewing P&L statistics
+      await alert(
+        "REDEEM ✅",
+        `${$(pos.value)} redeemed | Tx: ${tx.hash.slice(0, 10)}...`,
+        true,
+      );
     } catch (e: any) {
       log(`❌ Redeem: ${e.message?.slice(0, 40)}`);
+      await alert(
+        "REDEEM ❌",
+        `${$(pos.value)} failed | ${e.message?.slice(0, 30) || "Unknown error"}`,
+        false,
+      );
     }
   }
 }
@@ -4026,7 +4063,7 @@ export async function startV2() {
   // ============ MAIN LOOP WITH IN-FLIGHT GUARD ============
   let cycleRunning = false;
   let skippedLogged = false;
-  
+
   const runCycle = async () => {
     if (cycleRunning) {
       if (!skippedLogged) {

@@ -100,7 +100,7 @@ describe("PolymarketClient", () => {
     test("should detect hedged up position with 2+ BUY orders", () => {
       const buyOrders = [
         { side: "BUY", size: 100, price: 0.85 }, // Initial buy
-        { side: "BUY", size: 50, price: 0.90 },  // Hedge up buy
+        { side: "BUY", size: 50, price: 0.9 }, // Hedge up buy
       ];
 
       // hasBeenHedgedUp uses the same logic as hasBeenStacked
@@ -114,45 +114,58 @@ describe("PolymarketClient", () => {
       ];
 
       const hasBeenHedgedUp = buyOrders.length >= 2;
-      assert.equal(hasBeenHedgedUp, false, "1 BUY order = not yet hedged up, can proceed");
+      assert.equal(
+        hasBeenHedgedUp,
+        false,
+        "1 BUY order = not yet hedged up, can proceed",
+      );
     });
 
     test("should use same detection logic for stacked and hedged up", () => {
       // Both stacking and hedge up are "buy more of existing position" operations
       // They use the same detection logic: 2+ BUY orders = already done
-      
+
       const buyOrders = [
-        { side: "BUY", size: 100, price: 0.50 },
-        { side: "BUY", size: 50, price: 0.60 },
-        { side: "BUY", size: 25, price: 0.70 },
+        { side: "BUY", size: 100, price: 0.5 },
+        { side: "BUY", size: 50, price: 0.6 },
+        { side: "BUY", size: 25, price: 0.7 },
       ];
 
       const isStacked = buyOrders.length >= 2;
       const hasBeenHedgedUp = buyOrders.length >= 2;
-      
-      assert.equal(isStacked, hasBeenHedgedUp, "Stacked and hedged up detection should be identical");
-      assert.equal(isStacked, true, "3 BUY orders = both stacked and hedged up");
+
+      assert.equal(
+        isStacked,
+        hasBeenHedgedUp,
+        "Stacked and hedged up detection should be identical",
+      );
+      assert.equal(
+        isStacked,
+        true,
+        "3 BUY orders = both stacked and hedged up",
+      );
     });
 
     test("should prevent repeated hedge up across bot restarts", () => {
       // This test documents the bug that was fixed:
       // - Before: hedgedUpPositions was in-memory only, cleared on restart
       // - After: hasBeenHedgedUp uses API trade history, survives restarts
-      
+
       // Simulate scenario: bot restarted after hedge up
       // API trade history still shows 2 BUY orders
       const tradeHistoryFromApi = [
         { side: "BUY", timestamp: 1700000000, size: 100, price: 0.85 },
-        { side: "BUY", timestamp: 1700001000, size: 50, price: 0.90 }, // Previous hedge up
+        { side: "BUY", timestamp: 1700001000, size: 50, price: 0.9 }, // Previous hedge up
       ];
 
       // Even after restart (when in-memory Set would be empty),
       // API check prevents re-hedging
-      const hasBeenHedgedUp = tradeHistoryFromApi.filter(t => t.side === "BUY").length >= 2;
+      const hasBeenHedgedUp =
+        tradeHistoryFromApi.filter((t) => t.side === "BUY").length >= 2;
       assert.equal(
-        hasBeenHedgedUp, 
-        true, 
-        "API-based detection survives bot restart and prevents re-hedging"
+        hasBeenHedgedUp,
+        true,
+        "API-based detection survives bot restart and prevents re-hedging",
       );
     });
   });

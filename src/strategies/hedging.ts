@@ -32,7 +32,11 @@ import {
   acquireHedgeLock,
   releaseHedgeLock,
 } from "../utils/funds-allowance.util";
-import { POLYMARKET_TAKER_FEE_BPS, BASIS_POINTS_DIVISOR, FALLING_KNIFE_SLIPPAGE_PCT } from "./constants";
+import {
+  POLYMARKET_TAKER_FEE_BPS,
+  BASIS_POINTS_DIVISOR,
+  FALLING_KNIFE_SLIPPAGE_PCT,
+} from "./constants";
 import { PolymarketClient } from "../api/polymarket-client";
 
 /**
@@ -1578,7 +1582,12 @@ export class HedgingStrategy {
           position.tokenId,
         );
         if (alreadyHedgedUp) {
-          if (this.logDeduper.shouldLog(`HedgeUp:already:${position.tokenId}`, 300_000)) {
+          if (
+            this.logDeduper.shouldLog(
+              `HedgeUp:already:${position.tokenId}`,
+              300_000,
+            )
+          ) {
             this.logger.info(
               `[Hedging] 🔒 ${tokenIdShort}... already hedged up (detected via trade history API)`,
             );

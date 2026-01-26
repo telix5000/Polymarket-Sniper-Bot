@@ -196,12 +196,14 @@ export class AutoSellStrategy {
       const disputeInfo = this.config.disputeWindowExitEnabled
         ? ` disputeExit=${(this.config.disputeWindowExitPrice ?? 0.999) * 100}¢`
         : "";
-      const staleInfo = this.config.stalePositionHours && this.config.stalePositionHours > 0
-        ? ` stalePositionHours=${this.config.stalePositionHours}`
-        : "";
-      const expiryHoldInfo = this.config.staleExpiryHoldHours && this.config.staleExpiryHoldHours > 0
-        ? ` expiryHoldHours=${this.config.staleExpiryHoldHours}`
-        : "";
+      const staleInfo =
+        this.config.stalePositionHours && this.config.stalePositionHours > 0
+          ? ` stalePositionHours=${this.config.stalePositionHours}`
+          : "";
+      const expiryHoldInfo =
+        this.config.staleExpiryHoldHours && this.config.staleExpiryHoldHours > 0
+          ? ` expiryHoldHours=${this.config.staleExpiryHoldHours}`
+          : "";
       const quickWinInfo = this.config.quickWinEnabled
         ? ` quickWin=${this.config.quickWinMaxHoldMinutes}m@${this.config.quickWinProfitPct}%`
         : "";
@@ -209,7 +211,7 @@ export class AutoSellStrategy {
         ? ` oversizedExit=$${this.config.oversizedExitThresholdUsd}@${this.config.oversizedExitHoursBeforeEvent}h`
         : "";
       this.logger.info(
-        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}${staleInfo}${quickWinInfo}${oversizedInfo}`,
+        `[AutoSell] Initialized: threshold=${(this.config.threshold * 100).toFixed(1)}¢ minHold=${this.config.minHoldSeconds}s${disputeInfo}${staleInfo}${expiryHoldInfo}${quickWinInfo}${oversizedInfo}`,
       );
     }
   }
@@ -595,7 +597,7 @@ export class AutoSellStrategy {
     const positions = this.positionTracker.getPositions();
     const staleThresholdMs = staleHours * 60 * 60 * 1000; // Convert hours to milliseconds
     const now = Date.now();
-    
+
     // Expiry-aware hold threshold (default 48 hours)
     const expiryHoldHours = this.config.staleExpiryHoldHours ?? 48;
     const expiryHoldMs = expiryHoldHours * 60 * 60 * 1000;
@@ -636,7 +638,12 @@ export class AutoSellStrategy {
           const hoursToExpiry = timeToExpiryMs / (60 * 60 * 1000);
           const posKey = `${pos.marketId}-${pos.tokenId}`;
           // Log once per position per expiry window (rate-limited by LogDeduper)
-          if (this.logDeduper.shouldLog(`stale_expiry_hold:${posKey}`, 60 * 60 * 1000)) {
+          if (
+            this.logDeduper.shouldLog(
+              `stale_expiry_hold:${posKey}`,
+              60 * 60 * 1000,
+            )
+          ) {
             this.logger.info(
               `[AutoSell] EXPIRY_HOLD: Skipping stale position (${hoursToExpiry.toFixed(1)}h to expiry, hold threshold=${expiryHoldHours}h) - waiting for resolution may be more profitable`,
             );
