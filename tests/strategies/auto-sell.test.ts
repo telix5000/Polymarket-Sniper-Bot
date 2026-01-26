@@ -42,6 +42,7 @@ describe("AutoSell Default Config", () => {
     assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.disputeWindowExitEnabled, true);
     assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.disputeWindowExitPrice, 0.999);
     assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.stalePositionHours, 24);
+    assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.staleExpiryHoldHours, 48);
   });
 });
 
@@ -846,6 +847,146 @@ describe("AutoSell Quick Win Logic", () => {
 
     // Quick win exit captures this momentum before price potentially reverses
     // If price drops back to 5¢, we'd have locked in $9.25 instead of $0
+  });
+});
+
+// === STALE EXPIRY HOLD TESTS ===
+
+describe("AutoSell Stale Expiry Hold Configuration", () => {
+  test("DEFAULT_AUTO_SELL_CONFIG has correct staleExpiryHoldHours default", () => {
+    assert.strictEqual(DEFAULT_AUTO_SELL_CONFIG.staleExpiryHoldHours, 48);
+  });
+
+  test("AUTO_SELL_STALE_EXPIRY_HOLD_HOURS defaults to 48 in balanced preset", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellStaleExpiryHoldHours, 48);
+  });
+
+  test("AUTO_SELL_STALE_EXPIRY_HOLD_HOURS can be overridden via env", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+      AUTO_SELL_STALE_EXPIRY_HOLD_HOURS: "72",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellStaleExpiryHoldHours, 72);
+  });
+
+  test("AUTO_SELL_STALE_EXPIRY_HOLD_HOURS can be disabled with 0", () => {
+    resetEnv();
+    Object.assign(process.env, baseEnv, {
+      STRATEGY_PRESET: "balanced",
+      AUTO_SELL_STALE_EXPIRY_HOLD_HOURS: "0",
+    });
+
+    const config = loadStrategyConfig();
+    assert.strictEqual(config?.autoSellStaleExpiryHoldHours, 0);
+  });
+});
+
+describe("AutoSell Stale Expiry Hold Logic", () => {
+  /**
+   * Helper function that simulates the expiry-aware hold logic from getStaleProfitablePositions()
+   * This tests the actual filtering logic that determines whether a position should be held for resolution
+   */
+  const shouldHoldForExpiry = (
+    pos: { marketEndTime?: number },
+    expiryHoldHours: number,
+    now: number = Date.now()
+  ): boolean => {
+    if (expiryHoldHours <= 0) return false;
+    if (pos.marketEndTime === undefined) return false;
+    
+    const timeToExpiryMs = pos.marketEndTime - now;
+    const expiryHoldMs = expiryHoldHours * 60 * 60 * 1000;
+    
+    return timeToExpiryMs > 0 && timeToExpiryMs <= expiryHoldMs;
+  };
+
+  test("position expiring within hold window should be held (not sold)", () => {
+    // Scenario: Event expires in 24 hours (within 48h hold window)
+    // Expected: shouldHoldForExpiry returns true → position NOT sold
+    const now = Date.now();
+    const expiryHoldHours = 48;
+    
+    const position = {
+      marketEndTime: now + (24 * 60 * 60 * 1000), // 24 hours from now
+    };
+    
+    const result = shouldHoldForExpiry(position, expiryHoldHours, now);
+    assert.strictEqual(result, true, "Position expiring in 24h should be held (within 48h window)");
+  });
+
+  test("position expiring AFTER hold window should be sold", () => {
+    // Scenario: Event expires in 120 hours (5 days) - well outside 48h hold window
+    // Expected: shouldHoldForExpiry returns false → position can be sold
+    const now = Date.now();
+    const expiryHoldHours = 48;
+    
+    const position = {
+      marketEndTime: now + (120 * 60 * 60 * 1000), // 120 hours (5 days) from now
+    };
+    
+    const result = shouldHoldForExpiry(position, expiryHoldHours, now);
+    assert.strictEqual(result, false, "Position expiring in 120h should NOT be held (outside 48h window)");
+  });
+
+  test("position without marketEndTime should be eligible for sale", () => {
+    // When we don't know when the market expires, we should sell stale positions
+    const now = Date.now();
+    const expiryHoldHours = 48;
+    
+    const position = {
+      marketEndTime: undefined,
+    };
+    
+    const result = shouldHoldForExpiry(position, expiryHoldHours, now);
+    assert.strictEqual(result, false, "Position without marketEndTime should NOT be held");
+  });
+
+  test("expiry hold disabled when staleExpiryHoldHours is 0", () => {
+    // When set to 0, always sell stale positions regardless of expiry
+    const now = Date.now();
+    const expiryHoldHours = 0; // DISABLED
+    
+    const position = {
+      marketEndTime: now + (12 * 60 * 60 * 1000), // 12 hours from now
+    };
+    
+    const result = shouldHoldForExpiry(position, expiryHoldHours, now);
+    assert.strictEqual(result, false, "Position should NOT be held when expiryHoldHours is 0");
+  });
+
+  test("position already expired should not trigger hold", () => {
+    // Edge case: marketEndTime is in the past
+    const now = Date.now();
+    const expiryHoldHours = 48;
+    
+    const position = {
+      marketEndTime: now - (1 * 60 * 60 * 1000), // 1 hour AGO (expired)
+    };
+    
+    const result = shouldHoldForExpiry(position, expiryHoldHours, now);
+    assert.strictEqual(result, false, "Expired position should NOT be held");
+  });
+
+  test("position at exact boundary of hold window", () => {
+    // Edge case: position expires at exactly expiryHoldHours
+    const now = Date.now();
+    const expiryHoldHours = 48;
+    
+    const position = {
+      marketEndTime: now + (48 * 60 * 60 * 1000), // Exactly 48 hours from now
+    };
+    
+    const result = shouldHoldForExpiry(position, expiryHoldHours, now);
+    assert.strictEqual(result, true, "Position at exact boundary should be held (<=, not <)");
   });
 });
 
