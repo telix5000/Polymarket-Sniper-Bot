@@ -9,11 +9,13 @@ Successfully improved CLOB preflight UNKNOWN_ERROR logging with minimal, surgica
 ## 📊 Changes Overview
 
 ### Files Modified (3)
+
 1. `src/clob/diagnostics.ts` - Enhanced UNKNOWN_ERROR case diagnostics
 2. `src/polymarket/preflight.ts` - Clarified NON_FATAL warning messages
 3. `DIAGNOSTICS_IMPROVEMENTS.md` - Comprehensive documentation
 
 ### Lines Changed
+
 - **+178 additions** (mostly documentation)
 - **-5 deletions**
 - **Net impact: +173 lines**
@@ -23,6 +25,7 @@ Successfully improved CLOB preflight UNKNOWN_ERROR logging with minimal, surgica
 ## 🎯 What Was Fixed
 
 ### Before (Confusing)
+
 ```
 [WARN] [CLOB][Preflight] FAIL stage=auth status=none code=none message=unknown_error
 [WARN] [CLOB][Preflight] UNKNOWN_ERROR status=undefined severity=NON_FATAL issue=UNKNOWN
@@ -30,6 +33,7 @@ Successfully improved CLOB preflight UNKNOWN_ERROR logging with minimal, surgica
 ```
 
 ### After (Clear)
+
 ```
 [WARN] [CLOB][Preflight] FAIL stage=auth status=none code=none message=unknown_error
 [WARN] [CLOB][Preflight] BENIGN: response without HTTP status - credentials OK, trading allowed. Details: status=undefined severity=NON_FATAL issue=UNKNOWN responseType=object hasData=true hasError=false keys=data,allowance
@@ -37,6 +41,7 @@ Successfully improved CLOB preflight UNKNOWN_ERROR logging with minimal, surgica
 ```
 
 **Auth Story Entry**:
+
 ```json
 {
   "attempt": 1,
@@ -54,6 +59,7 @@ Successfully improved CLOB preflight UNKNOWN_ERROR logging with minimal, surgica
 ### 1. Enhanced Diagnostic Logging (`src/clob/diagnostics.ts`)
 
 **Added diagnostic context collection:**
+
 ```typescript
 const responseType = typeof response;
 const isObject = response !== null && typeof response === "object";
@@ -63,6 +69,7 @@ const responseKeys = isObject ? Object.keys(response).join(",") : "none";
 ```
 
 **Improved log messages:**
+
 - Changed "UNKNOWN_ERROR" → "BENIGN: response without HTTP status"
 - Added clear statement: "credentials OK, trading allowed"
 - Included diagnostic details: responseType, keys, data/error presence
@@ -71,16 +78,19 @@ const responseKeys = isObject ? Object.keys(response).join(",") : "none";
 ### 2. Clarified Warning Messages (`src/polymarket/preflight.ts`)
 
 **Before:**
+
 ```typescript
-`[CLOB] Auth preflight check failed (NON_FATAL) but credentials appear valid; allowing trading. status=${preflight.status}`
+`[CLOB] Auth preflight check failed (NON_FATAL) but credentials appear valid; allowing trading. status=${preflight.status}`;
 ```
 
 **After:**
+
 ```typescript
-`[CLOB] Auth preflight NON_FATAL issue detected - credentials are valid, trading continues normally. status=${preflight.status ?? "undefined"}`
+`[CLOB] Auth preflight NON_FATAL issue detected - credentials are valid, trading continues normally. status=${preflight.status ?? "undefined"}`;
 ```
 
 **Auth Story improvement:**
+
 ```typescript
 errorTextShort:
   preflight.status === undefined
@@ -101,13 +111,13 @@ errorTextShort:
 
 ### ✅ All Checks Passed
 
-| Check | Status | Notes |
-|-------|--------|-------|
-| **Build** | ✅ Pass | `npm run build` completes successfully |
-| **Lint** | ✅ Pass | No linting errors in modified files |
-| **Security** | ✅ Pass | CodeQL found 0 alerts |
-| **Code Review** | ✅ Pass | All feedback addressed |
-| **Functional** | ✅ Pass | No authentication logic changed |
+| Check           | Status  | Notes                                  |
+| --------------- | ------- | -------------------------------------- |
+| **Build**       | ✅ Pass | `npm run build` completes successfully |
+| **Lint**        | ✅ Pass | No linting errors in modified files    |
+| **Security**    | ✅ Pass | CodeQL found 0 alerts                  |
+| **Code Review** | ✅ Pass | All feedback addressed                 |
+| **Functional**  | ✅ Pass | No authentication logic changed        |
 
 ### 🔒 Constraints Respected
 
@@ -125,7 +135,8 @@ errorTextShort:
 
 **Why This Happens**: The API client sometimes returns a result object directly (e.g., `{data: {...}, allowance: 123}`) rather than wrapping it in an HTTP response object with a status code.
 
-**Why It's Benign**: 
+**Why It's Benign**:
+
 - The API call succeeded
 - Credentials are valid
 - Data is returned correctly
@@ -139,20 +150,22 @@ errorTextShort:
 ## 💡 Impact
 
 ### Positive Changes
+
 ✅ **Reduced operator confusion** - "BENIGN" messaging instead of alarming "UNKNOWN_ERROR"  
 ✅ **Better diagnostics** - Response structure info helps debugging  
 ✅ **Clearer Auth Story** - One-line summary explains what happened  
 ✅ **No false alarms** - Operators understand this is expected behavior  
 ✅ **More maintainable code** - Extracted common checks, better comments  
-✅ **Reduced log noise** - Combined multiple warnings into single message  
+✅ **Reduced log noise** - Combined multiple warnings into single message
 
 ### Zero Negative Impact
+
 ✅ No functional changes  
 ✅ No authentication changes  
 ✅ No trading logic changes  
 ✅ No performance impact  
 ✅ No new error states  
-✅ No breaking changes  
+✅ No breaking changes
 
 ---
 
