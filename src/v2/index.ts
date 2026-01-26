@@ -2580,7 +2580,7 @@ export function loadConfig() {
     liveTrading: isLive,
     leaderboardLimit,
     telegram: (env("TELEGRAM_TOKEN") || env("TELEGRAM_BOT_TOKEN")) && (env("TELEGRAM_CHAT") || env("TELEGRAM_CHAT_ID"))
-      ? { token: (env("TELEGRAM_TOKEN") || env("TELEGRAM_BOT_TOKEN"))!, chatId: (env("TELEGRAM_CHAT") || env("TELEGRAM_CHAT_ID"))!, silent: (env("TELEGRAM_SILENT") ?? "").toLowerCase() === "true" } : undefined,
+      ? { token: (env("TELEGRAM_TOKEN") || env("TELEGRAM_BOT_TOKEN"))!, chatId: (env("TELEGRAM_CHAT") || env("TELEGRAM_CHAT_ID"))!, silent: (env("TELEGRAM_SILENT") ?? "").trim().toLowerCase() === "true" } : undefined,
   };
 }
 

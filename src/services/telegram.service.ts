@@ -735,7 +735,7 @@ export function loadTelegramConfig(): TelegramConfig {
     process.env.TELEGRAM_PNL_INTERVAL_MINUTES ?? "60",
     10,
   );
-  const silent = (process.env.TELEGRAM_SILENT ?? "").toLowerCase() === "true";
+  const silent = (process.env.TELEGRAM_SILENT ?? "").trim().toLowerCase() === "true";
 
   return {
     botToken,
