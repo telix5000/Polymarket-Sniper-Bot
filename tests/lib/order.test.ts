@@ -101,9 +101,6 @@ describe("postOrder", () => {
 
       assert.strictEqual(result.success, false);
       assert.strictEqual(result.reason, "EXCEEDS_ABSOLUTE_MAX");
-      
-      // Cleanup
-      delete process.env.ABSOLUTE_MAX_POSITION_USD;
     });
 
     it("allows orders within ABSOLUTE_MAX_POSITION_USD", async () => {
@@ -120,9 +117,6 @@ describe("postOrder", () => {
       });
 
       assert.strictEqual(result.success, true);
-      
-      // Cleanup
-      delete process.env.ABSOLUTE_MAX_POSITION_USD;
     });
 
     it("uses default ABSOLUTE_MAX_POSITION_USD of $50 when not set", async () => {
