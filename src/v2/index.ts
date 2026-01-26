@@ -1554,6 +1554,14 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
         return true;
       }
       
+      // Handle ZERO_PRICE_LEVEL: No liquidity to sell into
+      // Add to ignore list to prevent infinite retry, these can only be redeemed
+      if (result.reason === "ZERO_PRICE_LEVEL" || result.reason === "NO_LIQUIDITY") {
+        state.zeroPriceTokens.set(tokenId, Date.now());
+        log(`⚠️ SELL | ${reason} | Zero price/no liquidity - skipping for 1h (redeem only) | ${outcome} ${$(sizeUsd)}`);
+        return false;
+      }
+      
       // Fallback to CLOB if on-chain not implemented yet
       if (result.reason === "NOT_IMPLEMENTED" && state.clobClient) {
         log(`⚠️ On-chain not ready, falling back to CLOB`);
@@ -1688,6 +1696,13 @@ async function executeBuy(tokenId: string, conditionId: string, outcome: string,
         if (cfg.adaptiveLearning.enabled) recordTradeForLearning(conditionId, price || 0.5, sizeUsd);
         invalidate();
         return true;
+      }
+      
+      // Handle ZERO_PRICE_LEVEL: No liquidity to buy from
+      // Silently skip these instead of alerting
+      if (result.reason === "ZERO_PRICE_LEVEL" || result.reason === "NO_LIQUIDITY") {
+        log(`⚠️ BUY | ${reason} | Zero price/no liquidity - skipping | ${outcome} ${$(sizeUsd)}`);
+        return false;
       }
       
       // Fallback to CLOB if on-chain not implemented yet
