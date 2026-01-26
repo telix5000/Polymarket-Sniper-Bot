@@ -21,10 +21,10 @@ const createLogger = () => {
 test("cloudflare block triggers cooldown and blocks further submits", async () => {
   const { logs, logger } = createLogger();
   const controller = new OrderSubmissionController({
-    minOrderUsd: 1,
     minIntervalMs: 0,
     maxPerHour: 100,
     marketCooldownMs: 0,
+    duplicatePreventionMs: 0,
     cloudflareCooldownMs: 1000,
     authCooldownMs: 1000,
   });
@@ -81,10 +81,10 @@ test("cloudflare block triggers cooldown and blocks further submits", async () =
 test("401 auth failure triggers cooldown backoff", async () => {
   const { logs, logger } = createLogger();
   const controller = new OrderSubmissionController({
-    minOrderUsd: 1,
     minIntervalMs: 0,
     maxPerHour: 100,
     marketCooldownMs: 0,
+    duplicatePreventionMs: 0,
     cloudflareCooldownMs: 1000,
     authCooldownMs: 1000,
   });
@@ -180,7 +180,6 @@ test("extractFillInfo handles empty response", () => {
 test("FOK order with takingAmount=0 and makingAmount=0 is identified as killed", async () => {
   const { logs, logger } = createLogger();
   const controller = new OrderSubmissionController({
-    minOrderUsd: 1,
     minIntervalMs: 0,
     maxPerHour: 100,
     marketCooldownMs: 0,
@@ -214,7 +213,6 @@ test("FOK order with takingAmount=0 and makingAmount=0 is identified as killed",
 test("FOK order with non-zero takingAmount is treated as successful", async () => {
   const { logs, logger } = createLogger();
   const controller = new OrderSubmissionController({
-    minOrderUsd: 1,
     minIntervalMs: 0,
     maxPerHour: 100,
     marketCooldownMs: 0,
@@ -247,7 +245,6 @@ test("FOK order with non-zero takingAmount is treated as successful", async () =
 test("FOK order with non-zero makingAmount only is treated as successful", async () => {
   const { logger } = createLogger();
   const controller = new OrderSubmissionController({
-    minOrderUsd: 1,
     minIntervalMs: 0,
     maxPerHour: 100,
     marketCooldownMs: 0,
@@ -276,7 +273,6 @@ test("FOK order with non-zero makingAmount only is treated as successful", async
 test("malformed response with empty string amounts is handled correctly", async () => {
   const { logger } = createLogger();
   const controller = new OrderSubmissionController({
-    minOrderUsd: 1,
     minIntervalMs: 0,
     maxPerHour: 100,
     marketCooldownMs: 0,
@@ -308,7 +304,6 @@ test("malformed response with empty string amounts is handled correctly", async 
 test("response without fill info is handled correctly", async () => {
   const { logger } = createLogger();
   const controller = new OrderSubmissionController({
-    minOrderUsd: 1,
     minIntervalMs: 0,
     maxPerHour: 100,
     marketCooldownMs: 0,

@@ -2018,8 +2018,6 @@ export class ScalpTradeStrategy {
         sellSlippagePct: DEFAULT_SELL_SLIPPAGE_PCT,
         logger: this.logger,
         skipDuplicatePrevention: true,
-        // Pass minOrderUsd so preflight and submission settings match
-        orderConfig: { minOrderUsd: this.config.minOrderUsd },
       });
 
       if (result.status === "submitted") {
