@@ -372,7 +372,7 @@ async function runPolReserveCheck(): Promise<void> {
   );
 
   if (result?.success) {
-    await sendTelegram("💱 POL Rebalance", `Swapped $${result.usdcSwapped?.toFixed(2)} USDC → ~${result.polReceived?.toFixed(2)} POL`);
+    await sendTelegram("💱 POL Rebalance", `Swapped $${result.usdcSwapped?.toFixed(2)} USDC → ${result.polReceived?.toFixed(2)} POL`);
   } else if (result?.error) {
     await sendTelegram("❌ POL Rebalance Failed", result.error);
   }

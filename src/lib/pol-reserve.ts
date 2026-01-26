@@ -61,6 +61,8 @@ export interface SwapResult {
  */
 export function loadPolReserveConfig(preset: PresetConfig): PolReserveConfig {
   const envEnabled = process.env.POL_RESERVE_ENABLED;
+  // NOTE: POL_RESERVE_TARGET is the preferred variable name.
+  // MIN_POL_RESERVE is a legacy alias kept for backward compatibility.
   const envTarget = process.env.POL_RESERVE_TARGET ?? process.env.MIN_POL_RESERVE;
   const envMin = process.env.POL_RESERVE_MIN;
   const envMaxSwap = process.env.POL_RESERVE_MAX_SWAP_USD;
@@ -150,11 +152,12 @@ export async function swapUsdcToPol(
     const wpolContract = new Contract(WPOL_ADDRESS, WPOL_ABI, wallet);
     const routerContract = new Contract(QUICKSWAP_ROUTER, QUICKSWAP_ROUTER_ABI, wallet);
 
-    // Check and set allowance if needed
+    // Check and set allowance if needed - approve max to avoid repeated approval transactions
     const currentAllowance = await usdcContract.allowance(address, QUICKSWAP_ROUTER);
     if (currentAllowance < amountIn) {
       logger?.info?.(`Approving USDC for QuickSwap...`);
-      const approveTx = await usdcContract.approve(QUICKSWAP_ROUTER, amountIn);
+      const maxUint256 = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+      const approveTx = await usdcContract.approve(QUICKSWAP_ROUTER, maxUint256);
       await approveTx.wait();
       logger?.info?.(`USDC approved`);
     }
@@ -194,6 +197,7 @@ export async function swapUsdcToPol(
     const polReceived = Number(formatUnits(wpolReceived, 18));
 
     // Unwrap WPOL to native POL using the actual received amount
+    // WPOL.withdraw() burns WPOL from caller's balance and sends native POL
     logger?.info?.(`Unwrapping WPOL to native POL...`);
     const unwrapTx = await wpolContract.withdraw(wpolReceived);
     await unwrapTx.wait();
