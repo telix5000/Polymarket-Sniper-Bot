@@ -1,6 +1,6 @@
 /**
  * Entry Point - Switches between V1 (old) and V2 (new simple)
- * 
+ *
  * ENV:
  *   USE_V2=true  - Use new simple system
  *   USE_V2=false - Use old system (default)
@@ -11,7 +11,7 @@ import "dotenv/config";
 
 async function main() {
   const useV2 = process.env.USE_V2?.toLowerCase() === "true";
-  
+
   if (useV2) {
     console.log("🚀 Starting V2 (simple) system...\n");
     const { startV2 } = await import("./v2");
@@ -23,7 +23,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error(`Fatal: ${err}`);
   process.exit(1);
 });

@@ -710,49 +710,84 @@ describe("EntryMetaResolver UNTRUSTED_ENTRY Validation", () => {
 
   test("Entry is trusted when computed shares match live shares exactly", () => {
     const result = validateAgainstLiveShares(100, 100);
-    assert.strictEqual(result.trusted, true, "Should be trusted when shares match");
+    assert.strictEqual(
+      result.trusted,
+      true,
+      "Should be trusted when shares match",
+    );
     assert.strictEqual(result.reason, undefined, "Should have no reason");
   });
 
   test("Entry is trusted when difference is within both thresholds", () => {
     // 100 shares computed, 100.3 live = 0.3% difference AND 0.3 absolute < 0.5
     const result = validateAgainstLiveShares(100, 100.3);
-    assert.strictEqual(result.trusted, true, "Should be trusted within both thresholds");
+    assert.strictEqual(
+      result.trusted,
+      true,
+      "Should be trusted within both thresholds",
+    );
   });
 
   test("Entry is UNTRUSTED when percent difference exceeds 2%", () => {
     // 10 shares computed, 10.25 live = 2.5% difference (but absolute only 0.25)
     // This tests percent threshold specifically
     const result = validateAgainstLiveShares(10, 10.25);
-    assert.strictEqual(result.trusted, false, "Should be untrusted when percent diff > 2%");
-    assert.ok(result.reason?.includes("Shares mismatch"), "Should have mismatch reason");
+    assert.strictEqual(
+      result.trusted,
+      false,
+      "Should be untrusted when percent diff > 2%",
+    );
+    assert.ok(
+      result.reason?.includes("Shares mismatch"),
+      "Should have mismatch reason",
+    );
   });
 
   test("Entry is UNTRUSTED when absolute difference exceeds 0.5 shares", () => {
     // 10 shares computed, 10.6 live = 6% but more importantly 0.6 > 0.5 absolute
     const result = validateAgainstLiveShares(10, 10.6);
-    assert.strictEqual(result.trusted, false, "Should be untrusted when absolute diff > 0.5");
+    assert.strictEqual(
+      result.trusted,
+      false,
+      "Should be untrusted when absolute diff > 0.5",
+    );
   });
 
   test("Entry is trusted when no live shares provided (undefined)", () => {
     const result = validateAgainstLiveShares(100, undefined);
-    assert.strictEqual(result.trusted, true, "Should be trusted when no live shares");
+    assert.strictEqual(
+      result.trusted,
+      true,
+      "Should be trusted when no live shares",
+    );
   });
 
   test("Entry is trusted when live shares is 0", () => {
     const result = validateAgainstLiveShares(100, 0);
-    assert.strictEqual(result.trusted, true, "Should be trusted when live shares is 0");
+    assert.strictEqual(
+      result.trusted,
+      true,
+      "Should be trusted when live shares is 0",
+    );
   });
 
   test("Small positions: 1 share computed vs 0.4 live = UNTRUSTED (diff 0.6)", () => {
     const result = validateAgainstLiveShares(1, 0.4);
-    assert.strictEqual(result.trusted, false, "Small position diff should be caught");
+    assert.strictEqual(
+      result.trusted,
+      false,
+      "Small position diff should be caught",
+    );
   });
 
   test("Large positions within thresholds: 1000 vs 1000.4 = trusted", () => {
     // 1000.4 - 1000 = 0.4 (< 0.5 absolute) AND 0.04% (< 2%)
     const result = validateAgainstLiveShares(1000, 1000.4);
-    assert.strictEqual(result.trusted, true, "Should be trusted when within both thresholds");
+    assert.strictEqual(
+      result.trusted,
+      true,
+      "Should be trusted when within both thresholds",
+    );
   });
 
   test("Large positions: 1000 computed vs 1025 live = UNTRUSTED (2.5% diff)", () => {
@@ -809,10 +844,26 @@ describe("EntryMetaResolver Multiple TokenIds", () => {
     );
 
     // Verify specific values
-    assert.strictEqual(result1.remainingShares, 100, "Token 1 should have 100 shares");
-    assert.strictEqual(result1.avgEntryPriceCents, 50, "Token 1 should have 50¢ avg");
-    assert.strictEqual(result2.remainingShares, 50, "Token 2 should have 50 shares");
-    assert.strictEqual(result2.avgEntryPriceCents, 70, "Token 2 should have 70¢ avg");
+    assert.strictEqual(
+      result1.remainingShares,
+      100,
+      "Token 1 should have 100 shares",
+    );
+    assert.strictEqual(
+      result1.avgEntryPriceCents,
+      50,
+      "Token 1 should have 50¢ avg",
+    );
+    assert.strictEqual(
+      result2.remainingShares,
+      50,
+      "Token 2 should have 50 shares",
+    );
+    assert.strictEqual(
+      result2.avgEntryPriceCents,
+      70,
+      "Token 2 should have 70¢ avg",
+    );
   });
 
   test("Same tokenId across different markets still grouped by tokenId", () => {
@@ -841,8 +892,16 @@ describe("EntryMetaResolver Multiple TokenIds", () => {
 
     assert.ok(result, "Result should exist");
     // Both trades should be aggregated (same tokenId)
-    assert.strictEqual(result.remainingShares, 200, "Should aggregate both buys");
-    assert.strictEqual(result.avgEntryPriceCents, 60, "Should have weighted avg of 60¢");
+    assert.strictEqual(
+      result.remainingShares,
+      200,
+      "Should aggregate both buys",
+    );
+    assert.strictEqual(
+      result.avgEntryPriceCents,
+      60,
+      "Should have weighted avg of 60¢",
+    );
   });
 
   test("Prevent bug: multiple tokenIds with identical first/last timestamps", () => {
@@ -866,7 +925,7 @@ describe("EntryMetaResolver Multiple TokenIds", () => {
         asset: "token-BBB",
         side: "BUY",
         size: 500,
-        price: 0.30,
+        price: 0.3,
       },
     ];
 
@@ -898,7 +957,15 @@ describe("EntryMetaResolver Multiple TokenIds", () => {
       Math.abs(result1.avgEntryPriceCents - 61.4) < 0.1,
       `Token AAA should have 61.4¢ avg, got ${result1.avgEntryPriceCents}`,
     );
-    assert.strictEqual(result2.remainingShares, 500, "Token BBB should have 500 shares");
-    assert.strictEqual(result2.avgEntryPriceCents, 30, "Token BBB should have 30¢ avg");
+    assert.strictEqual(
+      result2.remainingShares,
+      500,
+      "Token BBB should have 500 shares",
+    );
+    assert.strictEqual(
+      result2.avgEntryPriceCents,
+      30,
+      "Token BBB should have 30¢ avg",
+    );
   });
 });

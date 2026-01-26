@@ -16,7 +16,7 @@ import {
 describe("Hedging Near-Close Logic", () => {
   // Helper function to simulate the near-close decision logic
   // This mirrors the logic in HedgingStrategy.execute()
-  // 
+  //
   // UPDATED (Jan 2025): Near resolution, hedging is PRIORITIZED for significant losses
   // because buying the inverse locks in recovery value before market resolves.
   function shouldHedgePosition(
@@ -43,7 +43,7 @@ describe("Hedging Near-Close Logic", () => {
 
     const minutesToClose = (position.marketEndTime - now) / (60 * 1000);
 
-    // No-hedge window (last 2-3 minutes): 
+    // No-hedge window (last 2-3 minutes):
     // NEW LOGIC: For significant losses, hedge is PRIORITIZED (buy inverse + sell original)
     // This is the BEST time to hedge - outcome is nearly certain
     if (minutesToClose <= config.noHedgeWindowMinutes) {
@@ -54,7 +54,10 @@ describe("Hedging Near-Close Logic", () => {
           sellOriginalAfter: true,
         };
       }
-      return { shouldHedge: false, reason: "No-hedge window - small loss skip" };
+      return {
+        shouldHedge: false,
+        reason: "No-hedge window - small loss skip",
+      };
     }
 
     // Near-close window: apply stricter thresholds
@@ -1339,7 +1342,8 @@ describe("Hedging Multi-Position Fund-Freeing", () => {
    * Calculate freed funds net of taker fees
    */
   function calculateFreedFundsNetOfFees(grossValue: number): number {
-    const feeAmount = grossValue * (POLYMARKET_TAKER_FEE_BPS / BASIS_POINTS_DIVISOR);
+    const feeAmount =
+      grossValue * (POLYMARKET_TAKER_FEE_BPS / BASIS_POINTS_DIVISOR);
     return grossValue - feeAmount;
   }
 
@@ -1418,7 +1422,11 @@ describe("Hedging Multi-Position Fund-Freeing", () => {
 
     // Target $25 for hedge - first position yields ~$22 (net of fees), not enough
     // Second position yields ~$10.80 (net of fees), together > $25
-    const result = simulateMultiPositionSell(profitableCandidates, 25, new Set());
+    const result = simulateMultiPositionSell(
+      profitableCandidates,
+      25,
+      new Set(),
+    );
 
     assert.strictEqual(
       result.positionsSold.length,
@@ -1467,7 +1475,11 @@ describe("Hedging Multi-Position Fund-Freeing", () => {
     ];
 
     // Target $10 - first position alone yields ~$50 (net of fees), more than enough
-    const result = simulateMultiPositionSell(profitableCandidates, 10, new Set());
+    const result = simulateMultiPositionSell(
+      profitableCandidates,
+      10,
+      new Set(),
+    );
 
     assert.strictEqual(
       result.positionsSold.length,
@@ -1483,7 +1495,8 @@ describe("Hedging Multi-Position Fund-Freeing", () => {
 
   test("Should calculate freed funds net of taker fees correctly", () => {
     const grossValue = 100; // $100
-    const expectedFee = grossValue * (POLYMARKET_TAKER_FEE_BPS / BASIS_POINTS_DIVISOR); // $0.01
+    const expectedFee =
+      grossValue * (POLYMARKET_TAKER_FEE_BPS / BASIS_POINTS_DIVISOR); // $0.01
     const expectedNetValue = grossValue - expectedFee; // $99.99
 
     const netValue = calculateFreedFundsNetOfFees(grossValue);
@@ -1535,7 +1548,11 @@ describe("Hedging Multi-Position Fund-Freeing", () => {
     ];
 
     const hedgedPositions = new Set(["m1-t1"]); // m1 is already hedged
-    const result = simulateMultiPositionSell(profitableCandidates, 25, hedgedPositions);
+    const result = simulateMultiPositionSell(
+      profitableCandidates,
+      25,
+      hedgedPositions,
+    );
 
     assert.strictEqual(
       result.positionsSold.includes("m1-t1"),
@@ -1564,7 +1581,11 @@ describe("Hedging Multi-Position Fund-Freeing", () => {
     ];
 
     // Target $50 but only $4.40 (minus fees) available
-    const result = simulateMultiPositionSell(profitableCandidates, 50, new Set());
+    const result = simulateMultiPositionSell(
+      profitableCandidates,
+      50,
+      new Set(),
+    );
 
     assert.strictEqual(
       result.positionsSold.length,
@@ -1607,7 +1628,11 @@ describe("Hedging Multi-Position Fund-Freeing", () => {
     ];
 
     // Target $60 - need both positions
-    const result = simulateMultiPositionSell(profitableCandidates, 60, new Set());
+    const result = simulateMultiPositionSell(
+      profitableCandidates,
+      60,
+      new Set(),
+    );
 
     const expectedTotal =
       calculateFreedFundsNetOfFees(50) + calculateFreedFundsNetOfFees(20);
@@ -1924,7 +1949,7 @@ describe("Hedging Up (High Win Probability)", () => {
       const result = shouldHedgeUp(
         DEFAULT_HEDGING_CONFIG,
         {
-          currentPrice: 0.90, // 90¢ - good profit margin
+          currentPrice: 0.9, // 90¢ - good profit margin
           marketEndTime,
         },
         now,
@@ -2162,7 +2187,10 @@ describe("Hedging Reserve-Aware Sizing", () => {
     config: HedgingConfig,
     computedHedgeUsd: number,
     cycleHedgeBudgetRemaining: number | null,
-  ): { finalSize: number; reason: "full" | "partial" | "skipped" | "no_reserve_plan" } {
+  ): {
+    finalSize: number;
+    reason: "full" | "partial" | "skipped" | "no_reserve_plan";
+  } {
     // If no reserve plan, use full computed size
     if (cycleHedgeBudgetRemaining === null) {
       return { finalSize: computedHedgeUsd, reason: "no_reserve_plan" };
@@ -2190,8 +2218,16 @@ describe("Hedging Reserve-Aware Sizing", () => {
         null, // no reserve plan
       );
 
-      assert.strictEqual(result.finalSize, 15.0, "Should use full computed size");
-      assert.strictEqual(result.reason, "no_reserve_plan", "Should indicate no reserve plan");
+      assert.strictEqual(
+        result.finalSize,
+        15.0,
+        "Should use full computed size",
+      );
+      assert.strictEqual(
+        result.reason,
+        "no_reserve_plan",
+        "Should indicate no reserve plan",
+      );
     });
   });
 
@@ -2204,7 +2240,11 @@ describe("Hedging Reserve-Aware Sizing", () => {
       );
 
       assert.strictEqual(result.finalSize, 0, "Should skip hedge");
-      assert.strictEqual(result.reason, "skipped", "Should indicate skipped due to shortfall");
+      assert.strictEqual(
+        result.reason,
+        "skipped",
+        "Should indicate skipped due to shortfall",
+      );
     });
 
     test("skips hedge when budget is exactly zero", () => {
@@ -2227,8 +2267,16 @@ describe("Hedging Reserve-Aware Sizing", () => {
         10.0, // only $10 remaining in budget
       );
 
-      assert.strictEqual(result.finalSize, 10.0, "Should cap to remaining budget");
-      assert.strictEqual(result.reason, "partial", "Should indicate partial hedge");
+      assert.strictEqual(
+        result.finalSize,
+        10.0,
+        "Should cap to remaining budget",
+      );
+      assert.strictEqual(
+        result.reason,
+        "partial",
+        "Should indicate partial hedge",
+      );
     });
 
     test("submits partial hedge at exactly minHedgeUsd when budget equals minHedgeUsd", () => {
@@ -2239,8 +2287,16 @@ describe("Hedging Reserve-Aware Sizing", () => {
         1.0, // exactly minHedgeUsd remaining
       );
 
-      assert.strictEqual(result.finalSize, 1.0, "Should use remaining budget at minHedgeUsd");
-      assert.strictEqual(result.reason, "partial", "Should indicate partial hedge");
+      assert.strictEqual(
+        result.finalSize,
+        1.0,
+        "Should use remaining budget at minHedgeUsd",
+      );
+      assert.strictEqual(
+        result.reason,
+        "partial",
+        "Should indicate partial hedge",
+      );
     });
 
     test("submits partial hedge when budget is between minHedgeUsd and computed size", () => {
@@ -2250,8 +2306,16 @@ describe("Hedging Reserve-Aware Sizing", () => {
         5.5, // $5.50 remaining
       );
 
-      assert.strictEqual(result.finalSize, 5.5, "Should use all remaining budget");
-      assert.strictEqual(result.reason, "partial", "Should indicate partial hedge");
+      assert.strictEqual(
+        result.finalSize,
+        5.5,
+        "Should use all remaining budget",
+      );
+      assert.strictEqual(
+        result.reason,
+        "partial",
+        "Should indicate partial hedge",
+      );
     });
   });
 
@@ -2263,7 +2327,11 @@ describe("Hedging Reserve-Aware Sizing", () => {
         100.0, // plenty of budget
       );
 
-      assert.strictEqual(result.finalSize, 15.0, "Should use full computed size");
+      assert.strictEqual(
+        result.finalSize,
+        15.0,
+        "Should use full computed size",
+      );
       assert.strictEqual(result.reason, "full", "Should indicate full hedge");
     });
 
@@ -2274,7 +2342,11 @@ describe("Hedging Reserve-Aware Sizing", () => {
         25.0, // exactly the amount needed
       );
 
-      assert.strictEqual(result.finalSize, 25.0, "Should use full computed size");
+      assert.strictEqual(
+        result.finalSize,
+        25.0,
+        "Should use full computed size",
+      );
       assert.strictEqual(result.reason, "full", "Should indicate full hedge");
     });
   });
@@ -2291,32 +2363,56 @@ describe("Hedging Reserve-Aware Sizing", () => {
 
       // First hedge: $20
       const result1 = computeReserveAwareSize(config, 20.0, budgetRemaining);
-      assert.strictEqual(result1.finalSize, 20.0, "First hedge should use full $20");
+      assert.strictEqual(
+        result1.finalSize,
+        20.0,
+        "First hedge should use full $20",
+      );
       assert.strictEqual(result1.reason, "full", "First hedge should be full");
-      
+
       // Simulate deducting from budget after successful BUY
       budgetRemaining -= result1.finalSize; // Now $30
 
       // Second hedge: $20
       const result2 = computeReserveAwareSize(config, 20.0, budgetRemaining);
-      assert.strictEqual(result2.finalSize, 20.0, "Second hedge should use full $20");
+      assert.strictEqual(
+        result2.finalSize,
+        20.0,
+        "Second hedge should use full $20",
+      );
       assert.strictEqual(result2.reason, "full", "Second hedge should be full");
-      
+
       // Simulate deducting from budget after successful BUY
       budgetRemaining -= result2.finalSize; // Now $10
 
       // Third hedge: $20 - should be capped to $10 (partial)
       const result3 = computeReserveAwareSize(config, 20.0, budgetRemaining);
-      assert.strictEqual(result3.finalSize, 10.0, "Third hedge should be capped to $10");
-      assert.strictEqual(result3.reason, "partial", "Third hedge should be partial");
-      
+      assert.strictEqual(
+        result3.finalSize,
+        10.0,
+        "Third hedge should be capped to $10",
+      );
+      assert.strictEqual(
+        result3.reason,
+        "partial",
+        "Third hedge should be partial",
+      );
+
       // Simulate deducting from budget after successful BUY
       budgetRemaining -= result3.finalSize; // Now $0
 
       // Fourth hedge: should be skipped (budget exhausted)
       const result4 = computeReserveAwareSize(config, 20.0, budgetRemaining);
-      assert.strictEqual(result4.finalSize, 0, "Fourth hedge should be skipped");
-      assert.strictEqual(result4.reason, "skipped", "Fourth hedge should indicate budget exhausted");
+      assert.strictEqual(
+        result4.finalSize,
+        0,
+        "Fourth hedge should be skipped",
+      );
+      assert.strictEqual(
+        result4.reason,
+        "skipped",
+        "Fourth hedge should indicate budget exhausted",
+      );
     });
 
     test("partial fills also decrement the budget", () => {
@@ -2327,7 +2423,7 @@ describe("Hedging Reserve-Aware Sizing", () => {
       const result1 = computeReserveAwareSize(config, 20.0, budgetRemaining);
       assert.strictEqual(result1.finalSize, 15.0, "Should cap to budget");
       assert.strictEqual(result1.reason, "partial", "Should be partial");
-      
+
       // Assume only $10 of the $15 actually filled (partial fill from market)
       const actualFilled = 10.0;
       budgetRemaining -= actualFilled; // Now $5
@@ -2342,7 +2438,7 @@ describe("Hedging Reserve-Aware Sizing", () => {
 
 /**
  * Tests for Untrusted P&L Exception Logic
- * 
+ *
  * These tests verify the control flow where positions with pnlTrusted=false
  * are handled differently based on loss magnitude:
  * - Catastrophic losses (>= forceLiquidationPct): Proceed with hedge/liquidation
@@ -2365,12 +2461,19 @@ describe("Untrusted P&L Exception Logic", () => {
     // Only consider catastrophic loss exception when pnlPct is actually negative
     const isActualLoss = pnlPct < 0;
     const lossPctMagnitude = Math.abs(pnlPct);
-    const isCatastrophicLoss = isActualLoss && lossPctMagnitude >= config.forceLiquidationPct;
+    const isCatastrophicLoss =
+      isActualLoss && lossPctMagnitude >= config.forceLiquidationPct;
 
     if (isCatastrophicLoss) {
-      return { shouldProceed: true, reason: "Catastrophic loss - proceed despite untrusted P&L" };
+      return {
+        shouldProceed: true,
+        reason: "Catastrophic loss - proceed despite untrusted P&L",
+      };
     } else if (isActualLoss && lossPctMagnitude >= config.triggerLossPct) {
-      return { shouldProceed: false, reason: "Non-catastrophic loss with untrusted P&L - skip" };
+      return {
+        shouldProceed: false,
+        reason: "Non-catastrophic loss with untrusted P&L - skip",
+      };
     } else {
       return { shouldProceed: false, reason: "Untrusted P&L - skip" };
     }
@@ -2460,13 +2563,9 @@ describe("Untrusted P&L Exception Logic", () => {
 
   test("should respect custom forceLiquidationPct threshold", () => {
     const customConfig = { ...DEFAULT_HEDGING_CONFIG, forceLiquidationPct: 40 };
-    
+
     // 45% loss should now be catastrophic with custom 40% threshold
-    const result = shouldProceedWithUntrustedPnl(
-      customConfig,
-      -45,
-      false,
-    );
+    const result = shouldProceedWithUntrustedPnl(customConfig, -45, false);
 
     assert.strictEqual(
       result.shouldProceed,
@@ -2511,7 +2610,8 @@ describe("Invalid Orderbook Exception Logic", () => {
       if (isCatastrophicLossWithTrustedPnl) {
         return {
           shouldProceed: true,
-          reason: "Catastrophic loss with trusted P&L - proceed despite invalid orderbook",
+          reason:
+            "Catastrophic loss with trusted P&L - proceed despite invalid orderbook",
         };
       }
       return {
@@ -2532,7 +2632,11 @@ describe("Invalid Orderbook Exception Logic", () => {
       "VALID",
     );
 
-    assert.strictEqual(result.shouldProceed, true, "Should proceed with valid orderbook");
+    assert.strictEqual(
+      result.shouldProceed,
+      true,
+      "Should proceed with valid orderbook",
+    );
   });
 
   test("should proceed with invalid orderbook when catastrophic loss AND trusted P&L", () => {
@@ -2606,7 +2710,12 @@ describe("Invalid Orderbook Exception Logic", () => {
     };
 
     // 55% loss is below custom 60% threshold
-    const result1 = shouldProceedWithInvalidOrderbook(customConfig, -55, true, "INVALID_BOOK");
+    const result1 = shouldProceedWithInvalidOrderbook(
+      customConfig,
+      -55,
+      true,
+      "INVALID_BOOK",
+    );
     assert.strictEqual(
       result1.shouldProceed,
       false,
@@ -2614,7 +2723,12 @@ describe("Invalid Orderbook Exception Logic", () => {
     );
 
     // 65% loss is above custom 60% threshold
-    const result2 = shouldProceedWithInvalidOrderbook(customConfig, -65, true, "INVALID_BOOK");
+    const result2 = shouldProceedWithInvalidOrderbook(
+      customConfig,
+      -65,
+      true,
+      "INVALID_BOOK",
+    );
     assert.strictEqual(
       result2.shouldProceed,
       true,
@@ -2625,7 +2739,7 @@ describe("Invalid Orderbook Exception Logic", () => {
 
 /**
  * Tests for hedgeUpAnytime Configuration
- * 
+ *
  * These tests verify the hedge up eligibility logic based on the hedgeUpAnytime setting:
  * - hedgeUpAnytime=true: Allow hedge up regardless of time to close
  * - hedgeUpAnytime=false (default): Only hedge up within hedgeUpWindowMinutes of close
@@ -2782,7 +2896,8 @@ describe("Emergency Hedge Sizing", () => {
     lossPct?: number,
   ): { hedgeUsd: number; isEmergency: boolean } {
     // Detect emergency hedge condition
-    const isEmergencyHedge = lossPct !== undefined && lossPct >= config.emergencyLossPct;
+    const isEmergencyHedge =
+      lossPct !== undefined && lossPct >= config.emergencyLossPct;
 
     let hedgeUsd: number;
     if (isEmergencyHedge) {
@@ -2809,28 +2924,44 @@ describe("Emergency Hedge Sizing", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, emergencyLossPct: 30 };
       const result = computeHedgeSizing(config, 15.0, 35); // 35% loss >= 30% threshold
 
-      assert.strictEqual(result.isEmergency, true, "Should be in emergency mode");
+      assert.strictEqual(
+        result.isEmergency,
+        true,
+        "Should be in emergency mode",
+      );
     });
 
     test("should trigger emergency mode when lossPct equals emergencyLossPct exactly", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, emergencyLossPct: 30 };
       const result = computeHedgeSizing(config, 15.0, 30); // Exactly 30%
 
-      assert.strictEqual(result.isEmergency, true, "Should be in emergency mode at exact threshold");
+      assert.strictEqual(
+        result.isEmergency,
+        true,
+        "Should be in emergency mode at exact threshold",
+      );
     });
 
     test("should NOT trigger emergency mode when lossPct < emergencyLossPct", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, emergencyLossPct: 30 };
       const result = computeHedgeSizing(config, 15.0, 25); // 25% loss < 30% threshold
 
-      assert.strictEqual(result.isEmergency, false, "Should NOT be in emergency mode");
+      assert.strictEqual(
+        result.isEmergency,
+        false,
+        "Should NOT be in emergency mode",
+      );
     });
 
     test("should NOT trigger emergency mode when lossPct is undefined", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, emergencyLossPct: 30 };
       const result = computeHedgeSizing(config, 15.0, undefined);
 
-      assert.strictEqual(result.isEmergency, false, "Should NOT be in emergency mode without lossPct");
+      assert.strictEqual(
+        result.isEmergency,
+        false,
+        "Should NOT be in emergency mode without lossPct",
+      );
     });
   });
 
@@ -2847,7 +2978,11 @@ describe("Emergency Hedge Sizing", () => {
       const result = computeHedgeSizing(config, 15.0, 40); // 40% loss
 
       assert.strictEqual(result.isEmergency, true);
-      assert.strictEqual(result.hedgeUsd, 100, "Should target absoluteMaxUsd=$100 in emergency");
+      assert.strictEqual(
+        result.hedgeUsd,
+        100,
+        "Should target absoluteMaxUsd=$100 in emergency",
+      );
     });
 
     test("should use absoluteMaxUsd even when break-even is higher", () => {
@@ -2861,7 +2996,11 @@ describe("Emergency Hedge Sizing", () => {
       const result = computeHedgeSizing(config, 75.0, 35);
 
       assert.strictEqual(result.isEmergency, true);
-      assert.strictEqual(result.hedgeUsd, 50, "Should cap at absoluteMaxUsd even in emergency");
+      assert.strictEqual(
+        result.hedgeUsd,
+        50,
+        "Should cap at absoluteMaxUsd even in emergency",
+      );
     });
   });
 
@@ -2877,7 +3016,11 @@ describe("Emergency Hedge Sizing", () => {
       const result = computeHedgeSizing(config, 15.0, 40); // 40% loss
 
       assert.strictEqual(result.isEmergency, true);
-      assert.strictEqual(result.hedgeUsd, 25, "Should target maxHedgeUsd=$25 when allowExceedMax=false");
+      assert.strictEqual(
+        result.hedgeUsd,
+        25,
+        "Should target maxHedgeUsd=$25 when allowExceedMax=false",
+      );
     });
   });
 
@@ -2894,7 +3037,11 @@ describe("Emergency Hedge Sizing", () => {
       const result = computeHedgeSizing(config, 40.0, 20);
 
       assert.strictEqual(result.isEmergency, false);
-      assert.strictEqual(result.hedgeUsd, 40, "Should use break-even calculation in normal mode");
+      assert.strictEqual(
+        result.hedgeUsd,
+        40,
+        "Should use break-even calculation in normal mode",
+      );
     });
 
     test("should cap break-even at absoluteMaxUsd in normal mode with allowExceedMax=true", () => {
@@ -2908,7 +3055,11 @@ describe("Emergency Hedge Sizing", () => {
       const result = computeHedgeSizing(config, 75.0, 20);
 
       assert.strictEqual(result.isEmergency, false);
-      assert.strictEqual(result.hedgeUsd, 50, "Should cap at absoluteMaxUsd in normal mode");
+      assert.strictEqual(
+        result.hedgeUsd,
+        50,
+        "Should cap at absoluteMaxUsd in normal mode",
+      );
     });
 
     test("should use break-even capped at maxHedgeUsd when allowExceedMax=false", () => {
@@ -2923,7 +3074,11 @@ describe("Emergency Hedge Sizing", () => {
       const result = computeHedgeSizing(config, 40.0, 20);
 
       assert.strictEqual(result.isEmergency, false);
-      assert.strictEqual(result.hedgeUsd, 25, "Should cap at maxHedgeUsd when allowExceedMax=false");
+      assert.strictEqual(
+        result.hedgeUsd,
+        25,
+        "Should cap at maxHedgeUsd when allowExceedMax=false",
+      );
     });
   });
 
@@ -2939,7 +3094,11 @@ describe("Emergency Hedge Sizing", () => {
     test("emergency at default 30% threshold should work correctly", () => {
       const result = computeHedgeSizing(DEFAULT_HEDGING_CONFIG, 15.0, 30);
 
-      assert.strictEqual(result.isEmergency, true, "Should trigger emergency at default 30% threshold");
+      assert.strictEqual(
+        result.isEmergency,
+        true,
+        "Should trigger emergency at default 30% threshold",
+      );
       assert.strictEqual(
         result.hedgeUsd,
         DEFAULT_HEDGING_CONFIG.absoluteMaxUsd,
@@ -2967,7 +3126,11 @@ describe("Emergency Hedge Sizing", () => {
       let reason = "full";
       if (cycleHedgeBudgetRemaining !== null) {
         if (cycleHedgeBudgetRemaining < config.minHedgeUsd) {
-          return { hedgeUsd: 0, isEmergency: sizing.isEmergency, reason: "skipped" };
+          return {
+            hedgeUsd: 0,
+            isEmergency: sizing.isEmergency,
+            reason: "skipped",
+          };
         }
         if (cycleHedgeBudgetRemaining < hedgeUsd) {
           hedgeUsd = cycleHedgeBudgetRemaining;
@@ -2990,7 +3153,11 @@ describe("Emergency Hedge Sizing", () => {
       const result = computeHedgeSizingWithReserves(config, 15.0, 40, 30.0);
 
       assert.strictEqual(result.isEmergency, true);
-      assert.strictEqual(result.hedgeUsd, 30, "Emergency hedge should be capped by reserve budget");
+      assert.strictEqual(
+        result.hedgeUsd,
+        30,
+        "Emergency hedge should be capped by reserve budget",
+      );
       assert.strictEqual(result.reason, "partial");
     });
 
@@ -3006,7 +3173,11 @@ describe("Emergency Hedge Sizing", () => {
       const result = computeHedgeSizingWithReserves(config, 15.0, 40, 2.0);
 
       assert.strictEqual(result.isEmergency, true);
-      assert.strictEqual(result.hedgeUsd, 0, "Emergency hedge should be skipped when below minHedgeUsd");
+      assert.strictEqual(
+        result.hedgeUsd,
+        0,
+        "Emergency hedge should be skipped when below minHedgeUsd",
+      );
       assert.strictEqual(result.reason, "skipped");
     });
 
@@ -3021,7 +3192,11 @@ describe("Emergency Hedge Sizing", () => {
       const result = computeHedgeSizingWithReserves(config, 15.0, 40, 100.0);
 
       assert.strictEqual(result.isEmergency, true);
-      assert.strictEqual(result.hedgeUsd, 50, "Emergency hedge should use full absoluteMaxUsd");
+      assert.strictEqual(
+        result.hedgeUsd,
+        50,
+        "Emergency hedge should use full absoluteMaxUsd",
+      );
       assert.strictEqual(result.reason, "full");
     });
   });
@@ -3051,25 +3226,45 @@ describe("Hedge Exit Monitoring", () => {
   ): { shouldExitOriginal: boolean; shouldExitHedge: boolean; reason: string } {
     // If hedge exit monitoring is disabled
     if (config.hedgeExitThreshold <= 0) {
-      return { shouldExitOriginal: false, shouldExitHedge: false, reason: "monitoring_disabled" };
+      return {
+        shouldExitOriginal: false,
+        shouldExitHedge: false,
+        reason: "monitoring_disabled",
+      };
     }
 
     // If neither position is held, nothing to monitor
     if (originalPrice === null && hedgePrice === null) {
-      return { shouldExitOriginal: false, shouldExitHedge: false, reason: "no_positions" };
+      return {
+        shouldExitOriginal: false,
+        shouldExitHedge: false,
+        reason: "no_positions",
+      };
     }
 
     // Check original position for exit
     if (originalPrice !== null && originalPrice < config.hedgeExitThreshold) {
-      return { shouldExitOriginal: true, shouldExitHedge: false, reason: "original_below_threshold" };
+      return {
+        shouldExitOriginal: true,
+        shouldExitHedge: false,
+        reason: "original_below_threshold",
+      };
     }
 
     // Check hedge position for exit
     if (hedgePrice !== null && hedgePrice < config.hedgeExitThreshold) {
-      return { shouldExitOriginal: false, shouldExitHedge: true, reason: "hedge_below_threshold" };
+      return {
+        shouldExitOriginal: false,
+        shouldExitHedge: true,
+        reason: "hedge_below_threshold",
+      };
     }
 
-    return { shouldExitOriginal: false, shouldExitHedge: false, reason: "both_above_threshold" };
+    return {
+      shouldExitOriginal: false,
+      shouldExitHedge: false,
+      reason: "both_above_threshold",
+    };
   }
 
   describe("Default Configuration", () => {
@@ -3085,7 +3280,7 @@ describe("Hedge Exit Monitoring", () => {
   describe("Hedge Exit Detection", () => {
     test("should exit original when price drops below threshold", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
-      const result = checkHedgeExit(config, 0.20, 0.80); // Original at 20¢, hedge at 80¢
+      const result = checkHedgeExit(config, 0.2, 0.8); // Original at 20¢, hedge at 80¢
 
       assert.strictEqual(result.shouldExitOriginal, true);
       assert.strictEqual(result.shouldExitHedge, false);
@@ -3094,7 +3289,7 @@ describe("Hedge Exit Monitoring", () => {
 
     test("should exit hedge when price drops below threshold", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
-      const result = checkHedgeExit(config, 0.80, 0.20); // Original at 80¢, hedge at 20¢
+      const result = checkHedgeExit(config, 0.8, 0.2); // Original at 80¢, hedge at 20¢
 
       assert.strictEqual(result.shouldExitOriginal, false);
       assert.strictEqual(result.shouldExitHedge, true);
@@ -3103,7 +3298,7 @@ describe("Hedge Exit Monitoring", () => {
 
     test("should NOT exit when both prices above threshold", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
-      const result = checkHedgeExit(config, 0.50, 0.50); // Both at 50¢
+      const result = checkHedgeExit(config, 0.5, 0.5); // Both at 50¢
 
       assert.strictEqual(result.shouldExitOriginal, false);
       assert.strictEqual(result.shouldExitHedge, false);
@@ -3114,7 +3309,11 @@ describe("Hedge Exit Monitoring", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
       const result = checkHedgeExit(config, 0.25, 0.75); // Original exactly at threshold
 
-      assert.strictEqual(result.shouldExitOriginal, false, "Should not exit at exact threshold");
+      assert.strictEqual(
+        result.shouldExitOriginal,
+        false,
+        "Should not exit at exact threshold",
+      );
       assert.strictEqual(result.shouldExitHedge, false);
     });
   });
@@ -3122,7 +3321,7 @@ describe("Hedge Exit Monitoring", () => {
   describe("Disabled Monitoring", () => {
     test("should NOT exit when hedgeExitThreshold is 0", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0 };
-      const result = checkHedgeExit(config, 0.10, 0.90); // Original at 10¢ (would trigger if enabled)
+      const result = checkHedgeExit(config, 0.1, 0.9); // Original at 10¢ (would trigger if enabled)
 
       assert.strictEqual(result.shouldExitOriginal, false);
       assert.strictEqual(result.shouldExitHedge, false);
@@ -3133,7 +3332,7 @@ describe("Hedge Exit Monitoring", () => {
   describe("Position Not Held", () => {
     test("should handle only original position held", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
-      const result = checkHedgeExit(config, 0.20, null); // Only original held, below threshold
+      const result = checkHedgeExit(config, 0.2, null); // Only original held, below threshold
 
       assert.strictEqual(result.shouldExitOriginal, true);
       assert.strictEqual(result.shouldExitHedge, false);
@@ -3141,7 +3340,7 @@ describe("Hedge Exit Monitoring", () => {
 
     test("should handle only hedge position held", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.25 };
-      const result = checkHedgeExit(config, null, 0.20); // Only hedge held, below threshold
+      const result = checkHedgeExit(config, null, 0.2); // Only hedge held, below threshold
 
       assert.strictEqual(result.shouldExitOriginal, false);
       assert.strictEqual(result.shouldExitHedge, true);
@@ -3162,16 +3361,16 @@ describe("Hedge Exit Monitoring", () => {
       const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.15 };
 
       // At 20¢, should NOT exit (above 15¢ threshold)
-      const result1 = checkHedgeExit(config, 0.20, 0.80);
+      const result1 = checkHedgeExit(config, 0.2, 0.8);
       assert.strictEqual(result1.shouldExitOriginal, false);
 
       // At 10¢, should exit (below 15¢ threshold)
-      const result2 = checkHedgeExit(config, 0.10, 0.90);
+      const result2 = checkHedgeExit(config, 0.1, 0.9);
       assert.strictEqual(result2.shouldExitOriginal, true);
     });
 
     test("should respect custom threshold of 30¢", () => {
-      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.30 };
+      const config = { ...DEFAULT_HEDGING_CONFIG, hedgeExitThreshold: 0.3 };
 
       // At 25¢, should exit (below 30¢ threshold)
       const result = checkHedgeExit(config, 0.25, 0.75);
@@ -3193,38 +3392,67 @@ describe("Fund-Freeing Logic for Hedge Failures", () => {
    * This mirrors the logic in HedgingStrategy.executeInternal().
    */
   function shouldTriggerFundFreeing(reason: string): boolean {
-    return reason === "INSUFFICIENT_BALANCE_OR_ALLOWANCE" || reason === "RESERVE_SHORTFALL";
+    return (
+      reason === "INSUFFICIENT_BALANCE_OR_ALLOWANCE" ||
+      reason === "RESERVE_SHORTFALL"
+    );
   }
 
   describe("Hedge Failure Reason Detection", () => {
     test("INSUFFICIENT_BALANCE_OR_ALLOWANCE should trigger fund-freeing", () => {
-      const result = shouldTriggerFundFreeing("INSUFFICIENT_BALANCE_OR_ALLOWANCE");
-      assert.strictEqual(result, true, "INSUFFICIENT_BALANCE_OR_ALLOWANCE should trigger fund-freeing");
+      const result = shouldTriggerFundFreeing(
+        "INSUFFICIENT_BALANCE_OR_ALLOWANCE",
+      );
+      assert.strictEqual(
+        result,
+        true,
+        "INSUFFICIENT_BALANCE_OR_ALLOWANCE should trigger fund-freeing",
+      );
     });
 
     test("RESERVE_SHORTFALL should trigger fund-freeing", () => {
       const result = shouldTriggerFundFreeing("RESERVE_SHORTFALL");
-      assert.strictEqual(result, true, "RESERVE_SHORTFALL should trigger fund-freeing");
+      assert.strictEqual(
+        result,
+        true,
+        "RESERVE_SHORTFALL should trigger fund-freeing",
+      );
     });
 
     test("TOO_EXPENSIVE should NOT trigger fund-freeing", () => {
       const result = shouldTriggerFundFreeing("TOO_EXPENSIVE");
-      assert.strictEqual(result, false, "TOO_EXPENSIVE should not trigger fund-freeing");
+      assert.strictEqual(
+        result,
+        false,
+        "TOO_EXPENSIVE should not trigger fund-freeing",
+      );
     });
 
     test("NO_OPPOSITE_TOKEN should NOT trigger fund-freeing", () => {
       const result = shouldTriggerFundFreeing("NO_OPPOSITE_TOKEN");
-      assert.strictEqual(result, false, "NO_OPPOSITE_TOKEN should not trigger fund-freeing");
+      assert.strictEqual(
+        result,
+        false,
+        "NO_OPPOSITE_TOKEN should not trigger fund-freeing",
+      );
     });
 
     test("NO_LIQUIDITY should NOT trigger fund-freeing", () => {
       const result = shouldTriggerFundFreeing("NO_LIQUIDITY");
-      assert.strictEqual(result, false, "NO_LIQUIDITY should not trigger fund-freeing");
+      assert.strictEqual(
+        result,
+        false,
+        "NO_LIQUIDITY should not trigger fund-freeing",
+      );
     });
 
     test("MARKET_RESOLVED should NOT trigger fund-freeing", () => {
       const result = shouldTriggerFundFreeing("MARKET_RESOLVED");
-      assert.strictEqual(result, false, "MARKET_RESOLVED should not trigger fund-freeing");
+      assert.strictEqual(
+        result,
+        false,
+        "MARKET_RESOLVED should not trigger fund-freeing",
+      );
     });
   });
 
@@ -3247,7 +3475,11 @@ describe("Fund-Freeing Logic for Hedge Failures", () => {
       const freedValue = 10.0;
 
       const newBudget = updateCycleBudgetAfterSell(initialBudget, freedValue);
-      assert.strictEqual(newBudget, 15.0, "Budget should increase by freed amount");
+      assert.strictEqual(
+        newBudget,
+        15.0,
+        "Budget should increase by freed amount",
+      );
     });
 
     test("should update cycle budget from zero", () => {
@@ -3255,7 +3487,11 @@ describe("Fund-Freeing Logic for Hedge Failures", () => {
       const freedValue = 25.0;
 
       const newBudget = updateCycleBudgetAfterSell(initialBudget, freedValue);
-      assert.strictEqual(newBudget, 25.0, "Budget should be exactly the freed amount");
+      assert.strictEqual(
+        newBudget,
+        25.0,
+        "Budget should be exactly the freed amount",
+      );
     });
 
     test("should not update if budget is null (no reserve tracking)", () => {
@@ -3263,7 +3499,11 @@ describe("Fund-Freeing Logic for Hedge Failures", () => {
       const freedValue = 10.0;
 
       const newBudget = updateCycleBudgetAfterSell(initialBudget, freedValue);
-      assert.strictEqual(newBudget, null, "Budget should remain null if no reserve tracking");
+      assert.strictEqual(
+        newBudget,
+        null,
+        "Budget should remain null if no reserve tracking",
+      );
     });
   });
 
@@ -3283,27 +3523,48 @@ describe("Fund-Freeing Logic for Hedge Failures", () => {
 
     test("should detect RESERVE_SHORTFALL as critical", () => {
       const summary = "loss_below_trigger=5, RESERVE_SHORTFALL=2";
-      assert.strictEqual(hasCriticalSkips(summary), true, "RESERVE_SHORTFALL issues should be critical");
+      assert.strictEqual(
+        hasCriticalSkips(summary),
+        true,
+        "RESERVE_SHORTFALL issues should be critical",
+      );
     });
 
     test("should detect untrusted_pnl as critical", () => {
       const summary = "loss_below_trigger=5, untrusted_pnl=3";
-      assert.strictEqual(hasCriticalSkips(summary), true, "untrusted_pnl issues should be critical");
+      assert.strictEqual(
+        hasCriticalSkips(summary),
+        true,
+        "untrusted_pnl issues should be critical",
+      );
     });
 
     test("should detect not_tradable as critical", () => {
       const summary = "loss_below_trigger=5, not_tradable=1";
-      assert.strictEqual(hasCriticalSkips(summary), true, "not_tradable should be critical");
+      assert.strictEqual(
+        hasCriticalSkips(summary),
+        true,
+        "not_tradable should be critical",
+      );
     });
 
     test("should detect cooldown as critical", () => {
       const summary = "loss_below_trigger=5, cooldown=2";
-      assert.strictEqual(hasCriticalSkips(summary), true, "cooldown should be critical");
+      assert.strictEqual(
+        hasCriticalSkips(summary),
+        true,
+        "cooldown should be critical",
+      );
     });
 
     test("should NOT detect normal skips as critical", () => {
-      const summary = "loss_below_trigger=5, already_hedged=2, hold_time_short=1";
-      assert.strictEqual(hasCriticalSkips(summary), false, "normal skips should not be critical");
+      const summary =
+        "loss_below_trigger=5, already_hedged=2, hold_time_short=1";
+      assert.strictEqual(
+        hasCriticalSkips(summary),
+        false,
+        "normal skips should not be critical",
+      );
     });
   });
 });

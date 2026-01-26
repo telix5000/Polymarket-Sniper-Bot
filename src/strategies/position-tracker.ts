@@ -779,8 +779,10 @@ export class PositionTracker {
   // Since trading now fetches fresh data at execution time (see fast-orderbook.util.ts),
   // this can be longer to reduce API calls. 30 seconds is good for display purposes.
   // Configurable via POSITION_TRACKER_ORDERBOOK_CACHE_MS env var.
-  private static readonly ORDERBOOK_CACHE_TTL_MS = 
-    parseInt(process.env.POSITION_TRACKER_ORDERBOOK_CACHE_MS ?? "30000", 10); // 30 seconds default
+  private static readonly ORDERBOOK_CACHE_TTL_MS = parseInt(
+    process.env.POSITION_TRACKER_ORDERBOOK_CACHE_MS ?? "30000",
+    10,
+  ); // 30 seconds default
   private static readonly POSITION_BALANCE_CACHE_TTL_MS = 5000; // 5 seconds for position balances
   private static readonly MAX_ORDERBOOK_CACHE_SIZE = 500;
 
@@ -3530,7 +3532,7 @@ export class PositionTracker {
                   this.logger.debug(
                     `[PositionTracker] Failed to fetch price data for ${tokenId.slice(0, 16)}...: ${errMsg} - keeping as ACTIVE with unknown P&L`,
                   );
-                  
+
                   // CRITICAL FIX (Jan 2025): If Data API provided curPrice, use it as currentPrice.
                   // This prevents P&L discrepancy issues when orderbook/fallback fetch fails but
                   // Data API already provided valid P&L data. Without this fix:
@@ -3911,8 +3913,7 @@ export class PositionTracker {
                 // For EXECUTABLE_BOOK and FALLBACK, pnlPct is derived from currentPrice so no discrepancy.
                 if (pnlSource === "DATA_API" && pnlDiscrepancy > 0) {
                   if (
-                    pnlDiscrepancy >
-                    PositionTracker.PNL_UNTRUSTED_THRESHOLD_PCT
+                    pnlDiscrepancy > PositionTracker.PNL_UNTRUSTED_THRESHOLD_PCT
                   ) {
                     // SEVERE DISCREPANCY: Data-API P&L materially disagrees with price-derived P&L
                     // Mark as untrusted to prevent scalper from acting on spurious values

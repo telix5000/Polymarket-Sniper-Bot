@@ -10,10 +10,34 @@ describe("PolymarketClient", () => {
 
       // Simulated positions from API
       const mockPositions = [
-        { tokenId: "active1", size: 100, curPrice: 0.5, isComplete: false, redeemable: false },
-        { tokenId: "complete1", size: 0, curPrice: 0, isComplete: true, redeemable: false },
-        { tokenId: "redeemable1", size: 50, curPrice: 1.0, isComplete: false, redeemable: true },
-        { tokenId: "active2", size: 200, curPrice: 0.7, isComplete: false, redeemable: false },
+        {
+          tokenId: "active1",
+          size: 100,
+          curPrice: 0.5,
+          isComplete: false,
+          redeemable: false,
+        },
+        {
+          tokenId: "complete1",
+          size: 0,
+          curPrice: 0,
+          isComplete: true,
+          redeemable: false,
+        },
+        {
+          tokenId: "redeemable1",
+          size: 50,
+          curPrice: 1.0,
+          isComplete: false,
+          redeemable: true,
+        },
+        {
+          tokenId: "active2",
+          size: 200,
+          curPrice: 0.7,
+          isComplete: false,
+          redeemable: false,
+        },
       ];
 
       // Filter logic (same as PolymarketClient)
@@ -21,7 +45,11 @@ describe("PolymarketClient", () => {
         (pos) => !pos.isComplete && !pos.redeemable,
       );
 
-      assert.equal(activePositions.length, 2, "Should only have 2 active positions");
+      assert.equal(
+        activePositions.length,
+        2,
+        "Should only have 2 active positions",
+      );
       assert.equal(activePositions[0].tokenId, "active1");
       assert.equal(activePositions[1].tokenId, "active2");
     });
@@ -185,7 +213,9 @@ describe("PolymarketClient", () => {
       const currentValue = size * curPrice; // 70
       const cashPnl = currentValue - initialValue; // 20
       const percentPnl =
-        initialValue > 0 ? ((currentValue - initialValue) / initialValue) * 100 : 0; // 40%
+        initialValue > 0
+          ? ((currentValue - initialValue) / initialValue) * 100
+          : 0; // 40%
 
       assert.equal(initialValue, 50);
       assert.equal(currentValue, 70);
@@ -223,14 +253,22 @@ describe("Stacking Strategy Logic", () => {
       const gainCents = curPriceCents - avgPriceCents; // 15 cents
 
       const eligible = gainCents >= minGainCents;
-      assert.equal(eligible, false, "15 cent gain < 20 cent threshold = not eligible");
+      assert.equal(
+        eligible,
+        false,
+        "15 cent gain < 20 cent threshold = not eligible",
+      );
     });
 
     test("should reject positions near $1", () => {
       const maxCurrentPrice = 0.95;
       const curPrice = 0.98;
       const eligible = curPrice < maxCurrentPrice;
-      assert.equal(eligible, false, "98 cent price >= 95 cent max = not eligible");
+      assert.equal(
+        eligible,
+        false,
+        "98 cent price >= 95 cent max = not eligible",
+      );
     });
 
     test("should accept eligible position", () => {
@@ -254,9 +292,14 @@ describe("Stacking Strategy Logic", () => {
       const gainSufficient = gainCents >= config.minGainCents;
       const notNearOne = position.curPrice < config.maxCurrentPrice;
 
-      const eligible = hasEntryPrice && isProfitable && gainSufficient && notNearOne;
+      const eligible =
+        hasEntryPrice && isProfitable && gainSufficient && notNearOne;
 
-      assert.equal(eligible, true, "Position with 25 cent gain @ 75 cents = eligible");
+      assert.equal(
+        eligible,
+        true,
+        "Position with 25 cent gain @ 75 cents = eligible",
+      );
       assert.equal(gainCents, 25);
     });
   });

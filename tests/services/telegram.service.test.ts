@@ -171,7 +171,8 @@ describe("Telegram Service Configuration", () => {
 describe("Telegram Service Message Formatting - escapeHtml", () => {
   test("should escape HTML special characters", () => {
     const input = "Test <script>alert('xss')</script> & more";
-    const expected = "Test &lt;script&gt;alert('xss')&lt;/script&gt; &amp; more";
+    const expected =
+      "Test &lt;script&gt;alert('xss')&lt;/script&gt; &amp; more";
 
     const result = escapeHtml(input);
 
@@ -418,10 +419,10 @@ describe("TelegramService Class", () => {
       { botToken: "test-token", chatId: "123456", pnlIntervalMinutes: 60 },
       logger,
     );
-    
+
     // Verify service is enabled
     assert.ok(service.isEnabled(), "Service should be enabled");
-    
+
     const mockSummary = {
       totalRealizedPnl: 100,
       totalUnrealizedPnl: 50,
@@ -439,12 +440,16 @@ describe("TelegramService Class", () => {
 
     // Start P&L updates to set the callback
     service.startPnlUpdates(() => mockSummary);
-    
+
     try {
       const result = await service.sendPnlUpdate();
 
       assert.strictEqual(result, true, "sendPnlUpdate should return true");
-      assert.strictEqual(mockFetch.mock.calls.length, 1, "fetch should be called once");
+      assert.strictEqual(
+        mockFetch.mock.calls.length,
+        1,
+        "fetch should be called once",
+      );
 
       const [, options] = mockFetch.mock.calls[0].arguments;
       const body = JSON.parse(options.body);
@@ -695,7 +700,10 @@ describe("TelegramService Class", () => {
       losingTrades: 2,
     };
 
-    const result = await service.sendTradeNotificationWithPnL(trade, pnlSnapshot);
+    const result = await service.sendTradeNotificationWithPnL(
+      trade,
+      pnlSnapshot,
+    );
 
     assert.strictEqual(result, true);
     assert.strictEqual(mockFetch.mock.calls.length, 1);
@@ -750,7 +758,7 @@ describe("TelegramService Class", () => {
       marketId: "0x1234567890abcdef1234567890abcdef",
       tokenId: "token123",
       size: 100,
-      price: 0.80,
+      price: 0.8,
       sizeUsd: 80,
       entryPrice: 0.65,
     };
@@ -816,16 +824,40 @@ describe("TelegramService Class", () => {
     const [, options] = mockFetch.mock.calls[0].arguments;
     const body = JSON.parse(options.body);
     // Check preset name is included
-    assert.ok(body.text.includes("balanced"), "Message should include preset name");
+    assert.ok(
+      body.text.includes("balanced"),
+      "Message should include preset name",
+    );
     // Check core modules section with ✅ indicators
-    assert.ok(body.text.includes("Core Modules"), "Message should include Core Modules section");
-    assert.ok(body.text.includes("✅ Orchestrator"), "Message should show Orchestrator enabled");
-    assert.ok(body.text.includes("✅ Arbitrage"), "Message should show Arbitrage enabled");
-    assert.ok(body.text.includes("✅ Monitor"), "Message should show Monitor enabled");
+    assert.ok(
+      body.text.includes("Core Modules"),
+      "Message should include Core Modules section",
+    );
+    assert.ok(
+      body.text.includes("✅ Orchestrator"),
+      "Message should show Orchestrator enabled",
+    );
+    assert.ok(
+      body.text.includes("✅ Arbitrage"),
+      "Message should show Arbitrage enabled",
+    );
+    assert.ok(
+      body.text.includes("✅ Monitor"),
+      "Message should show Monitor enabled",
+    );
     // Check strategies are included
-    assert.ok(body.text.includes("Endgame Sweep"), "Message should include Endgame Sweep strategy");
-    assert.ok(body.text.includes("Position Stacking"), "Message should include Position Stacking strategy");
-    assert.ok(body.text.includes("Hedging"), "Message should include Hedging strategy");
+    assert.ok(
+      body.text.includes("Endgame Sweep"),
+      "Message should include Endgame Sweep strategy",
+    );
+    assert.ok(
+      body.text.includes("Position Stacking"),
+      "Message should include Position Stacking strategy",
+    );
+    assert.ok(
+      body.text.includes("Hedging"),
+      "Message should include Hedging strategy",
+    );
   });
 
   test("sendStartupNotification shows ❌ for disabled core modules", async () => {
@@ -848,9 +880,18 @@ describe("TelegramService Class", () => {
     const [, options] = mockFetch.mock.calls[0].arguments;
     const body = JSON.parse(options.body);
     // Check core modules are shown as disabled
-    assert.ok(body.text.includes("❌ Orchestrator"), "Message should show Orchestrator disabled");
-    assert.ok(body.text.includes("❌ Arbitrage"), "Message should show Arbitrage disabled");
-    assert.ok(body.text.includes("❌ Monitor"), "Message should show Monitor disabled");
+    assert.ok(
+      body.text.includes("❌ Orchestrator"),
+      "Message should show Orchestrator disabled",
+    );
+    assert.ok(
+      body.text.includes("❌ Arbitrage"),
+      "Message should show Arbitrage disabled",
+    );
+    assert.ok(
+      body.text.includes("❌ Monitor"),
+      "Message should show Monitor disabled",
+    );
   });
 
   test("sendStartupNotification returns false when disabled", async () => {

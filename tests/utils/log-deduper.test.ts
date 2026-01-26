@@ -303,7 +303,11 @@ describe("LogDeduper", () => {
         eventKey: "skip_low_price",
         priceBucket: "10-20c",
       });
-      assert.strictEqual(result, true, "Different priceBucket should return true");
+      assert.strictEqual(
+        result,
+        true,
+        "Different priceBucket should return true",
+      );
     });
   });
 
@@ -314,19 +318,19 @@ describe("LogDeduper", () => {
     });
 
     test("returns 10-20c for prices 10-19 cents", () => {
-      assert.strictEqual(LogDeduper.priceToBucket(0.10), "10-20c");
+      assert.strictEqual(LogDeduper.priceToBucket(0.1), "10-20c");
       assert.strictEqual(LogDeduper.priceToBucket(0.15), "10-20c");
       assert.strictEqual(LogDeduper.priceToBucket(0.19), "10-20c");
     });
 
     test("returns 20-50c for prices 20-49 cents", () => {
-      assert.strictEqual(LogDeduper.priceToBucket(0.20), "20-50c");
+      assert.strictEqual(LogDeduper.priceToBucket(0.2), "20-50c");
       assert.strictEqual(LogDeduper.priceToBucket(0.35), "20-50c");
       assert.strictEqual(LogDeduper.priceToBucket(0.49), "20-50c");
     });
 
     test("returns 50c+ for prices at or above 50 cents", () => {
-      assert.strictEqual(LogDeduper.priceToBucket(0.50), "50c+");
+      assert.strictEqual(LogDeduper.priceToBucket(0.5), "50c+");
       assert.strictEqual(LogDeduper.priceToBucket(0.75), "50c+");
       assert.strictEqual(LogDeduper.priceToBucket(0.99), "50c+");
     });

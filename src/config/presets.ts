@@ -351,7 +351,7 @@ export const STRATEGY_PRESETS = {
      */
     POSITION_STACKING_ENABLED: true, // ENABLED BY DEFAULT
     POSITION_STACKING_MIN_GAIN_CENTS: 25, // Conservative: require 25¢ gain
-    POSITION_STACKING_MAX_CURRENT_PRICE: 0.90, // Conservative: don't stack above 90¢
+    POSITION_STACKING_MAX_CURRENT_PRICE: 0.9, // Conservative: don't stack above 90¢
     // Rate limits
     ORDER_SUBMIT_MAX_PER_HOUR: 30,
     ORDER_SUBMIT_MIN_INTERVAL_MS: 10000,

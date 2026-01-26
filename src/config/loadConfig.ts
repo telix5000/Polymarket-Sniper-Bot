@@ -1765,8 +1765,7 @@ export function loadStrategyConfig(
     hedgingMaxHedgeUsd:
       parseNumber(readEnv("HEDGING_MAX_HEDGE_USD", overrides) ?? "") ??
       ("HEDGING_MAX_HEDGE_USD" in preset
-        ? (preset as { HEDGING_MAX_HEDGE_USD: number })
-            .HEDGING_MAX_HEDGE_USD
+        ? (preset as { HEDGING_MAX_HEDGE_USD: number }).HEDGING_MAX_HEDGE_USD
         : undefined) ??
       10, // Default: max $10 per hedge
     // HEDGING_MIN_HEDGE_USD: minimum USD per hedge position (skip smaller hedges)
@@ -1774,16 +1773,14 @@ export function loadStrategyConfig(
     hedgingMinHedgeUsd:
       parseNumber(readEnv("HEDGING_MIN_HEDGE_USD", overrides) ?? "") ??
       ("HEDGING_MIN_HEDGE_USD" in preset
-        ? (preset as { HEDGING_MIN_HEDGE_USD: number })
-            .HEDGING_MIN_HEDGE_USD
+        ? (preset as { HEDGING_MIN_HEDGE_USD: number }).HEDGING_MIN_HEDGE_USD
         : undefined) ??
       1, // Default: min $1 per hedge (skip micro-hedges below $1)
     // HEDGING_RESERVE_PCT: percentage of wallet to reserve for hedging
     hedgingReservePct:
       parseNumber(readEnv("HEDGING_RESERVE_PCT", overrides) ?? "") ??
       ("HEDGING_RESERVE_PCT" in preset
-        ? (preset as { HEDGING_RESERVE_PCT: number })
-            .HEDGING_RESERVE_PCT
+        ? (preset as { HEDGING_RESERVE_PCT: number }).HEDGING_RESERVE_PCT
         : undefined) ??
       20, // Default: keep 20% in reserve
     /**
@@ -1816,9 +1813,7 @@ export function loadStrategyConfig(
      * Default: 30%
      */
     hedgingEmergencyLossPct:
-      parseNumber(
-        readEnv("HEDGING_EMERGENCY_LOSS_PCT", overrides) ?? "",
-      ) ??
+      parseNumber(readEnv("HEDGING_EMERGENCY_LOSS_PCT", overrides) ?? "") ??
       ("HEDGING_EMERGENCY_LOSS_PCT" in preset
         ? (preset as { HEDGING_EMERGENCY_LOSS_PCT: number })
             .HEDGING_EMERGENCY_LOSS_PCT
@@ -1830,9 +1825,7 @@ export function loadStrategyConfig(
      * Default: 0.25 (25¢)
      */
     hedgingHedgeExitThreshold:
-      parseNumber(
-        readEnv("HEDGING_HEDGE_EXIT_THRESHOLD", overrides) ?? "",
-      ) ??
+      parseNumber(readEnv("HEDGING_HEDGE_EXIT_THRESHOLD", overrides) ?? "") ??
       ("HEDGING_HEDGE_EXIT_THRESHOLD" in preset
         ? (preset as { HEDGING_HEDGE_EXIT_THRESHOLD: number })
             .HEDGING_HEDGE_EXIT_THRESHOLD
@@ -1900,9 +1893,7 @@ export function loadStrategyConfig(
      * Default: 30%
      */
     hedgingNearCloseLossPct:
-      parseNumber(
-        readEnv("HEDGING_NEAR_CLOSE_LOSS_PCT", overrides) ?? "",
-      ) ??
+      parseNumber(readEnv("HEDGING_NEAR_CLOSE_LOSS_PCT", overrides) ?? "") ??
       ("HEDGING_NEAR_CLOSE_LOSS_PCT" in preset
         ? (preset as { HEDGING_NEAR_CLOSE_LOSS_PCT: number })
             .HEDGING_NEAR_CLOSE_LOSS_PCT
@@ -1934,8 +1925,13 @@ export function loadStrategyConfig(
         return envValue;
       }
       if ("HEDGING_DIRECTION" in preset) {
-        const presetValue = (preset as { HEDGING_DIRECTION: string }).HEDGING_DIRECTION;
-        if (presetValue === "down" || presetValue === "up" || presetValue === "both") {
+        const presetValue = (preset as { HEDGING_DIRECTION: string })
+          .HEDGING_DIRECTION;
+        if (
+          presetValue === "down" ||
+          presetValue === "up" ||
+          presetValue === "both"
+        ) {
           return presetValue;
         }
       }
@@ -1961,9 +1957,7 @@ export function loadStrategyConfig(
      * Default: 0.95 = 95¢
      */
     hedgingHedgeUpMaxPrice:
-      parseNumber(
-        readEnv("HEDGING_HEDGE_UP_MAX_PRICE", overrides) ?? "",
-      ) ??
+      parseNumber(readEnv("HEDGING_HEDGE_UP_MAX_PRICE", overrides) ?? "") ??
       ("HEDGING_HEDGE_UP_MAX_PRICE" in preset
         ? (preset as { HEDGING_HEDGE_UP_MAX_PRICE: number })
             .HEDGING_HEDGE_UP_MAX_PRICE
@@ -1988,9 +1982,7 @@ export function loadStrategyConfig(
      * Default: 25 (matches absoluteMaxUsd)
      */
     hedgingHedgeUpMaxUsd:
-      parseNumber(
-        readEnv("HEDGING_HEDGE_UP_MAX_USD", overrides) ?? "",
-      ) ??
+      parseNumber(readEnv("HEDGING_HEDGE_UP_MAX_USD", overrides) ?? "") ??
       ("HEDGING_HEDGE_UP_MAX_USD" in preset
         ? (preset as { HEDGING_HEDGE_UP_MAX_USD: number })
             .HEDGING_HEDGE_UP_MAX_USD
@@ -2003,11 +1995,15 @@ export function loadStrategyConfig(
      * Default: false (safer - only hedge up near close when outcome is more certain)
      */
     hedgingHedgeUpAnytime: (() => {
-      const envValue = readEnv("HEDGING_HEDGE_UP_ANYTIME", overrides)?.toLowerCase();
+      const envValue = readEnv(
+        "HEDGING_HEDGE_UP_ANYTIME",
+        overrides,
+      )?.toLowerCase();
       if (envValue === "true" || envValue === "1") return true;
       if (envValue === "false" || envValue === "0") return false;
       if ("HEDGING_HEDGE_UP_ANYTIME" in preset) {
-        return !!(preset as { HEDGING_HEDGE_UP_ANYTIME: boolean }).HEDGING_HEDGE_UP_ANYTIME;
+        return !!(preset as { HEDGING_HEDGE_UP_ANYTIME: boolean })
+          .HEDGING_HEDGE_UP_ANYTIME;
       }
       return false; // Default: only hedge up near close (safer)
     })(),
@@ -2217,7 +2213,8 @@ export function loadStrategyConfig(
     autoSellStalePositionHours:
       parseNumber(readEnv("AUTO_SELL_STALE_POSITION_HOURS", overrides) ?? "") ??
       ("AUTO_SELL_STALE_POSITION_HOURS" in preset
-        ? (preset as { AUTO_SELL_STALE_POSITION_HOURS: number }).AUTO_SELL_STALE_POSITION_HOURS
+        ? (preset as { AUTO_SELL_STALE_POSITION_HOURS: number })
+            .AUTO_SELL_STALE_POSITION_HOURS
         : undefined) ??
       24, // Default: 24 hours - sell profitable positions held for 24+ hours
     // AUTO_SELL_STALE_EXPIRY_HOLD_HOURS: Hours before event expiry to hold instead of sell
@@ -2234,21 +2231,26 @@ export function loadStrategyConfig(
     autoSellQuickWinEnabled:
       parseBool(readEnv("AUTO_SELL_QUICK_WIN_ENABLED", overrides) ?? "") ??
       ("AUTO_SELL_QUICK_WIN_ENABLED" in preset
-        ? (preset as { AUTO_SELL_QUICK_WIN_ENABLED: boolean }).AUTO_SELL_QUICK_WIN_ENABLED
+        ? (preset as { AUTO_SELL_QUICK_WIN_ENABLED: boolean })
+            .AUTO_SELL_QUICK_WIN_ENABLED
         : undefined) ??
       false, // Default: disabled - opt-in feature
     // AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES: Max hold time for quick win (minutes)
     autoSellQuickWinMaxHoldMinutes:
-      parseNumber(readEnv("AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES", overrides) ?? "") ??
+      parseNumber(
+        readEnv("AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES", overrides) ?? "",
+      ) ??
       ("AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES" in preset
-        ? (preset as { AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES: number }).AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES
+        ? (preset as { AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES: number })
+            .AUTO_SELL_QUICK_WIN_MAX_HOLD_MINUTES
         : undefined) ??
       60, // Default: 60 minutes (1 hour)
     // AUTO_SELL_QUICK_WIN_PROFIT_PCT: Profit % threshold for quick win
     autoSellQuickWinProfitPct:
       parseNumber(readEnv("AUTO_SELL_QUICK_WIN_PROFIT_PCT", overrides) ?? "") ??
       ("AUTO_SELL_QUICK_WIN_PROFIT_PCT" in preset
-        ? (preset as { AUTO_SELL_QUICK_WIN_PROFIT_PCT: number }).AUTO_SELL_QUICK_WIN_PROFIT_PCT
+        ? (preset as { AUTO_SELL_QUICK_WIN_PROFIT_PCT: number })
+            .AUTO_SELL_QUICK_WIN_PROFIT_PCT
         : undefined) ??
       90, // Default: 90% profit
     // === OVERSIZED POSITION EXIT SETTINGS ===
@@ -2257,29 +2259,45 @@ export function loadStrategyConfig(
     autoSellOversizedExitEnabled:
       parseBool(readEnv("AUTO_SELL_OVERSIZED_EXIT_ENABLED", overrides) ?? "") ??
       ("AUTO_SELL_OVERSIZED_EXIT_ENABLED" in preset
-        ? (preset as { AUTO_SELL_OVERSIZED_EXIT_ENABLED: boolean }).AUTO_SELL_OVERSIZED_EXIT_ENABLED
+        ? (preset as { AUTO_SELL_OVERSIZED_EXIT_ENABLED: boolean })
+            .AUTO_SELL_OVERSIZED_EXIT_ENABLED
         : undefined) ??
       false, // Default: disabled - opt-in feature
     // AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD: USD threshold for "oversized" positions
     // Typically set to match HEDGING_ABSOLUTE_MAX_USD
     autoSellOversizedExitThresholdUsd:
-      parseNumber(readEnv("AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD", overrides) ?? "") ??
+      parseNumber(
+        readEnv("AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD", overrides) ?? "",
+      ) ??
       ("AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD" in preset
-        ? (preset as { AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD: number }).AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD
+        ? (preset as { AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD: number })
+            .AUTO_SELL_OVERSIZED_EXIT_THRESHOLD_USD
         : undefined) ??
       25, // Default: $25 (matches default HEDGING_ABSOLUTE_MAX_USD)
     // AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT: Hours before event to force exit
     autoSellOversizedExitHoursBeforeEvent:
-      parseNumber(readEnv("AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT", overrides) ?? "") ??
+      parseNumber(
+        readEnv("AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT", overrides) ?? "",
+      ) ??
       ("AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT" in preset
-        ? (preset as { AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT: number }).AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT
+        ? (preset as { AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT: number })
+            .AUTO_SELL_OVERSIZED_EXIT_HOURS_BEFORE_EVENT
         : undefined) ??
       1, // Default: 1 hour before event
     // AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT: P&L % tolerance for breakeven exits
     autoSellOversizedExitBreakevenTolerancePct:
-      parseNumber(readEnv("AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT", overrides) ?? "") ??
+      parseNumber(
+        readEnv(
+          "AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT",
+          overrides,
+        ) ?? "",
+      ) ??
       ("AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT" in preset
-        ? (preset as { AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT: number }).AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT
+        ? (
+            preset as {
+              AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT: number;
+            }
+          ).AUTO_SELL_OVERSIZED_EXIT_BREAKEVEN_TOLERANCE_PCT
         : undefined) ??
       2, // Default: 2% tolerance (-2% to +2%)
     // === ON-CHAIN EXIT STRATEGY (routes NOT_TRADABLE positions to redemption) ===

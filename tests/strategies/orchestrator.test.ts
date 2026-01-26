@@ -370,19 +370,24 @@ describe("Portfolio P&L Calculation", () => {
       size,
       entryPrice,
       currentPrice,
-      pnlPct: entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0,
+      pnlPct:
+        entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : 0,
       pnlUsd,
       pnlTrusted,
-      pnlClassification: pnlTrusted ? (pnlUsd > 0 ? "PROFITABLE" : "LOSING") : "UNKNOWN",
+      pnlClassification: pnlTrusted
+        ? pnlUsd > 0
+          ? "PROFITABLE"
+          : "LOSING"
+        : "UNKNOWN",
     };
   }
 
   test("Unrealized P&L includes positions with pnlTrusted=false", () => {
     // Simulate the P&L calculation logic from getSummaryWithBalances
     const positions = [
-      createMockPosition("token1", 10, 0.50, 0.80, true),  // Trusted: +$3.00
-      createMockPosition("token2", 10, 0.60, 0.90, false), // Untrusted: +$3.00 (should still be included)
-      createMockPosition("token3", 5, 0.70, 0.40, true),   // Trusted: -$1.50
+      createMockPosition("token1", 10, 0.5, 0.8, true), // Trusted: +$3.00
+      createMockPosition("token2", 10, 0.6, 0.9, false), // Untrusted: +$3.00 (should still be included)
+      createMockPosition("token3", 5, 0.7, 0.4, true), // Trusted: -$1.50
     ];
 
     let holdingsValue = 0;
@@ -398,7 +403,7 @@ describe("Portfolio P&L Calculation", () => {
 
     // Expected holdings: (10 * 0.80) + (10 * 0.90) + (5 * 0.40) = 8 + 9 + 2 = $19
     assert.strictEqual(holdingsValue, 19, "Holdings value should be $19");
-    
+
     // Expected P&L: +$3.00 + $3.00 - $1.50 = $4.50
     // Use tolerance for floating-point comparison
     assert.ok(
@@ -410,8 +415,8 @@ describe("Portfolio P&L Calculation", () => {
   test("Holdings and unrealized P&L remain consistent when all positions have untrusted P&L", () => {
     // All positions are untrusted but should still contribute to P&L
     const positions = [
-      createMockPosition("token1", 10, 0.50, 0.80, false), // +$3.00
-      createMockPosition("token2", 10, 0.60, 0.90, false), // +$3.00
+      createMockPosition("token1", 10, 0.5, 0.8, false), // +$3.00
+      createMockPosition("token2", 10, 0.6, 0.9, false), // +$3.00
     ];
 
     let holdingsValue = 0;
@@ -426,7 +431,7 @@ describe("Portfolio P&L Calculation", () => {
 
     // Holdings: 8 + 9 = $17
     assert.strictEqual(holdingsValue, 17, "Holdings value should be $17");
-    
+
     // P&L should still be calculated: +$3.00 + $3.00 = $6.00
     // Use tolerance for floating-point comparison
     assert.ok(
@@ -439,7 +444,11 @@ describe("Portfolio P&L Calculation", () => {
 describe("Initial Investment Tracking (enrichWithInitialInvestment)", () => {
   // Simulate the enrichWithInitialInvestment logic
   function enrichWithInitialInvestment(
-    summary: { initialInvestment?: number; overallGainLoss?: number; overallReturnPct?: number },
+    summary: {
+      initialInvestment?: number;
+      overallGainLoss?: number;
+      overallReturnPct?: number;
+    },
     totalValue: number,
     envValue: string | undefined,
   ): void {
@@ -450,87 +459,200 @@ describe("Initial Investment Tracking (enrichWithInitialInvestment)", () => {
 
     summary.initialInvestment = initialInvestment;
     summary.overallGainLoss = totalValue - initialInvestment;
-    summary.overallReturnPct = (summary.overallGainLoss / initialInvestment) * 100;
+    summary.overallReturnPct =
+      (summary.overallGainLoss / initialInvestment) * 100;
   }
 
   test("Correct calculation of overallGainLoss and overallReturnPct", () => {
-    const summary: { initialInvestment?: number; overallGainLoss?: number; overallReturnPct?: number } = {};
-    
+    const summary: {
+      initialInvestment?: number;
+      overallGainLoss?: number;
+      overallReturnPct?: number;
+    } = {};
+
     // Started with $100, now have $125 = +$25 gain (+25%)
     enrichWithInitialInvestment(summary, 125, "100");
-    
-    assert.strictEqual(summary.initialInvestment, 100, "Initial investment should be $100");
-    assert.strictEqual(summary.overallGainLoss, 25, "Overall gain should be +$25");
-    assert.strictEqual(summary.overallReturnPct, 25, "Overall return should be +25%");
+
+    assert.strictEqual(
+      summary.initialInvestment,
+      100,
+      "Initial investment should be $100",
+    );
+    assert.strictEqual(
+      summary.overallGainLoss,
+      25,
+      "Overall gain should be +$25",
+    );
+    assert.strictEqual(
+      summary.overallReturnPct,
+      25,
+      "Overall return should be +25%",
+    );
   });
 
   test("Handles loss scenario correctly", () => {
-    const summary: { initialInvestment?: number; overallGainLoss?: number; overallReturnPct?: number } = {};
-    
+    const summary: {
+      initialInvestment?: number;
+      overallGainLoss?: number;
+      overallReturnPct?: number;
+    } = {};
+
     // Started with $200, now have $150 = -$50 loss (-25%)
     enrichWithInitialInvestment(summary, 150, "200");
-    
-    assert.strictEqual(summary.initialInvestment, 200, "Initial investment should be $200");
-    assert.strictEqual(summary.overallGainLoss, -50, "Overall gain should be -$50");
-    assert.strictEqual(summary.overallReturnPct, -25, "Overall return should be -25%");
+
+    assert.strictEqual(
+      summary.initialInvestment,
+      200,
+      "Initial investment should be $200",
+    );
+    assert.strictEqual(
+      summary.overallGainLoss,
+      -50,
+      "Overall gain should be -$50",
+    );
+    assert.strictEqual(
+      summary.overallReturnPct,
+      -25,
+      "Overall return should be -25%",
+    );
   });
 
   test("Edge case: totalValue equals initialInvestment (0% return)", () => {
-    const summary: { initialInvestment?: number; overallGainLoss?: number; overallReturnPct?: number } = {};
-    
+    const summary: {
+      initialInvestment?: number;
+      overallGainLoss?: number;
+      overallReturnPct?: number;
+    } = {};
+
     // Started with $100, still have $100 = $0 gain (0%)
     enrichWithInitialInvestment(summary, 100, "100");
-    
-    assert.strictEqual(summary.initialInvestment, 100, "Initial investment should be $100");
+
+    assert.strictEqual(
+      summary.initialInvestment,
+      100,
+      "Initial investment should be $100",
+    );
     assert.strictEqual(summary.overallGainLoss, 0, "Overall gain should be $0");
-    assert.strictEqual(summary.overallReturnPct, 0, "Overall return should be 0%");
+    assert.strictEqual(
+      summary.overallReturnPct,
+      0,
+      "Overall return should be 0%",
+    );
   });
 
   test("Does nothing when INITIAL_INVESTMENT_USD is not set", () => {
-    const summary: { initialInvestment?: number; overallGainLoss?: number; overallReturnPct?: number } = {};
-    
+    const summary: {
+      initialInvestment?: number;
+      overallGainLoss?: number;
+      overallReturnPct?: number;
+    } = {};
+
     enrichWithInitialInvestment(summary, 150, undefined);
-    
-    assert.strictEqual(summary.initialInvestment, undefined, "Initial investment should not be set");
-    assert.strictEqual(summary.overallGainLoss, undefined, "Overall gain should not be set");
-    assert.strictEqual(summary.overallReturnPct, undefined, "Overall return should not be set");
+
+    assert.strictEqual(
+      summary.initialInvestment,
+      undefined,
+      "Initial investment should not be set",
+    );
+    assert.strictEqual(
+      summary.overallGainLoss,
+      undefined,
+      "Overall gain should not be set",
+    );
+    assert.strictEqual(
+      summary.overallReturnPct,
+      undefined,
+      "Overall return should not be set",
+    );
   });
 
   test("Handles invalid INITIAL_INVESTMENT_USD - NaN", () => {
-    const summary: { initialInvestment?: number; overallGainLoss?: number; overallReturnPct?: number } = {};
-    
+    const summary: {
+      initialInvestment?: number;
+      overallGainLoss?: number;
+      overallReturnPct?: number;
+    } = {};
+
     enrichWithInitialInvestment(summary, 150, "not-a-number");
-    
-    assert.strictEqual(summary.initialInvestment, undefined, "Initial investment should not be set for NaN");
-    assert.strictEqual(summary.overallGainLoss, undefined, "Overall gain should not be set for NaN");
+
+    assert.strictEqual(
+      summary.initialInvestment,
+      undefined,
+      "Initial investment should not be set for NaN",
+    );
+    assert.strictEqual(
+      summary.overallGainLoss,
+      undefined,
+      "Overall gain should not be set for NaN",
+    );
   });
 
   test("Handles invalid INITIAL_INVESTMENT_USD - negative", () => {
-    const summary: { initialInvestment?: number; overallGainLoss?: number; overallReturnPct?: number } = {};
-    
+    const summary: {
+      initialInvestment?: number;
+      overallGainLoss?: number;
+      overallReturnPct?: number;
+    } = {};
+
     enrichWithInitialInvestment(summary, 150, "-100");
-    
-    assert.strictEqual(summary.initialInvestment, undefined, "Initial investment should not be set for negative");
-    assert.strictEqual(summary.overallGainLoss, undefined, "Overall gain should not be set for negative");
+
+    assert.strictEqual(
+      summary.initialInvestment,
+      undefined,
+      "Initial investment should not be set for negative",
+    );
+    assert.strictEqual(
+      summary.overallGainLoss,
+      undefined,
+      "Overall gain should not be set for negative",
+    );
   });
 
   test("Handles invalid INITIAL_INVESTMENT_USD - zero", () => {
-    const summary: { initialInvestment?: number; overallGainLoss?: number; overallReturnPct?: number } = {};
-    
+    const summary: {
+      initialInvestment?: number;
+      overallGainLoss?: number;
+      overallReturnPct?: number;
+    } = {};
+
     enrichWithInitialInvestment(summary, 150, "0");
-    
-    assert.strictEqual(summary.initialInvestment, undefined, "Initial investment should not be set for zero");
-    assert.strictEqual(summary.overallGainLoss, undefined, "Overall gain should not be set for zero");
+
+    assert.strictEqual(
+      summary.initialInvestment,
+      undefined,
+      "Initial investment should not be set for zero",
+    );
+    assert.strictEqual(
+      summary.overallGainLoss,
+      undefined,
+      "Overall gain should not be set for zero",
+    );
   });
 
   test("Handles decimal INITIAL_INVESTMENT_USD values", () => {
-    const summary: { initialInvestment?: number; overallGainLoss?: number; overallReturnPct?: number } = {};
-    
+    const summary: {
+      initialInvestment?: number;
+      overallGainLoss?: number;
+      overallReturnPct?: number;
+    } = {};
+
     // Started with $99.50, now have $149.25 = +$49.75 gain (+50%)
     enrichWithInitialInvestment(summary, 149.25, "99.50");
-    
-    assert.strictEqual(summary.initialInvestment, 99.5, "Initial investment should be $99.50");
-    assert.strictEqual(summary.overallGainLoss, 49.75, "Overall gain should be +$49.75");
-    assert.strictEqual(summary.overallReturnPct, 50, "Overall return should be +50%");
+
+    assert.strictEqual(
+      summary.initialInvestment,
+      99.5,
+      "Initial investment should be $99.50",
+    );
+    assert.strictEqual(
+      summary.overallGainLoss,
+      49.75,
+      "Overall gain should be +$49.75",
+    );
+    assert.strictEqual(
+      summary.overallReturnPct,
+      50,
+      "Overall return should be +50%",
+    );
   });
 });

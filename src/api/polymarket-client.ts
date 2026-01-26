@@ -403,9 +403,7 @@ export class PolymarketClient {
   private async refreshPositions(address: string): Promise<void> {
     const url = POLYMARKET_API.POSITIONS_ENDPOINT(address);
 
-    this.logger.debug(
-      `[PolymarketClient] 📡 Fetching positions from API...`,
-    );
+    this.logger.debug(`[PolymarketClient] 📡 Fetching positions from API...`);
 
     try {
       const rawPositions = await httpGet<RawApiPosition[]>(url, {
@@ -487,8 +485,7 @@ export class PolymarketClient {
           : 0;
 
     // Determine if position is complete (zero value or fully redeemed)
-    const isComplete =
-      size <= 0 || currentValue <= 0;
+    const isComplete = size <= 0 || currentValue <= 0;
 
     return {
       tokenId: raw.asset,
