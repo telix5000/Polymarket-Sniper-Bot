@@ -2222,9 +2222,12 @@ export function loadStrategyConfig(
     // instead of selling. Waiting for resolution may be more profitable ($1 vs current price).
     // Set to 0 to disable expiry-aware holding (always sell stale positions).
     autoSellStaleExpiryHoldHours:
-      parseNumber(readEnv("AUTO_SELL_STALE_EXPIRY_HOLD_HOURS", overrides) ?? "") ??
+      parseNumber(
+        readEnv("AUTO_SELL_STALE_EXPIRY_HOLD_HOURS", overrides) ?? "",
+      ) ??
       ("AUTO_SELL_STALE_EXPIRY_HOLD_HOURS" in preset
-        ? (preset as { AUTO_SELL_STALE_EXPIRY_HOLD_HOURS: number }).AUTO_SELL_STALE_EXPIRY_HOLD_HOURS
+        ? (preset as { AUTO_SELL_STALE_EXPIRY_HOLD_HOURS: number })
+            .AUTO_SELL_STALE_EXPIRY_HOLD_HOURS
         : undefined) ??
       48, // Default: 48 hours - if event expires within 48 hours, hold for resolution
     // AUTO_SELL_QUICK_WIN_ENABLED: Enable quick win exit for positions with massive gains in short time

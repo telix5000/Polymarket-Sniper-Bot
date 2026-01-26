@@ -584,13 +584,12 @@ const fetchBalanceAllowance = async (
     }
   }
 
-  const { requestParams } =
-    buildBalanceAllowanceRequestInfo({
-      client,
-      endpoint: BALANCE_ALLOWANCE_ENDPOINT,
-      assetType,
-      tokenId,
-    });
+  const { requestParams } = buildBalanceAllowanceRequestInfo({
+    client,
+    endpoint: BALANCE_ALLOWANCE_ENDPOINT,
+    assetType,
+    tokenId,
+  });
 
   try {
     const response = await client.getBalanceAllowance(requestParams);

@@ -1566,7 +1566,7 @@ describe("Auto-Redeem getRedeemablePositions Flow", () => {
 
 /**
  * Tests for the Immediate Trigger functionality
- * 
+ *
  * When PositionTracker detects new on-chain verified redeemable positions,
  * it triggers AutoRedeem.triggerImmediate() to bypass the interval throttle.
  * This ensures capital is recovered as quickly as possible.
@@ -1593,9 +1593,8 @@ describe("Auto-Redeem Immediate Trigger", () => {
 
     test("triggerImmediate should bypass interval throttle", async () => {
       // Import the actual AutoRedeemStrategy class
-      const { AutoRedeemStrategy } = await import(
-        "../../src/strategies/auto-redeem"
-      );
+      const { AutoRedeemStrategy } =
+        await import("../../src/strategies/auto-redeem");
 
       const mockLogger = createMockLogger();
       const mockClient = createMockClient();
@@ -1648,9 +1647,8 @@ describe("Auto-Redeem Immediate Trigger", () => {
     });
 
     test("triggerImmediate should respect single-flight guard", async () => {
-      const { AutoRedeemStrategy } = await import(
-        "../../src/strategies/auto-redeem"
-      );
+      const { AutoRedeemStrategy } =
+        await import("../../src/strategies/auto-redeem");
 
       const mockLogger = createMockLogger();
       const mockClient = createMockClient();
@@ -1701,9 +1699,8 @@ describe("Auto-Redeem Immediate Trigger", () => {
     });
 
     test("triggerImmediate should update lastCheckTimeMs to prevent immediate re-trigger", async () => {
-      const { AutoRedeemStrategy } = await import(
-        "../../src/strategies/auto-redeem"
-      );
+      const { AutoRedeemStrategy } =
+        await import("../../src/strategies/auto-redeem");
 
       const mockLogger = createMockLogger();
       const mockClient = createMockClient();
@@ -1730,7 +1727,11 @@ describe("Auto-Redeem Immediate Trigger", () => {
 
       // Trigger immediate (should succeed and update lastCheckTimeMs)
       const immediateResult = await strategy.triggerImmediate();
-      assert.strictEqual(immediateResult, 1, "Immediate trigger should succeed");
+      assert.strictEqual(
+        immediateResult,
+        1,
+        "Immediate trigger should succeed",
+      );
       assert.strictEqual(executeInternalCallCount, 1);
 
       // Now execute() should be throttled because triggerImmediate updated lastCheckTimeMs
@@ -1748,9 +1749,8 @@ describe("Auto-Redeem Immediate Trigger", () => {
     });
 
     test("triggerImmediate should return 0 when disabled", async () => {
-      const { AutoRedeemStrategy } = await import(
-        "../../src/strategies/auto-redeem"
-      );
+      const { AutoRedeemStrategy } =
+        await import("../../src/strategies/auto-redeem");
 
       const mockLogger = createMockLogger();
       const mockClient = createMockClient();
@@ -1787,7 +1787,9 @@ describe("Auto-Redeem Immediate Trigger", () => {
       let knownRedeemableTokenIds = new Set<string>();
 
       // Simulate detecting newly redeemable positions
-      const detectNewlyRedeemable = (currentRedeemableTokenIds: Set<string>) => {
+      const detectNewlyRedeemable = (
+        currentRedeemableTokenIds: Set<string>,
+      ) => {
         const newlyRedeemable: string[] = [];
         for (const tokenId of currentRedeemableTokenIds) {
           if (!knownRedeemableTokenIds.has(tokenId)) {

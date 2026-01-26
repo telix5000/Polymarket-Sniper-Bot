@@ -416,7 +416,7 @@ async function main() {
   // Run immediately then on interval with in-flight guard
   let cycleRunning = false;
   let skippedLogged = false;
-  
+
   const runCycle = async () => {
     if (cycleRunning) {
       if (!skippedLogged) {

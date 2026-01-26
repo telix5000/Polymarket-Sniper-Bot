@@ -208,17 +208,17 @@ export class AutoRedeemStrategy {
 
   /**
    * Trigger immediate redemption check - BYPASSES interval throttle.
-   * 
+   *
    * Called by the Orchestrator when PositionTracker detects new on-chain verified
    * redeemable positions. This allows redemption to happen as soon as positions
    * become redeemable rather than waiting for the next 30-second interval.
-   * 
+   *
    * IMPORTANT: This method is designed to be called asynchronously (fire-and-forget)
    * to avoid blocking the PositionTracker refresh cycle.
-   * 
+   *
    * SINGLE-FLIGHT: Still respects the in-flight guard to prevent concurrent execution.
    * If a redemption is already in progress, this call will be skipped.
-   * 
+   *
    * @returns Promise resolving to the number of successful redemptions
    */
   async triggerImmediate(): Promise<number> {
@@ -228,12 +228,16 @@ export class AutoRedeemStrategy {
 
     // Single-flight guard: prevent concurrent execution
     if (this.inFlight) {
-      this.logger.debug("[AutoRedeem] Immediate trigger skipped - already in flight");
+      this.logger.debug(
+        "[AutoRedeem] Immediate trigger skipped - already in flight",
+      );
       return 0;
     }
 
-    this.logger.info("[AutoRedeem] 🚨 IMMEDIATE TRIGGER: Bypassing interval throttle for new redeemable positions");
-    
+    this.logger.info(
+      "[AutoRedeem] 🚨 IMMEDIATE TRIGGER: Bypassing interval throttle for new redeemable positions",
+    );
+
     this.inFlight = true;
     // Update last check time to prevent immediate re-trigger from regular execute()
     this.lastCheckTimeMs = Date.now();

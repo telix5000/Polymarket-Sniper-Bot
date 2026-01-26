@@ -142,6 +142,18 @@ With $100 balance, 20% base reserve, and one position at -30% loss (hedge tier):
 | `TELEGRAM_SILENT` | `false` | Send notifications silently (no sound) | - |
 | `INITIAL_INVESTMENT_USD` | - | Your initial investment amount for tracking overall P&L return % | - |
 
+### Telegram Notifications
+
+When both `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, you'll receive alerts for:
+
+- **Startup/Shutdown**: Bot started and stopped messages
+- **Successful Trades**: BUY and SELL orders that execute successfully (including simulated trades with `[SIM]` tag)
+- **Failed Trades**: Order failures with error details
+- **Redemptions**: Positions redeemed after market resolution
+- **Portfolio Summaries**: Every 5 minutes if you have positions, balance, or completed trades
+
+Set `TELEGRAM_SILENT=true` to receive notifications without sound (uses Telegram's `disable_notification` feature).
+
 ### P&L Tracking
 
 Set `INITIAL_INVESTMENT_USD` to track your overall portfolio performance:

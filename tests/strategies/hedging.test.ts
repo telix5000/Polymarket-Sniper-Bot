@@ -3618,9 +3618,17 @@ describe("API-based Hedge Up Detection", () => {
     const apiCheckResult = true; // 2+ BUY orders detected via API
     const positionKey = "market-token123";
 
-    const result = checkHedgeUpEligibility(inMemorySet, apiCheckResult, positionKey);
+    const result = checkHedgeUpEligibility(
+      inMemorySet,
+      apiCheckResult,
+      positionKey,
+    );
 
-    assert.strictEqual(result.eligible, false, "Should block hedge up when API shows prior hedge up");
+    assert.strictEqual(
+      result.eligible,
+      false,
+      "Should block hedge up when API shows prior hedge up",
+    );
     assert.strictEqual(result.reason, "already_hedged_up_api");
   });
 
@@ -3629,9 +3637,17 @@ describe("API-based Hedge Up Detection", () => {
     const apiCheckResult = false; // Only 1 BUY order (initial buy, no prior hedge up)
     const positionKey = "market-token456";
 
-    const result = checkHedgeUpEligibility(inMemorySet, apiCheckResult, positionKey);
+    const result = checkHedgeUpEligibility(
+      inMemorySet,
+      apiCheckResult,
+      positionKey,
+    );
 
-    assert.strictEqual(result.eligible, true, "Should allow hedge up when no prior hedge up");
+    assert.strictEqual(
+      result.eligible,
+      true,
+      "Should allow hedge up when no prior hedge up",
+    );
     assert.strictEqual(result.reason, "eligible");
   });
 
@@ -3640,9 +3656,17 @@ describe("API-based Hedge Up Detection", () => {
     const apiCheckResult = false; // API not even checked due to in-memory hit
     const positionKey = "market-token789";
 
-    const result = checkHedgeUpEligibility(inMemorySet, apiCheckResult, positionKey);
+    const result = checkHedgeUpEligibility(
+      inMemorySet,
+      apiCheckResult,
+      positionKey,
+    );
 
-    assert.strictEqual(result.eligible, false, "Should use in-memory set for fast path");
+    assert.strictEqual(
+      result.eligible,
+      false,
+      "Should use in-memory set for fast path",
+    );
     assert.strictEqual(result.reason, "already_hedged_up_memory");
   });
 
@@ -3651,11 +3675,19 @@ describe("API-based Hedge Up Detection", () => {
     const apiCheckResult = null; // API error
     const positionKey = "market-token000";
 
-    const result = checkHedgeUpEligibility(inMemorySet, apiCheckResult, positionKey);
+    const result = checkHedgeUpEligibility(
+      inMemorySet,
+      apiCheckResult,
+      positionKey,
+    );
 
     // On API error, we allow the hedge up attempt (fail open)
     // This prevents API failures from completely blocking hedge up functionality
-    assert.strictEqual(result.eligible, true, "Should allow hedge up on API error");
+    assert.strictEqual(
+      result.eligible,
+      true,
+      "Should allow hedge up on API error",
+    );
     assert.strictEqual(result.reason, "api_error_fallthrough");
   });
 
@@ -3677,14 +3709,22 @@ describe("API-based Hedge Up Detection", () => {
     let totalSpend = 0;
     for (const scenario of scenarios) {
       const inMemorySet = new Set<string>(); // Cleared on each restart
-      const result = checkHedgeUpEligibility(inMemorySet, scenario.apiResult, "market-tokenXYZ");
+      const result = checkHedgeUpEligibility(
+        inMemorySet,
+        scenario.apiResult,
+        "market-tokenXYZ",
+      );
 
       if (result.eligible) {
         totalSpend += scenario.expectedSpend;
       }
     }
 
-    assert.strictEqual(totalSpend, absoluteMaxUsd, "Total spend should be 1x absoluteMaxUsd, not 6x");
+    assert.strictEqual(
+      totalSpend,
+      absoluteMaxUsd,
+      "Total spend should be 1x absoluteMaxUsd, not 6x",
+    );
   });
 
   describe("Integration with hedge up tracking", () => {
@@ -3698,7 +3738,11 @@ describe("API-based Hedge Up Detection", () => {
       orderSuccess: boolean,
     ): { executed: boolean; newApiCheckResult: boolean } {
       // Check eligibility
-      const eligibility = checkHedgeUpEligibility(inMemorySet, apiCheckResult, positionKey);
+      const eligibility = checkHedgeUpEligibility(
+        inMemorySet,
+        apiCheckResult,
+        positionKey,
+      );
 
       if (!eligibility.eligible) {
         return { executed: false, newApiCheckResult: apiCheckResult };
@@ -3720,14 +3764,35 @@ describe("API-based Hedge Up Detection", () => {
       const positionKey = "market-token-new";
 
       // First hedge up
-      const result1 = simulateHedgeUpFlow(inMemorySet, false, positionKey, true);
-      assert.strictEqual(result1.executed, true, "First hedge up should execute");
-      assert.strictEqual(result1.newApiCheckResult, true, "API should now show 2+ BUY orders");
+      const result1 = simulateHedgeUpFlow(
+        inMemorySet,
+        false,
+        positionKey,
+        true,
+      );
+      assert.strictEqual(
+        result1.executed,
+        true,
+        "First hedge up should execute",
+      );
+      assert.strictEqual(
+        result1.newApiCheckResult,
+        true,
+        "API should now show 2+ BUY orders",
+      );
 
       // After restart (in-memory cleared), API check prevents re-hedge
       const newInMemorySet = new Set<string>(); // Simulates restart
-      const result2 = checkHedgeUpEligibility(newInMemorySet, result1.newApiCheckResult, positionKey);
-      assert.strictEqual(result2.eligible, false, "Should be blocked by API after restart");
+      const result2 = checkHedgeUpEligibility(
+        newInMemorySet,
+        result1.newApiCheckResult,
+        positionKey,
+      );
+      assert.strictEqual(
+        result2.eligible,
+        false,
+        "Should be blocked by API after restart",
+      );
     });
   });
 });

@@ -555,12 +555,12 @@ export interface PositionTrackerConfig {
   refreshIntervalMs?: number;
   /**
    * Optional callback that fires when new on-chain verified redeemable positions are detected.
-   * 
+   *
    * IMMEDIATE REDEMPTION TRIGGER:
    * When PositionTracker detects new positions with verified on-chain payoutDenominator > 0
    * that weren't previously marked as redeemable, this callback is invoked immediately.
    * This allows AutoRedeem to trigger instant redemption without waiting for its interval.
-   * 
+   *
    * @param newRedeemableTokenIds - Array of tokenIds that are newly detected as redeemable
    */
   onNewRedeemablePositions?: (newRedeemableTokenIds: string[]) => void;
@@ -849,7 +849,7 @@ export class PositionTracker {
   // Callback invoked when new on-chain verified redeemable positions are detected.
   // Allows AutoRedeem to trigger immediately instead of waiting for interval.
   private onNewRedeemablePositions?: (newRedeemableTokenIds: string[]) => void;
-  
+
   // Track previously known redeemable tokenIds to detect NEW redeemable positions
   private knownRedeemableTokenIds: Set<string> = new Set();
 
@@ -872,14 +872,16 @@ export class PositionTracker {
 
   /**
    * Set the callback for newly detected redeemable positions.
-   * 
+   *
    * This is a setter method that allows wiring up the callback after construction,
    * which is necessary because the Orchestrator creates PositionTracker before
    * AutoRedeemStrategy, but needs to wire them together.
-   * 
+   *
    * @param callback Function to call when new on-chain verified redeemable positions are detected
    */
-  setOnNewRedeemablePositions(callback: (newRedeemableTokenIds: string[]) => void): void {
+  setOnNewRedeemablePositions(
+    callback: (newRedeemableTokenIds: string[]) => void,
+  ): void {
     this.onNewRedeemablePositions = callback;
   }
 
@@ -1607,7 +1609,7 @@ export class PositionTracker {
       if (this.onNewRedeemablePositions) {
         // Get current redeemable tokenIds from the committed snapshot
         const currentRedeemableTokenIds = new Set(
-          candidateSnapshot.redeemablePositions.map((p) => p.tokenId)
+          candidateSnapshot.redeemablePositions.map((p) => p.tokenId),
         );
 
         // Find newly redeemable positions (in current but not in known set)
@@ -1629,11 +1631,11 @@ export class PositionTracker {
             .map((t) => t.slice(0, 8))
             .join(", ");
           const hasMore = newlyRedeemableTokenIds.length > 3 ? "..." : "";
-          
+
           this.logger.info(
-            `[PositionTracker] 🚨 NEW REDEEMABLE DETECTED: ${newlyRedeemableTokenIds.length} position(s) [${tokenIdsPreview}${hasMore}] - triggering immediate redemption`
+            `[PositionTracker] 🚨 NEW REDEEMABLE DETECTED: ${newlyRedeemableTokenIds.length} position(s) [${tokenIdsPreview}${hasMore}] - triggering immediate redemption`,
           );
-          
+
           // Fire callback asynchronously via setImmediate to not block the refresh cycle
           // The callback is expected to be the Orchestrator's triggerImmediateRedeem()
           const callback = this.onNewRedeemablePositions;
@@ -1643,7 +1645,7 @@ export class PositionTracker {
               callback(newlyRedeemableTokenIds);
             } catch (callbackErr) {
               logger.error(
-                `[PositionTracker] onNewRedeemablePositions callback error: ${callbackErr instanceof Error ? callbackErr.message : String(callbackErr)}`
+                `[PositionTracker] onNewRedeemablePositions callback error: ${callbackErr instanceof Error ? callbackErr.message : String(callbackErr)}`,
               );
             }
           });
