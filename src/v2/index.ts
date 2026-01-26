@@ -299,6 +299,7 @@ const ASSUMED_MARKET_DURATION_HOURS = 24; // Used for hold-time fallback when ma
 const MARKET_END_TIME_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes for successful lookups
 const MARKET_END_TIME_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for failed lookups
 const MARKET_END_TIME_CACHE_MAX_SIZE = 500;
+const ZERO_PRICE_BLOCK_TTL_MS = 60 * 60 * 1000; // 1 hour - how long to block sell retries for zero-price tokens
 
 // Arbitrage configuration
 const DEFAULT_ARBITRAGE_ACTIVE_MARKET_LIMIT = 100; // Matches V1 endgame-sweep
@@ -321,7 +322,7 @@ const state = {
   hedged: new Set<string>(),
   sold: new Set<string>(),
   copied: new Set<string>(),
-  zeroPriceTokens: new Set<string>(), // Tokens with zero price level - cannot sell via CLOB, only redeem
+  zeroPriceTokens: new Map<string, number>(), // tokenId -> timestamp when marked (TTL: ZERO_PRICE_BLOCK_TTL_MS)
   sellSignalCooldown: new Map<string, number>(),
   positionEntryTime: new Map<string, number>(),
   positionPriceHistory: new Map<string, { price: number; time: number }[]>(), // For momentum tracking
@@ -1146,9 +1147,15 @@ const simpleLogger = {
 async function executeSell(tokenId: string, conditionId: string, outcome: string, sizeUsd: number, reason: string, cfg: Config, curPrice?: number): Promise<boolean> {
   const priceStr = curPrice ? ` @ ${$price(curPrice)}` : "";
   
-  // Skip if token has zero price level - these can only be redeemed, not sold via CLOB
-  if (state.zeroPriceTokens.has(tokenId)) {
+  // Skip if token has zero price level (with TTL to allow periodic retry)
+  // These positions can only be redeemed, not sold via CLOB
+  const zeroPriceTime = state.zeroPriceTokens.get(tokenId);
+  if (zeroPriceTime && Date.now() - zeroPriceTime < ZERO_PRICE_BLOCK_TTL_MS) {
     return false;
+  }
+  // TTL expired, remove from map and allow retry
+  if (zeroPriceTime) {
+    state.zeroPriceTokens.delete(tokenId);
   }
   
   // Risk check (SELL orders are always allowed for protective exits, but still rate limited)
@@ -1242,8 +1249,8 @@ async function executeSell(tokenId: string, conditionId: string, outcome: string
     // Handle ZERO_PRICE_LEVEL: Add to ignore list to prevent infinite retry
     // These positions can only be redeemed, not sold via CLOB
     if (result.reason === "ZERO_PRICE_LEVEL") {
-      state.zeroPriceTokens.add(tokenId);
-      log(`⚠️ SELL | ${reason} | Zero price - added to redeem-only list | ${outcome} ${$(sizeUsd)}`);
+      state.zeroPriceTokens.set(tokenId, Date.now());
+      log(`⚠️ SELL | ${reason} | Zero price - skipping for 1h (redeem only) | ${outcome} ${$(sizeUsd)}`);
       return false;
     }
     
