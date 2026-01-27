@@ -73,6 +73,12 @@ Position sizes automatically scale with your balance:
 ### Exit Strategies
 - **⚡ APEX Blitz**: Quick scalps (0.6-3% profit)
 - **⚡ APEX Command**: Auto-sell at 99.5¢
+- **⚡ APEX Guardian**: Hard stop-loss protection
+- **⚡ APEX Ratchet**: Dynamic trailing stop
+- **⚡ APEX Ladder**: Partial profit taking
+- **⚡ APEX Reaper**: Strategy performance cleanup
+
+📚 **[Complete Selling Logic Documentation](docs/SELLING_LOGIC.md)** - Comprehensive guide to all sell pathways, error messages, and troubleshooting
 
 ### Performance Tracking
 - **🧠 APEX Oracle**: Analyzes last 24 hours of trades
@@ -593,6 +599,83 @@ V2 uses simple, direct logic. If condition is met → execute action:
 | Redeem | position resolved | REDEEM |
 
 No complex internal logic or cross-strategy dependencies. What you set is what it does.
+
+## 🔄 Selling & Exit Strategies
+
+### Understanding Sell Pathways
+
+The bot uses multiple pathways to exit positions, each with different triggers and price protection levels:
+
+1. **Strategy-Based Sells** - Blitz, Command, Guardian, Ratchet, Ladder, Reaper
+2. **Emergency Sells** - CONSERVATIVE/MODERATE/NUCLEAR modes for low-balance situations
+3. **Recovery Mode** - Automatic liquidation when balance drops critically low
+4. **Scavenger Mode** - Special handling during low-liquidity periods
+
+📚 **[Complete Selling Logic Documentation](docs/SELLING_LOGIC.md)**
+
+### Common Sell Error Messages
+
+#### ❌ "Price too low: 1¢ < 67¢"
+
+**Meaning:** Best bid (1¢) is below minimum acceptable price (67¢)
+
+**Common causes:**
+- Standard sell: Uses 1% slippage tolerance (won't sell below 66¢ if entry was 67¢)
+- Emergency CONSERVATIVE: Won't sell below 50% of entry (34¢)
+- Emergency MODERATE: Won't sell below 20% of entry (13¢)
+
+**Solutions:**
+- Wait for better liquidity
+- Switch to MODERATE mode: `EMERGENCY_SELL_MODE=MODERATE`
+- Use NUCLEAR mode if desperate: `EMERGENCY_SELL_MODE=NUCLEAR` (⚠️ sells at ANY price)
+
+#### ❌ "No bids available"
+
+**Meaning:** Orderbook has zero buyers
+
+**Solutions:**
+- Wait for market activity
+- Check if market is resolved (use redeem instead)
+- Consider NUCLEAR mode if you need liquidity immediately
+
+### Emergency Sell Modes
+
+Configure emergency behavior when balance drops below threshold:
+
+```bash
+# In .env
+EMERGENCY_SELL_MODE=CONSERVATIVE  # CONSERVATIVE | MODERATE | NUCLEAR
+EMERGENCY_BALANCE_THRESHOLD=5     # Activate when balance < $5
+```
+
+| Mode | Protection | Example |
+|------|------------|---------|
+| **CONSERVATIVE** | Won't sell below 50% of entry | 67¢ entry → min 34¢ |
+| **MODERATE** | Won't sell below 20% of entry | 67¢ entry → min 13¢ |
+| **NUCLEAR** | No protection - sells at ANY price | 67¢ entry → will sell at 1¢ ⚠️ |
+
+📚 **[Emergency Sells Guide](docs/EMERGENCY_SELLS.md)**
+
+### Troubleshooting Sell Issues
+
+**Problem:** Positions won't sell, keep showing "Price too low"
+
+**Diagnosis:**
+1. Check which sell pathway is active (look for log indicators)
+2. Check your emergency mode configuration
+3. Verify orderbook has bids (buyers)
+4. Review current vs minimum acceptable price
+
+**Quick Fix:**
+```bash
+# Force sell everything (⚠️ accepts massive losses)
+EMERGENCY_SELL_MODE=NUCLEAR
+docker-compose restart
+```
+
+📚 **[Complete Troubleshooting Guide](docs/SELLING_LOGIC.md#troubleshooting-guide)**
+
+---
 
 ## VPN Configuration (Geo-Blocked Regions)
 

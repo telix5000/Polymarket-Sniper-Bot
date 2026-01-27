@@ -711,6 +711,45 @@ async function checkPolBalance(): Promise<void> {
  * Sell a position using scavenger's proven sell logic
  * Based on src/lib/scavenger.ts executeSell() (lines 519-541)
  */
+/**
+ * Standard sell function with 1% slippage protection
+ * 
+ * This is the default sell pathway used by most strategies (Blitz, Command, Guardian, etc.).
+ * It provides conservative price protection by rejecting sells if the best bid is more than 1% below entry price.
+ * 
+ * **How it works:**
+ * 1. Fetches current orderbook for the position's token
+ * 2. Checks if bids (buyers) are available
+ * 3. Calculates minimum acceptable price: avgPrice * 0.99 (1% slippage tolerance)
+ * 4. Compares best bid against minimum price
+ * 5. If acceptable, creates SELL order via createMarketOrder() with Side.SELL
+ * 6. Uses Fill-or-Kill (FOK) execution - order fills completely or not at all
+ * 
+ * **Price Protection:**
+ * - Won't sell if bestBid < (entry price * 0.99)
+ * - Example: 67¢ entry → won't sell below 66¢
+ * 
+ * **Common Failures:**
+ * - NO_BIDS: Orderbook has zero buyers (market illiquid or losing outcome)
+ * - PRICE_TOO_LOW: Best bid below minimum acceptable (e.g., 1¢ < 66¢)
+ * - ORDER_FAILED: CLOB rejected order (network error, market closed, etc.)
+ * 
+ * **When to use:**
+ * - Strategy-based exits (Blitz, Command, Guardian, Ratchet, Ladder)
+ * - Non-emergency situations where some price protection is desired
+ * 
+ * **When NOT to use:**
+ * - Emergency/recovery situations (use sellPositionEmergency instead)
+ * - Need to sell at any price (use NUCLEAR mode via sellPositionEmergency)
+ * - Low liquidity markets (consider scavenger mode sells)
+ * 
+ * @param position - Position to sell
+ * @param reason - Human-readable reason for the sell (logged and sent to Telegram)
+ * @returns Promise<boolean> - true if sell succeeded, false otherwise
+ * 
+ * @see sellPositionEmergency for emergency/recovery sells with configurable protection
+ * @see docs/SELLING_LOGIC.md for complete documentation
+ */
 async function sellPosition(
   position: Position,
   reason: string
@@ -718,7 +757,8 @@ async function sellPosition(
   
   if (!state.client) return false;
   
-  logger.info(`🔄 Selling ${position.outcome}`);
+  logger.info(`🔄 [SELL] ${position.outcome}`);
+  logger.info(`   Pathway: Standard sell (1% slippage protection)`);
   logger.info(`   Shares: ${position.size.toFixed(2)}`);
   logger.info(`   Value: $${position.value.toFixed(2)}`);
   logger.info(`   P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%`);
@@ -728,7 +768,8 @@ async function sellPosition(
     // Get orderbook
     const book = await state.client.getOrderBook(position.tokenId);
     if (!book?.bids?.length) {
-      logger.warn(`❌ No bids available for ${position.tokenId}`);
+      logger.warn(`❌ Sell failed: NO_BIDS (no buyers in orderbook)`);
+      logger.info(`   Tip: Wait for market activity or check if market is resolved`);
       return false;
     }
 
@@ -737,9 +778,14 @@ async function sellPosition(
     // Minimum price check (allow 1% slippage)
     const minPrice = position.avgPrice * 0.99;
     if (bestBid < minPrice) {
-      logger.warn(`❌ Price too low: ${(bestBid * 100).toFixed(0)}¢ < ${(minPrice * 100).toFixed(0)}¢`);
+      logger.warn(`❌ Sell failed: PRICE_TOO_LOW`);
+      logger.warn(`   Best bid: ${(bestBid * 100).toFixed(0)}¢ < Min acceptable: ${(minPrice * 100).toFixed(0)}¢`);
+      logger.info(`   Protection: 1% slippage (entry was ${(position.avgPrice * 100).toFixed(0)}¢)`);
+      logger.info(`   Tip: Wait for better liquidity or use emergency mode if needed`);
       return false;
     }
+
+    logger.info(`   Best bid: ${(bestBid * 100).toFixed(0)}¢ (acceptable, min ${(minPrice * 100).toFixed(0)}¢)`);
 
     // Create and sign SELL order (THIS IS THE CRITICAL PART!)
     const signed = await state.client.createMarketOrder({
@@ -768,7 +814,7 @@ async function sellPosition(
       
       return true;
     } else {
-      logger.warn(`❌ Sell failed: ${resp.errorMsg || 'Unknown error'}`);
+      logger.warn(`❌ Sell failed: ${resp.errorMsg || 'ORDER_FAILED'}`);
       return false;
     }
   } catch (error) {
@@ -786,8 +832,62 @@ async function sellPosition(
 }
 
 /**
- * Execute sell with emergency mode support
- * Uses postOrder with configurable price protection
+ * Emergency/recovery sell with configurable price protection
+ * 
+ * This function is used in emergency and recovery situations where you may need to sell at worse prices
+ * than normal. It supports three protection modes: CONSERVATIVE, MODERATE, and NUCLEAR.
+ * 
+ * **Protection Modes:**
+ * 
+ * 1. **CONSERVATIVE** (default):
+ *    - Protection: Won't sell below 50% of entry price
+ *    - Example: 67¢ entry → won't sell below 34¢
+ *    - Use when: Markets are illiquid but not dead, you can wait for better prices
+ * 
+ * 2. **MODERATE**:
+ *    - Protection: Won't sell below 20% of entry price
+ *    - Example: 67¢ entry → won't sell below 13¢
+ *    - Use when: Need liquidity soon, willing to accept large losses but not total wipeout
+ * 
+ * 3. **NUCLEAR** (⚠️ DANGEROUS):
+ *    - Protection: NONE - Sells at ANY price
+ *    - Example: 67¢ entry → will sell at 1¢ (98.5% loss!)
+ *    - Use when: DESPERATE for capital, willing to accept total loss
+ * 
+ * **Configuration:**
+ * ```bash
+ * # In .env
+ * EMERGENCY_SELL_MODE=CONSERVATIVE  # or MODERATE or NUCLEAR
+ * EMERGENCY_BALANCE_THRESHOLD=5     # Activate when balance < $5
+ * ```
+ * 
+ * **How it works:**
+ * 1. Determines price protection based on emergencyMode flag and config
+ * 2. If emergencyMode=true, uses configured emergency mode (CONSERVATIVE/MODERATE/NUCLEAR)
+ * 3. If emergencyMode=false, uses standard 1% slippage (recovery mode)
+ * 4. Calls postOrder() with calculated maxAcceptablePrice
+ * 5. postOrder() handles retry logic and FOK execution
+ * 
+ * **When activated:**
+ * - Emergency mode: When balance < EMERGENCY_BALANCE_THRESHOLD (default $5)
+ * - Recovery mode: When balance < RECOVERY_MODE_BALANCE_THRESHOLD (default $20)
+ * 
+ * **Common Failures:**
+ * - PRICE_TOO_LOW: Best bid below minimum acceptable for current mode
+ * - NO_BIDS: Orderbook has zero buyers (wait or use NUCLEAR if desperate)
+ * - ORDER_FAILED: CLOB rejected order
+ * 
+ * **Edge Cases:**
+ * - If orderbook data is stale, minAcceptablePrice may be calculated from outdated info
+ * - postOrder() fetches fresh orderbook on each retry to mitigate this
+ * 
+ * @param position - Position to sell
+ * @param reason - Human-readable reason for the sell (logged and sent to Telegram)
+ * @param emergencyMode - true = use configured emergency mode, false = use 1% slippage
+ * @returns Promise<boolean> - true if sell succeeded, false otherwise
+ * 
+ * @see docs/EMERGENCY_SELLS.md for detailed emergency mode documentation
+ * @see docs/SELLING_LOGIC.md for complete selling logic guide
  */
 async function sellPositionEmergency(
   position: Position,
@@ -797,7 +897,8 @@ async function sellPositionEmergency(
   
   if (!state.client) return false;
   
-  logger.info(`🔄 Selling ${position.outcome}`);
+  logger.info(`🔄 [SELL] ${position.outcome}`);
+  logger.info(`   Pathway: ${emergencyMode ? 'Emergency sell' : 'Recovery sell'} (configurable protection)`);
   logger.info(`   Shares: ${position.size.toFixed(2)}`);
   logger.info(`   Value: $${position.value.toFixed(2)}`);
   logger.info(`   Entry: ${(position.avgPrice * 100).toFixed(1)}¢`);
@@ -815,14 +916,16 @@ async function sellPositionEmergency(
     );
     
     if (maxAcceptablePrice !== undefined) {
-      logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (${state.emergencySellConfig.mode} mode)`);
+      logger.info(`   Protection: ${state.emergencySellConfig.mode} mode`);
+      logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢`);
     } else {
-      logger.warn(`   ⚠️  NUCLEAR MODE - No price protection!`);
+      logger.warn(`   Protection: ⚠️  NUCLEAR MODE - No price protection!`);
+      logger.warn(`   Will sell at ANY price (including 1¢)`);
     }
   } else {
     // Normal mode: 1% slippage tolerance
     maxAcceptablePrice = position.avgPrice * 0.99;
-    logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (1% slippage)`);
+    logger.info(`   Protection: 1% slippage (min ${(maxAcceptablePrice * 100).toFixed(1)}¢)`);
   }
   
   try {
@@ -855,8 +958,16 @@ async function sellPositionEmergency(
       logger.warn(`❌ Sell failed: ${result.reason}`);
       
       if (result.reason === 'PRICE_TOO_LOW') {
-        logger.warn(`   Bid price below ${state.emergencySellConfig.mode} threshold`);
-        logger.warn(`   To force sell, use NUCLEAR mode (⚠️  accepts massive losses)`);
+        logger.warn(`   Bid price below minimum acceptable`);
+        if (emergencyMode && state.emergencySellConfig.mode !== 'NUCLEAR') {
+          logger.info(`   Current mode: ${state.emergencySellConfig.mode}`);
+          logger.info(`   Tip: Consider MODERATE or NUCLEAR mode if you need to sell`);
+        } else if (!emergencyMode) {
+          logger.info(`   Tip: This is a recovery sell with 1% slippage protection`);
+        }
+      } else if (result.reason === 'NO_BIDS') {
+        logger.warn(`   No buyers in orderbook`);
+        logger.info(`   Tip: Wait for market activity or check if market is resolved`);
       }
       
       return false;
