@@ -142,6 +142,71 @@ import {
   type ReaperSignal,
 } from "./strategies/reaper";
 
+// APEX v3.0 Protection Modules
+import {
+  detectShield,
+  type ShieldSignal,
+  type HedgeState,
+} from "./strategies/shield";
+
+import {
+  detectGuardian,
+  isInDangerZone,
+  type GuardianSignal,
+} from "./strategies/guardian";
+
+import {
+  detectSentinel,
+  getSentinelUrgency,
+  type SentinelSignal,
+} from "./strategies/sentinel";
+
+// APEX v3.0 Entry Strategies
+import {
+  calculateVelocity,
+  shouldRideMomentum,
+  isMomentumReversing,
+} from "./strategies/velocity";
+
+import {
+  calculateGrindSize,
+  shouldExitGrind,
+  type MarketMetrics,
+} from "./strategies/grinder";
+
+// APEX v3.0 Firewall Module
+import {
+  checkFirewall,
+  calculateExposure,
+  shouldHaltTrading,
+  getFirewallSummary,
+  type FirewallStatus,
+} from "./strategies/firewall";
+
+// APEX v3.0 Closer Module
+import {
+  detectCloser,
+  shouldExitBeforeClose,
+  calculateCloserSize,
+  type CloserSignal,
+} from "./strategies/closer";
+
+// APEX v3.0 Amplifier Module
+import {
+  detectAmplifier,
+  isSafeToStack,
+  type AmplifierSignal,
+} from "./strategies/amplifier";
+
+// APEX v3.0 Shadow Module
+import {
+  fetchShadowTrades,
+  filterQualityTrades,
+  getTraderStats,
+  type ShadowConfig,
+  type TraderStats,
+} from "./strategies/shadow";
+
 import { POLYMARKET_API } from "./lib/constants";
 
 // APEX v3.0 Monitoring
@@ -210,6 +275,9 @@ interface State {
   prioritizeExits: boolean;
   errorReporter?: ErrorReporter;
   
+  // APEX v3.0 Protection Module State
+  hedgeStates: Map<string, HedgeState>; // Track active hedges by tokenId
+  priceHistory: Map<string, number[]>;  // Track price history for velocity detection
   // Emergency Sell Configuration (APEX v3.0 PR #4)
   emergencySellConfig: EmergencySellConfig;
   lastEmergencyConfigLog: number; // Timestamp of last emergency config log
@@ -256,6 +324,8 @@ const state: State = {
   recoveryMode: false,
   prioritizeExits: false,
   errorReporter: undefined,
+  hedgeStates: new Map(),
+  priceHistory: new Map(),
   emergencySellConfig: getEmergencySellConfig(),
   lastEmergencyConfigLog: 0,
   lastRecoveryTipLog: 0,
@@ -758,6 +828,21 @@ async function sellPosition(
   
   if (!state.client) return false;
   
+  // Check live trading mode
+  if (!state.liveTrading) {
+    // Return true for simulation - this mirrors the behavior of buy() function.
+    // In simulation mode, we log what would happen and return success to allow
+    // the bot cycle to continue normally without executing real trades.
+    logger.info(
+      `🔸 [SIM] SELL ${position.outcome} $${position.value.toFixed(2)} | ${reason}`,
+    );
+    await sendTelegram(
+      "[SIM] POSITION SELL",
+      `${position.outcome}\n$${position.value.toFixed(2)}\n${reason}`,
+    );
+    return true;
+  }
+  
   logger.info(`🔄 Selling ${position.outcome}`);
   logger.info(`   Shares: ${position.size.toFixed(2)}`);
   logger.info(`   Value: $${position.value.toFixed(2)}`);
@@ -783,7 +868,7 @@ async function sellPosition(
       logger.info(`   💎 High-probability position: using tight ${SELL.HIGH_PRICE_SLIPPAGE_PCT}% slippage`);
     }
     
-    // Execute smart sell
+    // Execute smart sell (handles orderbook analysis, slippage protection internally)
     const result = await smartSell(state.client, position, config);
     
     if (result.success) {
@@ -881,7 +966,7 @@ async function sellPositionEmergency(
     const result = await postOrder({
       client: state.client,
       tokenId: position.tokenId,
-      outcome: position.outcome as OrderOutcome,
+      outcome: position.outcome as "YES" | "NO",
       side: 'SELL',
       sizeUsd: position.value,
       maxAcceptablePrice, // undefined = NO PROTECTION in NUCLEAR mode
@@ -1071,33 +1156,45 @@ async function runFirewallCheck(
   currentBalance: number,
   positions: Position[],
 ): Promise<void> {
-  // CRITICAL: HALT IF BALANCE TOO LOW
-  if (currentBalance < 20) {
+  // Calculate current exposure from positions
+  const currentExposure = calculateExposure(positions);
+  const maxExposure = currentBalance * (state.modeConfig.maxExposurePct / 100);
+  
+  // Use firewall module's halt check (includes drawdown)
+  const haltCheck = shouldHaltTrading(currentBalance, state.startBalance, state.modeConfig);
+  
+  if (haltCheck.halt) {
     // Only alert/log on transition to halted state (not every cycle)
     if (!state.tradingHalted) {
       logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      logger.error(`🚨 APEX FIREWALL: CRITICAL LOW BALANCE`);
+      logger.error(`🚨 APEX FIREWALL: ${haltCheck.reason}`);
       logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       logger.error(`   Balance: ${$(currentBalance)}`);
-      logger.error(`   Minimum: $20.00`);
+      logger.error(`   Start Balance: ${$(state.startBalance)}`);
+      logger.error(`   Exposure: ${$(currentExposure)} / ${$(maxExposure)}`);
       logger.error(`   Status: TRADING HALTED ⛔`);
       logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      
+      // Log firewall summary
+      const summary = getFirewallSummary(currentExposure, maxExposure, currentBalance, state.startBalance);
+      logger.error(summary);
 
       await sendTelegram(
         "🚨 APEX FIREWALL: TRADING HALTED",
-        `Balance critically low: ${$(currentBalance)}\n\n` +
-          `New trades halted. Exits/redemptions continue.\n` +
-          `Will auto-resume when balance ≥ $20.00`,
+        `${haltCheck.reason}\n\n` +
+          `Balance: ${$(currentBalance)}\n` +
+          `Exposure: ${$(currentExposure)} / ${$(maxExposure)}\n\n` +
+          `New trades halted. Exits/redemptions continue.`,
       );
 
       state.tradingHalted = true;
-      state.haltReason = "CRITICAL_LOW_BALANCE";
+      state.haltReason = haltCheck.reason;
     }
     return;
   }
 
-  // Reset halt if balance recovered
-  if (state.tradingHalted && currentBalance >= 20) {
+  // Reset halt if conditions cleared
+  if (state.tradingHalted && !haltCheck.halt) {
     state.tradingHalted = false;
     state.haltReason = "";
     logger.info(
@@ -1113,6 +1210,7 @@ async function runFirewallCheck(
   if (currentBalance < 50 && !state.lowBalanceWarned) {
     logger.warn(`⚠️ APEX FIREWALL: Low Balance Warning`);
     logger.warn(`   Balance: ${$(currentBalance)}`);
+    logger.warn(getFirewallSummary(currentExposure, maxExposure, currentBalance, state.startBalance));
 
     await sendTelegram(
       "⚠️ LOW BALANCE WARNING",
@@ -1353,65 +1451,12 @@ async function buy(
   }
 }
 
-async function sell(
-  tokenId: string,
-  outcome: "YES" | "NO",
-  sizeUsd: number,
-  reason: string,
-  strategy: StrategyType,
-  pnl: number = 0,
-  shares?: number,
-): Promise<boolean> {
-  if (!state.client) return false;
-
-  if (!state.liveTrading) {
-    logger.info(
-      `🔸 [SIM] ⚡ APEX ${strategy}: SELL ${outcome} ${$(sizeUsd)} | ${reason}`,
-    );
-    await sendTelegram(
-      `[SIM] APEX ${strategy} SELL`,
-      `${reason}\n${outcome} ${$(sizeUsd)}`,
-    );
-
-    // Record simulated trade with P&L
-    recordTrade(state.oracleState, strategy, pnl, true, tokenId, reason);
-    return true;
-  }
-
-  const result = await postOrder({
-    client: state.client,
-    tokenId,
-    outcome,
-    side: "SELL",
-    sizeUsd,
-    shares,
-    skipDuplicateCheck: true,
-    logger,
-  });
-
-  if (result.success) {
-    logger.info(
-      `✅ ⚡ APEX ${strategy}: SELL ${outcome} ${$(result.filledUsd ?? sizeUsd)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢ | ${reason}`,
-    );
-    await sendTelegram(
-      `⚡ APEX ${strategy} SELL`,
-      `${reason}\n${outcome} ${$(result.filledUsd ?? sizeUsd)}\nP&L: ${pnl >= 0 ? "+" : ""}${$(pnl)}`,
-    );
-
-    // Record trade with P&L
-    recordTrade(state.oracleState, strategy, pnl, true, tokenId, reason);
-    state.tradesExecuted++;
-    invalidatePositions();
-    return true;
-  }
-
-  if (result.reason !== "SIMULATED") {
-    logger.warn(
-      `⚡ APEX ${strategy}: SELL failed - ${result.reason} | ${reason}`,
-    );
-  }
-  return false;
-}
+// Note: The deprecated sell() function has been removed.
+// All sell operations now use sellPosition() which has:
+// - Proper price protection (5% slippage tolerance)
+// - Live trading mode checking  
+// - Better error handling
+// - Telegram notifications
 
 // ============================================
 // APEX v3.0 - HUNTER SCANNER
@@ -1730,6 +1775,160 @@ async function runExitStrategies(positions: Position[]): Promise<number> {
 }
 
 // ============================================
+// APEX v3.0 - PROTECTION STRATEGIES
+// ============================================
+
+/**
+ * Run all protection strategies
+ * Priority order: Guardian (stop-loss) → Sentinel (emergency) → Shield (hedging)
+ */
+async function runProtectionStrategies(positions: Position[]): Promise<number> {
+  let protectionCount = 0;
+  
+  // Enrich positions with entry time and price history
+  const enrichedPositions = enrichPositions(positions);
+  
+  // Track which positions we've acted on
+  const actedTokenIds = new Set<string>();
+  
+  // Get mode-specific protection settings
+  const maxLossPct = state.mode === "CONSERVATIVE" ? 15 : 
+                     state.mode === "BALANCED" ? 20 : 25;
+  const hedgeTriggerPct = state.mode === "CONSERVATIVE" ? 15 : 
+                          state.mode === "BALANCED" ? 20 : 25;
+  
+  // GUARDIAN - Hard stop-loss protection
+  for (const p of enrichedPositions) {
+    if (actedTokenIds.has(p.tokenId)) continue;
+    
+    // Check if position already has a hedge (skip guardian if hedged)
+    const isHedged = state.hedgeStates.has(p.tokenId);
+    
+    // Check for danger zone warning
+    if (isInDangerZone(p, maxLossPct * 0.6)) {
+      logger.warn(`🛡️ APEX Guardian: ${p.outcome} in danger zone (${p.pnlPct.toFixed(1)}% loss)`);
+    }
+    
+    const signal = detectGuardian(p, maxLossPct, isHedged);
+    if (signal) {
+      logger.warn(`🛡️ APEX Guardian: STOP-LOSS triggered for ${p.outcome} (${signal.stopLossPct.toFixed(1)}% loss)`);
+      const success = await sellPosition(p, signal.reason, true /* forceSell */);
+      if (success) {
+        protectionCount++;
+        actedTokenIds.add(p.tokenId);
+        
+        // Clean up any associated hedge state
+        state.hedgeStates.delete(p.tokenId);
+        
+        // Gate protection Telegram behind liveTrading to avoid misleading sim messages
+        if (state.liveTrading) {
+          await sendTelegram(
+            "🛡️ GUARDIAN STOP-LOSS",
+            `${p.outcome} exited at ${signal.stopLossPct.toFixed(1)}% loss\n` +
+            `Value: $${p.value.toFixed(2)}\n` +
+            `Reason: ${signal.reason}`
+          );
+        }
+      }
+    }
+  }
+  
+  // SENTINEL - Emergency exit for markets closing soon
+  for (const p of enrichedPositions) {
+    if (actedTokenIds.has(p.tokenId)) continue;
+    
+    const signal = detectSentinel(p);
+    if (signal) {
+      const urgency = signal.minutesToClose !== undefined 
+        ? getSentinelUrgency(signal.minutesToClose) 
+        : "HIGH";
+      
+      // Force exit on CRITICAL urgency or if force flag is set
+      if (urgency === "CRITICAL" || signal.force) {
+        logger.warn(`🚨 APEX Sentinel: EMERGENCY EXIT for ${p.outcome} - ${signal.reason}`);
+        const success = await sellPosition(p, signal.reason, true /* forceSell */);
+        if (success) {
+          protectionCount++;
+          actedTokenIds.add(p.tokenId);
+          
+          // Gate protection Telegram behind liveTrading to avoid misleading sim messages
+          if (state.liveTrading) {
+            await sendTelegram(
+              "🚨 SENTINEL EMERGENCY",
+              `${p.outcome} force exited!\n` +
+              `Time remaining: ${signal.minutesToClose?.toFixed(1) ?? "Unknown"} min\n` +
+              `P&L: ${p.pnlPct.toFixed(1)}%\n` +
+              `Reason: ${signal.reason}`
+            );
+          }
+        }
+      } else if (urgency === "HIGH") {
+        // Warn but don't force exit
+        logger.warn(`⚠️ APEX Sentinel: WARNING for ${p.outcome} - market closing soon`);
+      }
+    }
+  }
+  
+  // SHIELD - Intelligent hedging for losing positions
+  for (const p of enrichedPositions) {
+    if (actedTokenIds.has(p.tokenId)) continue;
+    
+    const isHedged = state.hedgeStates.has(p.tokenId);
+    const signal = detectShield(p, isHedged, hedgeTriggerPct);
+    
+    if (signal) {
+      logger.info(`🛡️ APEX Shield: Hedge signal for ${p.outcome} (${p.pnlPct.toFixed(1)}% loss)`);
+      
+      // Calculate hedge position size
+      const positionSize = calculatePositionSize(
+        state.currentBalance,
+        state.modeConfig,
+        Strategy.SHADOW, // Use conservative weight for hedges
+      );
+      const hedgeSize = Math.min(signal.hedgeSize, positionSize * 0.5);
+      
+      // NOTE: Executing a hedge requires the tokenId of the opposite outcome, which
+      // we don't have directly. In a real implementation, we would need to:
+      // 1. Look up the market by marketId/conditionId
+      // 2. Find the opposite outcome's tokenId
+      // 3. Execute the buy on that tokenId
+      //
+      // For now, we log the hedge signal for manual follow-up and track that we've
+      // considered hedging this position. Full hedge implementation requires market
+      // data integration to resolve opposite tokenIds.
+      
+      if (hedgeSize >= 5) {
+        logger.warn(
+          `🛡️ APEX Shield: Hedge recommended for ${p.outcome} ` +
+          `(${p.pnlPct.toFixed(1)}% loss) → consider ${signal.hedgeOutcome} hedge of $${hedgeSize.toFixed(2)}`
+        );
+        
+        // Gate protection Telegram behind liveTrading to avoid misleading sim messages
+        if (state.liveTrading) {
+          await sendTelegram(
+            "🛡️ SHIELD HEDGE SIGNAL",
+            `⚠️ Manual hedge recommended:\n` +
+            `Position: ${p.outcome}\n` +
+            `Current loss: ${p.pnlPct.toFixed(1)}%\n` +
+            `Recommended: Buy ${signal.hedgeOutcome} for $${hedgeSize.toFixed(2)}\n\n` +
+            `Note: Automatic hedging requires market data integration.`
+          );
+        }
+        
+        // Mark that we've signaled this position to avoid spam
+        actedTokenIds.add(p.tokenId);
+      }
+    }
+  }
+  
+  // NOTE: Hedge stop-loss/take-profit monitoring is disabled until automatic
+  // hedge execution is implemented with proper tokenId resolution.
+  // The existing positions are already monitored by Guardian for stop-loss.
+  
+  return protectionCount;
+}
+
+// ============================================
 // APEX v3.0 - ENTRY STRATEGIES
 // ============================================
 
@@ -1737,32 +1936,44 @@ async function runShadowStrategy(
   positions: Position[],
   currentBalance: number,
 ): Promise<void> {
-  // APEX Shadow - Copy Trading
+  // APEX Shadow - Copy Trading using module functions
   if (state.targets.length === 0) return;
 
   const allocation = state.strategyAllocations.get(Strategy.SHADOW) || 0;
   if (allocation === 0) return;
 
-  const trades = await fetchRecentTrades(state.targets);
-  const minBuyPrice = 0.05; // 5¢ minimum
+  // Use module's fetchShadowTrades with config
+  const rawTrades = await fetchShadowTrades(state.targets, {
+    minTradeSize: 10,
+    maxTradeSize: 1000,
+    onlyBuys: true,
+    timeWindowSeconds: 60,
+  });
+  
+  // Use module's quality filtering
+  const qualityTrades = filterQualityTrades(rawTrades, 0.3);
+  
+  // Log trader stats periodically
+  if (state.cycleCount % 60 === 0 && qualityTrades.length > 0) {
+    const stats = getTraderStats(qualityTrades);
+    logger.info(`📊 APEX Shadow: Tracking ${stats.length} traders, ${qualityTrades.length} quality trades`);
+  }
 
-  for (const t of trades) {
-    if (t.side !== "BUY") continue;
-    if (t.price < minBuyPrice) continue;
+  // Calculate position size
+  const positionSize = calculatePositionSize(
+    currentBalance,
+    state.modeConfig,
+    Strategy.SHADOW,
+  );
 
-    // Calculate dynamic position size
-    const positionSize = calculatePositionSize(
-      currentBalance,
-      state.modeConfig,
-      Strategy.SHADOW,
-    );
+  for (const t of qualityTrades) {
     const size = Math.min(t.sizeUsd * 1.0, positionSize);
 
     await buy(
       t.tokenId,
       t.outcome as "YES" | "NO",
       size,
-      `Shadow: Following ${t.trader.slice(0, 8)}...`,
+      `Shadow: Following ${t.trader.slice(0, 8)}... @ ${(t.price * 100).toFixed(0)}¢`,
       Strategy.SHADOW,
       positions,
       t.marketId,
@@ -1774,31 +1985,52 @@ async function runCloserStrategy(
   positions: Position[],
   currentBalance: number,
 ): Promise<void> {
-  // APEX Closer - Endgame (92-97¢)
-  // NOTE: This strategy adds MORE to existing profitable positions in endgame range
-  // Consider adding position tracking to prevent over-concentration in single markets
+  // APEX Closer - Endgame Strategy using module functions
   const allocation = state.strategyAllocations.get(Strategy.CLOSER) || 0;
   if (allocation === 0) return;
 
+  const basePositionSize = calculatePositionSize(
+    currentBalance,
+    state.modeConfig,
+    Strategy.CLOSER,
+  );
+
   for (const p of positions) {
-    if (p.curPrice < 0.92 || p.curPrice > 0.97) continue;
-    if (p.pnlPct <= 0) continue;
-
-    const positionSize = calculatePositionSize(
-      currentBalance,
-      state.modeConfig,
-      Strategy.CLOSER,
-    );
-
-    await buy(
-      p.tokenId,
+    // Use module's detectCloser to find opportunities
+    const signal = detectCloser(
+      p.marketEndTime,
+      p.curPrice,
       p.outcome as "YES" | "NO",
-      positionSize,
-      `Closer: Endgame @ ${(p.curPrice * 100).toFixed(0)}¢`,
-      Strategy.CLOSER,
-      positions,
+      p.tokenId,
+      p.conditionId,
       p.marketId,
     );
+    
+    if (signal && signal.confidence > 50) {
+      // Use module's risk-adjusted position sizing
+      const hoursToClose = signal.hoursToClose;
+      const closerSize = calculateCloserSize(basePositionSize, hoursToClose, p.curPrice);
+      
+      if (closerSize >= 5) {
+        logger.info(`📊 APEX Closer: ${signal.reason} (confidence: ${signal.confidence.toFixed(0)}%)`);
+        
+        await buy(
+          p.tokenId,
+          p.outcome as "YES" | "NO",
+          closerSize,
+          signal.reason,
+          Strategy.CLOSER,
+          positions,
+          p.marketId,
+        );
+      }
+    }
+    
+    // Check if positions should exit before close
+    if (shouldExitBeforeClose(p, 1)) {
+      logger.info(`📊 APEX Closer: Exit recommended - market closing soon`);
+      await sellPosition(p, "APEX Closer: Market closing soon");
+    }
   }
 }
 
@@ -1806,35 +2038,55 @@ async function runAmplifierStrategy(
   positions: Position[],
   currentBalance: number,
 ): Promise<void> {
-  // APEX Amplifier - Stack Winners
+  // APEX Amplifier - Stack Winners using module functions
   const allocation = state.strategyAllocations.get(Strategy.AMPLIFIER) || 0;
   if (allocation === 0) return;
 
   const stackedTokens = new Set<string>();
+  
+  // Calculate current exposure for safety checks
+  const currentExposure = calculateExposure(positions);
+  const maxExposure = currentBalance * (state.modeConfig.maxExposurePct / 100);
+  
+  const maxStackSize = calculatePositionSize(
+    currentBalance,
+    state.modeConfig,
+    Strategy.AMPLIFIER,
+  );
 
   for (const p of positions) {
     if (stackedTokens.has(p.tokenId)) continue;
-    if (p.gainCents < 1.5) continue; // Minimum 1.5¢ gain
-    if (p.curPrice > 0.75) continue; // Max price 75¢
-    if (p.curPrice < ORDER.GLOBAL_MIN_BUY_PRICE) continue;
+    
+    // Check if already stacked (would need position history tracking)
+    const alreadyStacked = state.actedPositions.has(`stack:${p.tokenId}`);
+    
+    // Use module's detectAmplifier to find stacking opportunities
+    const signal = detectAmplifier(p, maxStackSize, alreadyStacked);
+    
+    if (signal && signal.confidence > 30) {
+      // Use module's safety check before stacking
+      if (!isSafeToStack(p, currentExposure, maxExposure)) {
+        logger.debug?.(`📊 APEX Amplifier: Skipping ${p.outcome} - unsafe to stack`);
+        continue;
+      }
+      
+      logger.info(`📊 APEX Amplifier: ${signal.reason} (confidence: ${signal.confidence.toFixed(0)}%)`);
+      
+      const success = await buy(
+        p.tokenId,
+        p.outcome as "YES" | "NO",
+        signal.stackSize,
+        signal.reason,
+        Strategy.AMPLIFIER,
+        positions,
+        p.marketId,
+      );
 
-    const positionSize = calculatePositionSize(
-      currentBalance,
-      state.modeConfig,
-      Strategy.AMPLIFIER,
-    );
-
-    const success = await buy(
-      p.tokenId,
-      p.outcome as "YES" | "NO",
-      positionSize,
-      `Amplifier: Stack +${p.gainCents.toFixed(1)}¢`,
-      Strategy.AMPLIFIER,
-      positions,
-      p.marketId,
-    );
-
-    if (success) stackedTokens.add(p.tokenId);
+      if (success) {
+        stackedTokens.add(p.tokenId);
+        state.actedPositions.add(`stack:${p.tokenId}`);
+      }
+    }
   }
 }
 
@@ -1846,8 +2098,44 @@ async function runGrinderStrategy(
   const allocation = state.strategyAllocations.get(Strategy.GRINDER) || 0;
   if (allocation === 0) return;
 
-  // For now, Grinder is placeholder - would need volume data from API
-  // Placeholder only logs in debug mode
+  // Calculate position size for grinder strategy
+  const basePositionSize = calculatePositionSize(
+    currentBalance,
+    state.modeConfig,
+    Strategy.GRINDER,
+  );
+  
+  // Grinder uses smaller position sizes for more frequent trades
+  const grindSize = calculateGrindSize(basePositionSize);
+  
+  if (grindSize < 5) return; // Minimum $5 for grind trades
+  
+  // Check existing positions for grind exit conditions
+  for (const p of positions) {
+    // NOTE: Market metrics are approximated from available data.
+    // In production, these would come from market data API calls.
+    // The Grinder strategy currently uses conservative defaults that favor
+    // P&L-based exits rather than volume/spread-based exits.
+    const metrics: MarketMetrics = {
+      tokenId: p.tokenId,
+      volume24h: state.volume24h || 5000, // Use state or default
+      volume1h: (state.volume24h || 5000) / 24, // Approximate hourly volume
+      spread: 0.015, // Conservative 1.5% spread assumption
+      liquidity: 1000,
+      // Price stability: mid-range prices (20-80¢) are more stable
+      priceStability: p.curPrice > 0.2 && p.curPrice < 0.8 ? 0.8 : 0.5,
+    };
+    
+    // Check if should exit existing grind position
+    // Exit triggers: P&L >= 8%, or detected volume/spread issues
+    if (shouldExitGrind(p, metrics)) {
+      logger.info(`📊 APEX Grinder: Exit signal for ${p.outcome} (${p.pnlPct.toFixed(1)}%)`);
+      await sellPosition(p, `APEX Grinder: Exit (${p.pnlPct.toFixed(1)}% P&L)`);
+    }
+  }
+  
+  // Note: Entry signals would require market scanning with volume data
+  // For now, Grinder focuses on managing existing positions using P&L targets
 }
 
 async function runVelocityStrategy(
@@ -1858,9 +2146,48 @@ async function runVelocityStrategy(
   const allocation = state.strategyAllocations.get(Strategy.VELOCITY) || 0;
   if (allocation === 0) return;
 
-  // Velocity detection would need price history data
-  // For now, this is a placeholder that would integrate with real market data
-  // Placeholder only logs in debug mode
+  // Calculate position size for velocity strategy
+  const positionSize = calculatePositionSize(
+    currentBalance,
+    state.modeConfig,
+    Strategy.VELOCITY,
+  );
+  
+  if (positionSize < 5) return; // Minimum $5 for velocity trades
+  
+  // Prune price history for closed positions (memory leak prevention)
+  const currentTokenIds = new Set(positions.map(p => p.tokenId));
+  for (const tokenId of state.priceHistory.keys()) {
+    if (!currentTokenIds.has(tokenId)) {
+      state.priceHistory.delete(tokenId);
+    }
+  }
+  
+  // Update price history for all positions
+  for (const p of positions) {
+    const history = state.priceHistory.get(p.tokenId) || [];
+    history.push(p.curPrice);
+    
+    // Keep last 60 price points (approximately 5 minutes of data at 5-second intervals)
+    if (history.length > 60) history.shift();
+    state.priceHistory.set(p.tokenId, history);
+    
+    // Check for momentum reversal on existing positions (exit signal)
+    if (history.length >= 10) {
+      const currentVelocity = calculateVelocity(history);
+      
+      if (isMomentumReversing(p, currentVelocity)) {
+        logger.info(`⚡ APEX Velocity: Momentum reversal for ${p.outcome} (velocity: ${currentVelocity.toFixed(1)}%)`);
+        await sellPosition(p, `APEX Velocity: Momentum reversal (${currentVelocity.toFixed(1)}% velocity)`);
+      } else if (shouldRideMomentum(p, currentVelocity)) {
+        // Keep position, momentum still strong
+        logger.debug?.(`⚡ APEX Velocity: Riding momentum for ${p.outcome} (velocity: ${currentVelocity.toFixed(1)}%)`);
+      }
+    }
+  }
+  
+  // Note: New entry signals would require scanning markets with price history
+  // For now, Velocity focuses on managing existing positions based on momentum
 }
 
 // ============================================
@@ -2184,6 +2511,15 @@ async function runAPEXCycle(): Promise<void> {
   if (exitCount > 0) {
     logger.info(`📤 Exited ${exitCount} positions this cycle`);
     invalidatePositions(); // Force refresh after exits
+  }
+
+  // ============================================
+  // PRIORITY 1.5: PROTECTION (Guard remaining positions)
+  // ============================================
+  const protectionCount = await runProtectionStrategies(positions);
+  if (protectionCount > 0) {
+    logger.info(`🛡️ Protection actions: ${protectionCount} this cycle`);
+    invalidatePositions(); // Force refresh after protection actions
   }
 
   // ============================================

@@ -515,7 +515,12 @@ export function analyzeMarketConditions(
 // EXECUTION
 // ============================================================================
 
-/** Execute a sell order */
+/**
+ * Execute a sell order
+ * 
+ * NOTE: This function is used by processGreenExit() and processRedRecovery()
+ * for the scavenger mode. It is a core sell mechanism for this module.
+ */
 async function executeSell(client: ClobClient, position: Position, minPrice: number): Promise<OrderResult> {
   try {
     const book = await client.getOrderBook(position.tokenId);
