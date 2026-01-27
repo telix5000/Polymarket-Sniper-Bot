@@ -311,8 +311,10 @@ const MINIMUM_OPERATING_BALANCE = 1; // Minimum balance to continue operations
 const PROFITABLE_POSITION_THRESHOLD = 0.5; // Minimum profit % to exit in recovery (0.5%)
 const NEAR_RESOLUTION_PRICE_THRESHOLD = 0.95; // Price threshold for near-resolution (95¢)
 const ACCEPTABLE_LOSS_THRESHOLD = -2; // Max loss % for near-resolution exits (-2%)
-const EMERGENCY_BALANCE_THRESHOLD = 10; // Balance below this triggers emergency exits
 const MAX_ACCEPTABLE_LOSS = -5; // Max loss % for emergency exits (-5%)
+
+// Note: Emergency sell thresholds are now configured via state.emergencySellConfig
+// See EMERGENCY_SELL_MODE and EMERGENCY_BALANCE_THRESHOLD environment variables
 
 /**
  * Calculate total portfolio value (balance + position value)
