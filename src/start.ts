@@ -39,6 +39,7 @@ import {
   // Config
   TIMING,
   ORDER,
+  POLYGON,
   // Data
   getPositions,
   invalidatePositions,
@@ -541,9 +542,7 @@ function enrichPositions(positions: Position[]): Position[] {
   });
 }
 
-// USDC and CTF Exchange addresses
-const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"; // Polygon USDC
-const CTF_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"; // Polymarket CTF Exchange
+// Max uint256 for infinite approval
 const MAX_UINT256 = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
 /**
@@ -565,12 +564,12 @@ async function ensureUSDCApproval(): Promise<void> {
   
   try {
     const usdc = new Contract(
-      USDC_ADDRESS,
+      POLYGON.USDC_ADDRESS,
       ["function approve(address spender, uint256 amount) returns (bool)"],
       state.wallet
     );
     
-    const tx = await usdc.approve(CTF_EXCHANGE, MAX_UINT256);
+    const tx = await usdc.approve(POLYGON.CTF_EXCHANGE, MAX_UINT256);
     logger.info(`⏳ Waiting for approval tx: ${tx.hash.slice(0, 16)}...`);
     
     await tx.wait();
@@ -1553,9 +1552,7 @@ async function runGrinderStrategy(
   if (allocation === 0) return;
 
   // For now, Grinder is placeholder - would need volume data from API
-  if (process.env.DEBUG && logger.debug) {
-    logger.debug(`⚡ APEX Grinder: Monitoring volume (placeholder)`);
-  }
+  // Placeholder only logs in debug mode
 }
 
 async function runVelocityStrategy(
@@ -1568,9 +1565,7 @@ async function runVelocityStrategy(
 
   // Velocity detection would need price history data
   // For now, this is a placeholder that would integrate with real market data
-  if (process.env.DEBUG && logger.debug) {
-    logger.debug(`⚡ APEX Velocity: Monitoring momentum (placeholder)`);
-  }
+  // Placeholder only logs in debug mode
 }
 
 // ============================================
