@@ -784,16 +784,44 @@ class BiasAccumulator {
       if (allEntries.length > 0) {
         this.leaderboardWallets.clear();
         
-        // Show top 10 at startup to verify it's working
+        // Show top 10 at startup to verify it's working, sorted by last traded
         const isFirstFetch = this.lastLeaderboardFetch === 0;
         if (isFirstFetch) {
-          console.log(`\n🐋 TOP 10 TRADERS (from ${allEntries.length} tracked):`);
-          for (const entry of allEntries.slice(0, 10)) {
+          // Fetch last activity for top 10 traders (parallel requests)
+          const top10 = allEntries.slice(0, 10);
+          const activityPromises = top10.map(async (entry) => {
+            const wallet = entry.proxyWallet || entry.address;
+            if (!wallet) return { ...entry, lastTraded: 0 };
+            try {
+              const { data } = await axios.get(
+                `${this.DATA_API}/activity?user=${wallet}&limit=1&sortBy=TIMESTAMP&sortDirection=DESC`,
+                { timeout: 5000 }
+              );
+              const lastTraded = Array.isArray(data) && data.length > 0 ? Number(data[0].timestamp || 0) * 1000 : 0;
+              return { ...entry, lastTraded };
+            } catch (err) {
+              // Activity fetch failed - trader may have no activity or API issue
+              // Continue gracefully - they'll show with N/A timestamp
+              console.debug?.(`   Activity fetch for ${wallet.slice(0, 10)}... failed: ${err instanceof Error ? err.message : 'Unknown'}`);
+              return { ...entry, lastTraded: 0 };
+            }
+          });
+          
+          const top10WithActivity = await Promise.all(activityPromises);
+          
+          // Sort by last traded (most recent first)
+          top10WithActivity.sort((a, b) => b.lastTraded - a.lastTraded);
+          
+          console.log(`\n🐋 TOP 10 TRADERS (sorted by last traded, from ${allEntries.length} tracked):`);
+          for (const entry of top10WithActivity) {
             const wallet = (entry.proxyWallet || entry.address || '').slice(0, 12);
             const pnl = Number(entry.pnl || 0);
             const vol = Number(entry.vol || 0);
             const name = entry.userName || 'anon';
-            console.log(`   ${wallet}... | PNL: $${pnl >= 1000 ? (pnl/1000).toFixed(0) + 'k' : pnl.toFixed(0)} | Vol: $${vol >= 1000 ? (vol/1000).toFixed(0) + 'k' : vol.toFixed(0)} | @${name}`);
+            const lastTradedStr = entry.lastTraded > 0 
+              ? new Date(entry.lastTraded).toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+              : 'N/A';
+            console.log(`   ${wallet}... | Last: ${lastTradedStr} | PNL: $${pnl >= 1000 ? (pnl/1000).toFixed(0) + 'k' : pnl.toFixed(0)} | Vol: $${vol >= 1000 ? (vol/1000).toFixed(0) + 'k' : vol.toFixed(0)} | @${name}`);
           }
           console.log('');
         }
