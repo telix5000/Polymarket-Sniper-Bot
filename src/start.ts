@@ -145,15 +145,12 @@ import {
 // APEX v3.0 Protection Modules
 import {
   detectShield,
-  shouldStopHedge,
-  shouldTakeProfitHedge,
   type ShieldSignal,
   type HedgeState,
 } from "./strategies/shield";
 
 import {
   detectGuardian,
-  calculateDynamicStopLoss,
   isInDangerZone,
   type GuardianSignal,
 } from "./strategies/guardian";
@@ -865,19 +862,13 @@ async function sellPosition(
       logger.info(`   ⚠️ Stop-loss mode: allowing ${SELL.LOSS_SLIPPAGE_PCT}% slippage`);
     }
     
-    // Minimum price check (allow 5% slippage for exits - more lenient than buys)
-    // This helps ensure positions can be liquidated in volatile conditions
-    const minPrice = position.avgPrice * 0.95;
-    if (bestBid < minPrice) {
-      logger.warn(`❌ Price too low: ${(bestBid * 100).toFixed(0)}¢ < ${(minPrice * 100).toFixed(0)}¢ (min 95% of entry)`);
-      return false;
     // If position is near resolution ($0.95+), use tighter slippage
     if (position.curPrice >= SELL.HIGH_PRICE_THRESHOLD) {
       config.maxSlippagePct = SELL.HIGH_PRICE_SLIPPAGE_PCT;
       logger.info(`   💎 High-probability position: using tight ${SELL.HIGH_PRICE_SLIPPAGE_PCT}% slippage`);
     }
     
-    // Execute smart sell
+    // Execute smart sell (handles orderbook analysis, slippage protection internally)
     const result = await smartSell(state.client, position, config);
     
     if (result.success) {
@@ -1821,7 +1812,7 @@ async function runProtectionStrategies(positions: Position[]): Promise<number> {
     const signal = detectGuardian(p, maxLossPct, isHedged);
     if (signal) {
       logger.warn(`🛡️ APEX Guardian: STOP-LOSS triggered for ${p.outcome} (${signal.stopLossPct.toFixed(1)}% loss)`);
-      const success = await sellPosition(p, signal.reason);
+      const success = await sellPosition(p, signal.reason, true /* forceSell */);
       if (success) {
         protectionCount++;
         actedTokenIds.add(p.tokenId);
@@ -1829,12 +1820,15 @@ async function runProtectionStrategies(positions: Position[]): Promise<number> {
         // Clean up any associated hedge state
         state.hedgeStates.delete(p.tokenId);
         
-        await sendTelegram(
-          "🛡️ GUARDIAN STOP-LOSS",
-          `${p.outcome} exited at ${signal.stopLossPct.toFixed(1)}% loss\n` +
-          `Value: $${p.value.toFixed(2)}\n` +
-          `Reason: ${signal.reason}`
-        );
+        // Gate protection Telegram behind liveTrading to avoid misleading sim messages
+        if (state.liveTrading) {
+          await sendTelegram(
+            "🛡️ GUARDIAN STOP-LOSS",
+            `${p.outcome} exited at ${signal.stopLossPct.toFixed(1)}% loss\n` +
+            `Value: $${p.value.toFixed(2)}\n` +
+            `Reason: ${signal.reason}`
+          );
+        }
       }
     }
   }
@@ -1852,18 +1846,21 @@ async function runProtectionStrategies(positions: Position[]): Promise<number> {
       // Force exit on CRITICAL urgency or if force flag is set
       if (urgency === "CRITICAL" || signal.force) {
         logger.warn(`🚨 APEX Sentinel: EMERGENCY EXIT for ${p.outcome} - ${signal.reason}`);
-        const success = await sellPosition(p, signal.reason);
+        const success = await sellPosition(p, signal.reason, true /* forceSell */);
         if (success) {
           protectionCount++;
           actedTokenIds.add(p.tokenId);
           
-          await sendTelegram(
-            "🚨 SENTINEL EMERGENCY",
-            `${p.outcome} force exited!\n` +
-            `Time remaining: ${signal.minutesToClose?.toFixed(1) ?? "Unknown"} min\n` +
-            `P&L: ${p.pnlPct.toFixed(1)}%\n` +
-            `Reason: ${signal.reason}`
-          );
+          // Gate protection Telegram behind liveTrading to avoid misleading sim messages
+          if (state.liveTrading) {
+            await sendTelegram(
+              "🚨 SENTINEL EMERGENCY",
+              `${p.outcome} force exited!\n` +
+              `Time remaining: ${signal.minutesToClose?.toFixed(1) ?? "Unknown"} min\n` +
+              `P&L: ${p.pnlPct.toFixed(1)}%\n` +
+              `Reason: ${signal.reason}`
+            );
+          }
         }
       } else if (urgency === "HIGH") {
         // Warn but don't force exit
@@ -1906,14 +1903,17 @@ async function runProtectionStrategies(positions: Position[]): Promise<number> {
           `(${p.pnlPct.toFixed(1)}% loss) → consider ${signal.hedgeOutcome} hedge of $${hedgeSize.toFixed(2)}`
         );
         
-        await sendTelegram(
-          "🛡️ SHIELD HEDGE SIGNAL",
-          `⚠️ Manual hedge recommended:\n` +
-          `Position: ${p.outcome}\n` +
-          `Current loss: ${p.pnlPct.toFixed(1)}%\n` +
-          `Recommended: Buy ${signal.hedgeOutcome} for $${hedgeSize.toFixed(2)}\n\n` +
-          `Note: Automatic hedging requires market data integration.`
-        );
+        // Gate protection Telegram behind liveTrading to avoid misleading sim messages
+        if (state.liveTrading) {
+          await sendTelegram(
+            "🛡️ SHIELD HEDGE SIGNAL",
+            `⚠️ Manual hedge recommended:\n` +
+            `Position: ${p.outcome}\n` +
+            `Current loss: ${p.pnlPct.toFixed(1)}%\n` +
+            `Recommended: Buy ${signal.hedgeOutcome} for $${hedgeSize.toFixed(2)}\n\n` +
+            `Note: Automatic hedging requires market data integration.`
+          );
+        }
         
         // Mark that we've signaled this position to avoid spam
         actedTokenIds.add(p.tokenId);
@@ -2154,6 +2154,14 @@ async function runVelocityStrategy(
   );
   
   if (positionSize < 5) return; // Minimum $5 for velocity trades
+  
+  // Prune price history for closed positions (memory leak prevention)
+  const currentTokenIds = new Set(positions.map(p => p.tokenId));
+  for (const tokenId of state.priceHistory.keys()) {
+    if (!currentTokenIds.has(tokenId)) {
+      state.priceHistory.delete(tokenId);
+    }
+  }
   
   // Update price history for all positions
   for (const p of positions) {

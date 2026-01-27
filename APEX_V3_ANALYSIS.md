@@ -78,17 +78,24 @@ The following protection modules have been integrated into the execution cycle:
 
 | Module | File | Status | Integration |
 |--------|------|--------|-------------|
-| **Shield** | shield.ts | ✅ INTEGRATED | Hedging with stop-loss/take-profit |
-| **Guardian** | guardian.ts | ✅ INTEGRATED | Hard stop-loss protection |
-| **Sentinel** | sentinel.ts | ✅ INTEGRATED | Emergency exit for closing markets |
+| **Shield** | shield.ts | ⚠️ PARTIAL | Hedge signal recommendation only (auto-execution disabled) |
+| **Guardian** | guardian.ts | ✅ INTEGRATED | Hard stop-loss protection with forceSell |
+| **Sentinel** | sentinel.ts | ✅ INTEGRATED | Emergency exit for closing markets with forceSell |
 | **Firewall** | firewall.ts | ✅ INTEGRATED | Circuit breaker with drawdown/exposure limits |
 
 ### Implementation Details
 
 Added `runProtectionStrategies()` function with:
-- Guardian stop-loss (mode-specific: 15%/20%/25%)
-- Sentinel emergency exit (force exit at <5 minutes)
-- Shield intelligent hedging with stop-loss/take-profit for hedges
+- Guardian stop-loss (mode-specific: 15%/20%/25%) - uses `forceSell=true` to bypass liquidity checks
+- Sentinel emergency exit (force exit at <5 minutes) - uses `forceSell=true` to bypass liquidity checks
+- Shield hedge signaling (recommends manual hedges, auto-execution disabled pending market data integration)
+
+**Note on Shield:** Hedge stop-loss/take-profit monitoring is disabled until automatic hedge execution is implemented with proper opposite tokenId resolution. Manual hedge recommendations are sent via Telegram in live trading mode only.
+
+**Note on Sell Protection:** The `sellPosition()` function uses SmartSell with:
+- Dynamic slippage based on position state
+- Orderbook depth analysis
+- `forceSell` parameter for Guardian/Sentinel to bypass liquidity checks
 
 `runFirewallCheck()` now uses firewall module:
 - `shouldHaltTrading()` for circuit breaker logic
@@ -96,6 +103,8 @@ Added `runProtectionStrategies()` function with:
 - `getFirewallSummary()` for status reporting
 
 Protection strategies run in `runAPEXCycle()` at PRIORITY 1.5 (after exits, before redemption).
+
+Protection Telegram notifications are gated behind `liveTrading` mode to avoid misleading simulation messages.
 
 ---
 
@@ -113,7 +122,7 @@ Protection strategies run in `runAPEXCycle()` at PRIORITY 1.5 (after exits, befo
 
 ### Implementation Details
 
-- `runVelocityStrategy()`: Tracks price history, detects momentum reversal, manages exits
+- `runVelocityStrategy()`: Tracks price history (with memory leak prevention pruning), detects momentum reversal, manages exits
 - `runGrinderStrategy()`: Monitors positions for grind exit conditions (volume/spread/target)
 - `runCloserStrategy()`: Uses `detectCloser()` for endgame opportunities, `calculateCloserSize()` for position sizing
 - `runAmplifierStrategy()`: Uses `detectAmplifier()` and `isSafeToStack()` for safe position stacking
