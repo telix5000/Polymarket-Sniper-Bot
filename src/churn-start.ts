@@ -718,24 +718,24 @@ class BiasAccumulator {
   }
 
   /**
-   * Fetch recent trades for leaderboard wallets
+   * Fetch recent trades for leaderboard wallets - PARALLEL EXECUTION
+   * Fetches all whale wallets simultaneously for maximum speed
    */
   async fetchLeaderboardTrades(): Promise<LeaderboardTrade[]> {
     const wallets = await this.refreshLeaderboard();
-    const newTrades: LeaderboardTrade[] = [];
     const now = Date.now();
     const windowStart = now - this.config.biasWindowSeconds * 1000;
 
-    // Limit concurrent requests
-    const batch = wallets.slice(0, 10);
-
-    for (const wallet of batch) {
+    // Fetch all wallets in parallel for speed
+    // API can handle concurrent requests, and we want to catch whale movement FAST
+    const fetchPromises = wallets.map(async (wallet) => {
       try {
         const url = `${this.DATA_API}/trades?user=${wallet}&limit=20`;
         const { data } = await axios.get(url, { timeout: 5000 });
 
-        if (!Array.isArray(data)) continue;
+        if (!Array.isArray(data)) return [];
 
+        const trades: LeaderboardTrade[] = [];
         for (const trade of data) {
           const timestamp = new Date(
             trade.timestamp || trade.createdAt,
@@ -750,7 +750,7 @@ class BiasAccumulator {
           const sizeUsd = Number(trade.size) * Number(trade.price) || 0;
           if (sizeUsd <= 0) continue;
 
-          newTrades.push({
+          trades.push({
             tokenId,
             marketId: trade.marketId,
             wallet: wallet,
@@ -759,10 +759,16 @@ class BiasAccumulator {
             timestamp,
           });
         }
+        return trades;
       } catch {
-        // Continue on error
+        // Continue on error - don't block other wallets
+        return [];
       }
-    }
+    });
+
+    // Wait for all fetches to complete in parallel
+    const results = await Promise.all(fetchPromises);
+    const newTrades = results.flat();
 
     // Add to accumulator and prune old trades
     this.addTrades(newTrades);
