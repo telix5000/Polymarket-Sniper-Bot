@@ -2754,7 +2754,13 @@ class ChurnEngine {
     
     if (evAllowed.allowed && activeBiases.length > 0) {
       // Execute entries in parallel to avoid missing opportunities
-      // when multiple whale signals arrive simultaneously
+      // when multiple whale signals arrive simultaneously.
+      // 
+      // RACE CONDITION SAFEGUARD: The position manager enforces:
+      // - maxOpenPositionsTotal (12) - hard limit on concurrent positions
+      // - maxDeployedFractionTotal (30%) - max exposure cap
+      // - maxOpenPositionsPerMarket (2) - per-token limit
+      // These checks happen atomically in processEntry, preventing over-allocation.
       const entryPromises = activeBiases.slice(0, 3).map(async (bias) => {
         try {
           const marketData = await this.fetchTokenMarketData(bias.tokenId);

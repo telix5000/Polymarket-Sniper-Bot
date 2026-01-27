@@ -408,11 +408,14 @@ export async function smartSell(
         "Unknown error";
       logger?.warn?.(`⚠️ Sell failed: ${errorMsg}`);
 
-      // Handle specific error cases
+      // Handle specific error cases - distinguish between balance and allowance issues
       const lowerError = errorMsg.toLowerCase();
+      if (lowerError.includes("not enough allowance") || lowerError.includes("insufficient allowance")) {
+        return { success: false, reason: "INSUFFICIENT_ALLOWANCE", analysis };
+      }
       if (
         lowerError.includes("not enough balance") ||
-        lowerError.includes("not enough allowance") ||
+        lowerError.includes("insufficient balance") ||
         lowerError.includes("insufficient")
       ) {
         return { success: false, reason: "INSUFFICIENT_BALANCE", analysis };
@@ -448,10 +451,14 @@ export async function smartSell(
     logger?.error?.(`❌ Sell error: ${cleanMsg}`);
 
     // Check for specific error types and return appropriate reason codes
+    // Distinguish between balance and allowance issues for better debugging
     const lowerMsg = cleanMsg.toLowerCase();
+    if (lowerMsg.includes("not enough allowance") || lowerMsg.includes("insufficient allowance")) {
+      return { success: false, reason: "INSUFFICIENT_ALLOWANCE" };
+    }
     if (
       lowerMsg.includes("not enough balance") ||
-      lowerMsg.includes("not enough allowance") ||
+      lowerMsg.includes("insufficient balance") ||
       lowerMsg.includes("insufficient")
     ) {
       return { success: false, reason: "INSUFFICIENT_BALANCE" };
