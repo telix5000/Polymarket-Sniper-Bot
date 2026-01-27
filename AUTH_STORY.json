@@ -28,7 +28,7 @@
           "expected_log": "⚡ On-chain → Bias | Block #... | $... BUY",
           "actual_log": "NONE (no trades above $500)"
         },
-        "fix": "Set ONCHAIN_MIN_WHALE_TRADE_USD=100 in .env"
+        "fix": "Set WHALE_TRADE_USD=100 in .env"
       },
       {
         "phase": 2,
@@ -120,8 +120,8 @@
         "title": "Whale Trade Threshold Too High",
         "description": "Only detecting whale trades >= $500, but user needs >= $100",
         "location": "src/lib/onchain-monitor.ts:921",
-        "current_value": "ONCHAIN_MIN_WHALE_TRADE_USD = 500 (default)",
-        "required_value": "ONCHAIN_MIN_WHALE_TRADE_USD = 100",
+        "current_value": "WHALE_TRADE_USD = 500 (default)",
+        "required_value": "WHALE_TRADE_USD = 100",
         "impact": "No whale trades detected, entire pipeline blocked",
         "evidence": "No '⚡ On-chain → Bias' logs appearing in 5+ minutes",
         "fix_required": true

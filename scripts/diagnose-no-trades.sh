@@ -83,7 +83,7 @@ elif [[ "$RPC_URL" == https://* ]]; then
     echo "   📝 Change to WebSocket: wss://polygon-mainnet.infura.io/ws/v3/YOUR_KEY"
     echo "   ⚠️  On-chain monitoring requires WebSocket!"
 else
-    echo "   ❌ RPC_URL format not recognized: $RPC_URL"
+    echo "   ❌ RPC_URL format not recognized"
 fi
 echo ""
 
