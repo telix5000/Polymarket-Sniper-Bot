@@ -13,7 +13,7 @@
  *
  * Environment Variables for VPN bypass:
  * - VPN_BYPASS_RPC: Set to "false" to route RPC through VPN (default: true)
- * - VPN_BYPASS_POLYMARKET_READS: Set to "false" to route reads through VPN (default: true)
+ * - VPN_BYPASS_POLYMARKET_READS: Set to "true" to route reads outside VPN (default & RECOMMENDED: false; set to true only if you explicitly want Polymarket reads to bypass the VPN) [APEX v3.0 FIX]
  *
  * WireGuard configuration (either file or env vars):
  * - WG_CONFIG: Path to existing WireGuard config file (legacy; use this if you have a .conf file to mount)
@@ -626,16 +626,17 @@ export async function setupRpcBypass(
  * Write operations require VPN protection to avoid geo-blocking, and
  * IP-level routing cannot differentiate between reads and writes.
  *
- * Enabled by default. Set VPN_BYPASS_POLYMARKET_READS=false to route all
- * Polymarket traffic through VPN.
+ * APEX v3.0 CRITICAL FIX: Disabled by default to prevent geo-blocking.
+ * Set VPN_BYPASS_POLYMARKET_READS=true to enable bypass.
  */
 export async function setupPolymarketReadBypass(
   logger?: Logger,
 ): Promise<void> {
-  // Check if bypass is disabled
-  if (process.env.VPN_BYPASS_POLYMARKET_READS === "false") {
+  // APEX v3.0 FIX: Changed default to false (disabled)
+  // Check if bypass is explicitly enabled
+  if (process.env.VPN_BYPASS_POLYMARKET_READS !== "true") {
     logger?.info?.(
-      "Polymarket read bypass disabled - all traffic through VPN",
+      "Polymarket read bypass disabled (default) - all traffic through VPN",
     );
     return;
   }
