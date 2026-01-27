@@ -3000,13 +3000,18 @@ async function main(): Promise<void> {
   await engine.run();
 }
 
-// Run if executed directly (check if this is the main module)
-const isMainModule =
-  process.argv[1]?.endsWith("churn-start.ts") ||
-  process.argv[1]?.endsWith("churn-start.js") ||
-  process.argv[1]?.includes("churn-start");
+// Run if executed directly
+// Check if this file is the entry point by examining the call stack
+function isDirectlyExecuted(): boolean {
+  // If we're in a test environment, don't run
+  if (process.env.NODE_ENV === "test") return false;
+  
+  // Check if process.argv[1] contains our filename
+  const scriptPath = process.argv[1] || "";
+  return scriptPath.includes("churn-start");
+}
 
-if (isMainModule && !process.argv[1]?.includes("test")) {
+if (isDirectlyExecuted()) {
   main().catch((err) => {
     console.error("Fatal error:", err);
     process.exit(1);
