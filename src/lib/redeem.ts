@@ -30,7 +30,8 @@ export interface RedeemResult {
  * Clean and validate Ethereum address
  */
 function cleanAddress(addr: string | undefined): string | null {
-  if (!addr || addr.length < 40) return null;
+  if (!addr) return null;
+  // ethers.getAddress validates and checksums the address
   try {
     return ethers.getAddress(addr.toLowerCase());
   } catch {
@@ -292,6 +293,17 @@ export async function redeemAllPositions(
 // ============================================
 
 /**
+ * Legacy API position data
+ */
+interface LegacyApiPosition {
+  conditionId?: string;
+  asset?: string;
+  size?: number | string;
+  curPrice?: number | string;
+  redeemable?: boolean;
+}
+
+/**
  * Legacy: Fetch redeemable positions (old API)
  * @deprecated Use fetchRedeemablePositions instead
  */
@@ -300,15 +312,15 @@ export async function getRedeemablePositions(
 ): Promise<Array<{ conditionId: string; tokenId: string; size: number; value: number }>> {
   try {
     const url = `${POLYMARKET_API.DATA}/positions?user=${address}&limit=500`;
-    const { data } = await axios.get(url, { timeout: 10000 });
+    const { data } = await axios.get<LegacyApiPosition[]>(url, { timeout: 10000 });
 
     if (!Array.isArray(data)) return [];
 
     return data
-      .filter((p: any) => p.redeemable && Number(p.size) > 0)
-      .map((p: any) => ({
-        conditionId: p.conditionId,
-        tokenId: p.asset,
+      .filter((p) => p.redeemable && Number(p.size) > 0 && p.conditionId && p.asset)
+      .map((p) => ({
+        conditionId: p.conditionId!,
+        tokenId: p.asset!,
         size: Number(p.size),
         value: Number(p.size) * Number(p.curPrice || 1),
       }));
