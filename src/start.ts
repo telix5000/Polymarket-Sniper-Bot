@@ -40,6 +40,7 @@ import {
   TIMING,
   ORDER,
   POLYGON,
+  loadPreset,
   // Data
   getPositions,
   invalidatePositions,
@@ -63,6 +64,10 @@ import {
   setupRpcBypass,
   setupPolymarketReadBypass,
   checkVpnForTrading,
+  // POL Reserve
+  runPolReserve,
+  loadPolReserveConfig,
+  type PolReserveConfig,
 } from "./lib";
 
 // APEX v3.0 Core Modules
@@ -212,6 +217,10 @@ interface State {
   emergencySellConfig: EmergencySellConfig;
   lastEmergencyConfigLog: number; // Timestamp of last emergency config log
   lastRecoveryTipLog: number; // Timestamp of last recovery tip log
+  
+  // POL Reserve (auto-refill for gas)
+  lastPolReserveCheck: number; // Timestamp of last POL reserve check
+  polReserveConfig?: PolReserveConfig;
 }
 
 const state: State = {
@@ -258,6 +267,8 @@ const state: State = {
   emergencySellConfig: getEmergencySellConfig(),
   lastEmergencyConfigLog: 0,
   lastRecoveryTipLog: 0,
+  lastPolReserveCheck: 0,
+  polReserveConfig: undefined,
 };
 
 // ============================================
@@ -665,13 +676,84 @@ async function ensureUSDCApproval(): Promise<void> {
 
 /**
  * Check POL balance for gas
- * Warn if low, halt if critical
+ * Warn if low, halt if critical, and auto-rebalance using POL Reserve
  */
 async function checkPolBalance(): Promise<void> {
   if (!state.wallet) return;
   
   const polBalance = await getPolBalance(state.wallet, state.address);
   
+  // Initialize POL reserve config if not loaded
+  if (!state.polReserveConfig) {
+    const { config: presetConfig } = loadPreset();
+    state.polReserveConfig = loadPolReserveConfig(presetConfig);
+    
+    if (state.polReserveConfig.enabled) {
+      logger.info(`💱 POL Reserve enabled | Target: ${state.polReserveConfig.targetPol} POL | Min: ${state.polReserveConfig.minPol} POL`);
+    }
+  }
+  
+  const config = state.polReserveConfig;
+  
+  // Skip if config is somehow not initialized
+  if (!config) {
+    return;
+  }
+  
+  // Check if it's time for a POL reserve check
+  const now = Date.now();
+  const checkIntervalMs = config.checkIntervalMin * 60 * 1000;
+  const timeSinceLastCheck = now - state.lastPolReserveCheck;
+  
+  // Run POL reserve rebalance if:
+  // 1. Feature is enabled
+  // 2. Enough time has passed since last check
+  // 3. POL balance is below minimum threshold
+  if (config.enabled && 
+      timeSinceLastCheck >= checkIntervalMs && 
+      polBalance < config.minPol) {
+    
+    state.lastPolReserveCheck = now;
+    
+    // Get current USDC balance for swap calculation
+    const availableUsdc = await getUsdcBalance(state.wallet, state.address);
+    
+    logger.info(`💱 POL Reserve check | Current: ${polBalance.toFixed(2)} POL | Target: ${config.targetPol} POL`);
+    
+    const result = await runPolReserve(
+      state.wallet,
+      state.address,
+      polBalance,
+      availableUsdc,
+      config,
+      logger,
+    );
+    
+    if (result?.success) {
+      logger.info(`✅ POL topped up | +${result.polReceived?.toFixed(2)} POL`);
+      
+      await sendTelegram("✅ POL Auto-Refill",
+        `Swapped $${result.usdcSwapped?.toFixed(2)} USDC → ${result.polReceived?.toFixed(2)} POL\n` +
+        `TX: ${result.txHash?.slice(0, 16)}...`
+      );
+      
+      // If trading was halted due to low gas, resume after successful top-up
+      if (state.tradingHalted && state.haltReason === "INSUFFICIENT_GAS") {
+        const newPolBalance = await getPolBalance(state.wallet, state.address);
+        if (newPolBalance >= 0.1) {
+          state.tradingHalted = false;
+          state.haltReason = "";
+          logger.info(`✅ Trading resumed after POL refill`);
+        }
+      }
+      
+      return; // Skip warnings since we just topped up
+    } else if (result?.error) {
+      logger.warn(`⚠️ POL refill failed: ${result.error}`);
+    }
+  }
+  
+  // Original warning logic for low POL
   if (polBalance < 0.5) {
     logger.warn(`⚠️ Low POL balance: ${polBalance.toFixed(3)} POL`);
     logger.warn(`   You may run out of gas soon`);
@@ -1981,6 +2063,12 @@ async function runAPEXCycle(): Promise<void> {
       `Failed to update USDC balance; using last known balance: ${error}`,
     );
   }
+
+  // ============================================
+  // POL RESERVE CHECK (Auto-refill gas)
+  // ============================================
+  // Check periodically if POL needs to be topped off
+  await checkPolBalance();
 
   // Get positions with error handling
   let positions: Position[] = [];
