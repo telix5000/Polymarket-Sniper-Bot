@@ -75,7 +75,10 @@ export function shouldActivateEmergencySells(
 /**
  * Log emergency sell configuration
  */
-export function logEmergencyConfig(config: EmergencySellConfig, logger?: any): void {
+export function logEmergencyConfig(config: EmergencySellConfig, logger?: { 
+  info?: (msg: string) => void; 
+  warn?: (msg: string) => void; 
+}): void {
   logger?.info?.(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   logger?.info?.(`🚨 EMERGENCY SELL MODE: ${config.mode}`);
   logger?.info?.(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);

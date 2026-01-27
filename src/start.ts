@@ -210,6 +210,8 @@ interface State {
   
   // Emergency Sell Configuration (APEX v3.0 PR #4)
   emergencySellConfig: EmergencySellConfig;
+  lastEmergencyConfigLog: number; // Timestamp of last emergency config log
+  lastRecoveryTipLog: number; // Timestamp of last recovery tip log
 }
 
 const state: State = {
@@ -254,6 +256,8 @@ const state: State = {
   prioritizeExits: false,
   errorReporter: undefined,
   emergencySellConfig: getEmergencySellConfig(),
+  lastEmergencyConfigLog: 0,
+  lastRecoveryTipLog: 0,
 };
 
 // ============================================
@@ -379,9 +383,11 @@ async function runRecoveryExits(
   
   const emergencyActive = shouldActivateEmergencySells(balance, state.emergencySellConfig);
   
-  if (emergencyActive && state.cycleCount % 10 === 0) {
-    // Log config every 10 cycles
+  // Log emergency config at most once per minute (60 seconds)
+  const now = Date.now();
+  if (emergencyActive && (now - state.lastEmergencyConfigLog) > 60000) {
     logEmergencyConfig(state.emergencySellConfig, logger);
+    state.lastEmergencyConfigLog = now;
   }
   
   logger.warn(`♻️ RECOVERY MODE (Cycle ${state.cycleCount})`);
@@ -485,13 +491,18 @@ async function runRecoveryExits(
   } else {
     logger.warn(`⚠️ Recovery: No positions could be exited this cycle`);
     
-    if (!emergencyActive) {
-      logger.info(`💡 Tip: Balance is $${balance.toFixed(2)}`);
-      logger.info(`   Emergency mode activates at < $${state.emergencySellConfig.balanceThreshold}`);
-    } else if (state.emergencySellConfig.mode === 'CONSERVATIVE') {
-      logger.warn(`💡 Tip: CONSERVATIVE mode may block very low bids`);
-      logger.warn(`   Consider MODERATE or NUCLEAR mode if desperate`);
-      logger.warn(`   Set: EMERGENCY_SELL_MODE=MODERATE or NUCLEAR`);
+    // Show tips at most once per 5 minutes (300 seconds)
+    const now = Date.now();
+    if ((now - state.lastRecoveryTipLog) > 300000) {
+      if (!emergencyActive) {
+        logger.info(`💡 Tip: Balance is $${balance.toFixed(2)}`);
+        logger.info(`   Emergency mode activates at < $${state.emergencySellConfig.balanceThreshold}`);
+      } else if (state.emergencySellConfig.mode === 'CONSERVATIVE') {
+        logger.warn(`💡 Tip: CONSERVATIVE mode may block very low bids`);
+        logger.warn(`   Consider MODERATE or NUCLEAR mode if desperate`);
+        logger.warn(`   Set: EMERGENCY_SELL_MODE=MODERATE or NUCLEAR`);
+      }
+      state.lastRecoveryTipLog = now;
     }
   }
   
