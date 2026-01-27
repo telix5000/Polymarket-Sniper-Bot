@@ -278,7 +278,7 @@ export async function smartSell(
   // Validate position has shares to sell
   if (sharesToSell <= ORDER.MIN_SHARES_THRESHOLD) {
     logger?.debug?.(
-      `SmartSell rejected: Position too small (${sharesToSell} shares)`,
+      `Sell rejected: Position too small (${sharesToSell} shares)`,
     );
     return { success: false, reason: "POSITION_TOO_SMALL" };
   }
@@ -294,14 +294,14 @@ export async function smartSell(
         errorMessage.includes("No orderbook") ||
         errorMessage.includes("404")
       ) {
-        logger?.debug?.(`SmartSell rejected: Market closed (no orderbook)`);
+        logger?.debug?.(`Sell rejected: Market closed (no orderbook)`);
         return { success: false, reason: "MARKET_CLOSED" };
       }
       throw err;
     }
 
     if (!orderBook?.bids?.length) {
-      logger?.warn?.(`SmartSell rejected: No bids in orderbook`);
+      logger?.warn?.(`Sell rejected: No bids in orderbook`);
       return { success: false, reason: "NO_BIDS" };
     }
 
@@ -311,7 +311,7 @@ export async function smartSell(
     const analysis = analyzeLiquidity(bids, sharesToSell, maxSlippage);
 
     logger?.debug?.(
-      `SmartSell analysis: bestBid=${(analysis.bestBid * 100).toFixed(1)}¢, ` +
+      `Sell analysis: bestBid=${(analysis.bestBid * 100).toFixed(1)}¢, ` +
         `expectedAvg=${(analysis.expectedAvgPrice * 100).toFixed(1)}¢, ` +
         `slippage=${analysis.expectedSlippagePct.toFixed(2)}%, ` +
         `canFill=${analysis.canFill}, levels=${analysis.levelsNeeded}`,
@@ -321,7 +321,7 @@ export async function smartSell(
     const minLiquidity = config?.minLiquidityUsd ?? SELL.MIN_LIQUIDITY_USD;
     if (analysis.liquidityAtSlippage < minLiquidity && !config?.forceSell) {
       logger?.warn?.(
-        `SmartSell rejected: Insufficient liquidity ($${analysis.liquidityAtSlippage.toFixed(2)} < $${minLiquidity})`,
+        `Sell rejected: Insufficient liquidity ($${analysis.liquidityAtSlippage.toFixed(2)} < $${minLiquidity})`,
       );
       return {
         success: false,
@@ -333,7 +333,7 @@ export async function smartSell(
     // STEP 4: Check if we can fill within slippage tolerance
     if (!analysis.canFill && !config?.forceSell) {
       logger?.warn?.(
-        `SmartSell rejected: Cannot fill at acceptable price. ` +
+        `Sell rejected: Cannot fill at acceptable price. ` +
           `Expected slippage: ${analysis.expectedSlippagePct.toFixed(2)}% > max ${maxSlippage}%`,
       );
       return {
@@ -354,7 +354,7 @@ export async function smartSell(
     const orderPrice = analysis.bestBid;
 
     logger?.info?.(
-      `SmartSell executing: ${sharesToSell.toFixed(2)} shares @ ${(orderPrice * 100).toFixed(1)}¢ ` +
+      `Sell executing: ${sharesToSell.toFixed(2)} shares @ ${(orderPrice * 100).toFixed(1)}¢ ` +
         `(${orderType}, max slippage: ${maxSlippage}%)`,
     );
 
@@ -372,7 +372,7 @@ export async function smartSell(
     // Check for Cloudflare block
     if (isCloudflareBlock(response)) {
       logger?.error?.(
-        `SmartSell blocked by Cloudflare (403). Consider using VPN.`,
+        `Sell blocked by Cloudflare (403). Consider using VPN.`,
       );
       return { success: false, reason: "CLOUDFLARE_BLOCKED", analysis };
     }
@@ -384,7 +384,7 @@ export async function smartSell(
       const expectedSlippage = analysis.expectedSlippagePct;
 
       logger?.info?.(
-        `✅ SmartSell success: $${filledUsd.toFixed(2)} ` +
+        `✅ Sell success: $${filledUsd.toFixed(2)} ` +
           `(expected slippage: ${expectedSlippage.toFixed(2)}%)`,
       );
 
@@ -399,17 +399,28 @@ export async function smartSell(
         orderType,
       };
     } else {
-      const errorMsg = (response as any).errorMsg || "Unknown error";
-      logger?.warn?.(`SmartSell failed: ${errorMsg}`);
+      // Extract error message from various CLOB response structures
+      const respAny = response as any;
+      const errorMsg =
+        respAny?.errorMsg ||
+        respAny?.data?.error ||
+        respAny?.error ||
+        "Unknown error";
+      logger?.warn?.(`⚠️ Sell failed: ${errorMsg}`);
 
-      // Handle specific error cases
+      // Handle specific error cases - distinguish between balance and allowance issues
+      const lowerError = errorMsg.toLowerCase();
+      if (lowerError.includes("not enough allowance") || lowerError.includes("insufficient allowance")) {
+        return { success: false, reason: "INSUFFICIENT_ALLOWANCE", analysis };
+      }
       if (
-        errorMsg.includes("not enough balance") ||
-        errorMsg.includes("insufficient")
+        lowerError.includes("not enough balance") ||
+        lowerError.includes("insufficient balance") ||
+        lowerError.includes("insufficient")
       ) {
         return { success: false, reason: "INSUFFICIENT_BALANCE", analysis };
       }
-      if (errorMsg.includes("FOK") && errorMsg.includes("not filled")) {
+      if (lowerError.includes("fok") && lowerError.includes("not filled")) {
         return { success: false, reason: "FOK_NOT_FILLED", analysis };
       }
 
@@ -424,9 +435,36 @@ export async function smartSell(
       return { success: false, reason: "CLOUDFLARE_BLOCKED" };
     }
 
-    const msg = err instanceof Error ? err.message : String(err);
-    logger?.error?.(`SmartSell error: ${msg}`);
-    return { success: false, reason: formatErrorForLog(msg) };
+    // Extract clean error message from CLOB exception structures
+    const errAny = err as any;
+    let cleanMsg: string;
+    if (errAny?.response?.data?.error) {
+      cleanMsg = String(errAny.response.data.error);
+    } else if (errAny?.data?.error) {
+      cleanMsg = String(errAny.data.error);
+    } else if (err instanceof Error) {
+      cleanMsg = err.message;
+    } else {
+      cleanMsg = String(err);
+    }
+
+    logger?.error?.(`❌ Sell error: ${cleanMsg}`);
+
+    // Check for specific error types and return appropriate reason codes
+    // Distinguish between balance and allowance issues for better debugging
+    const lowerMsg = cleanMsg.toLowerCase();
+    if (lowerMsg.includes("not enough allowance") || lowerMsg.includes("insufficient allowance")) {
+      return { success: false, reason: "INSUFFICIENT_ALLOWANCE" };
+    }
+    if (
+      lowerMsg.includes("not enough balance") ||
+      lowerMsg.includes("insufficient balance") ||
+      lowerMsg.includes("insufficient")
+    ) {
+      return { success: false, reason: "INSUFFICIENT_BALANCE" };
+    }
+
+    return { success: false, reason: formatErrorForLog(cleanMsg) };
   }
 }
 
