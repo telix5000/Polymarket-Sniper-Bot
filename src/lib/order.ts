@@ -48,11 +48,21 @@ export interface PostOrderInput {
    */
   shares?: number;
   /**
-   * Optional: Order type override. If not provided, uses BUY_ORDER_TYPE env for BUY orders.
+   * Optional: Order type override. If not provided, uses ORDER_TYPE/BUY_ORDER_TYPE/SELL_ORDER_TYPE env.
    * - "FOK": Fill-Or-Kill - immediate execution only, does NOT sit on orderbook
    * - "GTC": Good-Til-Cancelled - posts limit order to orderbook, waits for fill
    */
   orderType?: "FOK" | "GTC";
+  /**
+   * Optional: On-chain price for deviance-aware GTC pricing.
+   * When provided and using GTC orders, the order will use the BETTER price
+   * between on-chain and API prices:
+   * - For BUY: min(onChainPrice, apiPrice) - pay less
+   * - For SELL: max(onChainPrice, apiPrice) - receive more
+   * 
+   * This captures price deviance between on-chain and CLOB for better fills.
+   */
+  onChainPrice?: number;
 }
 
 /**
@@ -399,11 +409,11 @@ export function clearCooldowns(): void {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GTC ORDER TRACKING - Monitor and cancel stale/unfavorable GTC orders
+// GTC ORDER TRACKING - Monitor, adjust, and cancel GTC orders based on deviance
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Tracked GTC order for monitoring and potential cancellation
+ * Tracked GTC order for monitoring and potential cancellation/adjustment
  */
 export interface TrackedGtcOrder {
   orderId: string;
@@ -411,31 +421,53 @@ export interface TrackedGtcOrder {
   side: OrderSide;
   price: number;           // Price the order was placed at
   sizeUsd: number;         // Original order size in USD
+  shares: number;          // Number of shares in the order
   createdAt: number;       // Timestamp when order was placed
   expiresAt: number;       // When to auto-cancel (internal timeout)
   reason: string;          // Why this order was placed (e.g., "whale_copy", "deviance_arb")
+  onChainPriceAtCreation?: number;  // On-chain price when order was created (for deviance tracking)
 }
 
 /**
- * GTC Order Tracker - Monitors open GTC orders and cancels them when appropriate
+ * Order that needs repricing due to deviance shift
+ */
+export interface OrderToReprice {
+  order: TrackedGtcOrder;
+  newPrice: number;
+  reason: string;
+}
+
+/**
+ * GTC Order Tracker - Monitors open GTC orders and adjusts them based on price deviance
  * 
  * CRITICAL: GTC orders sit on the orderbook and can fill at any time!
- * We need to monitor them and cancel when:
- * - Price drifts too far from our target (market moved against us)
- * - Order is too old (conditions may have changed)
- * - Whale flow reverses (our thesis is now wrong)
- * - We want to reposition at a better price
+ * We need to monitor them and:
+ * - Cancel when price drifts too far (market moved against us)
+ * - REPRICE when on-chain deviance shifts (better price available)
+ * - Cancel when order is too old (conditions may have changed)
+ * - Cancel when whale flow reverses (our thesis is now wrong)
+ * 
+ * DEVIANCE-AWARE REPRICING:
+ * When on-chain price changes, we may want to adjust our GTC price to capture
+ * the new deviance. This is like a "trailing limit order" that follows on-chain.
  */
 export class GtcOrderTracker {
   private orders: Map<string, TrackedGtcOrder> = new Map();
   private readonly maxPriceDriftPct: number;
   private readonly defaultExpiryMs: number;
+  private readonly repriceThresholdCents: number;
 
-  constructor(options?: { maxPriceDriftPct?: number; defaultExpiryMs?: number }) {
+  constructor(options?: { 
+    maxPriceDriftPct?: number; 
+    defaultExpiryMs?: number;
+    repriceThresholdCents?: number;
+  }) {
     // Cancel GTC if price drifts more than 3% from our order price
     this.maxPriceDriftPct = options?.maxPriceDriftPct ?? 3;
     // Default expiry: 1 hour (can be overridden per-order)
     this.defaultExpiryMs = options?.defaultExpiryMs ?? BUY.GTC_EXPIRATION_SECONDS * 1000;
+    // Reprice if deviance shifts by more than 1 cent
+    this.repriceThresholdCents = options?.repriceThresholdCents ?? 1;
   }
 
   /**
