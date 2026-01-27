@@ -391,7 +391,8 @@ export async function smartSell(
         
         // FOK order should have status "MATCHED" or "FILLED" and non-zero amounts
         // If status is "UNMATCHED", "DELAYED", or amounts are 0, the order didn't fill
-        const isMatched = status === "MATCHED" || status === "FILLED" || status === "LIVE";
+        // Note: FOK orders are fill-or-kill, they cannot be "LIVE" (sitting on orderbook)
+        const isMatched = status === "MATCHED" || status === "FILLED";
         const hasFilledAmount = takingAmount > 0 || makingAmount > 0;
         
         // If we have status info, use it to determine success
@@ -422,7 +423,8 @@ export async function smartSell(
         success: true,
         filledUsd,
         avgPrice: orderPrice,
-        orderId: respAny?.orderID || respAny?.orderId || respAny?.orderHashes?.[0],
+        // API returns orderID (capital ID) per types.d.ts OrderResponse interface
+        orderId: respAny?.orderID || respAny?.orderHashes?.[0],
         analysis,
         actualPrice: orderPrice,
         actualSlippagePct: expectedSlippage,

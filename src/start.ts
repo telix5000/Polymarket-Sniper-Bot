@@ -2939,9 +2939,10 @@ class ChurnEngine {
             }
           } else {
             // If sell failed due to balance issue, the position might already be sold
-            // Add to cooldown to prevent spamming the same position
+            // (API cache delay). Add to cooldown to prevent spamming the same position.
+            // This also helps avoid rate limiting when there's a genuine issue.
             if (result.reason === "INSUFFICIENT_BALANCE" || result.reason === "INSUFFICIENT_ALLOWANCE") {
-              console.log(`   ⏳ Adding to cooldown (may already be sold)`);
+              console.log(`   ⏳ Adding to cooldown (likely already sold, waiting for API update)`);
               this.recentlySoldPositions.set(positionToSell.tokenId, now);
             }
             console.log(`   ❌ Sell failed: ${result.reason}`);
