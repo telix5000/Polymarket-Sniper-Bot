@@ -99,14 +99,11 @@ import {
 
 import {
   detectBlitz,
-  isProfitAtRisk,
-  prioritizeBlitzExits,
   type BlitzSignal,
 } from "./strategies/blitz";
 
 import {
   detectAutoSell,
-  detectOversized,
   type CommandSignal,
 } from "./strategies/command";
 
@@ -226,6 +223,9 @@ const state: State = {
   actedPositions: new Set(),
   ratchetStates: new Map(),
   ladderStates: new Map(),
+  // NOTE: volume24h and orderBookDepth are initialized to 0 but not currently populated.
+  // These are used by the reaper strategy for scavenger mode detection.
+  // Future enhancement: populate these from market data API calls.
   volume24h: 0,
   orderBookDepth: 0,
   lastRedeem: 0,
@@ -528,10 +528,13 @@ function enrichPositions(positions: Position[]): Position[] {
       positionCache.set(p.tokenId, cache);
     }
     
-    // Update price history
-    cache.priceHistory.push(p.curPrice);
-    if (cache.priceHistory.length > 100) {
-      cache.priceHistory = cache.priceHistory.slice(-100);
+    // Update price history (only when price changes)
+    const lastPrice = cache.priceHistory[cache.priceHistory.length - 1];
+    if (cache.priceHistory.length === 0 || lastPrice !== p.curPrice) {
+      cache.priceHistory.push(p.curPrice);
+      if (cache.priceHistory.length > 100) {
+        cache.priceHistory = cache.priceHistory.slice(-100);
+      }
     }
     
     return {
@@ -617,6 +620,16 @@ async function checkPolBalance(): Promise<void> {
       `Cannot execute trades without gas.\n` +
       `Deposit POL immediately!`
     );
+  } else if (state.tradingHalted && state.haltReason === "INSUFFICIENT_GAS" && polBalance >= 0.1) {
+    // Auto-resume trading when POL balance is restored
+    state.tradingHalted = false;
+    state.haltReason = "";
+    logger.info(`✅ POL balance restored: ${polBalance.toFixed(3)} POL - Trading resumed`);
+    
+    await sendTelegram("✅ TRADING RESUMED",
+      `POL Balance: ${polBalance.toFixed(3)}\n` +
+      `Gas restored - trading has resumed automatically`
+    );
   }
 }
 
@@ -668,8 +681,9 @@ async function sellPosition(
       const filled = position.size * bestBid;
       logger.info(`✅ Sold: $${filled.toFixed(2)}`);
       
-      // Clean up position cache
-      positionCache.delete(position.tokenId);
+      // Note: We intentionally keep the positionCache entry here.
+      // It will be cleaned up naturally when the position no longer appears in getPositions.
+      // This avoids issues where subsequent strategies in the same cycle might reference stale data.
       
       await sendTelegram("💰 POSITION SOLD",
         `${position.outcome} @ ${(bestBid * 100).toFixed(0)}¢\n` +
@@ -1166,6 +1180,9 @@ interface MarketData {
 
 /**
  * Fetch active markets from Gamma API
+ * NOTE: This function is currently unused but provides infrastructure
+ * for future full-market scanning capabilities in APEX Hunter.
+ * When integrated, it will enable scanning external markets beyond current positions.
  */
 async function fetchActiveMarkets(limit: number = 100): Promise<MarketData[]> {
   try {
@@ -1331,26 +1348,41 @@ async function runExitStrategies(positions: Position[]): Promise<number> {
   // Enrich positions with entry time and price history
   const enrichedPositions = enrichPositions(positions);
   
+  // Track which positions we've sold in this cycle to prevent double-selling
+  const soldTokenIds = new Set<string>();
+  
   // BLITZ - Quick scalps (10%+ profit, high urgency)
   for (const p of enrichedPositions) {
+    if (soldTokenIds.has(p.tokenId)) continue;
+    
     const signal = detectBlitz(p, 10, 5);
     if (signal && signal.urgency === "HIGH") {
       const success = await sellPosition(p, signal.reason);
-      if (success) exitCount++;
+      if (success) {
+        exitCount++;
+        soldTokenIds.add(p.tokenId);
+      }
     }
   }
   
   // COMMAND - AutoSell near $1 (99.5¢+)
   for (const p of enrichedPositions) {
+    if (soldTokenIds.has(p.tokenId)) continue;
+    
     const signal = detectAutoSell(p, 0.995);
     if (signal) {
       const success = await sellPosition(p, signal.reason);
-      if (success) exitCount++;
+      if (success) {
+        exitCount++;
+        soldTokenIds.add(p.tokenId);
+      }
     }
   }
   
   // RATCHET - Trailing stops (adaptive based on volatility)
   for (const p of enrichedPositions) {
+    if (soldTokenIds.has(p.tokenId)) continue;
+    
     const ratchetState = state.ratchetStates.get(p.tokenId);
     const trailingPct = calculateOptimalTrailing(p);
     const updated = updateRatchet(p, ratchetState || null, trailingPct);
@@ -1361,6 +1393,7 @@ async function runExitStrategies(positions: Position[]): Promise<number> {
       const success = await sellPosition(p, signal.reason);
       if (success) {
         exitCount++;
+        soldTokenIds.add(p.tokenId);
         state.ratchetStates.delete(p.tokenId);
       }
     }
@@ -1368,6 +1401,8 @@ async function runExitStrategies(positions: Position[]): Promise<number> {
   
   // LADDER - Partial exits at profit milestones
   for (const p of enrichedPositions) {
+    if (soldTokenIds.has(p.tokenId)) continue;
+    
     const ladderState = state.ladderStates.get(p.tokenId);
     const signal = detectLadder(p, ladderState || null, DEFAULT_LADDER);
     if (signal) {
@@ -1376,7 +1411,13 @@ async function runExitStrategies(positions: Position[]): Promise<number> {
       const partialPosition: Position = { 
         ...p, 
         size: partialSize, 
-        value: partialSize * p.curPrice 
+        value: partialSize * p.curPrice,
+        // Scale P&L to the partial size
+        pnlUsd: p.size && p.size > 0 && p.pnlUsd !== undefined
+          ? (p.pnlUsd * partialSize) / p.size
+          : p.pnlUsd,
+        // Percentage P&L remains the same for the partial position
+        pnlPct: p.pnlPct,
       };
       
       const success = await sellPosition(partialPosition, signal.reason);
@@ -1394,10 +1435,10 @@ async function runExitStrategies(positions: Position[]): Promise<number> {
         );
         state.ladderStates.set(p.tokenId, updated);
         
-        // If fully exited, clean up
-        if (updated.exitedPct >= 100) {
-          state.ladderStates.delete(p.tokenId);
-        }
+        // NOTE: We intentionally DO NOT delete the ladder state when exitedPct >= 100.
+        // If, due to any inconsistency, this position remains in the portfolio
+        // on a subsequent cycle, preserving the final ladder state prevents the
+        // ladder logic from being reinitialized from 0% exited for the same token.
       }
     }
   }
@@ -1413,6 +1454,8 @@ async function runExitStrategies(positions: Position[]): Promise<number> {
     const reaperSignals: ReaperSignal[] = [];
     
     for (const p of enrichedPositions) {
+      if (soldTokenIds.has(p.tokenId)) continue;
+      
       const signal = detectReaper(p, {
         isLowLiquidity: true,
         volumeDry: true,
@@ -1426,8 +1469,13 @@ async function runExitStrategies(positions: Position[]): Promise<number> {
     const prioritized = prioritizeReaperExits(reaperSignals);
     
     for (const signal of prioritized.filter(s => s.priority === "HIGH")) {
+      if (soldTokenIds.has(signal.position.tokenId)) continue;
+      
       const success = await sellPosition(signal.position, signal.reason);
-      if (success) exitCount++;
+      if (success) {
+        exitCount++;
+        soldTokenIds.add(signal.position.tokenId);
+      }
     }
   }
   
@@ -1573,19 +1621,6 @@ async function runVelocityStrategy(
 // ============================================
 
 /**
- * Track positions we've already acted on (to avoid double-trading)
- */
-function hasActedOnPosition(tokenId: string): boolean {
-  if (!state.actedPositions) return false;
-  return state.actedPositions.has(tokenId);
-}
-
-function markPositionActed(tokenId: string): void {
-  if (!state.actedPositions) state.actedPositions = new Set();
-  state.actedPositions.add(tokenId);
-}
-
-/**
  * Send hourly summary
  */
 async function sendHourlySummary(balance: number): Promise<void> {
@@ -1593,7 +1628,10 @@ async function sendHourlySummary(balance: number): Promise<void> {
   const recentTrades = state.oracleState.trades.filter(t => t.timestamp > hourAgo);
   
   const pnl = recentTrades.reduce((sum, t) => sum + t.pnl, 0);
-  const wins = recentTrades.filter(t => t.success && t.pnl > 0).length;
+  const successfulTrades = recentTrades.filter(t => t.success);
+  const wins = successfulTrades.filter(t => t.pnl > 0).length;
+  const losses = successfulTrades.filter(t => t.pnl <= 0).length;
+  const winRate = successfulTrades.length > 0 ? (wins / successfulTrades.length) * 100 : 0;
   
   // Get current positions
   if (!state.client) return;
@@ -1605,7 +1643,8 @@ async function sendHourlySummary(balance: number): Promise<void> {
   await sendTelegram("📊 HOURLY SUMMARY",
     `Last Hour:\n` +
     `Trades: ${recentTrades.length}\n` +
-    `Wins: ${wins}/${recentTrades.length}\n` +
+    `Wins: ${wins} | Losses: ${losses}\n` +
+    `Win rate: ${winRate.toFixed(1)}%\n` +
     `P&L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}\n\n` +
     `Current:\n` +
     `Balance: $${balance.toFixed(2)}\n` +
