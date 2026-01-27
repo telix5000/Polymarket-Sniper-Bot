@@ -2684,7 +2684,10 @@ class ChurnEngine {
       // Deduplication is handled by BiasAccumulator.addTrades()
       // ═══════════════════════════════════════════════════════════════════════
       this.onchainMonitor.onWhaleTrade((trade) => {
-        // Only record BUY trades (matching existing bias accumulator logic)
+        // Log ALL whale trades for visibility
+        console.log(`🐋 Whale ${trade.side} detected | $${trade.sizeUsd.toFixed(0)} @ ${(trade.price * 100).toFixed(1)}¢ | Block #${trade.blockNumber}`);
+        
+        // Only record BUY trades for bias (we copy buys, not sells)
         if (trade.side === "BUY") {
           // Determine which address is the whale with defensive validation
           const whaleWallets = this.biasAccumulator.getWhaleWallets();
@@ -2700,6 +2703,7 @@ class ChurnEngine {
             // Defensive: on-chain monitor emitted a whale trade but neither
             // participant is currently in the whale set. This can happen due
             // to leaderboard refresh timing. Skip to avoid misattributing.
+            console.log(`   ⚠️ Whale not in current tracking set, skipping`);
             return;
           }
 
@@ -2715,6 +2719,13 @@ class ChurnEngine {
           });
           
           console.log(`⚡ On-chain → Bias | Block #${trade.blockNumber} | $${trade.sizeUsd.toFixed(0)} BUY | PRIORITY SIGNAL`);
+          
+          // In COPY_ANY_WHALE_BUY mode, log that we should copy this
+          if (this.config.copyAnyWhaleBuy) {
+            console.log(`   🎯 COPY_ANY_WHALE_BUY: Signal ready to copy!`);
+          }
+        } else {
+          console.log(`   ℹ️ SELL trade - not copying (we only copy buys)`);
         }
       });
 
@@ -3074,11 +3085,22 @@ class ChurnEngine {
       ? `${actualPositions.length} (${managedPositions.length} managed)`
       : `${managedPositions.length}`;
     
+    // Get active biases count for diagnostic
+    const activeBiases = this.biasAccumulator.getActiveBiases();
+    
     console.log("");
     console.log(`📊 STATUS | ${new Date().toLocaleTimeString()}`);
     console.log(`   💰 Balance: $${usdcBalance.toFixed(2)} | Bankroll: $${effectiveBankroll.toFixed(2)} | ⛽ POL: ${polBalance.toFixed(1)}${polWarning}`);
     console.log(`   📈 Positions: ${positionDisplay} | Trades: ${metrics.totalTrades} | 🐋 Following: ${trackedWallets}`);
     console.log(`   🎯 Win: ${winPct}% | EV: ${evSign}${metrics.evCents.toFixed(1)}¢ | P&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`);
+    
+    // Show whale copy mode status
+    if (this.config.copyAnyWhaleBuy) {
+      console.log(`   🔥 Mode: AGGRESSIVE (copy any whale buy ≥ $${this.config.onchainMinWhaleTradeUsd})`);
+    } else {
+      console.log(`   🐢 Mode: CONSERVATIVE (need $${this.config.biasMinNetUsd} flow + ${this.config.biasMinTrades} trades)`);
+    }
+    console.log(`   📡 Active signals: ${activeBiases.length} | Live trading: ${this.config.liveTradingEnabled ? 'ON' : 'OFF (simulation)'}`);
     console.log("");
     
     // Telegram update

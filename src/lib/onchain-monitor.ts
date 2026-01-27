@@ -513,6 +513,7 @@ export class OnChainMonitor {
       this.wsProvider
     );
     this.exchangeContract.on("OrderFilled", this.handleOrderFilled.bind(this));
+    console.log(`📡 Connected to CTF Exchange at ${POLYGON.CTF_EXCHANGE}`);
 
     // Also subscribe to NEG_RISK_CTF_EXCHANGE for negative risk markets
     this.negRiskExchangeContract = new ethers.Contract(
@@ -521,6 +522,10 @@ export class OnChainMonitor {
       this.wsProvider
     );
     this.negRiskExchangeContract.on("OrderFilled", this.handleOrderFilled.bind(this));
+    console.log(`📡 Connected to NEG_RISK Exchange at ${POLYGON.NEG_RISK_CTF_EXCHANGE}`);
+    
+    // Log whale tracking status
+    console.log(`📡 Tracking ${this.config.whaleWallets.size} whale wallets | Min trade: $${this.config.minWhaleTradeUsd}`);
 
     // ═══════════════════════════════════════════════════════════════════════
     // SUBSCRIBE TO CTF TOKEN - Our position monitoring (if wallet configured)
@@ -701,6 +706,21 @@ export class OnChainMonitor {
 
       const isMakerWhale = this.config.whaleWallets.has(makerLower);
       const isTakerWhale = this.config.whaleWallets.has(takerLower);
+
+      // DEBUG: Log all trades $50+ to help diagnose if whale detection is working
+      // This helps identify if whales ARE trading but being filtered
+      if (sizeUsd >= 50) {
+        const whaleStatus = isMakerWhale || isTakerWhale 
+          ? `🐋 WHALE (${isMakerWhale ? 'maker' : 'taker'})` 
+          : `👤 non-whale`;
+        const thresholdStatus = sizeUsd >= this.config.minWhaleTradeUsd 
+          ? '✓ meets threshold' 
+          : `✗ below $${this.config.minWhaleTradeUsd}`;
+        console.log(
+          `📡 Trade $${sizeUsd.toFixed(0)} | ${whaleStatus} | ${thresholdStatus} | ` +
+          `maker:${makerLower.slice(0, 8)}... taker:${takerLower.slice(0, 8)}...`
+        );
+      }
 
       // Skip whale callbacks if not a whale trade or too small
       if (!isMakerWhale && !isTakerWhale) {
