@@ -240,7 +240,7 @@ async function main() {
       logger.info(`   New balance: $${newBalance.toFixed(2)} (was $${balance.toFixed(2)})`);
       
       logger.info(`\n🎉 SELLING WORKS! Recovery mode will work correctly.`);
-      logger.info(`✅ Safe to deploy PR #2`);
+      logger.info(`✅ Safe to deploy recovery mode`);
     } else {
       logger.info(`✅ DRY RUN SUCCESSFUL!`);
       logger.info(`   Orderbook accessible: YES`);
@@ -262,7 +262,7 @@ async function main() {
       logger.info(`\n💡 Current bid price would cause >1% loss.`);
       logger.info(`   This is expected behavior - bot won't sell at bad prices.`);
     } else {
-      logger.error(`\n🚨 UNEXPECTED FAILURE - Investigate before deploying PR #2!`);
+      logger.error(`\n🚨 UNEXPECTED FAILURE - Investigate before deploying recovery mode!`);
     }
   }
   

@@ -76,11 +76,11 @@ Waiting 3 seconds... (Ctrl+C to cancel)
    New balance: $48.38 (was $0.15)
 
 🎉 SELLING WORKS! Recovery mode will work correctly.
-✅ Safe to deploy PR #2
+✅ Safe to deploy recovery mode
 ```
 
 ### Step 3: Deploy with Confidence
-If test passes, deploy PR #2 knowing recovery mode will work!
+If test passes, deploy recovery mode knowing it will work!
 
 ## Troubleshooting
 
