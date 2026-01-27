@@ -273,7 +273,7 @@ function loadConfig(): ChurnConfig {
 
     // POL Reserve - auto-fill gas (fixed settings)
     polReserveEnabled: true,
-    polReserveTarget: 2.0,
+    polReserveTarget: envNum("POL_RESERVE_TARGET", 50),  // 50 POL target (user requested)
     polReserveMin: 0.5,
     polReserveMaxSwapUsd: 10,
     polReserveCheckIntervalMin: 30,
