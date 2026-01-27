@@ -27,6 +27,12 @@ export interface PostOrderInput {
   side: OrderSide;
   sizeUsd: number;
   marketId?: string;
+  /**
+   * Optional maximum acceptable price for price protection.
+   * - For BUY orders: rejects if ask price > maxAcceptablePrice
+   * - For SELL orders: rejects if bid price < maxAcceptablePrice
+   * - If undefined: NO price protection (emergency NUCLEAR mode)
+   */
   maxAcceptablePrice?: number;
   skipDuplicateCheck?: boolean;
   logger?: Logger;
@@ -41,6 +47,12 @@ export interface PostOrderInput {
 
 /**
  * Post order to CLOB
+ *
+ * Based on Novus-Tech-LLC working implementation:
+ * - For BUY: uses orderbook.asks
+ * - For SELL: uses orderbook.bids (CORRECT!)
+ * - If maxAcceptablePrice undefined → sells at ANY price (NUCLEAR mode)
+ * - Uses FOK (Fill-or-Kill) for immediate execution
  *
  * Calculates the number of shares based on sizeUsd and current orderbook price,
  * then executes the order using Fill-Or-Kill (FOK) execution.
