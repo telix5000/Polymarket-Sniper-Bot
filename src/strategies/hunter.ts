@@ -80,16 +80,24 @@ export function detectMomentum(snapshot: MarketSnapshot): HunterOpportunity | nu
 }
 
 /**
- * Detect mispricing (YES + NO > $1.05)
+ * Detect mispricing (YES + NO != $1.00)
+ * 
+ * IMPORTANT: This uses spot prices, not orderbook asks.
+ * - If total < 0.95: Market is UNDERPRICED (opportunity to buy cheap side)
+ * - If total > 1.05: Market is OVERPRICED (WARNING - don't buy, potential sell arb)
+ * 
+ * For proper orderbook-based detection, fetch asks from CLOB and check:
+ * - buySum = yesAsk + noAsk
+ * - sellSum = yesBid + noBid
  */
 export function detectMispricing(snapshot: MarketSnapshot): HunterOpportunity | null {
   const total = snapshot.yesPrice + snapshot.noPrice;
 
-  if (total > 1.05) {
-    // Buy the cheaper side
+  // Market is UNDERPRICED - opportunity to buy the cheaper side
+  if (total < 0.95) {
     const outcome = snapshot.yesPrice < snapshot.noPrice ? "YES" : "NO";
     const price = outcome === "YES" ? snapshot.yesPrice : snapshot.noPrice;
-    const confidence = Math.min(100, (total - 1.0) * 200);
+    const confidence = Math.min(100, (1.0 - total) * 200);
 
     return {
       pattern: HunterPattern.MISPRICING,
@@ -99,9 +107,17 @@ export function detectMispricing(snapshot: MarketSnapshot): HunterOpportunity | 
       outcome,
       price,
       confidence,
-      reason: `Mispricing: YES ${snapshot.yesPrice.toFixed(2)} + NO ${snapshot.noPrice.toFixed(2)} = $${total.toFixed(2)}`,
+      reason: `Underpriced: YES ${snapshot.yesPrice.toFixed(2)} + NO ${snapshot.noPrice.toFixed(2)} = $${total.toFixed(2)}`,
       timestamp: Date.now(),
     };
+  }
+
+  // Market is OVERPRICED - log warning but DON'T return opportunity
+  // Buying when overpriced is a losing trade!
+  if (total > 1.05) {
+    // Note: This is logged elsewhere in the cycle, not here
+    // We return null to prevent buying into overpriced markets
+    return null;
   }
 
   return null;
