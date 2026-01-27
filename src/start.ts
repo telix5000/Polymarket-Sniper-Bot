@@ -706,6 +706,21 @@ class BiasAccumulator {
 
       if (Array.isArray(data)) {
         this.leaderboardWallets.clear();
+        
+        // Show top 10 at startup to verify it's working
+        const isFirstFetch = this.lastLeaderboardFetch === 0;
+        if (isFirstFetch && data.length > 0) {
+          console.log(`\n🐋 TOP 10 TRADERS (from ${data.length} tracked):`);
+          for (const entry of data.slice(0, 10)) {
+            const wallet = (entry.proxyWallet || entry.address || '').slice(0, 12);
+            const pnl = Number(entry.pnl || 0);
+            const vol = Number(entry.vol || 0);
+            const name = entry.userName || 'anon';
+            console.log(`   ${wallet}... | PNL: $${pnl >= 1000 ? (pnl/1000).toFixed(0) + 'k' : pnl.toFixed(0)} | Vol: $${vol >= 1000 ? (vol/1000).toFixed(0) + 'k' : vol.toFixed(0)} | @${name}`);
+          }
+          console.log('');
+        }
+        
         for (const entry of data) {
           // Use proxyWallet (where trades happen) or fallback to address
           const wallet = entry.proxyWallet || entry.address;
