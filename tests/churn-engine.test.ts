@@ -79,6 +79,8 @@ function createTestConfig(): ChurnConfig {
     minReserveUsd: 100,
     useAvailableBalanceOnly: true,
     forceLiquidation: false,
+    liquidationMaxSlippagePct: 10,
+    liquidationPollIntervalMs: 1000,
     privateKey: "test",
     rpcUrl: "https://polygon-rpc.com",
     liveTradingEnabled: false,

@@ -153,6 +153,8 @@ export interface ChurnConfig {
 
   // Liquidation Mode
   forceLiquidation: boolean;  // If true, start liquidating positions even with no effective bankroll
+  liquidationMaxSlippagePct: number;  // Max slippage for liquidation sells (default: 10%)
+  liquidationPollIntervalMs: number;  // Poll interval in liquidation mode (default: 1000ms)
 
   // Auth
   privateKey: string;
@@ -279,6 +281,8 @@ export function loadConfig(): ChurnConfig {
 
     // Liquidation Mode - force sell existing positions when balance is too low
     forceLiquidation: envBool("FORCE_LIQUIDATION", false),
+    liquidationMaxSlippagePct: envNum("LIQUIDATION_MAX_SLIPPAGE_PCT", 10),  // 10% default
+    liquidationPollIntervalMs: envNum("LIQUIDATION_POLL_INTERVAL_MS", 1000),  // 1s default
 
     // ═══════════════════════════════════════════════════════════════════════
     // AUTH & INTEGRATIONS (user provides these)

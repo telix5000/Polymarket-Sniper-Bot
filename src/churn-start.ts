@@ -359,10 +359,10 @@ class ChurnEngine {
       }
 
       // Aggressive polling: 100ms with positions, 200ms without
-      // In liquidation mode, use slower interval (1s) to avoid rate limits
+      // In liquidation mode, use configurable slower interval to avoid rate limits
       const openCount = this.positionManager.getOpenPositions().length;
       const pollInterval = this.liquidationMode
-        ? 1000  // 1s in liquidation mode
+        ? this.config.liquidationPollIntervalMs
         : (openCount > 0
           ? this.config.positionPollIntervalMs  // 100ms - track positions fast
           : this.config.pollIntervalMs);        // 200ms - scan for opportunities
@@ -443,42 +443,39 @@ class ChurnEngine {
 
     console.log(`🔥 Liquidating ${sortedPositions.length} positions (total value: $${sortedPositions.reduce((s, p) => s + p.value, 0).toFixed(2)})`);
 
-    // Try to sell one position per cycle to avoid overwhelming the API
-    for (const position of sortedPositions.slice(0, 1)) {
-      console.log(`📤 Selling: $${position.value.toFixed(2)} @ ${(position.curPrice * 100).toFixed(1)}¢ (P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%)`);
+    // Sell one position per cycle to avoid overwhelming the API
+    const positionToSell = sortedPositions[0];
+    if (positionToSell) {
+      console.log(`📤 Selling: $${positionToSell.value.toFixed(2)} @ ${(positionToSell.curPrice * 100).toFixed(1)}¢ (P&L: ${positionToSell.pnlPct >= 0 ? '+' : ''}${positionToSell.pnlPct.toFixed(1)}%)`);
 
       if (!this.config.liveTradingEnabled) {
-        console.log(`   [SIM] Would sell ${position.size.toFixed(2)} shares`);
-        continue;
-      }
-
-      if (!this.client) {
+        console.log(`   [SIM] Would sell ${positionToSell.size.toFixed(2)} shares`);
+      } else if (!this.client) {
         console.warn(`   ⚠️ No client available for selling`);
-        continue;
-      }
+      } else {
+        try {
+          const result = await smartSell(this.client, positionToSell, {
+            maxSlippagePct: this.config.liquidationMaxSlippagePct,
+            forceSell: true,     // Force sell even if conditions aren't ideal
+            logger: this.logger,
+          });
 
-      try {
-        const result = await smartSell(this.client, position, {
-          maxSlippagePct: 10,  // Allow higher slippage in liquidation mode
-          forceSell: true,     // Force sell even if conditions aren't ideal
-          logger: this.logger,
-        });
+          if (result.success) {
+            console.log(`   ✅ Sold for $${result.filledUsd?.toFixed(2) || 'unknown'}`);
 
-        if (result.success) {
-          console.log(`   ✅ Sold for $${result.filledUsd?.toFixed(2) || 'unknown'}`);
-
-          if (this.config.telegramBotToken) {
-            await sendTelegram(
-              "🔥 Position Liquidated",
-              `Sold: $${result.filledUsd?.toFixed(2) || position.value.toFixed(2)}\n` +
-                `P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%`,
-            ).catch(() => {});
+            if (this.config.telegramBotToken) {
+              await sendTelegram(
+                "🔥 Position Liquidated",
+                `Sold: $${result.filledUsd?.toFixed(2) || positionToSell.value.toFixed(2)}\n` +
+                  `P&L: ${positionToSell.pnlPct >= 0 ? '+' : ''}${positionToSell.pnlPct.toFixed(1)}%`,
+              ).catch(() => {});
+            }
+          } else {
+            console.log(`   ❌ Sell failed: ${result.reason}`);
           }
-        } else {
-          console.log(`   ❌ Sell failed: ${result.reason}`);
+        } catch (err) {
+          console.warn(`   ⚠️ Sell error: ${err instanceof Error ? err.message : err}`);
         }
-      } catch (err) {
-        console.warn(`   ⚠️ Sell error: ${err instanceof Error ? err.message : err}`);
       }
     }
 
