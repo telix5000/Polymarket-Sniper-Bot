@@ -183,7 +183,6 @@ interface State {
   orderBookDepth: number;
 
   // Timing
-  lastRedeem: number;
   lastSummary: number;
   lastOracleReview: number;
   weekStartTime: number;
@@ -230,7 +229,6 @@ const state: State = {
   // Future enhancement: populate these from market data API calls.
   volume24h: 0,
   orderBookDepth: 0,
-  lastRedeem: 0,
   lastSummary: 0,
   lastOracleReview: 0,
   weekStartTime: Date.now(),

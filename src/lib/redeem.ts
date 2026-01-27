@@ -234,24 +234,27 @@ export async function redeemPosition(
 
     // Wait for confirmation with 45 second timeout
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(
-        () => reject(new Error("Transaction timeout after 45s")),
-        45000,
-      );
-    });
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error("Transaction timeout after 45s")),
+          45000,
+        );
+      });
 
-    const receipt = await Promise.race([tx.wait(), timeoutPromise]);
+      const receipt = await Promise.race([tx.wait(), timeoutPromise]);
 
-    if (timeoutId) clearTimeout(timeoutId);
+      logger?.info?.(`✅ Confirmed in block ${receipt.blockNumber}`);
 
-    logger?.info?.(`✅ Confirmed in block ${receipt.blockNumber}`);
-
-    return {
-      success: true,
-      conditionId,
-      txHash: tx.hash,
-    };
+      return {
+        success: true,
+        conditionId,
+        txHash: tx.hash,
+      };
+    } finally {
+      // Always cleanup timeout to prevent resource leak
+      if (timeoutId) clearTimeout(timeoutId);
+    }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     logger?.error?.(`❌ Redemption failed: ${errorMsg}`);
