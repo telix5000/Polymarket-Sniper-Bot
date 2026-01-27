@@ -64,7 +64,7 @@ This will:
 
 When markets resolve:
 - Orderbook goes dead (no more trading)
-- Only 1¢ bids remain (from bots scraping残 orders)
+- Only 1¢ bids remain (from bots scraping remaining orders)
 - **DO NOT SELL** - you'll throw away money!
 - **REDEEM INSTEAD** - claim full payout
 

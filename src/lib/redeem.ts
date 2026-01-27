@@ -6,17 +6,8 @@
 
 import { ethers, type Wallet } from "ethers";
 import axios from "axios";
-import { POLYGON, POLYMARKET_API } from "./constants";
+import { POLYGON, POLYMARKET_API, CTF_ABI, PROXY_ABI } from "./constants";
 import type { Logger } from "./types";
-
-// CTF and Proxy ABIs
-const CTF_ABI = [
-  "function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets) external",
-];
-
-const PROXY_ABI = [
-  "function proxy(address dest, bytes calldata data) external returns (bytes memory)",
-];
 
 export interface RedeemablePosition {
   conditionId: string;
@@ -166,7 +157,10 @@ export async function redeemPosition(
       ? (feeData.maxFeePerGas * 130n) / 100n
       : undefined;
 
-    const txDetails: any = {};
+    const txDetails: {
+      maxPriorityFeePerGas?: bigint;
+      maxFeePerGas?: bigint;
+    } = {};
     if (maxPriorityFee) txDetails.maxPriorityFeePerGas = maxPriorityFee;
     if (maxFee) txDetails.maxFeePerGas = maxFee;
 

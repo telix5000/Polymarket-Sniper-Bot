@@ -57,3 +57,8 @@ export const CTF_ABI = [
   "function payoutDenominator(bytes32 conditionId) view returns (uint256)",
   "function payoutNumerators(bytes32 conditionId, uint256 index) view returns (uint256)",
 ] as const;
+
+// Proxy Wallet ABI (minimal for redemption via proxy)
+export const PROXY_ABI = [
+  "function proxy(address dest, bytes calldata data) external returns (bytes memory)",
+] as const;
