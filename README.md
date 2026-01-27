@@ -32,9 +32,14 @@ PRIVATE_KEY=0x...
 RPC_URL=https://polygon-rpc.com
 APEX_MODE=AGGRESSIVE  # or BALANCED or CONSERVATIVE
 
-# 4. Start trading
+# 4. Enable live trading (optional - defaults to simulation)
+LIVE_TRADING=I_UNDERSTAND_THE_RISKS
+
+# 5. Start trading
 npm start
 ```
+
+**⚠️ Important**: The bot defaults to **simulation mode**. Set `LIVE_TRADING=I_UNDERSTAND_THE_RISKS` to enable real trades.
 
 ## APEX Modes
 

@@ -88,21 +88,11 @@ import {
 import {
   detectMomentum,
   detectMispricing,
-  detectVolumeSpike,
   detectNewMarket,
-  detectWhaleActivity,
   detectSpreadCompression,
   type HunterOpportunity,
   type MarketSnapshot,
-  HunterPattern,
 } from "./strategies/hunter";
-
-import {
-  detectVelocity,
-  shouldRideMomentum,
-  isMomentumReversing,
-  type VelocitySignal,
-} from "./strategies/velocity";
 
 // ============================================
 // STATE - APEX v3.0
@@ -138,8 +128,6 @@ interface State {
     trades: number;
   };
   
-  // Market Data Cache (for Hunter)
-  marketCache: Map<string, MarketSnapshot>;
   actedPositions: Set<string>; // Track which markets we've already acted on
   
   // Timing
@@ -155,8 +143,8 @@ const state: State = {
   liveTrading: false,
   targets: [],
   mode: "BALANCED",
-  modeConfig: {} as ModeConfig,
-  tier: {} as TierInfo,
+  modeConfig: getApexMode(),
+  tier: getAccountTier(0),
   cycleCount: 0,
   startTime: Date.now(),
   startBalance: 0,
@@ -169,7 +157,6 @@ const state: State = {
     opportunitiesFound: 0,
     trades: 0,
   },
-  marketCache: new Map(),
   actedPositions: new Set(),
   lastRedeem: 0,
   lastSummary: 0,
@@ -323,8 +310,7 @@ async function buy(
     logger.info(`🔸 [SIM] ⚡ APEX ${strategy}: BUY ${outcome} ${$(sizeUsd)} | ${reason}`);
     await sendTelegram(`[SIM] APEX ${strategy} BUY`, `${reason}\n${outcome} ${$(sizeUsd)}`);
     
-    // Record simulated trade
-    recordTrade(state.oracleState, strategy, 0, true, tokenId, reason);
+    // Don't record simulated buys - only record sells with actual P&L
     return true;
   }
 
@@ -348,8 +334,7 @@ async function buy(
       `${reason}\n${outcome} ${$(result.filledUsd ?? sizeUsd)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢`,
     );
     
-    // Record trade
-    recordTrade(state.oracleState, strategy, 0, true, tokenId, reason);
+    // Don't record buy trades in Oracle - only record sells with actual P&L
     state.tradesExecuted++;
     invalidatePositions();
     return true;
@@ -430,6 +415,11 @@ async function runHunterScan(positions: Position[]): Promise<HunterOpportunity[]
   // For now, use existing positions as market snapshots
   // In a full implementation, you would fetch all active markets
   for (const p of positions) {
+    // NOTE: Hunter currently uses limited data from existing positions
+    // For full functionality, this should fetch complete market data from the API
+    // including: real-time volume, liquidity, price history, whale trades, etc.
+    // Current implementation provides basic pattern detection as a foundation
+    
     // Create a simple market snapshot from position
     const snapshot: MarketSnapshot = {
       tokenId: p.tokenId,
@@ -564,7 +554,7 @@ async function runCommandExits(positions: Position[]): Promise<void> {
         p.outcome as "YES" | "NO",
         p.value,
         `Command AutoSell (${(p.curPrice * 100).toFixed(0)}¢)`,
-        Strategy.VELOCITY, // Use VELOCITY as default strategy
+        Strategy.BLITZ, // Attribute to BLITZ (exit strategy)
         p.pnlUsd,
         p.size,
       );
@@ -607,6 +597,8 @@ async function runShadowStrategy(positions: Position[], currentBalance: number):
 
 async function runCloserStrategy(positions: Position[], currentBalance: number): Promise<void> {
   // APEX Closer - Endgame (92-97¢)
+  // NOTE: This strategy adds MORE to existing profitable positions in endgame range
+  // Consider adding position tracking to prevent over-concentration in single markets
   const allocation = state.strategyAllocations.get(Strategy.CLOSER) || 0;
   if (allocation === 0) return;
 
@@ -695,6 +687,7 @@ async function runOracleReview(): Promise<void> {
     Strategy.GRINDER,
     Strategy.CLOSER,
     Strategy.AMPLIFIER,
+    Strategy.HUNTER,
   ];
   const performance = analyzePerformance(state.oracleState, strategies);
   const performanceWithAllocations = calculateAllocations(performance);
@@ -745,8 +738,8 @@ async function sendHourlySummary(currentBalance: number): Promise<void> {
   const hourStart = Date.now() - 60 * 60 * 1000;
   const recentTrades = state.oracleState.trades.filter(t => t.timestamp > hourStart);
   
-  const wins = recentTrades.filter(t => t.success && t.pnl > 0).length;
-  const losses = recentTrades.filter(t => t.success && t.pnl < 0).length;
+  const wins = recentTrades.filter(t => t.pnl > 0).length;
+  const losses = recentTrades.filter(t => t.pnl < 0).length;
   const totalPnl = recentTrades.reduce((sum, t) => sum + t.pnl, 0);
   const winRate = wins / Math.max(1, wins + losses) * 100;
   
@@ -761,7 +754,9 @@ async function sendHourlySummary(currentBalance: number): Promise<void> {
 
 async function sendWeeklyReport(currentBalance: number): Promise<void> {
   const weekGain = currentBalance - state.weekStartBalance;
-  const weekGainPct = (weekGain / state.weekStartBalance) * 100;
+  const weekGainPct = state.weekStartBalance > 0
+    ? (weekGain / state.weekStartBalance) * 100
+    : 0;
   
   const targetMultiplier = state.mode === "AGGRESSIVE" ? 10 : 
                           state.mode === "BALANCED" ? 5 : 3;
@@ -815,10 +810,22 @@ async function runRedeem(): Promise<void> {
 async function runAPEXCycle(): Promise<void> {
   state.cycleCount++;
   
-  // Update current balance
+  // Update current balance with error handling
   if (!state.wallet) return;
-  state.currentBalance = await getUsdcBalance(state.wallet, state.address);
-  const positions = await getPositions(state.address);
+  try {
+    state.currentBalance = await getUsdcBalance(state.wallet, state.address);
+  } catch (error) {
+    logger.error(`Failed to update USDC balance; using last known balance: ${error}`);
+  }
+  
+  // Get positions with error handling
+  let positions: Position[] = [];
+  try {
+    positions = await getPositions(state.address);
+  } catch (error) {
+    logger.error(`Failed to fetch positions; continuing with empty positions: ${error}`);
+    positions = [];
+  }
   
   // Clear acted positions at start of each cycle
   state.actedPositions.clear();
@@ -849,23 +856,23 @@ async function runAPEXCycle(): Promise<void> {
   // Then run strategy-based entries based on Oracle allocations
   const allocations = state.strategyAllocations;
   
-  if (allocations.get(Strategy.VELOCITY)! > 0) {
+  if ((allocations.get(Strategy.VELOCITY) ?? 0) > 0) {
     await runVelocityStrategy(positions, state.currentBalance);
   }
   
-  if (allocations.get(Strategy.SHADOW)! > 0) {
+  if ((allocations.get(Strategy.SHADOW) ?? 0) > 0) {
     await runShadowStrategy(positions, state.currentBalance);
   }
   
-  if (allocations.get(Strategy.GRINDER)! > 0) {
+  if ((allocations.get(Strategy.GRINDER) ?? 0) > 0) {
     await runGrinderStrategy(positions, state.currentBalance);
   }
   
-  if (allocations.get(Strategy.CLOSER)! > 0) {
+  if ((allocations.get(Strategy.CLOSER) ?? 0) > 0) {
     await runCloserStrategy(positions, state.currentBalance);
   }
   
-  if (allocations.get(Strategy.AMPLIFIER)! > 0) {
+  if ((allocations.get(Strategy.AMPLIFIER) ?? 0) > 0) {
     await runAmplifierStrategy(positions, state.currentBalance);
   }
   
@@ -913,15 +920,15 @@ async function main(): Promise<void> {
     if (process.env.WIREGUARD_ENABLED === "true" || process.env.WG_CONFIG) {
       logger.info("🔐 VPN: WireGuard enabled");
       capturePreVpnRouting();
-      await startWireguard();
-      await setupRpcBypass(rpcUrl);
-      await setupPolymarketReadBypass();
+      await startWireguard(logger);
+      await setupRpcBypass(rpcUrl, logger);
+      await setupPolymarketReadBypass(logger);
     } else if (process.env.OPENVPN_ENABLED === "true" || process.env.OVPN_CONFIG) {
       logger.info("🔐 VPN: OpenVPN enabled");
       capturePreVpnRouting();
-      await startOpenvpn();
-      await setupRpcBypass(rpcUrl);
-      await setupPolymarketReadBypass();
+      await startOpenvpn(logger);
+      await setupRpcBypass(rpcUrl, logger);
+      await setupPolymarketReadBypass(logger);
     }
 
     // Validate live trading
