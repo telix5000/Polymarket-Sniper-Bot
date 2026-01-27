@@ -13,7 +13,7 @@
  *
  * Environment Variables for VPN bypass:
  * - VPN_BYPASS_RPC: Set to "false" to route RPC through VPN (default: true)
- * - VPN_BYPASS_POLYMARKET_READS: Set to "true" to route reads outside VPN (default: false) [APEX v3.0 FIX]
+ * - VPN_BYPASS_POLYMARKET_READS: Set to "true" to route reads outside VPN (default & RECOMMENDED: false; set to true only if you explicitly want Polymarket reads to bypass the VPN) [APEX v3.0 FIX]
  *
  * WireGuard configuration (either file or env vars):
  * - WG_CONFIG: Path to existing WireGuard config file (legacy; use this if you have a .conf file to mount)

@@ -359,6 +359,7 @@ export class ErrorReporter {
 
   /**
    * Create GitHub issue via API
+   * Note: Requires Node.js 18+ for native fetch API support
    */
   private async createGitHubIssue(options: GitHubIssueOptions): Promise<string | null> {
     if (!this.githubToken) return null;
@@ -369,7 +370,7 @@ export class ErrorReporter {
         {
           method: "POST",
           headers: {
-            "Authorization": `token ${this.githubToken}`,
+            "Authorization": `Bearer ${this.githubToken}`,
             "Accept": "application/vnd.github.v3+json",
             "Content-Type": "application/json",
           },
@@ -517,6 +518,7 @@ export class ErrorReporter {
  * Global error reporter instance
  */
 let globalReporter: ErrorReporter | null = null;
+let handlersRegistered = false;
 
   /**
    * Initialize global error reporter
@@ -524,18 +526,40 @@ let globalReporter: ErrorReporter | null = null;
   export function initErrorReporter(logger: Logger): ErrorReporter {
     if (!globalReporter) {
       globalReporter = new ErrorReporter(logger);
+    }
+    
+    // Only register handlers once to prevent duplicates
+    if (!handlersRegistered) {
+      handlersRegistered = true;
       
       // Set up global error handlers
       process.on("uncaughtException", async (error) => {
         logger.error(`🔥 Uncaught Exception: ${error.message}`);
-        await globalReporter?.reportError(error, {
-          operation: "uncaught_exception",
-        } as Partial<ErrorContext>);
         
-        // Give time for report to send, then exit
-        setTimeout(() => {
+        try {
+          const reportingPromise = globalReporter?.reportError(error, {
+            operation: "uncaught_exception",
+          } as Partial<ErrorContext>);
+
+          if (reportingPromise) {
+            // Wait for report to complete, but don't block indefinitely
+            await Promise.race([
+              reportingPromise,
+              new Promise<void>((resolve) => setTimeout(resolve, 10000)),
+            ]);
+          }
+        } catch (reportErrorError) {
+          logger.error(
+            `Failed to report uncaught exception: ${
+              reportErrorError instanceof Error
+                ? reportErrorError.message
+                : String(reportErrorError)
+            }`
+          );
+        } finally {
+          // Uncaught exceptions should terminate the process
           process.exit(1);
-        }, 5000);
+        }
       });
   
       process.on("unhandledRejection", async (reason) => {

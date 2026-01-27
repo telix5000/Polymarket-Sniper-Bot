@@ -51,10 +51,10 @@ export interface MarketSnapshot {
 export function detectMomentum(snapshot: MarketSnapshot): HunterOpportunity | null {
   if (snapshot.priceHistory.length < 6) return null;
 
-  // Calculate 30-min price change
-  // Note: If scanning every 5 seconds, 6 samples = 30 seconds
-  // For true 30-min tracking, need 360 samples (30min * 60sec / 5sec)
-  // Using recent 6 samples as short-term momentum indicator
+  // Calculate short-term price change using recent samples
+  // Note: 6 samples at 5-second intervals = 30 seconds of data
+  // For longer 30-minute tracking, need 360 samples (30min * 60sec / 5sec)
+  // This provides fast momentum detection for short-term moves
   const oldPrice = snapshot.priceHistory[0];
   const currentPrice = snapshot.lastPrice;
   const priceChange = ((currentPrice - oldPrice) / oldPrice) * 100;
@@ -117,7 +117,7 @@ export function detectVolumeSpike(
   if (snapshot.volume24h >= normalVolume * 3 && normalVolume > 0) {
     // Trade in direction of price movement
     const recentChange =
-      snapshot.priceHistory.length > 1
+      snapshot.priceHistory && snapshot.priceHistory.length > 1
         ? snapshot.lastPrice - snapshot.priceHistory[snapshot.priceHistory.length - 2]
         : 0;
 
@@ -212,7 +212,7 @@ export function detectSpreadCompression(snapshot: MarketSnapshot): HunterOpportu
   if (snapshot.spread < 0.01 && snapshot.liquidity > 1000) {
     // Tight spread means efficient pricing, trade direction of momentum
     const recentChange =
-      snapshot.priceHistory.length > 1
+      snapshot.priceHistory && snapshot.priceHistory.length > 1
         ? snapshot.lastPrice - snapshot.priceHistory[snapshot.priceHistory.length - 2]
         : 0;
 

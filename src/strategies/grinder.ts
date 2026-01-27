@@ -88,7 +88,7 @@ export function shouldExitGrind(position: Position, metrics: MarketMetrics): boo
   // 2. Volume drops significantly
   // 3. Spread widens
   const hitTarget = position.pnlPct >= 8;
-  const volumeDrying = metrics.volume1h < metrics.volume24h / 24 * 0.5;
+  const volumeDrying = metrics.volume24h > 0 && metrics.volume1h < (metrics.volume24h / 24) * 0.5;
   const spreadWidening = metrics.spread > 0.03;
 
   return hitTarget || volumeDrying || spreadWidening;

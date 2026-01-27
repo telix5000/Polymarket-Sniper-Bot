@@ -28,6 +28,9 @@ export function calculateVelocity(
   const oldPrice = priceHistory[0];
   const currentPrice = priceHistory[priceHistory.length - 1];
 
+  // Protect against division by zero
+  if (oldPrice === 0) return 0;
+
   return ((currentPrice - oldPrice) / oldPrice) * 100;
 }
 
@@ -77,7 +80,9 @@ export function isMomentumReversing(
   currentVelocity: number,
 ): boolean {
   // Exit if momentum reverses or stalls
-  const isReversal = Math.sign(currentVelocity) !== Math.sign(position.avgPrice - 0.5);
+  // Check if velocity direction opposes position direction (YES positions want positive velocity, NO want negative)
+  const expectedDirection = position.outcome === "YES" ? 1 : -1;
+  const isReversal = Math.sign(currentVelocity) !== expectedDirection && Math.abs(currentVelocity) > 3;
   const isStalling = Math.abs(currentVelocity) < 3;
 
   return (isReversal || isStalling) && position.pnlPct > 3;

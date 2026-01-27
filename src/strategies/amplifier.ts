@@ -31,11 +31,12 @@ export function detectAmplifier(
   if (position.curPrice >= 0.95) return null;
 
   // Check for continued momentum
+  const history = position.priceHistory;
+  if (!history || history.length < 3) return null;
+
   const hasMomentum =
-    position.priceHistory &&
-    position.priceHistory.length >= 3 &&
-    position.priceHistory[position.priceHistory.length - 1] >
-      position.priceHistory[position.priceHistory.length - 3];
+    history[history.length - 1] >
+    history[history.length - 3];
 
   if (!hasMomentum) return null;
 
@@ -71,6 +72,10 @@ export function isSafeToStack(
     const prices = position.priceHistory.slice(-5);
     const maxPrice = Math.max(...prices);
     const minPrice = Math.min(...prices);
+    
+    // Protect against division by zero
+    if (minPrice === 0) return false;
+    
     const volatility = (maxPrice - minPrice) / minPrice;
 
     // Too volatile

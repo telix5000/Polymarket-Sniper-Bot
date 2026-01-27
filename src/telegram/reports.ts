@@ -43,7 +43,7 @@ export function formatHourlySummary(data: {
 }): string {
   // Validate to prevent division by zero
   if (data.startBalance === 0 || data.maxExposure === 0) {
-    return "⚠️ Invalid data for hourly summary";
+    return `⚠️ Invalid data: ${data.startBalance === 0 ? 'startBalance' : 'maxExposure'} is zero`;
   }
 
   const pnlPct = ((data.balance - data.startBalance) / data.startBalance) * 100;

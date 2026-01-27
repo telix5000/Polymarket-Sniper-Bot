@@ -83,6 +83,10 @@ export function calculateOptimalTrailing(position: Position): number {
 
   // Calculate volatility from price history
   const prices = position.priceHistory.slice(-10);
+  
+  // Protect against division by zero
+  if (prices.length === 0) return 5; // Default trailing stop
+  
   const avgPrice = prices.reduce((sum, p) => sum + p, 0) / prices.length;
   const variance = prices.reduce((sum, p) => sum + Math.pow(p - avgPrice, 2), 0) / prices.length;
   const volatility = Math.sqrt(variance);
