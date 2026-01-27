@@ -156,7 +156,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     let remaining = sizeUsd;
     let remainingShares = input.shares; // Track remaining shares for SELL orders
     let totalFilled = 0;
-    let weightedPrice = 0;
+    let totalShares = 0; // Track total shares for accurate avgPrice calculation
     let retryCount = 0;
     let lastErrorReason = "NO_ERROR"; // Track last error for better reporting
 
@@ -217,7 +217,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           const filledValue = amount * levelPrice;
           remaining -= filledValue;
           totalFilled += filledValue;
-          weightedPrice += filledValue * levelPrice;
+          totalShares += amount; // Track shares for accurate avgPrice
           // Decrement remaining shares for SELL orders
           if (!isBuy && remainingShares !== undefined) {
             remainingShares -= amount;
@@ -316,7 +316,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       return {
         success: true,
         filledUsd: totalFilled,
-        avgPrice: weightedPrice / totalFilled,
+        avgPrice: totalShares > 0 ? totalFilled / totalShares : 0,
       };
     }
 

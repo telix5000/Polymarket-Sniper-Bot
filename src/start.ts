@@ -644,6 +644,18 @@ async function sellPosition(
   
   if (!state.client) return false;
   
+  // Check live trading mode
+  if (!state.liveTrading) {
+    logger.info(
+      `🔸 [SIM] SELL ${position.outcome} $${position.value.toFixed(2)} | ${reason}`,
+    );
+    await sendTelegram(
+      "[SIM] POSITION SELL",
+      `${position.outcome}\n$${position.value.toFixed(2)}\n${reason}`,
+    );
+    return true;
+  }
+  
   logger.info(`🔄 Selling ${position.outcome}`);
   logger.info(`   Shares: ${position.size.toFixed(2)}`);
   logger.info(`   Value: $${position.value.toFixed(2)}`);
@@ -660,10 +672,11 @@ async function sellPosition(
 
     const bestBid = parseFloat(book.bids[0].price);
     
-    // Minimum price check (allow 1% slippage)
-    const minPrice = position.avgPrice * 0.99;
+    // Minimum price check (allow 5% slippage for exits - more lenient than buys)
+    // This helps ensure positions can be liquidated in volatile conditions
+    const minPrice = position.avgPrice * 0.95;
     if (bestBid < minPrice) {
-      logger.warn(`❌ Price too low: ${(bestBid * 100).toFixed(0)}¢ < ${(minPrice * 100).toFixed(0)}¢`);
+      logger.warn(`❌ Price too low: ${(bestBid * 100).toFixed(0)}¢ < ${(minPrice * 100).toFixed(0)}¢ (min 95% of entry)`);
       return false;
     }
 
@@ -1106,6 +1119,19 @@ async function buy(
   }
 }
 
+/**
+ * @deprecated This function is not currently used. All sell operations use `sellPosition()` instead.
+ * 
+ * ISSUE: This function passes `outcome` to `postOrder()` but `postOrder()` ignores the outcome parameter.
+ * ISSUE: No price protection is applied (maxAcceptablePrice not provided).
+ * 
+ * Use `sellPosition()` for selling positions as it has:
+ * - Proper price protection (5% slippage tolerance)
+ * - Live trading mode checking
+ * - Better error handling
+ * 
+ * TODO: Either remove this function or integrate it properly with the sell flow.
+ */
 async function sell(
   tokenId: string,
   outcome: "YES" | "NO",
