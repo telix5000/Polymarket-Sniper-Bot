@@ -3012,7 +3012,7 @@ function isDirectlyExecuted(): boolean {
   
   // Check if process.argv[1] contains our filename
   const scriptPath = process.argv[1] || "";
-  return scriptPath.includes("churn-start");
+  return scriptPath.includes("start");
 }
 
 if (isDirectlyExecuted()) {
