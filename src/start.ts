@@ -354,13 +354,16 @@ function displayStartupDashboard(
 
 /**
  * Run auto-redeem check
- * Called at start of each cycle in recovery mode
+ * Called periodically to claim resolved positions
  */
 async function runAutoRedeem(): Promise<number> {
   if (!state.wallet) return 0;
 
-  // Check every 10 cycles (avoid spamming API)
-  if (state.cycleCount % 10 !== 0) return 0;
+  // Check frequency depends on mode:
+  // - Recovery mode: every 10 cycles (more urgent - need liquidity)
+  // - Normal mode: every 50 cycles (periodic cleanup)
+  const checkInterval = state.recoveryMode ? 10 : 50;
+  if (state.cycleCount % checkInterval !== 0) return 0;
 
   logger.debug?.(`Checking for redeemable positions...`);
 
@@ -1832,29 +1835,6 @@ async function runOracleReview(): Promise<void> {
 // APEX v3.0 - REDEMPTION
 // ============================================
 
-async function runRedeem(): Promise<void> {
-  if (!state.wallet) return;
-
-  const now = Date.now();
-  const intervalMin = 60; // Redeem every 60 minutes
-  if (now - state.lastRedeem < intervalMin * 60 * 1000) return;
-
-  state.lastRedeem = now;
-  const minPositionUsd = 0.1; // Minimum $0.10 to redeem
-  const count = await redeemAll(
-    state.wallet,
-    state.address,
-    minPositionUsd,
-    logger,
-  );
-
-  if (count > 0) {
-    logger.info(`💰 Redeemed ${count} positions`);
-    await sendTelegram("💰 Redeem", `Redeemed ${count} positions`);
-    invalidatePositions();
-  }
-}
-
 // ============================================
 // APEX v3.0 - MAIN EXECUTION CYCLE
 // ============================================
@@ -1995,7 +1975,12 @@ async function runAPEXCycle(): Promise<void> {
       logger.info(`📤 Exited ${exitCount} positions while halted`);
       invalidatePositions();
     }
-    await runRedeem();
+    // Check for redemptions even when halted
+    const redeemed = await runAutoRedeem();
+    if (redeemed > 0) {
+      logger.info(`💰 Auto-redeemed ${redeemed} positions while halted`);
+      invalidatePositions();
+    }
     return;
   }
 
@@ -2019,7 +2004,20 @@ async function runAPEXCycle(): Promise<void> {
   // ============================================
   // PRIORITY 2: REDEMPTION (Convert wins to USDC)
   // ============================================
-  await runRedeem();
+  // Auto-redeem runs every 50 cycles in normal mode, every 10 in recovery
+  const redeemed = await runAutoRedeem();
+  if (redeemed > 0) {
+    logger.info(`💰 Auto-redeemed ${redeemed} positions`);
+    invalidatePositions(); // Force refresh after redemption
+    
+    // Refresh balance after redemption
+    try {
+      state.currentBalance = await getUsdcBalance(state.wallet, state.address);
+      state.lastKnownBalance = state.currentBalance;
+    } catch (error) {
+      logger.error(`Failed to update balance after redemption: ${error}`);
+    }
+  }
 
   // ============================================
   // PRIORITY 3: ENTRIES (Deploy capital)

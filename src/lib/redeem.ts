@@ -27,6 +27,63 @@ export interface RedeemResult {
 }
 
 /**
+ * Proxy wallet cache to avoid redundant API calls
+ */
+interface ProxyWalletCache {
+  address: string;
+  proxyAddress: string | null;
+  timestamp: number;
+}
+
+let proxyWalletCache: ProxyWalletCache | null = null;
+const PROXY_CACHE_TTL = 60000; // 1 minute
+
+/**
+ * Get proxy wallet address with caching
+ */
+async function getProxyAddress(
+  address: string,
+  logger?: Logger,
+): Promise<string | null> {
+  // Check cache
+  if (
+    proxyWalletCache &&
+    proxyWalletCache.address === address &&
+    Date.now() - proxyWalletCache.timestamp < PROXY_CACHE_TTL
+  ) {
+    return proxyWalletCache.proxyAddress;
+  }
+
+  // Fetch from API
+  try {
+    const profileRes = await axios.get(
+      `${POLYMARKET_API.DATA}/profile?address=${address}`,
+      { timeout: 10000 },
+    );
+
+    const proxyAddress = profileRes.data?.proxyAddress
+      ? cleanAddress(profileRes.data.proxyAddress)
+      : null;
+
+    if (proxyAddress) {
+      logger?.debug?.(`Found proxy wallet: ${proxyAddress.slice(0, 8)}...`);
+    }
+
+    // Update cache
+    proxyWalletCache = {
+      address,
+      proxyAddress,
+      timestamp: Date.now(),
+    };
+
+    return proxyAddress;
+  } catch (err) {
+    logger?.debug?.(`No proxy wallet found (using main wallet)`);
+    return null;
+  }
+}
+
+/**
  * Clean and validate Ethereum address
  */
 function cleanAddress(addr: string | undefined): string | null {
@@ -50,23 +107,8 @@ export async function fetchRedeemablePositions(
   try {
     logger?.debug?.(`Fetching redeemable positions for ${address.slice(0, 8)}...`);
 
-    // Check if user has proxy wallet
-    let proxyAddress: string | null = null;
-    try {
-      const profileRes = await axios.get(
-        `${POLYMARKET_API.DATA}/profile?address=${address}`,
-        { timeout: 10000 },
-      );
-
-      if (profileRes.data?.proxyAddress) {
-        proxyAddress = cleanAddress(profileRes.data.proxyAddress);
-        if (proxyAddress) {
-          logger?.debug?.(`Found proxy wallet: ${proxyAddress.slice(0, 8)}...`);
-        }
-      }
-    } catch (err) {
-      logger?.debug?.(`No proxy wallet found (using main wallet)`);
-    }
+    // Check if user has proxy wallet (cached)
+    const proxyAddress = await getProxyAddress(address, logger);
 
     // Check target address (proxy if available, otherwise main wallet)
     const targetAddress = proxyAddress || address;
@@ -135,19 +177,8 @@ export async function redeemPosition(
       throw new Error("Wallet has no provider");
     }
 
-    // Check for proxy wallet
-    let proxyAddress: string | null = null;
-    try {
-      const profileRes = await axios.get(
-        `${POLYMARKET_API.DATA}/profile?address=${address}`,
-        { timeout: 10000 },
-      );
-      if (profileRes.data?.proxyAddress) {
-        proxyAddress = cleanAddress(profileRes.data.proxyAddress);
-      }
-    } catch {
-      // No proxy - use main wallet
-    }
+    // Check for proxy wallet (cached)
+    const proxyAddress = await getProxyAddress(address, logger);
 
     // Get current gas prices (Milan uses 130% of current for faster confirmation)
     const feeData = await provider.getFeeData();
@@ -180,6 +211,8 @@ export async function redeemPosition(
     let tx;
 
     // If using proxy wallet, route through proxy contract
+    // Both addresses are checksummed via cleanAddress/ethers.getAddress,
+    // so direct comparison is safe for detecting proxy vs. direct wallet
     if (proxyAddress && proxyAddress !== address) {
       logger?.debug?.(`Using proxy wallet: ${proxyAddress.slice(0, 8)}...`);
       const proxyContract = new ethers.Contract(proxyAddress, PROXY_ABI, wallet);
@@ -200,12 +233,17 @@ export async function redeemPosition(
     logger?.info?.(`⏳ Transaction sent: ${tx.hash.slice(0, 16)}...`);
 
     // Wait for confirmation with 45 second timeout
-    const receipt = await Promise.race([
-      tx.wait(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Transaction timeout after 45s")), 45000),
-      ),
-    ]);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error("Transaction timeout after 45s")),
+        45000,
+      );
+    });
+
+    const receipt = await Promise.race([tx.wait(), timeoutPromise]);
+
+    if (timeoutId) clearTimeout(timeoutId);
 
     logger?.info?.(`✅ Confirmed in block ${receipt.blockNumber}`);
 
@@ -253,7 +291,11 @@ export async function redeemAllPositions(
   for (const pos of positions) {
     logger?.info?.(`   ${pos.outcome}: ~$${pos.value.toFixed(2)}`);
     if (pos.question) {
-      logger?.info?.(`   "${pos.question.slice(0, 60)}..."`);
+      const questionPreview =
+        pos.question.length > 60
+          ? `${pos.question.slice(0, 60)}...`
+          : pos.question;
+      logger?.info?.(`   "${questionPreview}"`);
     }
     totalValue += pos.value;
   }
@@ -306,6 +348,10 @@ interface LegacyApiPosition {
 /**
  * Legacy: Fetch redeemable positions (old API)
  * @deprecated Use fetchRedeemablePositions instead
+ *
+ * Note: This function fetches ALL positions and filters client-side (less efficient).
+ * The new fetchRedeemablePositions uses the redeemable=true query parameter
+ * for server-side filtering, which is more efficient.
  */
 export async function getRedeemablePositions(
   address: string,

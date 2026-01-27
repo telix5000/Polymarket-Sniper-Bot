@@ -9,11 +9,11 @@ import "dotenv/config";
 import { createClobClient, redeemAllPositions, getUsdcBalance } from "../src/lib";
 
 const logger = {
-  info: (...args: any[]) => console.log(...args),
-  warn: (...args: any[]) => console.warn("⚠️", ...args),
-  error: (...args: any[]) => console.error("❌", ...args),
-  debug: (...args: any[]) => {
-    if (process.env.DEBUG) console.log("🔍", ...args);
+  info: (message: string) => console.log(message),
+  warn: (message: string) => console.warn("⚠️", message),
+  error: (message: string) => console.error("❌", message),
+  debug: (message: string) => {
+    if (process.env.DEBUG) console.log("🔍", message);
   },
 };
 

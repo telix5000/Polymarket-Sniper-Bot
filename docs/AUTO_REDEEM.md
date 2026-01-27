@@ -16,8 +16,8 @@ When a Polymarket market resolves (closes and determines winner):
 ### Automatic (Built-in)
 The bot automatically checks for redeemable positions:
 1. **On startup** - Redeems any resolved positions
-2. **Every 10 cycles** in recovery mode
-3. **Before attempting sells** (redemption is better than selling at 1¢!)
+2. **During normal operation** - Checks every 50 cycles
+3. **In recovery mode** - Checks every 10 cycles (more frequently)
 
 ### Manual (CLI)
 ```bash
