@@ -56,6 +56,8 @@ import {
   sendTelegram,
   // Redemption
   redeemAll,
+  redeemAllPositions,
+  fetchRedeemablePositions,
   // VPN
   capturePreVpnRouting,
   startWireguard,
@@ -348,6 +350,32 @@ function displayStartupDashboard(
   
   logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   logger.info(``);
+}
+
+/**
+ * Run auto-redeem check
+ * Called at start of each cycle in recovery mode
+ */
+async function runAutoRedeem(): Promise<number> {
+  if (!state.wallet) return 0;
+
+  // Check every 10 cycles (avoid spamming API)
+  if (state.cycleCount % 10 !== 0) return 0;
+
+  logger.debug(`Checking for redeemable positions...`);
+
+  const result = await redeemAllPositions(state.wallet, state.address, logger);
+
+  if (result.redeemed > 0) {
+    await sendTelegram(
+      "🎁 AUTO-REDEEM",
+      `Redeemed ${result.redeemed} market(s)\n` +
+        `Approximate value: $${result.totalValue.toFixed(2)}\n\n` +
+        `Check USDC balance for payouts!`,
+    );
+  }
+
+  return result.redeemed;
 }
 
 /**
@@ -755,7 +783,38 @@ async function initializeAPEX(): Promise<void> {
     `📊 Account Tier: ${state.tier.description} (${state.tier.multiplier}× multiplier)`,
   );
   logger.info(``);
-  
+
+  // Check for redeemable positions on startup
+  logger.info(`🎁 Checking for resolved positions to redeem...`);
+
+  const redeemResult = await redeemAllPositions(
+    state.wallet,
+    state.address,
+    logger,
+  );
+
+  if (redeemResult.redeemed > 0) {
+    logger.info(
+      `✅ Redeemed ${redeemResult.redeemed} position(s) on startup`,
+    );
+
+    // Refresh balance
+    state.startBalance = await getUsdcBalance(state.wallet, state.address);
+    state.currentBalance = state.startBalance;
+    state.lastKnownBalance = state.startBalance;
+
+    await sendTelegram(
+      "🎁 Startup Redemption",
+      `Redeemed ${redeemResult.redeemed} market(s)\n` +
+        `New balance: ${$(state.startBalance)}`,
+    );
+
+    // Recalculate tier with new balance
+    state.tier = getAccountTier(state.startBalance);
+  }
+
+  logger.info(``);
+
   // STEP 2: Auto-approve USDC
   await ensureUSDCApproval();
 
@@ -1848,6 +1907,44 @@ async function runAPEXCycle(): Promise<void> {
     }
     
     if (state.recoveryMode) {
+      // PRIORITY 0: Auto-redeem resolved markets (FREE MONEY!)
+      const redeemed = await runAutoRedeem();
+      if (redeemed > 0) {
+        logger.info(
+          `✅ Auto-redeemed ${redeemed} positions - checking new balance...`,
+        );
+
+        // Refresh balance after redemption
+        try {
+          const newBalance = await getUsdcBalance(state.wallet, state.address);
+          state.currentBalance = newBalance;
+          state.lastKnownBalance = newBalance;
+
+          if (newBalance >= RECOVERY_MODE_BALANCE_THRESHOLD) {
+            logger.info(
+              `🎉 RECOVERY COMPLETE! Balance: ${$(newBalance)}`,
+            );
+            state.recoveryMode = false;
+            state.prioritizeExits = false;
+
+            await sendTelegram(
+              "✅ RECOVERY COMPLETE (via redemption)",
+              `Balance restored: ${$(newBalance)}\n` +
+                `Redeemed ${redeemed} positions\n\n` +
+                `Resuming normal trading`,
+            );
+
+            return; // Exit recovery mode
+          }
+
+          logger.info(
+            `📊 Balance after redemption: ${$(newBalance)} (need $${RECOVERY_MODE_BALANCE_THRESHOLD})`,
+          );
+        } catch (error) {
+          logger.error(`Failed to update balance after redemption: ${error}`);
+        }
+      }
+
       // Run recovery exits
       const exitsCount = await runRecoveryExits(positions, state.currentBalance);
       
