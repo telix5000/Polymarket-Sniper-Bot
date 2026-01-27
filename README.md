@@ -48,6 +48,8 @@ Infura RPC calls never require a VPN, but Polymarket APIs can be geo-blocked. A 
 
 The bot tracks the top 100 whale wallets from the Polymarket leaderboard and trades based on their activity. All trading parameters are fixed based on EV math - you only configure your bet size.
 
+For a comprehensive understanding of the order system, including whale tracking, position management, price protection, and all trading mechanisms, see the **[Order System Documentation](docs/ORDER_SYSTEM.md)**.
+
 ## License
 
 Apache-2.0
