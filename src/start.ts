@@ -159,25 +159,19 @@ import {
 import {
   detectSentinel,
   getSentinelUrgency,
-  shouldForceExit,
   type SentinelSignal,
 } from "./strategies/sentinel";
 
 // APEX v3.0 Entry Strategies
 import {
-  detectVelocity,
   calculateVelocity,
   shouldRideMomentum,
   isMomentumReversing,
-  type VelocitySignal,
 } from "./strategies/velocity";
 
 import {
-  detectGrinder,
-  isGrindable,
   calculateGrindSize,
   shouldExitGrind,
-  type GrinderSignal,
   type MarketMetrics,
 } from "./strategies/grinder";
 
