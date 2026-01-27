@@ -89,7 +89,7 @@ APEX v3.0 includes an intelligent sell system that prevents losing money to bad 
 - **Orderbook Depth Analysis**: Calculates expected fill price across multiple levels before executing
 - **Dynamic Slippage Protection**: Adjusts tolerance based on position state (profit, loss, near-resolution)
 - **Liquidity Checks**: Won't sell into thin orderbooks unless explicitly forced
-- **Order Type Selection**: Chooses FOK (instant fill) or GTC (patient limit) based on conditions
+- **Order Type Selection**: Uses FOK (instant fill) only when the order can fully fill with sufficient USD liquidity within 1–2 bid levels; otherwise uses GTC (patient limit)
 - **Expected Fill Preview**: Know what you'll get before you execute
 
 ### How It Works

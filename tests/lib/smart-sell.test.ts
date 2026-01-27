@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it } from "node:test";
 import {
   analyzeLiquidity,
   calculateOptimalSlippage,
@@ -75,7 +75,7 @@ describe("Smart Sell - Liquidity Analysis", () => {
       assert.strictEqual(result.bestBid, 0.5);
       // Should only use first two levels (within 5% slippage)
       assert.strictEqual(result.levelsNeeded, 2);
-      // Can't fill full amount within slippage
+      // Can fill full amount within slippage (50 + 50 = 100 shares needed)
       assert.strictEqual(result.canFill, true);
     });
 

@@ -346,27 +346,11 @@ export async function smartSell(
     const orderType = determineOrderType(analysis, sharesToSell, config);
 
     // Calculate the price to use
-    // For FOK: use expected average price (already accounts for slippage)
+    // For FOK: use best bid price (the limit price for the order)
     // For GTC: use best bid (limit order waits for this price)
-    const orderPrice =
-      orderType === "FOK" ? analysis.expectedAvgPrice : analysis.bestBid;
-
-    // Minimum acceptable price (floor) - calculated from best bid minus slippage
-    // This protects against the order executing at a much worse price than expected
-    const minAcceptablePrice = analysis.bestBid * (1 - maxSlippage / 100);
-
-    // Don't sell at a price that would exceed our slippage tolerance
-    if (orderPrice < minAcceptablePrice && !config?.forceSell) {
-      logger?.warn?.(
-        `SmartSell rejected: Price too low (${(orderPrice * 100).toFixed(1)}¢ < ` +
-          `min ${(minAcceptablePrice * 100).toFixed(1)}¢)`,
-      );
-      return {
-        success: false,
-        reason: "PRICE_BELOW_MINIMUM",
-        analysis,
-      };
-    }
+    // Note: FOK uses best bid because the order type itself ensures complete fill
+    // The analysis already validated that we can fill within slippage tolerance
+    const orderPrice = analysis.bestBid;
 
     logger?.info?.(
       `SmartSell executing: ${sharesToSell.toFixed(2)} shares @ ${(orderPrice * 100).toFixed(1)}¢ ` +
@@ -394,14 +378,13 @@ export async function smartSell(
 
     if (response.success) {
       const filledUsd = sharesToSell * orderPrice;
-      const actualSlippage =
-        analysis.bestBid > 0
-          ? ((analysis.bestBid - orderPrice) / analysis.bestBid) * 100
-          : 0;
+      // Note: We use the pre-calculated expected slippage from analysis
+      // since we cannot get actual fill price from the order response
+      const expectedSlippage = analysis.expectedSlippagePct;
 
       logger?.info?.(
         `✅ SmartSell success: $${filledUsd.toFixed(2)} ` +
-          `(actual slippage: ${actualSlippage.toFixed(2)}%)`,
+          `(expected slippage: ${expectedSlippage.toFixed(2)}%)`,
       );
 
       return {
@@ -411,7 +394,7 @@ export async function smartSell(
         orderId: response.orderId || response.orderHashes?.[0],
         analysis,
         actualPrice: orderPrice,
-        actualSlippagePct: actualSlippage,
+        actualSlippagePct: expectedSlippage,
         orderType,
       };
     } else {
@@ -560,8 +543,8 @@ export async function getSellRecommendation(
       SELL.DEFAULT_SLIPPAGE_PCT,
     );
 
-    // Near resolution ($0.95+) - likely winner, sell carefully
-    if (position.curPrice >= 0.95) {
+    // Near resolution - likely winner, sell carefully
+    if (position.curPrice >= SELL.HIGH_PRICE_THRESHOLD) {
       if (analysis.canFill && analysis.expectedSlippagePct < 1) {
         return {
           recommendation: "SELL_NOW",

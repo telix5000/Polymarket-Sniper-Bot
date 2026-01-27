@@ -10,10 +10,21 @@ const envNum = (key: string, defaultValue: number): number => {
   return isNaN(parsed) ? defaultValue : parsed;
 };
 
-// Helper to read string env vars
-const envStr = <T extends string>(key: string, defaultValue: T): T => {
+// Helper to read string env vars with optional validation
+const envStr = <T extends string>(
+  key: string,
+  defaultValue: T,
+  validValues?: T[],
+): T => {
   const value = process.env[key];
-  return (value || defaultValue) as T;
+  if (value === undefined) return defaultValue;
+  if (validValues && !validValues.includes(value as T)) {
+    console.warn(
+      `Invalid value for ${key}: ${value}. Using default: ${defaultValue}`,
+    );
+    return defaultValue;
+  }
+  return value as T;
 };
 
 // API Endpoints
@@ -41,7 +52,7 @@ export const ORDER = {
   MIN_ORDER_USD: 0.01,
   MIN_TRADEABLE_PRICE: 0.001,
   MIN_SHARES_THRESHOLD: 0.0001,
-  GLOBAL_MIN_BUY_PRICE: 0.1,
+  GLOBAL_MIN_BUY_PRICE: 0.10,
   DEFAULT_SLIPPAGE_PCT: 3,
   COOLDOWN_MS: 1000,
   MARKET_COOLDOWN_MS: 5000,
@@ -83,7 +94,10 @@ export const SELL = {
   // Default order type for sells: "FOK" (Fill-Or-Kill) or "GTC" (Good-Til-Cancelled)
   // FOK = aggressive, instant fill or nothing
   // GTC = patient, waits on orderbook for better price
-  DEFAULT_ORDER_TYPE: envStr<"FOK" | "GTC">("SELL_ORDER_TYPE", "FOK"),
+  DEFAULT_ORDER_TYPE: envStr<"FOK" | "GTC">("SELL_ORDER_TYPE", "FOK", [
+    "FOK",
+    "GTC",
+  ]),
 
   // For GTC orders, default expiration in seconds (24 hours)
   GTC_EXPIRATION_SECONDS: envNum("SELL_GTC_EXPIRATION_SECONDS", 86400),

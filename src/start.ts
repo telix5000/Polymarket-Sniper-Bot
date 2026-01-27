@@ -48,7 +48,6 @@ import {
   postOrder,
   // Smart Sell (improved sell execution)
   smartSell,
-  getSellRecommendation,
   type SmartSellConfig,
   // Copy trading
   getTargetAddresses,
@@ -684,19 +683,19 @@ async function sellPosition(
     const result = await smartSell(state.client, position, config);
     
     if (result.success) {
-      const filled = result.filledUsd || position.size * (result.avgPrice || position.curPrice);
-      const actualSlippage = result.actualSlippagePct || 0;
+      const filled = result.filledUsd ?? (position.size * (result.avgPrice ?? position.curPrice));
+      const actualSlippage = result.actualSlippagePct ?? 0;
       
       logger.info(`✅ Sold: $${filled.toFixed(2)}`);
       if (result.analysis) {
         logger.info(`   Best bid: ${(result.analysis.bestBid * 100).toFixed(1)}¢`);
-        logger.info(`   Avg fill: ${(result.avgPrice! * 100).toFixed(1)}¢`);
+        logger.info(`   Avg fill: ${((result.avgPrice ?? position.curPrice) * 100).toFixed(1)}¢`);
         logger.info(`   Slippage: ${actualSlippage.toFixed(2)}%`);
-        logger.info(`   Order type: ${result.orderType || 'FOK'}`);
+        logger.info(`   Order type: ${result.orderType ?? 'FOK'}`);
       }
       
       await sendTelegram("💰 POSITION SOLD",
-        `${position.outcome} @ ${((result.avgPrice || position.curPrice) * 100).toFixed(0)}¢\n` +
+        `${position.outcome} @ ${((result.avgPrice ?? position.curPrice) * 100).toFixed(0)}¢\n` +
         `P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%\n` +
         `Received: $${filled.toFixed(2)}\n` +
         `Slippage: ${actualSlippage.toFixed(2)}%\n` +
@@ -712,12 +711,9 @@ async function sellPosition(
         logger.warn(`   Best bid: ${(result.analysis.bestBid * 100).toFixed(1)}¢`);
         logger.warn(`   Expected slippage: ${result.analysis.expectedSlippagePct.toFixed(2)}%`);
         logger.warn(`   Liquidity: $${result.analysis.liquidityAtSlippage.toFixed(2)}`);
-        
-        // Get recommendation for the user
-        if (result.reason === "SLIPPAGE_TOO_HIGH" || result.reason === "INSUFFICIENT_LIQUIDITY") {
-          const rec = await getSellRecommendation(state.client, position, logger);
-          logger.info(`   💡 Recommendation: ${rec.recommendation} - ${rec.reason}`);
-        }
+        // Note: we skip calling getSellRecommendation here to avoid
+        // an additional orderbook fetch; the above analysis already explains
+        // why the sell failed.
       }
       
       return false;
