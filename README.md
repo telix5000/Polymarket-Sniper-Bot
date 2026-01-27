@@ -82,12 +82,50 @@ Position sizes automatically scale with your balance:
 - **[Selling Logic Guide](docs/SELLING_LOGIC.md)** - Complete documentation of all sell pathways
 - **[Quick Reference](docs/SELL_QUICK_REFERENCE.md)** - Fast troubleshooting guide
 - **[Emergency Sells](docs/EMERGENCY_SELLS.md)** - CONSERVATIVE/MODERATE/NUCLEAR modes
+- **🛡️ Smart Sell**: Intelligent sell execution with slippage protection
 
 ### Performance Tracking
 - **🧠 APEX Oracle**: Analyzes last 24 hours of trades
 - Ranks strategies: Champion (75+), Performing (55-75), Testing (40-55), Struggling (30-40), Disabled (<30)
 - Automatically reallocates capital to best performers
 - Daily review sent via Telegram
+
+## 🛡️ Smart Sell - Avoiding Bad Bids
+
+APEX v3.0 includes an intelligent sell system that prevents losing money to bad bids:
+
+### Key Features
+- **Orderbook Depth Analysis**: Calculates expected fill price across multiple levels before executing
+- **Dynamic Slippage Protection**: Adjusts tolerance based on position state (profit, loss, near-resolution)
+- **Liquidity Checks**: Won't sell into thin orderbooks unless explicitly forced
+- **Order Type Selection**: Uses FOK (instant fill) only when the order can fully fill with sufficient USD liquidity within 1–2 bid levels; otherwise uses GTC (patient limit)
+- **Expected Fill Preview**: Know what you'll get before you execute
+
+### How It Works
+
+1. **Analyzes Orderbook**: Checks all bid levels to calculate your expected average fill price
+2. **Calculates Slippage**: Compares expected fill vs best bid to determine actual slippage
+3. **Protects Your Capital**: Rejects sells that would result in unacceptable slippage
+4. **Adapts to Conditions**: Uses tighter limits for winning positions, looser for stop-losses
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SELL_DEFAULT_SLIPPAGE_PCT` | 2 | Normal slippage tolerance (%) |
+| `SELL_MAX_SLIPPAGE_PCT` | 5 | Maximum slippage for urgent sells (%) |
+| `SELL_MIN_LIQUIDITY_USD` | 10 | Minimum liquidity required at best bid ($) |
+| `SELL_ORDER_TYPE` | FOK | Default order type (FOK or GTC) |
+| `SELL_HIGH_PRICE_SLIPPAGE_PCT` | 0.5 | Slippage for near-$1 positions (%) |
+| `SELL_LOSS_SLIPPAGE_PCT` | 5 | Slippage allowed for stop-loss (%) |
+
+### Best Practices (From Polymarket Community)
+
+1. **For liquid markets**: Use FOK with default slippage (2%) - fast and reliable
+2. **For thin orderbooks**: Use GTC limit orders - waits for better price
+3. **Near resolution ($0.95+)**: Use tight slippage (0.5%) - don't give away profits
+4. **Stop-loss situations**: Allow higher slippage (5%) - getting out is priority
+5. **Large positions**: Consider splitting into smaller orders
 
 ---
 
