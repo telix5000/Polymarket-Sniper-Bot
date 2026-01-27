@@ -1986,6 +1986,9 @@ interface TokenMarketData {
   orderbook: OrderbookState;
   activity: MarketActivity;
   referencePriceCents: number;
+  // Opposite token data for hedging - proactively monitored
+  oppositeTokenId?: string;
+  oppositeOrderbook?: OrderbookState;
 }
 
 interface ChurnLogger {
@@ -2191,6 +2194,7 @@ class ExecutionEngine {
       reason?: ExitReason;
       priceCents: number;
       biasDirection: BiasDirection;
+      marketData: TokenMarketData; // Include for proactive opposite token monitoring
     };
     
     const pendingActions: PendingAction[] = [];
@@ -2207,9 +2211,9 @@ class ExecutionEngine {
       const update = this.positionManager.updatePrice(position.id, priceCents, evMetrics, bias.direction);
 
       if (update.action === "EXIT") {
-        pendingActions.push({ position, action: "EXIT", reason: update.reason, priceCents, biasDirection: bias.direction });
+        pendingActions.push({ position, action: "EXIT", reason: update.reason, priceCents, biasDirection: bias.direction, marketData });
       } else if (update.action === "HEDGE") {
-        pendingActions.push({ position, action: "HEDGE", priceCents, biasDirection: bias.direction });
+        pendingActions.push({ position, action: "HEDGE", priceCents, biasDirection: bias.direction, marketData });
       } else {
         // Check decision engine for other exit conditions
         const exitCheck = this.decisionEngine.evaluateExit({
@@ -2219,7 +2223,7 @@ class ExecutionEngine {
           evAllowed: this.evTracker.isTradingAllowed(),
         });
         if (exitCheck.shouldExit) {
-          pendingActions.push({ position, action: "EXIT", reason: exitCheck.reason, priceCents, biasDirection: bias.direction });
+          pendingActions.push({ position, action: "EXIT", reason: exitCheck.reason, priceCents, biasDirection: bias.direction, marketData });
         }
       }
     }
@@ -2233,7 +2237,12 @@ class ExecutionEngine {
               const result = await this.executeExit(action.position, action.reason!, action.priceCents, action.biasDirection);
               return { id: action.position.id, action: "EXIT" as const, success: result.success };
             } else {
-              const result = await this.executeHedge(action.position, action.biasDirection);
+              // Pass the proactively-monitored opposite orderbook to executeHedge
+              const result = await this.executeHedge(
+                action.position, 
+                action.biasDirection,
+                action.marketData.oppositeOrderbook, // Use pre-fetched opposite data!
+              );
               return { id: action.position.id, action: "HEDGE" as const, success: result.success };
             }
           } catch (err) {
@@ -2359,7 +2368,18 @@ class ExecutionEngine {
     return { success: true, filledPriceCents: exitPriceCents };
   }
 
-  private async executeHedge(position: ManagedPosition, biasDirection: BiasDirection): Promise<ExecutionResult> {
+  /**
+   * Execute a hedge by buying the opposite token
+   * 
+   * @param position - The position to hedge
+   * @param biasDirection - Current bias direction
+   * @param prefetchedOppositeOrderbook - Optional pre-fetched opposite orderbook (for proactive monitoring)
+   */
+  private async executeHedge(
+    position: ManagedPosition,
+    biasDirection: BiasDirection,
+    prefetchedOppositeOrderbook?: OrderbookState,
+  ): Promise<ExecutionResult> {
     const hedgeSize = this.decisionEngine.calculateHedgeSize(position);
     const evMetrics = this.evTracker.getMetrics();
 
@@ -2373,14 +2393,20 @@ class ExecutionEngine {
 
     // Simulation mode - just record the hedge
     if (!this.config.liveTradingEnabled) {
+      // Use pre-fetched price if available, otherwise use position's current price as estimate
+      const hedgePrice = prefetchedOppositeOrderbook?.bestAskCents 
+        ? prefetchedOppositeOrderbook.bestAskCents 
+        : position.currentPriceCents;
+      
       this.positionManager.recordHedge(position.id, {
         tokenId: oppositeTokenId, // Use REAL opposite token ID!
         sizeUsd: hedgeSize,
-        entryPriceCents: position.currentPriceCents,
+        entryPriceCents: hedgePrice,
         entryTime: Date.now(),
       }, evMetrics, biasDirection);
 
-      console.log(`🛡️ [SIM] Hedged $${hedgeSize.toFixed(2)} by buying opposite token ${oppositeTokenId.slice(0, 16)}...`);
+      const proactiveTag = prefetchedOppositeOrderbook ? " [PROACTIVE]" : "";
+      console.log(`🛡️ [SIM]${proactiveTag} Hedged $${hedgeSize.toFixed(2)} by buying opposite @ ${hedgePrice.toFixed(1)}¢`);
       return { success: true, filledUsd: hedgeSize };
     }
 
@@ -2391,16 +2417,34 @@ class ExecutionEngine {
     }
 
     try {
-      // Get orderbook for the opposite token
-      const orderBook = await this.client.getOrderBook(oppositeTokenId);
-      const asks = orderBook?.asks;
+      let price: number;
       
-      if (!asks?.length) {
-        console.warn(`⚠️ [HEDGE] No asks available for opposite token - cannot hedge`);
-        return { success: false, reason: "NO_LIQUIDITY" };
+      // Use pre-fetched orderbook if available (proactive monitoring)
+      // Validate: price > 0 AND there's liquidity (askDepthUsd > 0)
+      const MIN_LIQUIDITY_USD = 5; // Minimum liquidity to trust pre-fetched data
+      const hasPrefetchedData = prefetchedOppositeOrderbook && 
+        prefetchedOppositeOrderbook.bestAskCents > 0 &&
+        prefetchedOppositeOrderbook.askDepthUsd >= MIN_LIQUIDITY_USD;
+      
+      if (hasPrefetchedData) {
+        price = prefetchedOppositeOrderbook!.bestAskCents / 100; // Convert cents to dollars
+        console.log(`🔄 [HEDGE] Using proactively monitored opposite price: ${(price * 100).toFixed(1)}¢ (depth: $${prefetchedOppositeOrderbook!.askDepthUsd.toFixed(0)})`);
+      } else {
+        // Fallback: fetch fresh orderbook (no pre-fetched data or insufficient liquidity)
+        const reason = prefetchedOppositeOrderbook 
+          ? `insufficient liquidity ($${prefetchedOppositeOrderbook.askDepthUsd?.toFixed(0) || 0})`
+          : "no pre-fetched data";
+        console.log(`📡 [HEDGE] Fetching fresh opposite orderbook (${reason})`);
+        const orderBook = await this.client.getOrderBook(oppositeTokenId);
+        const asks = orderBook?.asks;
+        
+        if (!asks?.length) {
+          console.warn(`⚠️ [HEDGE] No asks available for opposite token - cannot hedge`);
+          return { success: false, reason: "NO_LIQUIDITY" };
+        }
+        
+        price = parseFloat(asks[0].price);
       }
-
-      const price = parseFloat(asks[0].price);
       
       // Validate price is above minimum tradeable
       const MIN_TRADEABLE_PRICE = 0.001;
@@ -3226,19 +3270,75 @@ class ChurnEngine {
 
   /**
    * Build market data for positions - direct API calls
+   * 
+   * PROACTIVE MONITORING: Fetches BOTH the position's token AND the opposite
+   * token's orderbook. This gives us real-time hedge signal data without
+   * having to look it up when we need to hedge. Increases API calls proportionally
+   * to positions with opposite tokens configured (typically up to 2x if all have opposites).
    */
   private async buildMarketData(positions: any[]): Promise<Map<string, TokenMarketData>> {
     const map = new Map<string, TokenMarketData>();
     
-    // Fetch all orderbooks in parallel - API can handle it
-    const fetchPromises = positions.map(async (pos) => {
-      const orderbook = await this.getOrderbookState(pos.tokenId);
-      return { pos, orderbook };
+    // Deduplicate tokens to fetch - avoid fetching same token multiple times
+    // Key: tokenId, Value: { positions that need this token, isOpposite flag }
+    const tokensToFetch = new Map<string, { 
+      tokenId: string;
+      forPositions: Set<string>; // Position tokenIds that need this orderbook
+      isOpposite: boolean;
+    }>();
+    
+    for (const pos of positions) {
+      // Primary token - always fetch
+      if (!tokensToFetch.has(pos.tokenId)) {
+        tokensToFetch.set(pos.tokenId, {
+          tokenId: pos.tokenId,
+          forPositions: new Set(),
+          isOpposite: false,
+        });
+      }
+      tokensToFetch.get(pos.tokenId)!.forPositions.add(pos.tokenId);
+      
+      // Opposite token - for hedging (deduplicated)
+      if (pos.oppositeTokenId && !tokensToFetch.has(pos.oppositeTokenId)) {
+        tokensToFetch.set(pos.oppositeTokenId, {
+          tokenId: pos.oppositeTokenId,
+          forPositions: new Set(),
+          isOpposite: true,
+        });
+      }
+      if (pos.oppositeTokenId) {
+        tokensToFetch.get(pos.oppositeTokenId)!.forPositions.add(pos.tokenId);
+      }
+    }
+    
+    // Fetch all unique tokens in parallel - API can handle it
+    const fetchPromises = Array.from(tokensToFetch.values()).map(async (task) => {
+      const orderbook = await this.getOrderbookState(task.tokenId);
+      return { ...task, orderbook };
     });
     
     const results = await Promise.all(fetchPromises);
     
-    for (const { pos, orderbook } of results) {
+    // Create lookup maps for orderbooks
+    const primaryOrderbooks = new Map<string, OrderbookState>();
+    const oppositeOrderbooks = new Map<string, OrderbookState>();
+    
+    for (const result of results) {
+      if (result.orderbook) {
+        if (result.isOpposite) {
+          // Map opposite orderbook to the positions that need it
+          for (const posTokenId of result.forPositions) {
+            oppositeOrderbooks.set(posTokenId, result.orderbook);
+          }
+        } else {
+          primaryOrderbooks.set(result.tokenId, result.orderbook);
+        }
+      }
+    }
+    
+    // Build market data map
+    for (const pos of positions) {
+      const orderbook = primaryOrderbooks.get(pos.tokenId);
       if (!orderbook) continue;
       
       const activity: MarketActivity = {
@@ -3254,7 +3354,17 @@ class ChurnEngine {
         orderbook,
         activity,
         referencePriceCents: pos.referencePriceCents || orderbook.midPriceCents,
+        // Include opposite token data for proactive hedge monitoring
+        oppositeTokenId: pos.oppositeTokenId,
+        oppositeOrderbook: oppositeOrderbooks.get(pos.tokenId),
       });
+    }
+
+    // Log when we have both tokens monitored
+    const withOpposite = Array.from(map.values()).filter(m => m.oppositeOrderbook).length;
+    const apiCalls = tokensToFetch.size;
+    if (withOpposite > 0) {
+      console.log(`🔄 Monitoring ${map.size} positions + ${withOpposite} opposite tokens (${apiCalls} API calls)`);
     }
 
     return map;
