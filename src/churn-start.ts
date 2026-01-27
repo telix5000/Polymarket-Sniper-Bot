@@ -278,7 +278,7 @@ function loadConfig(): ChurnConfig {
     polReserveEnabled: true,
     polReserveTarget: envNum("POL_RESERVE_TARGET", 50),  // Target POL when refilling
     polReserveMin: envNum("POL_RESERVE_MIN", 0.5),       // Trigger threshold (refill when below this)
-    polReserveMaxSwapUsd: envNum("POL_RESERVE_MAX_SWAP_USD", 25),  // Max USDC per swap
+    polReserveMaxSwapUsd: envNum("POL_RESERVE_MAX_SWAP_USD", 10),  // Max USDC per swap
     polReserveCheckIntervalMin: envNum("POL_RESERVE_CHECK_INTERVAL_MIN", 5),  // Check every 5 min
     polReserveSlippagePct: 3,
   };
