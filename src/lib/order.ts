@@ -10,12 +10,15 @@
  * - FOK: Immediate fill or nothing. Orders do NOT sit on orderbook.
  * - GTC: Limit orders that post to orderbook and wait until filled.
  *
- * Use BUY_ORDER_TYPE env variable to control order type (default: FOK).
+ * Order type configuration hierarchy:
+ * - BUY_ORDER_TYPE / SELL_ORDER_TYPE (side-specific override)
+ * - ORDER_TYPE (global default)
+ * - FOK if none are set
  */
 
 import type { ClobClient } from "@polymarket/clob-client";
 import { OrderType, Side } from "@polymarket/clob-client";
-import { ORDER, BUY } from "./constants";
+import { ORDER, BUY, SELL } from "./constants";
 import type { OrderSide, OrderOutcome, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
 import { isCloudflareBlock, formatErrorForLog } from "./error-handling";
@@ -54,13 +57,14 @@ export interface PostOrderInput {
    */
   orderType?: "FOK" | "GTC";
   /**
-   * Optional: On-chain price for deviance-aware GTC pricing.
-   * When provided and using GTC orders, the order will use the BETTER price
-   * between on-chain and API prices:
-   * - For BUY: min(onChainPrice, apiPrice) - pay less
-   * - For SELL: max(onChainPrice, apiPrice) - receive more
-   * 
-   * This captures price deviance between on-chain and CLOB for better fills.
+   * Optional: On-chain price intended for future deviance-aware GTC pricing.
+   *
+   * NOTE: As of now, `postOrder` does NOT use this value when computing
+   * order prices. Providing `onChainPrice` currently has no effect on
+   * how orders are priced or submitted and should not be relied upon.
+   *
+   * This field is reserved for potential future behavior where GTC orders
+   * may take on-chain prices into account for pricing decisions.
    */
   onChainPrice?: number;
 }
@@ -84,7 +88,8 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
   const { client, tokenId, side, sizeUsd, logger, maxAcceptablePrice } = input;
   
   // Determine order type - use override, or default based on side
-  const orderType = input.orderType ?? (side === "BUY" ? BUY.DEFAULT_ORDER_TYPE : "FOK");
+  // Priority: explicit override > side-specific env > master ORDER_TYPE env > FOK
+  const orderType = input.orderType ?? (side === "BUY" ? BUY.DEFAULT_ORDER_TYPE : SELL.DEFAULT_ORDER_TYPE);
 
   // Check live trading
   if (!isLiveTradingEnabled()) {

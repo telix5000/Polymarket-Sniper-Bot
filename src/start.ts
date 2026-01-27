@@ -2852,7 +2852,7 @@ class ChurnEngine {
     // 2. GET BALANCES
     // ─────────────────────────────────────────────────────────────────
     const usdcBalance = await getUsdcBalance(this.wallet, this.address);
-    const { effectiveBankroll, reserveUsd } = this.executionEngine.getEffectiveBankroll(usdcBalance);
+    const { reserveUsd } = this.executionEngine.getEffectiveBankroll(usdcBalance);
 
     // ─────────────────────────────────────────────────────────────────
     // 3. FETCH AND LIQUIDATE EXISTING POLYMARKET POSITIONS
