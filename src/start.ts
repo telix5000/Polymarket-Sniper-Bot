@@ -2435,6 +2435,10 @@ class ChurnEngine {
   private lastPolCheckTime = 0;
   // Liquidation mode - when true, prioritize selling existing positions
   private liquidationMode = false;
+  // Track recently sold positions to prevent re-selling during API cache delay
+  // Maps tokenId to timestamp when it was sold
+  private recentlySoldPositions = new Map<string, number>();
+  private readonly SOLD_POSITION_COOLDOWN_MS = 30 * 1000; // 30 seconds cooldown
 
   // Intervals
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
@@ -2872,8 +2876,30 @@ class ChurnEngine {
       return;
     }
 
+    // Clean up expired cooldowns
+    for (const [tokenId, soldTime] of this.recentlySoldPositions) {
+      if (now - soldTime >= this.SOLD_POSITION_COOLDOWN_MS) {
+        this.recentlySoldPositions.delete(tokenId);
+      }
+    }
+
+    // Filter out positions that were recently sold (waiting for API cache to update)
+    const eligiblePositions = positions.filter(p => {
+      const soldTime = this.recentlySoldPositions.get(p.tokenId);
+      if (soldTime && now - soldTime < this.SOLD_POSITION_COOLDOWN_MS) {
+        return false; // Skip - recently sold, waiting for API to reflect
+      }
+      return true;
+    });
+
     // Sort by value descending - sell largest positions first for fastest capital recovery
-    const sortedPositions = [...positions].sort((a, b) => b.value - a.value);
+    const sortedPositions = [...eligiblePositions].sort((a, b) => b.value - a.value);
+
+    if (sortedPositions.length === 0) {
+      const cooldownCount = positions.length - eligiblePositions.length;
+      console.log(`⏳ Waiting for ${cooldownCount} recent sell(s) to settle...`);
+      return;
+    }
 
     console.log(`🔥 Liquidating ${sortedPositions.length} positions (total value: $${sortedPositions.reduce((s, p) => s + p.value, 0).toFixed(2)})`);
 
@@ -2897,6 +2923,10 @@ class ChurnEngine {
           if (result.success) {
             console.log(`   ✅ Sold for $${result.filledUsd?.toFixed(2) || 'unknown'}`);
 
+            // Track this position as recently sold to prevent re-selling
+            // while waiting for position API to reflect the change
+            this.recentlySoldPositions.set(positionToSell.tokenId, now);
+
             // Invalidate position cache to ensure fresh data on next fetch
             invalidatePositions();
 
@@ -2908,6 +2938,12 @@ class ChurnEngine {
               ).catch(() => {});
             }
           } else {
+            // If sell failed due to balance issue, the position might already be sold
+            // Add to cooldown to prevent spamming the same position
+            if (result.reason === "INSUFFICIENT_BALANCE" || result.reason === "INSUFFICIENT_ALLOWANCE") {
+              console.log(`   ⏳ Adding to cooldown (may already be sold)`);
+              this.recentlySoldPositions.set(positionToSell.tokenId, now);
+            }
             console.log(`   ❌ Sell failed: ${result.reason}`);
           }
         } catch (err) {

@@ -377,7 +377,37 @@ export async function smartSell(
       return { success: false, reason: "CLOUDFLARE_BLOCKED", analysis };
     }
 
+    // Cast response for accessing all fields
+    const respAny = response as any;
+
     if (response.success) {
+      // For FOK orders, we need to verify the order actually FILLED, not just that it was accepted
+      // The API returns success=true when the order is accepted, but FOK orders may not fill
+      // Check the status field and takingAmount/makingAmount to confirm actual fill
+      if (orderType === "FOK") {
+        const status = respAny?.status?.toUpperCase?.() || "";
+        const takingAmount = parseFloat(respAny?.takingAmount || "0");
+        const makingAmount = parseFloat(respAny?.makingAmount || "0");
+        
+        // FOK order should have status "MATCHED" or "FILLED" and non-zero amounts
+        // If status is "UNMATCHED", "DELAYED", or amounts are 0, the order didn't fill
+        const isMatched = status === "MATCHED" || status === "FILLED" || status === "LIVE";
+        const hasFilledAmount = takingAmount > 0 || makingAmount > 0;
+        
+        // If we have status info, use it to determine success
+        // If status is explicitly unmatched or amounts are 0 when we expected a fill, it failed
+        if (status && !isMatched) {
+          logger?.warn?.(`⚠️ FOK order not filled (status: ${status})`);
+          return { success: false, reason: "FOK_NOT_FILLED", analysis };
+        }
+        
+        // If we have amount info and it shows no fill, fail
+        if (respAny?.takingAmount !== undefined && !hasFilledAmount) {
+          logger?.warn?.(`⚠️ FOK order not filled (zero amount)`);
+          return { success: false, reason: "FOK_NOT_FILLED", analysis };
+        }
+      }
+
       const filledUsd = sharesToSell * orderPrice;
       // Note: We use the pre-calculated expected slippage from analysis
       // since we cannot get actual fill price from the order response
@@ -392,7 +422,7 @@ export async function smartSell(
         success: true,
         filledUsd,
         avgPrice: orderPrice,
-        orderId: response.orderId || response.orderHashes?.[0],
+        orderId: respAny?.orderID || respAny?.orderId || respAny?.orderHashes?.[0],
         analysis,
         actualPrice: orderPrice,
         actualSlippagePct: expectedSlippage,
@@ -400,7 +430,6 @@ export async function smartSell(
       };
     } else {
       // Extract error message from various CLOB response structures
-      const respAny = response as any;
       const errorMsg =
         respAny?.errorMsg ||
         respAny?.data?.error ||
