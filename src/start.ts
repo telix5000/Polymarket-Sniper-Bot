@@ -306,6 +306,9 @@ async function runRecoveryExits(
   
   logger.info(`🚨 RECOVERY MODE: Attempting to liquidate positions...`);
   
+  // Track positions that have been successfully exited to avoid duplicate attempts
+  const exitedTokenIds = new Set<string>();
+  
   // Priority 1: Exit ANY profitable position (pnlPct > PROFITABLE_POSITION_THRESHOLD)
   const profitablePositions = positions
     .filter((p) => p.pnlPct > PROFITABLE_POSITION_THRESHOLD)
@@ -319,13 +322,19 @@ async function runRecoveryExits(
     const result = await attemptExit(position, "RECOVERY_PROFIT");
     if (result.success) {
       exitsExecuted++;
+      exitedTokenIds.add(position.tokenId);
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
   
   // Priority 2: Exit near-resolution (curPrice > NEAR_RESOLUTION_PRICE_THRESHOLD)
+  // Filter out already exited positions
   const nearResolution = positions
-    .filter((p) => p.curPrice > NEAR_RESOLUTION_PRICE_THRESHOLD && p.pnlPct > ACCEPTABLE_LOSS_THRESHOLD);
+    .filter((p) => 
+      !exitedTokenIds.has(p.tokenId) &&
+      p.curPrice > NEAR_RESOLUTION_PRICE_THRESHOLD && 
+      p.pnlPct > ACCEPTABLE_LOSS_THRESHOLD
+    );
   
   for (const position of nearResolution) {
     logger.info(
@@ -335,14 +344,20 @@ async function runRecoveryExits(
     const result = await attemptExit(position, "RECOVERY_RESOLUTION");
     if (result.success) {
       exitsExecuted++;
+      exitedTokenIds.add(position.tokenId);
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
   
   // Priority 3: If balance < EMERGENCY_BALANCE_THRESHOLD, exit small losers
+  // Filter out already exited positions
   if (balance < EMERGENCY_BALANCE_THRESHOLD) {
     const smallLosers = positions
-      .filter((p) => p.pnlPct > MAX_ACCEPTABLE_LOSS && p.pnlPct <= PROFITABLE_POSITION_THRESHOLD)
+      .filter((p) => 
+        !exitedTokenIds.has(p.tokenId) &&
+        p.pnlPct > MAX_ACCEPTABLE_LOSS && 
+        p.pnlPct <= PROFITABLE_POSITION_THRESHOLD
+      )
       .sort((a, b) => b.pnlPct - a.pnlPct); // Least losing first
     
     for (const position of smallLosers) {
@@ -353,6 +368,7 @@ async function runRecoveryExits(
       const result = await attemptExit(position, "RECOVERY_EMERGENCY");
       if (result.success) {
         exitsExecuted++;
+        exitedTokenIds.add(position.tokenId);
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     }
@@ -1641,7 +1657,7 @@ async function main(): Promise<void> {
     state.address = authResult.address;
 
     // Initialize Error Reporter
-    state.errorReporter = new ErrorReporter(logger);
+    state.errorReporter = errorReporter;
 
     // Check startup balance and determine if recovery mode needed
     const usdcBalance = await getUsdcBalance(
