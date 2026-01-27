@@ -351,10 +351,11 @@ export async function smartSell(
     const orderPrice =
       orderType === "FOK" ? analysis.expectedAvgPrice : analysis.bestBid;
 
-    // Minimum acceptable price (floor)
-    const minAcceptablePrice = position.avgPrice * (1 - maxSlippage / 100);
+    // Minimum acceptable price (floor) - calculated from best bid minus slippage
+    // This protects against the order executing at a much worse price than expected
+    const minAcceptablePrice = analysis.bestBid * (1 - maxSlippage / 100);
 
-    // Don't sell below cost basis - slippage tolerance
+    // Don't sell at a price that would exceed our slippage tolerance
     if (orderPrice < minAcceptablePrice && !config?.forceSell) {
       logger?.warn?.(
         `SmartSell rejected: Price too low (${(orderPrice * 100).toFixed(1)}¢ < ` +
