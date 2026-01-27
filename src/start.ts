@@ -3123,9 +3123,9 @@ function isDirectlyExecuted(): boolean {
   // If we're in a test environment, don't run
   if (process.env.NODE_ENV === "test") return false;
   
-  // Check if process.argv[1] contains our filename
+  // Check if process.argv[1] ends with our filename (start.js or start.ts)
   const scriptPath = process.argv[1] || "";
-  return scriptPath.includes("start");
+  return scriptPath.endsWith("start.js") || scriptPath.endsWith("start.ts");
 }
 
 if (isDirectlyExecuted()) {
