@@ -84,6 +84,11 @@ import {
   type StrategyPerformance,
 } from "./core/oracle";
 
+import {
+  calculateIntelligentReserves,
+  type ReserveBreakdown,
+} from "./core/reserves";
+
 // APEX v3.0 Strategy Modules
 import {
   detectMomentum,
@@ -93,6 +98,9 @@ import {
   type HunterOpportunity,
   type MarketSnapshot,
 } from "./strategies/hunter";
+
+// APEX v3.0 Monitoring
+import { ErrorReporter } from "./monitoring/error-reporter";
 
 // ============================================
 // STATE - APEX v3.0
@@ -136,6 +144,14 @@ interface State {
   lastOracleReview: number;
   weekStartTime: number;
   weekStartBalance: number;
+  
+  // Balance tracking (CRITICAL for v3.0)
+  lastKnownBalance: number;
+  lastBalanceCheck: number;
+  tradingHalted: boolean;
+  haltReason: string;
+  lowBalanceWarned: boolean;
+  hourlySpendingLimitReached: boolean;
 }
 
 const state: State = {
@@ -163,6 +179,12 @@ const state: State = {
   lastOracleReview: 0,
   weekStartTime: Date.now(),
   weekStartBalance: 0,
+  lastKnownBalance: 0,
+  lastBalanceCheck: 0,
+  tradingHalted: false,
+  haltReason: "",
+  lowBalanceWarned: false,
+  hourlySpendingLimitReached: false,
 };
 
 // ============================================
@@ -232,6 +254,8 @@ async function initializeAPEX(): Promise<void> {
   
   state.startBalance = await getUsdcBalance(state.wallet, state.address);
   state.currentBalance = state.startBalance;
+  state.lastKnownBalance = state.startBalance;
+  state.lastBalanceCheck = Date.now();
   
   // Detect account tier
   state.tier = getAccountTier(state.startBalance);
@@ -292,58 +316,211 @@ async function initializeAPEX(): Promise<void> {
 }
 
 // ============================================
+// APEX v3.0 - FIREWALL (CIRCUIT BREAKER)
+// ============================================
+
+async function runFirewallCheck(currentBalance: number, positions: Position[]): Promise<void> {
+  // CRITICAL: HALT IF BALANCE TOO LOW
+  if (currentBalance < 20) {
+    logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    logger.error(`🚨 APEX FIREWALL: CRITICAL LOW BALANCE`);
+    logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    logger.error(`   Balance: ${$(currentBalance)}`);
+    logger.error(`   Minimum: $20.00`);
+    logger.error(`   Status: TRADING HALTED ⛔`);
+    logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    
+    await sendTelegram("🚨 APEX FIREWALL: TRADING HALTED",
+      `Balance critically low: ${$(currentBalance)}\n\n` +
+      `Trading halted until manual intervention.\n` +
+      `Minimum balance: $20.00`
+    );
+    
+    state.tradingHalted = true;
+    state.haltReason = "CRITICAL_LOW_BALANCE";
+    return;
+  }
+  
+  // Reset halt if balance recovered
+  if (state.tradingHalted && currentBalance >= 20) {
+    state.tradingHalted = false;
+    state.haltReason = "";
+    logger.info(`✅ APEX Firewall: Trading resumed (balance: ${$(currentBalance)})`);
+    await sendTelegram("✅ APEX FIREWALL: TRADING RESUMED",
+      `Balance recovered: ${$(currentBalance)}\n` +
+      `Trading has been resumed.`
+    );
+  }
+  
+  // WARNING: BALANCE GETTING LOW
+  if (currentBalance < 50 && !state.lowBalanceWarned) {
+    logger.warn(`⚠️ APEX FIREWALL: Low Balance Warning`);
+    logger.warn(`   Balance: ${$(currentBalance)}`);
+    
+    await sendTelegram("⚠️ LOW BALANCE WARNING",
+      `Balance: ${$(currentBalance)}\n` +
+      `Reducing position sizes\n` +
+      `Consider adding funds`
+    );
+    
+    state.lowBalanceWarned = true;
+  } else if (currentBalance >= 100 && state.lowBalanceWarned) {
+    // Reset warning if balance recovered
+    state.lowBalanceWarned = false;
+  }
+  
+  // HOURLY SPENDING LIMIT
+  const hourAgo = Date.now() - 60 * 60 * 1000;
+  const recentTrades = state.oracleState.trades.filter(t => t.timestamp > hourAgo);
+  const recentSpending = recentTrades.reduce((sum, t) => sum + (t.pnl < 0 ? Math.abs(t.pnl) : 0), 0);
+  
+  const maxSpendPerHour = currentBalance * (state.modeConfig.maxExposurePct / 100) * 0.5;
+  
+  if (recentSpending >= maxSpendPerHour) {
+    if (!state.hourlySpendingLimitReached) {
+      logger.warn(`⚠️ APEX Firewall: Hourly spending limit reached`);
+      logger.warn(`   Spent: ${$(recentSpending)}`);
+      logger.warn(`   Limit: ${$(maxSpendPerHour)}/hour`);
+    }
+    state.hourlySpendingLimitReached = true;
+  } else {
+    state.hourlySpendingLimitReached = false;
+  }
+}
+
+// ============================================
 // TRADING FUNCTIONS
 // ============================================
 
 async function buy(
   tokenId: string,
   outcome: "YES" | "NO",
-  sizeUsd: number,
+  requestedSize: number,
   reason: string,
   strategy: StrategyType,
   marketId?: string,
   shares?: number,
 ): Promise<boolean> {
-  if (!state.client) return false;
+  if (!state.client || !state.wallet) return false;
+
+  // CRITICAL: Fetch current balance FIRST (always get fresh balance before trading)
+  let currentBalance: number;
+  try {
+    currentBalance = await getUsdcBalance(state.wallet, state.address);
+    state.lastKnownBalance = currentBalance;
+    state.lastBalanceCheck = Date.now();
+  } catch (error) {
+    logger.error(`❌ Failed to check balance: ${error}`);
+    return false;
+  }
+
+  // CRITICAL: Halt if balance too low
+  if (currentBalance < 10) {
+    logger.error(`🚨 BALANCE TOO LOW: ${$(currentBalance)}`);
+    await sendTelegram("🚨 CRITICAL: LOW BALANCE",
+      `Balance: ${$(currentBalance)}\n` +
+      `Cannot place orders! Minimum: $10`
+    );
+    return false;
+  }
+
+  // Get current positions for reserve calculation
+  let positions: Position[] = [];
+  try {
+    positions = await getPositions(state.address);
+  } catch (error) {
+    logger.warn(`⚠️ Failed to fetch positions for reserve calculation, using empty list`);
+  }
+
+  // Calculate intelligent reserves
+  const reserves = calculateIntelligentReserves(currentBalance, positions);
+  const availableCapital = reserves.availableForTrading;
+
+  if (availableCapital <= 0) {
+    logger.warn(`⚠️ No capital available (all reserved)`);
+    return false;
+  }
+
+  // Calculate dynamic size based on balance and strategy
+  const dynamicSize = calculatePositionSize(currentBalance, state.modeConfig, strategy);
+
+  // CRITICAL: Cap to available capital and requested size
+  let finalSize = Math.min(requestedSize, dynamicSize, availableCapital);
+
+  // CRITICAL: Minimum order size
+  if (finalSize < 5) {
+    if (logger.debug) {
+      logger.debug(`⏭️ Position too small: ${$(finalSize)} (min $5)`);
+    }
+    return false;
+  }
+
+  // CRITICAL: Verify sufficient balance (final safety check)
+  if (finalSize > currentBalance) {
+    logger.error(`🚨 IMPOSSIBLE ORDER: Size ${$(finalSize)} > Balance ${$(currentBalance)}`);
+    return false;
+  }
+
+  // Log trade details
+  logger.info(`⚡ APEX ${strategy}: Buying ${outcome}`);
+  logger.info(`   Balance: ${$(currentBalance)}`);
+  logger.info(`   Available: ${$(availableCapital)}`);
+  logger.info(`   Requested: ${$(requestedSize)}`);
+  logger.info(`   Placing: ${$(finalSize)}`);
 
   if (!state.liveTrading) {
-    logger.info(`🔸 [SIM] ⚡ APEX ${strategy}: BUY ${outcome} ${$(sizeUsd)} | ${reason}`);
-    await sendTelegram(`[SIM] APEX ${strategy} BUY`, `${reason}\n${outcome} ${$(sizeUsd)}`);
+    logger.info(`🔸 [SIM] ⚡ APEX ${strategy}: BUY ${outcome} ${$(finalSize)} | ${reason}`);
+    await sendTelegram(`[SIM] APEX ${strategy} BUY`, `${reason}\n${outcome} ${$(finalSize)}`);
+    
+    // Update cached balance for simulation
+    state.lastKnownBalance = currentBalance - finalSize;
     
     // Don't record simulated buys - only record sells with actual P&L
     return true;
   }
 
-  const result = await postOrder({
-    client: state.client,
-    tokenId,
-    outcome,
-    side: "BUY",
-    sizeUsd,
-    marketId,
-    shares,
-    logger,
-  });
+  // Place order
+  try {
+    const result = await postOrder({
+      client: state.client,
+      tokenId,
+      outcome,
+      side: "BUY",
+      sizeUsd: finalSize,
+      marketId,
+      shares,
+      logger,
+    });
 
-  if (result.success) {
-    logger.info(
-      `✅ ⚡ APEX ${strategy}: BUY ${outcome} ${$(result.filledUsd ?? sizeUsd)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢ | ${reason}`,
-    );
-    await sendTelegram(
-      `⚡ APEX ${strategy} BUY`,
-      `${reason}\n${outcome} ${$(result.filledUsd ?? sizeUsd)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢`,
-    );
-    
-    // Don't record buy trades in Oracle - only record sells with actual P&L
-    state.tradesExecuted++;
-    invalidatePositions();
-    return true;
-  }
+    if (result.success) {
+      // Update cached balance
+      state.lastKnownBalance = currentBalance - finalSize;
+      
+      logger.info(
+        `✅ ⚡ APEX ${strategy}: BUY ${outcome} ${$(result.filledUsd ?? finalSize)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢ | ${reason}`,
+      );
+      logger.info(`   New balance: ~${$(state.lastKnownBalance)}`);
+      
+      await sendTelegram(
+        `⚡ APEX ${strategy} BUY`,
+        `${reason}\n${outcome} ${$(result.filledUsd ?? finalSize)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢\n` +
+        `Balance: ~${$(state.lastKnownBalance)}`
+      );
+      
+      // Don't record buy trades in Oracle - only record sells with actual P&L
+      state.tradesExecuted++;
+      invalidatePositions();
+      return true;
+    }
 
-  if (result.reason !== "SIMULATED") {
-    logger.warn(`⚡ APEX ${strategy}: BUY failed - ${result.reason} | ${reason}`);
+    if (result.reason !== "SIMULATED") {
+      logger.warn(`⚡ APEX ${strategy}: BUY failed - ${result.reason} | ${reason}`);
+    }
+    return false;
+  } catch (error) {
+    logger.error(`❌ Order error: ${error}`);
+    return false;
   }
-  return false;
 }
 
 async function sell(
@@ -814,6 +991,8 @@ async function runAPEXCycle(): Promise<void> {
   if (!state.wallet) return;
   try {
     state.currentBalance = await getUsdcBalance(state.wallet, state.address);
+    state.lastKnownBalance = state.currentBalance;
+    state.lastBalanceCheck = Date.now();
   } catch (error) {
     logger.error(`Failed to update USDC balance; using last known balance: ${error}`);
   }
@@ -825,6 +1004,21 @@ async function runAPEXCycle(): Promise<void> {
   } catch (error) {
     logger.error(`Failed to fetch positions; continuing with empty positions: ${error}`);
     positions = [];
+  }
+  
+  // ============================================
+  // PRIORITY -1: FIREWALL CHECK (CRITICAL!)
+  // ============================================
+  await runFirewallCheck(state.currentBalance, positions);
+  
+  // HALT if trading disabled
+  if (state.tradingHalted) {
+    logger.error(`⛔ Trading halted: ${state.haltReason}`);
+    // Still allow exits and redemptions even when halted
+    await runBlitzExits(positions);
+    await runCommandExits(positions);
+    await runRedeem();
+    return;
   }
   
   // Clear acted positions at start of each cycle
@@ -850,30 +1044,46 @@ async function runAPEXCycle(): Promise<void> {
   // PRIORITY 3: ENTRIES (Deploy capital)
   // ============================================
   
-  // Execute Hunter opportunities first (highest priority)
-  await executeHunterOpportunities(opportunities, state.currentBalance);
-  
-  // Then run strategy-based entries based on Oracle allocations
-  const allocations = state.strategyAllocations;
-  
-  if ((allocations.get(Strategy.VELOCITY) ?? 0) > 0) {
-    await runVelocityStrategy(positions, state.currentBalance);
-  }
-  
-  if ((allocations.get(Strategy.SHADOW) ?? 0) > 0) {
-    await runShadowStrategy(positions, state.currentBalance);
-  }
-  
-  if ((allocations.get(Strategy.GRINDER) ?? 0) > 0) {
-    await runGrinderStrategy(positions, state.currentBalance);
-  }
-  
-  if ((allocations.get(Strategy.CLOSER) ?? 0) > 0) {
-    await runCloserStrategy(positions, state.currentBalance);
-  }
-  
-  if ((allocations.get(Strategy.AMPLIFIER) ?? 0) > 0) {
-    await runAmplifierStrategy(positions, state.currentBalance);
+  // Check if hourly spending limit reached
+  if (state.hourlySpendingLimitReached) {
+    if (logger.debug) {
+      logger.debug(`⏭️ Hourly spending limit reached, skipping new entries`);
+    }
+  } else {
+    // Calculate available capital
+    const reserves = calculateIntelligentReserves(state.currentBalance, positions);
+    
+    if (reserves.availableForTrading > 5) {
+      // Execute Hunter opportunities first (highest priority)
+      await executeHunterOpportunities(opportunities, state.currentBalance);
+      
+      // Then run strategy-based entries based on Oracle allocations
+      const allocations = state.strategyAllocations;
+      
+      if ((allocations.get(Strategy.VELOCITY) ?? 0) > 0) {
+        await runVelocityStrategy(positions, state.currentBalance);
+      }
+      
+      if ((allocations.get(Strategy.SHADOW) ?? 0) > 0) {
+        await runShadowStrategy(positions, state.currentBalance);
+      }
+      
+      if ((allocations.get(Strategy.GRINDER) ?? 0) > 0) {
+        await runGrinderStrategy(positions, state.currentBalance);
+      }
+      
+      if ((allocations.get(Strategy.CLOSER) ?? 0) > 0) {
+        await runCloserStrategy(positions, state.currentBalance);
+      }
+      
+      if ((allocations.get(Strategy.AMPLIFIER) ?? 0) > 0) {
+        await runAmplifierStrategy(positions, state.currentBalance);
+      }
+    } else {
+      if (logger.debug) {
+        logger.debug(`⏭️ No capital available for new entries`);
+      }
+    }
   }
   
   // ============================================
@@ -907,6 +1117,11 @@ async function runAPEXCycle(): Promise<void> {
 // ============================================
 
 async function main(): Promise<void> {
+  // Initialize error reporter
+  const errorReporter = new ErrorReporter(logger, {
+    githubToken: process.env.GITHUB_ERROR_REPORTER_TOKEN,
+  });
+  
   try {
     // Get environment variables
     const privateKey = process.env.PRIVATE_KEY;
@@ -987,6 +1202,14 @@ async function main(): Promise<void> {
         await runAPEXCycle();
       } catch (err) {
         logger.error(`⚠️  Cycle error: ${err}`);
+        
+        // Report error to GitHub
+        await errorReporter.reportError(err as Error, {
+          operation: "apex_main_cycle",
+          balance: state.lastKnownBalance,
+          cycleCount: state.cycleCount,
+        });
+        
         await sendTelegram("⚠️ Cycle Error", String(err));
       }
 
@@ -994,6 +1217,13 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     logger.error(`❌ Fatal error: ${err}`);
+    
+    // Report fatal error to GitHub
+    await errorReporter.reportError(err as Error, {
+      operation: "apex_initialization",
+      balance: state.startBalance,
+    });
+    
     await sendTelegram("❌ Fatal Error", String(err));
     process.exit(1);
   }
