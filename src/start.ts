@@ -23,7 +23,6 @@
 
 import "dotenv/config";
 import type { ClobClient } from "@polymarket/clob-client";
-import { Side, OrderType } from "@polymarket/clob-client";
 import type { Wallet } from "ethers";
 import { Contract } from "ethers";
 import axios from "axios";
@@ -36,11 +35,10 @@ import {
   // Auth
   createClobClient,
   isLiveTradingEnabled,
-  getAuthDiagnostics,
   // Config
-  TIMING,
   ORDER,
   POLYGON,
+  SELL,
   // Data
   getPositions,
   invalidatePositions,
@@ -49,6 +47,9 @@ import {
   getUsdcAllowance,
   // Trading
   postOrder,
+  // Smart Sell (improved sell execution)
+  smartSell,
+  type SmartSellConfig,
   // Copy trading
   getTargetAddresses,
   fetchRecentTrades,
@@ -57,13 +58,14 @@ import {
   sendTelegram,
   // Redemption
   redeemAll,
+  redeemAllPositions,
+  fetchRedeemablePositions,
   // VPN
   capturePreVpnRouting,
   startWireguard,
   startOpenvpn,
   setupRpcBypass,
   setupPolymarketReadBypass,
-  checkVpnForTrading,
 } from "./lib";
 
 // APEX v3.0 Core Modules
@@ -258,7 +260,6 @@ interface State {
   orderBookDepth: number;
 
   // Timing
-  lastRedeem: number;
   lastSummary: number;
   lastOracleReview: number;
   weekStartTime: number;
@@ -313,7 +314,6 @@ const state: State = {
   // Future enhancement: populate these from market data API calls.
   volume24h: 0,
   orderBookDepth: 0,
-  lastRedeem: 0,
   lastSummary: 0,
   lastOracleReview: 0,
   weekStartTime: Date.now(),
@@ -440,6 +440,35 @@ function displayStartupDashboard(
   
   logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   logger.info(``);
+}
+
+/**
+ * Run auto-redeem check
+ * Called periodically to claim resolved positions
+ */
+async function runAutoRedeem(): Promise<number> {
+  if (!state.wallet) return 0;
+
+  // Check frequency depends on mode:
+  // - Recovery mode: every 10 cycles (more urgent - need liquidity)
+  // - Normal mode: every 50 cycles (periodic cleanup)
+  const checkInterval = state.recoveryMode ? 10 : 50;
+  if (state.cycleCount % checkInterval !== 0) return 0;
+
+  logger.debug?.(`Checking for redeemable positions...`);
+
+  const result = await redeemAllPositions(state.wallet, state.address, logger);
+
+  if (result.redeemed > 0) {
+    await sendTelegram(
+      "🎁 AUTO-REDEEM",
+      `Redeemed ${result.redeemed} market(s)\n` +
+        `Approximate value: $${result.totalValue.toFixed(2)}\n\n` +
+        `Check USDC balance for payouts!`,
+    );
+  }
+
+  return result.redeemed;
 }
 
 /**
@@ -782,12 +811,22 @@ async function checkPolBalance(): Promise<void> {
 }
 
 /**
- * Sell a position using scavenger's proven sell logic
- * Based on src/lib/scavenger.ts executeSell() (lines 519-541)
+ * Sell a position using SmartSell with improved protections
+ * 
+ * IMPROVEMENTS over the old implementation:
+ * 1. Orderbook depth analysis - calculates expected fill price before executing
+ * 2. Dynamic slippage - adjusts based on position state (profit, loss, near-resolution)
+ * 3. Liquidity checks - won't sell into thin orderbooks unless forced
+ * 4. Better logging - shows expected vs actual fills
+ * 
+ * @param position - Position to sell
+ * @param reason - Reason for selling (for logging/telegram)
+ * @param forceSell - If true, sell regardless of liquidity conditions (for stop-loss)
  */
 async function sellPosition(
   position: Position,
-  reason: string
+  reason: string,
+  forceSell: boolean = false
 ): Promise<boolean> {
   
   if (!state.client) return false;
@@ -814,14 +853,17 @@ async function sellPosition(
   logger.info(`   Reason: ${reason}`);
   
   try {
-    // Get orderbook
-    const book = await state.client.getOrderBook(position.tokenId);
-    if (!book?.bids?.length) {
-      logger.warn(`❌ No bids available for ${position.tokenId}`);
-      return false;
+    // Configure smart sell based on position state
+    const config: SmartSellConfig = {
+      logger,
+      forceSell,
+    };
+    
+    // If this is a stop-loss scenario (significant loss), allow more slippage
+    if (position.pnlPct <= -SELL.LOSS_THRESHOLD_PCT) {
+      config.maxSlippagePct = SELL.LOSS_SLIPPAGE_PCT;
+      logger.info(`   ⚠️ Stop-loss mode: allowing ${SELL.LOSS_SLIPPAGE_PCT}% slippage`);
     }
-
-    const bestBid = parseFloat(book.bids[0].price);
     
     // Minimum price check (allow 5% slippage for exits - more lenient than buys)
     // This helps ensure positions can be liquidated in volatile conditions
@@ -829,36 +871,49 @@ async function sellPosition(
     if (bestBid < minPrice) {
       logger.warn(`❌ Price too low: ${(bestBid * 100).toFixed(0)}¢ < ${(minPrice * 100).toFixed(0)}¢ (min 95% of entry)`);
       return false;
+    // If position is near resolution ($0.95+), use tighter slippage
+    if (position.curPrice >= SELL.HIGH_PRICE_THRESHOLD) {
+      config.maxSlippagePct = SELL.HIGH_PRICE_SLIPPAGE_PCT;
+      logger.info(`   💎 High-probability position: using tight ${SELL.HIGH_PRICE_SLIPPAGE_PCT}% slippage`);
     }
-
-    // Create and sign SELL order (THIS IS THE CRITICAL PART!)
-    const signed = await state.client.createMarketOrder({
-      side: Side.SELL,  // ← This is what makes it a SELL
-      tokenID: position.tokenId,
-      amount: position.size,
-      price: bestBid,
-    });
     
-    const resp = await state.client.postOrder(signed, OrderType.FOK);
-
-    if (resp.success) {
-      const filled = position.size * bestBid;
-      logger.info(`✅ Sold: $${filled.toFixed(2)}`);
+    // Execute smart sell
+    const result = await smartSell(state.client, position, config);
+    
+    if (result.success) {
+      const filled = result.filledUsd ?? (position.size * (result.avgPrice ?? position.curPrice));
+      const actualSlippage = result.actualSlippagePct ?? 0;
       
-      // Note: We intentionally keep the positionCache entry here.
-      // It will be cleaned up naturally when the position no longer appears in getPositions.
-      // This avoids issues where subsequent strategies in the same cycle might reference stale data.
+      logger.info(`✅ Sold: $${filled.toFixed(2)}`);
+      if (result.analysis) {
+        logger.info(`   Best bid: ${(result.analysis.bestBid * 100).toFixed(1)}¢`);
+        logger.info(`   Avg fill: ${((result.avgPrice ?? position.curPrice) * 100).toFixed(1)}¢`);
+        logger.info(`   Slippage: ${actualSlippage.toFixed(2)}%`);
+        logger.info(`   Order type: ${result.orderType ?? 'FOK'}`);
+      }
       
       await sendTelegram("💰 POSITION SOLD",
-        `${position.outcome} @ ${(bestBid * 100).toFixed(0)}¢\n` +
+        `${position.outcome} @ ${((result.avgPrice ?? position.curPrice) * 100).toFixed(0)}¢\n` +
         `P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%\n` +
         `Received: $${filled.toFixed(2)}\n` +
+        `Slippage: ${actualSlippage.toFixed(2)}%\n` +
         `Reason: ${reason}`
       );
       
       return true;
     } else {
-      logger.warn(`❌ Sell failed: ${resp.errorMsg || 'Unknown error'}`);
+      logger.warn(`❌ Sell failed: ${result.reason}`);
+      
+      // Provide helpful context on why the sell failed
+      if (result.analysis) {
+        logger.warn(`   Best bid: ${(result.analysis.bestBid * 100).toFixed(1)}¢`);
+        logger.warn(`   Expected slippage: ${result.analysis.expectedSlippagePct.toFixed(2)}%`);
+        logger.warn(`   Liquidity: $${result.analysis.liquidityAtSlippage.toFixed(2)}`);
+        // Note: we skip calling getSellRecommendation here to avoid
+        // an additional orderbook fetch; the above analysis already explains
+        // why the sell failed.
+      }
+      
       return false;
     }
   } catch (error) {
@@ -1010,7 +1065,38 @@ async function initializeAPEX(): Promise<void> {
     `📊 Account Tier: ${state.tier.description} (${state.tier.multiplier}× multiplier)`,
   );
   logger.info(``);
-  
+
+  // Check for redeemable positions on startup
+  logger.info(`🎁 Checking for resolved positions to redeem...`);
+
+  const redeemResult = await redeemAllPositions(
+    state.wallet,
+    state.address,
+    logger,
+  );
+
+  if (redeemResult.redeemed > 0) {
+    logger.info(
+      `✅ Redeemed ${redeemResult.redeemed} position(s) on startup`,
+    );
+
+    // Refresh balance
+    state.startBalance = await getUsdcBalance(state.wallet, state.address);
+    state.currentBalance = state.startBalance;
+    state.lastKnownBalance = state.startBalance;
+
+    await sendTelegram(
+      "🎁 Startup Redemption",
+      `Redeemed ${redeemResult.redeemed} market(s)\n` +
+        `New balance: ${$(state.startBalance)}`,
+    );
+
+    // Recalculate tier with new balance
+    state.tier = getAccountTier(state.startBalance);
+  }
+
+  logger.info(``);
+
   // STEP 2: Auto-approve USDC
   await ensureUSDCApproval();
 
@@ -2253,29 +2339,6 @@ async function runOracleReview(): Promise<void> {
 // APEX v3.0 - REDEMPTION
 // ============================================
 
-async function runRedeem(): Promise<void> {
-  if (!state.wallet) return;
-
-  const now = Date.now();
-  const intervalMin = 60; // Redeem every 60 minutes
-  if (now - state.lastRedeem < intervalMin * 60 * 1000) return;
-
-  state.lastRedeem = now;
-  const minPositionUsd = 0.1; // Minimum $0.10 to redeem
-  const count = await redeemAll(
-    state.wallet,
-    state.address,
-    minPositionUsd,
-    logger,
-  );
-
-  if (count > 0) {
-    logger.info(`💰 Redeemed ${count} positions`);
-    await sendTelegram("💰 Redeem", `Redeemed ${count} positions`);
-    invalidatePositions();
-  }
-}
-
 // ============================================
 // APEX v3.0 - MAIN EXECUTION CYCLE
 // ============================================
@@ -2328,6 +2391,44 @@ async function runAPEXCycle(): Promise<void> {
     }
     
     if (state.recoveryMode) {
+      // PRIORITY 0: Auto-redeem resolved markets (FREE MONEY!)
+      const redeemed = await runAutoRedeem();
+      if (redeemed > 0) {
+        logger.info(
+          `✅ Auto-redeemed ${redeemed} positions - checking new balance...`,
+        );
+
+        // Refresh balance after redemption
+        try {
+          const newBalance = await getUsdcBalance(state.wallet, state.address);
+          state.currentBalance = newBalance;
+          state.lastKnownBalance = newBalance;
+
+          if (newBalance >= RECOVERY_MODE_BALANCE_THRESHOLD) {
+            logger.info(
+              `🎉 RECOVERY COMPLETE! Balance: ${$(newBalance)}`,
+            );
+            state.recoveryMode = false;
+            state.prioritizeExits = false;
+
+            await sendTelegram(
+              "✅ RECOVERY COMPLETE (via redemption)",
+              `Balance restored: ${$(newBalance)}\n` +
+                `Redeemed ${redeemed} positions\n\n` +
+                `Resuming normal trading`,
+            );
+
+            return; // Exit recovery mode
+          }
+
+          logger.info(
+            `📊 Balance after redemption: ${$(newBalance)} (need $${RECOVERY_MODE_BALANCE_THRESHOLD})`,
+          );
+        } catch (error) {
+          logger.error(`Failed to update balance after redemption: ${error}`);
+        }
+      }
+
       // Run recovery exits
       const exitsCount = await runRecoveryExits(positions, state.currentBalance);
       
@@ -2378,7 +2479,12 @@ async function runAPEXCycle(): Promise<void> {
       logger.info(`📤 Exited ${exitCount} positions while halted`);
       invalidatePositions();
     }
-    await runRedeem();
+    // Check for redemptions even when halted
+    const redeemed = await runAutoRedeem();
+    if (redeemed > 0) {
+      logger.info(`💰 Auto-redeemed ${redeemed} positions while halted`);
+      invalidatePositions();
+    }
     return;
   }
 
@@ -2411,7 +2517,20 @@ async function runAPEXCycle(): Promise<void> {
   // ============================================
   // PRIORITY 2: REDEMPTION (Convert wins to USDC)
   // ============================================
-  await runRedeem();
+  // Auto-redeem runs every 50 cycles in normal mode, every 10 in recovery
+  const redeemed = await runAutoRedeem();
+  if (redeemed > 0) {
+    logger.info(`💰 Auto-redeemed ${redeemed} positions`);
+    invalidatePositions(); // Force refresh after redemption
+    
+    // Refresh balance after redemption
+    try {
+      state.currentBalance = await getUsdcBalance(state.wallet, state.address);
+      state.lastKnownBalance = state.currentBalance;
+    } catch (error) {
+      logger.error(`Failed to update balance after redemption: ${error}`);
+    }
+  }
 
   // ============================================
   // PRIORITY 3: ENTRIES (Deploy capital)
