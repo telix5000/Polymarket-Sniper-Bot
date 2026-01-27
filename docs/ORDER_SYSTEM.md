@@ -87,7 +87,7 @@ When a whale trades, the system captures the following signal:
 interface TradeSignal {
   tokenId: string;      // The outcome token (YES/NO)
   conditionId: string;  // Unique market condition
-  marketId: string;     // Market identifier
+  marketId?: string;    // Market identifier (optional - some data sources may not provide it)
   outcome: string;      // "YES" or "NO"
   side: OrderSide;      // "BUY" or "SELL"
   sizeUsd: number;      // Trade size in USD
@@ -402,8 +402,8 @@ When a Polymarket market **resolves** (outcome determined), winning positions be
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `redeemIntervalMin` | 15 | Check for redeemable positions every 15 min |
-| `minPositionUsd` | $0.10 | Minimum value to redeem |
+| Redemption interval | ~10 min | Check for redeemable positions approximately every 10 minutes (hard-coded) |
+| Minimum size filter | N/A | No minimum-size filter applied; all eligible positions are redeemed |
 
 ### Proxy Wallet Support
 
@@ -415,12 +415,41 @@ If using a Polymarket proxy wallet, redemption routes through the proxy contract
 
 ### User Configurable
 
+#### Core Settings
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `MAX_TRADE_USD` | $25 | Your bet size per trade |
 | `LIVE_TRADING` | - | Set to `I_UNDERSTAND_THE_RISKS` to enable |
 | `PRIVATE_KEY` | - | Your wallet private key |
 | `RPC_URL` | polygon-rpc.com | Polygon RPC endpoint |
+
+#### Telegram Notifications (Optional)
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `TELEGRAM_BOT_TOKEN` | - | Telegram bot token for notifications |
+| `TELEGRAM_CHAT_ID` | - | Telegram chat ID for notifications |
+
+#### On-Chain Monitoring
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `ONCHAIN_MONITOR_ENABLED` | true | Watch CTF Exchange contract via Infura WebSocket |
+| `ONCHAIN_MIN_WHALE_TRADE_USD` | $500 | Minimum trade size to track on-chain |
+| `INFURA_TIER` | core | Infura plan: "core" (free), "developer", "team", "growth" |
+
+#### Liquidation Mode
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `FORCE_LIQUIDATION` | false | Force sell existing positions when balance is too low |
+| `LIQUIDATION_MAX_SLIPPAGE_PCT` | 10% | Max slippage for liquidation sells |
+| `LIQUIDATION_POLL_INTERVAL_MS` | 1000 | Poll interval in liquidation mode (ms) |
+
+#### POL Reserve (Auto Gas Fill)
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `POL_RESERVE_TARGET` | 50 | Target POL when refilling |
+| `POL_RESERVE_MIN` | 0.5 | Trigger threshold (refill when below this) |
+| `POL_RESERVE_MAX_SWAP_USD` | $10 | Max USDC per swap |
+| `POL_RESERVE_CHECK_INTERVAL_MIN` | 5 | Check every N minutes |
 
 ### Fixed Parameters (Do Not Change)
 
@@ -472,6 +501,8 @@ These are fixed by the EV math:
 | `PRICE_SLIPPAGE` | Price moved too much |
 | `CLOUDFLARE_BLOCKED` | IP blocked (need VPN) |
 | `NO_FILLS` | Order couldn't fill |
+| `FOK_NOT_FILLED` | Fill-or-kill order did not fully fill |
+| `ORDER_FAILED` | Generic order placement or execution failure |
 | `INSUFFICIENT_LIQUIDITY` | Not enough orderbook depth |
 | `SLIPPAGE_TOO_HIGH` | Expected slippage exceeds limit |
 | `POSITION_TOO_SMALL` | Position has no shares |
