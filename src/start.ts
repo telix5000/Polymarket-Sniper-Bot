@@ -71,6 +71,10 @@ import {
   type OnChainMonitorConfig,
   type PositionChangeEvent,
   type OnChainPriceUpdate,
+  // Market utilities for hedge token lookup
+  getOppositeTokenId,
+  getMarketTokenPair,
+  type MarketTokenPair,
 } from "./lib";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1107,9 +1111,10 @@ interface ManagedPosition {
   hedgeTriggerPriceCents: number;
   hardExitPriceCents: number;
 
-  // Hedge
+  // Hedge - including opposite token for proper hedging
   hedges: HedgeLeg[];
   totalHedgeRatio: number;
+  oppositeTokenId?: string; // The opposite outcome token for hedging (YES↔NO)
 
   // Reference
   referencePriceCents: number;
@@ -1208,6 +1213,25 @@ class PositionManager {
     });
 
     return position;
+  }
+
+  /**
+   * Set the opposite token ID for a position (for hedging)
+   * This should be called after opening a position with the result of getOppositeTokenId()
+   */
+  setOppositeToken(positionId: string, oppositeTokenId: string): void {
+    const position = this.positions.get(positionId);
+    if (position) {
+      position.oppositeTokenId = oppositeTokenId;
+      console.log(`🔗 [HEDGE] Linked opposite token ${oppositeTokenId.slice(0, 16)}... for position ${positionId.slice(0, 16)}...`);
+    }
+  }
+
+  /**
+   * Get the opposite token ID for a position
+   */
+  getOppositeToken(positionId: string): string | undefined {
+    return this.positions.get(positionId)?.oppositeTokenId;
   }
 
   /**
@@ -2079,9 +2103,23 @@ class ExecutionEngine {
   ): Promise<ExecutionResult> {
     const evMetrics = this.evTracker.getMetrics();
 
+    // Look up the opposite token ID for hedging BEFORE opening position
+    // This is crucial for proper hedging - we need to know what to buy if we need to hedge
+    let oppositeTokenId: string | null = null;
+    try {
+      oppositeTokenId = await getOppositeTokenId(tokenId);
+      if (oppositeTokenId) {
+        console.log(`🔍 [HEDGE] Found opposite token for hedging: ${oppositeTokenId.slice(0, 16)}...`);
+      } else {
+        console.warn(`⚠️ [HEDGE] Could not find opposite token for ${tokenId.slice(0, 16)}... - hedging will be disabled`);
+      }
+    } catch (err) {
+      console.warn(`⚠️ [HEDGE] Error looking up opposite token: ${err instanceof Error ? err.message : err}`);
+    }
+
     // Simulation mode
     if (!this.config.liveTradingEnabled) {
-      this.positionManager.openPosition({
+      const position = this.positionManager.openPosition({
         tokenId, marketId, side,
         entryPriceCents: priceCents,
         sizeUsd,
@@ -2089,6 +2127,10 @@ class ExecutionEngine {
         evSnapshot: evMetrics,
         biasDirection,
       });
+      // Store opposite token for hedging
+      if (oppositeTokenId) {
+        this.positionManager.setOppositeToken(position.id, oppositeTokenId);
+      }
       console.log(`🎲 [SIM] ${side} $${sizeUsd.toFixed(2)} @ ${priceCents.toFixed(1)}¢`);
       return { success: true, filledUsd: sizeUsd, filledPriceCents: priceCents };
     }
@@ -2114,7 +2156,7 @@ class ExecutionEngine {
       const response = await this.client.postOrder(order, OrderType.FOK);
 
       if (response.success) {
-        this.positionManager.openPosition({
+        const position = this.positionManager.openPosition({
           tokenId, marketId, side,
           entryPriceCents: price * 100,
           sizeUsd,
@@ -2122,6 +2164,10 @@ class ExecutionEngine {
           evSnapshot: evMetrics,
           biasDirection,
         });
+        // Store opposite token for hedging
+        if (oppositeTokenId) {
+          this.positionManager.setOppositeToken(position.id, oppositeTokenId);
+        }
         console.log(`📥 ${side} $${sizeUsd.toFixed(2)} @ ${(price * 100).toFixed(1)}¢`);
         return { success: true, filledUsd: sizeUsd, filledPriceCents: price * 100 };
       }
@@ -2319,16 +2365,83 @@ class ExecutionEngine {
     const hedgeSize = this.decisionEngine.calculateHedgeSize(position);
     const evMetrics = this.evTracker.getMetrics();
 
-    this.positionManager.recordHedge(position.id, {
-      tokenId: position.tokenId + "_HEDGE",
-      sizeUsd: hedgeSize,
-      entryPriceCents: position.currentPriceCents,
-      entryTime: Date.now(),
-    }, evMetrics, biasDirection);
+    // Get the opposite token ID for hedging
+    const oppositeTokenId = position.oppositeTokenId;
+    
+    if (!oppositeTokenId) {
+      console.warn(`⚠️ [HEDGE] No opposite token available for position ${position.id.slice(0, 16)}... - cannot hedge`);
+      return { success: false, reason: "NO_OPPOSITE_TOKEN" };
+    }
 
-    const tag = this.config.liveTradingEnabled ? "" : "[SIM]";
-    console.log(`🛡️ ${tag} Hedged $${hedgeSize.toFixed(2)}`);
-    return { success: true, filledUsd: hedgeSize };
+    // Simulation mode - just record the hedge
+    if (!this.config.liveTradingEnabled) {
+      this.positionManager.recordHedge(position.id, {
+        tokenId: oppositeTokenId, // Use REAL opposite token ID!
+        sizeUsd: hedgeSize,
+        entryPriceCents: position.currentPriceCents,
+        entryTime: Date.now(),
+      }, evMetrics, biasDirection);
+
+      console.log(`🛡️ [SIM] Hedged $${hedgeSize.toFixed(2)} by buying opposite token ${oppositeTokenId.slice(0, 16)}...`);
+      return { success: true, filledUsd: hedgeSize };
+    }
+
+    // Live trading mode - actually place the hedge order!
+    if (!this.client) {
+      console.error(`❌ [HEDGE] No CLOB client available`);
+      return { success: false, reason: "NO_CLIENT" };
+    }
+
+    try {
+      // Get orderbook for the opposite token
+      const orderBook = await this.client.getOrderBook(oppositeTokenId);
+      const asks = orderBook?.asks;
+      
+      if (!asks?.length) {
+        console.warn(`⚠️ [HEDGE] No asks available for opposite token - cannot hedge`);
+        return { success: false, reason: "NO_LIQUIDITY" };
+      }
+
+      const price = parseFloat(asks[0].price);
+      const shares = hedgeSize / price;
+
+      console.log(`🛡️ [HEDGE] Placing hedge order: BUY ${shares.toFixed(4)} shares @ ${(price * 100).toFixed(1)}¢`);
+
+      // Import SDK types
+      const { Side, OrderType } = await import("@polymarket/clob-client");
+      
+      // Create and post hedge order
+      const order = await this.client.createMarketOrder({
+        side: Side.BUY, // Always BUY the opposite token to hedge
+        tokenID: oppositeTokenId,
+        amount: shares,
+        price,
+      });
+
+      const response = await this.client.postOrder(order, OrderType.FOK);
+
+      if (response.success) {
+        // Record the successful hedge with real token ID and fill price
+        const fillPriceCents = price * 100;
+        
+        this.positionManager.recordHedge(position.id, {
+          tokenId: oppositeTokenId,
+          sizeUsd: hedgeSize,
+          entryPriceCents: fillPriceCents,
+          entryTime: Date.now(),
+        }, evMetrics, biasDirection);
+
+        console.log(`✅ [HEDGE] Successfully hedged $${hedgeSize.toFixed(2)} @ ${fillPriceCents.toFixed(1)}¢`);
+        return { success: true, filledUsd: hedgeSize, filledPriceCents: fillPriceCents };
+      } else {
+        console.warn(`⚠️ [HEDGE] Hedge order rejected: ${response.errorMsg || "unknown reason"}`);
+        return { success: false, reason: "ORDER_REJECTED" };
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`❌ [HEDGE] Hedge order failed: ${errorMsg}`);
+      return { success: false, reason: errorMsg };
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
