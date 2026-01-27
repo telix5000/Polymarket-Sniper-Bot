@@ -23,8 +23,10 @@
   ],
   "scripts": {
     "build": "tsc",
-    "start": "node dist/start.js",
-    "dev": "npx ts-node src/start.ts",
+    "start": "node dist/churn-start.js",
+    "start:apex": "node dist/start.js",
+    "dev": "npx ts-node src/churn-start.ts",
+    "dev:apex": "npx ts-node src/start.ts",
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
     "format": "prettier --write .",

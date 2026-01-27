@@ -180,14 +180,15 @@ export function calculateOptimalSlippage(
   position: Position,
   config?: SmartSellConfig,
 ): number {
-  // If forced, use maximum slippage
-  if (config?.forceSell) {
-    return SELL.MAX_SLIPPAGE_PCT;
-  }
-
-  // If explicit slippage provided, use it
+  // If explicit slippage provided, use it (even with forceSell)
+  // This allows liquidation mode to specify custom slippage while still forcing the sell
   if (config?.maxSlippagePct !== undefined) {
     return Math.min(config.maxSlippagePct, SELL.MAX_SLIPPAGE_PCT);
+  }
+
+  // If forced with no explicit slippage, use maximum slippage
+  if (config?.forceSell) {
+    return SELL.MAX_SLIPPAGE_PCT;
   }
 
   // High price positions (near $1) - can use tighter slippage
