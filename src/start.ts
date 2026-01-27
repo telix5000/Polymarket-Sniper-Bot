@@ -1,2770 +1,3063 @@
 /**
- * ⚡ APEX v3.0 - Aggressive Polymarket Execution
+ * ═══════════════════════════════════════════════════════════════════════════
+ * POLYMARKET CASINO BOT - Consolidated Churn Engine
+ * ═══════════════════════════════════════════════════════════════════════════
  *
- * Next-generation trading bot with:
- * - Dynamic position scaling (percentage-based)
- * - Account tier detection (Entry → Elite)
- * - APEX Hunter (active market scanner)
- * - APEX Oracle (daily performance review)
- * - One-line configuration (APEX_MODE=AGGRESSIVE)
+ * A deterministic, math-driven trading system that:
+ * - Trades frequently with positive Expected Value (EV)
+ * - Caps losses strictly
+ * - Runs 24/7 with bias-based (leaderboard flow) permission
+ * - Pauses itself when edge disappears
  *
- * REQUIRED:
- *   PRIVATE_KEY - Wallet private key (0x...)
+ * REQUIRED ENV:
+ *   PRIVATE_KEY - Wallet private key
  *   RPC_URL     - Polygon RPC endpoint
  *
- * OPTIONAL:
- *   APEX_MODE            - CONSERVATIVE | BALANCED | AGGRESSIVE (default: BALANCED)
- *   LIVE_TRADING         - "I_UNDERSTAND_THE_RISKS" to enable
- *   TARGET_ADDRESSES     - Comma-separated addresses to copy
- *   TELEGRAM_BOT_TOKEN   - Telegram alerts
- *   TELEGRAM_CHAT_ID     - Telegram chat
- *   INTERVAL_MS          - Cycle interval (default: 5000)
+ * KEPT FEATURES:
+ *   - VPN support (WireGuard/OpenVPN)
+ *   - Telegram notifications
+ *   - Auto-redeem settled positions
+ *   - Auto-fill POL for gas
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MATH IS LAW. Every parameter is fixed by the EV equation:
+ *
+ *   EV = p(win) × avg_win - p(loss) × avg_loss - churn_cost
+ *
+ * Fixed values:
+ *   avg_win  = 14¢  (TP_CENTS)
+ *   avg_loss = 9¢   (after hedge caps losses)
+ *   churn    = 2¢   (spread + slippage)
+ *
+ * Break-even: p > (9 + 2) / (14 + 9) = 47.8%
+ *
+ *   50% wins → EV positive
+ *   55% wins → solid profit
+ *   60% wins → strong profit
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import "dotenv/config";
-import type { ClobClient } from "@polymarket/clob-client";
-import type { Wallet } from "ethers";
-import { Contract } from "ethers";
 import axios from "axios";
+import type { ClobClient } from "@polymarket/clob-client";
 
+// Keep essential lib modules
 import {
-  // Types
-  type Position,
-  type Logger,
-  type OrderOutcome,
-  // Auth
   createClobClient,
-  isLiveTradingEnabled,
-  // Config
-  ORDER,
-  POLYGON,
-  SELL,
-  // Data
-  getPositions,
-  invalidatePositions,
   getUsdcBalance,
   getPolBalance,
-  getUsdcAllowance,
-  // Trading
-  postOrder,
-  // Smart Sell (improved sell execution)
-  smartSell,
-  type SmartSellConfig,
-  // Copy trading
-  getTargetAddresses,
-  fetchRecentTrades,
-  // Notifications
   initTelegram,
   sendTelegram,
-  // Redemption
-  redeemAll,
   redeemAllPositions,
   fetchRedeemablePositions,
-  // VPN
   capturePreVpnRouting,
   startWireguard,
   startOpenvpn,
   setupRpcBypass,
   setupPolymarketReadBypass,
+  // POL Reserve (auto gas fill)
+  runPolReserve,
+  shouldRebalance,
+  type PolReserveConfig,
+  // Position fetching for liquidation mode
+  getPositions,
+  invalidatePositions,
+  smartSell,
+  type Position,
 } from "./lib";
 
-// APEX v3.0 Core Modules
-import { getApexMode, type ModeConfig } from "./core/modes";
+// ═══════════════════════════════════════════════════════════════════════════
+// CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════
 
-import {
-  getAccountTier,
-  calculatePositionSize,
-  type StrategyType,
-  StrategyType as Strategy,
-  type TierInfo,
-} from "./core/scaling";
-
-import {
-  createOracleState,
-  recordTrade,
-  analyzePerformance,
-  calculateAllocations,
-  type OracleState,
-  type StrategyPerformance,
-} from "./core/oracle";
-
-import { calculateIntelligentReserves } from "./core/reserves";
-
-import {
-  getEmergencySellConfig,
-  calculateEmergencyMinPrice,
-  shouldActivateEmergencySells,
-  logEmergencyConfig,
-  type EmergencySellConfig,
-} from "./core/emergency";
-
-// APEX v3.0 Strategy Modules
-import {
-  detectMomentum,
-  detectMispricing,
-  detectNewMarket,
-  detectSpreadCompression,
-  type HunterOpportunity,
-  type MarketSnapshot,
-} from "./strategies/hunter";
-
-import {
-  detectBlitz,
-  type BlitzSignal,
-} from "./strategies/blitz";
-
-import {
-  detectAutoSell,
-  type CommandSignal,
-} from "./strategies/command";
-
-import {
-  updateRatchet,
-  isRatchetTriggered,
-  calculateOptimalTrailing,
-  type RatchetState,
-  type RatchetSignal,
-} from "./strategies/ratchet";
-
-import {
-  detectLadder,
-  updateLadderState,
-  calculatePartialSize,
-  type LadderState,
-  type LadderSignal,
-  DEFAULT_LADDER,
-} from "./strategies/ladder";
-
-import {
-  detectReaper,
-  shouldEnterScavengerMode,
-  prioritizeReaperExits,
-  type ReaperSignal,
-} from "./strategies/reaper";
-
-// APEX v3.0 Protection Modules
-import {
-  detectShield,
-  type ShieldSignal,
-  type HedgeState,
-} from "./strategies/shield";
-
-import {
-  detectGuardian,
-  isInDangerZone,
-  type GuardianSignal,
-} from "./strategies/guardian";
-
-import {
-  detectSentinel,
-  getSentinelUrgency,
-  type SentinelSignal,
-} from "./strategies/sentinel";
-
-// APEX v3.0 Entry Strategies
-import {
-  calculateVelocity,
-  shouldRideMomentum,
-  isMomentumReversing,
-} from "./strategies/velocity";
-
-import {
-  calculateGrindSize,
-  shouldExitGrind,
-  type MarketMetrics,
-} from "./strategies/grinder";
-
-// APEX v3.0 Firewall Module
-import {
-  checkFirewall,
-  calculateExposure,
-  shouldHaltTrading,
-  getFirewallSummary,
-  type FirewallStatus,
-} from "./strategies/firewall";
-
-// APEX v3.0 Closer Module
-import {
-  detectCloser,
-  shouldExitBeforeClose,
-  calculateCloserSize,
-  type CloserSignal,
-} from "./strategies/closer";
-
-// APEX v3.0 Amplifier Module
-import {
-  detectAmplifier,
-  isSafeToStack,
-  type AmplifierSignal,
-} from "./strategies/amplifier";
-
-// APEX v3.0 Shadow Module
-import {
-  fetchShadowTrades,
-  filterQualityTrades,
-  getTraderStats,
-  type ShadowConfig,
-  type TraderStats,
-} from "./strategies/shadow";
-
-import { POLYMARKET_API } from "./lib/constants";
-
-// APEX v3.0 Monitoring
-import { ErrorReporter } from "./monitoring/error-reporter";
-
-// ============================================
-// STATE - APEX v3.0
-// ============================================
-
-interface State {
-  client?: ClobClient;
-  wallet?: Wallet;
-  address: string;
-  liveTrading: boolean;
-  targets: string[];
-
-  // APEX v3.0 Configuration
-  mode: string; // "CONSERVATIVE" | "BALANCED" | "AGGRESSIVE"
-  modeConfig: ModeConfig;
-  tier: TierInfo;
-
-  // Tracking
-  cycleCount: number;
-  startTime: number;
-  startBalance: number;
-  currentBalance: number;
-  tradesExecuted: number;
-
-  // APEX v3.0 Performance Tracking
-  oracleState: OracleState;
-  strategyAllocations: Map<StrategyType, number>;
-
-  // APEX Hunter Stats
-  hunterStats: {
-    scans: number;
-    opportunitiesFound: number;
-    trades: number;
-  };
-
-  actedPositions: Set<string>; // Track which markets we've already acted on
-  
-  // Exit strategy state tracking
-  ratchetStates: Map<string, RatchetState>;
-  ladderStates: Map<string, LadderState>;
-  
-  // Market data for reaper mode
-  volume24h: number;
-  orderBookDepth: number;
-
-  // Timing
-  lastSummary: number;
-  lastOracleReview: number;
-  weekStartTime: number;
-  weekStartBalance: number;
-
-  // Balance tracking (CRITICAL for v3.0)
-  lastKnownBalance: number;
-  lastBalanceCheck: number;
-  tradingHalted: boolean;
-  haltReason: string;
-  lowBalanceWarned: boolean;
-  hourlySpendingLimitReached: boolean;
-
-  // Recovery Mode (CRITICAL for v3.0)
-  recoveryMode: boolean;
-  prioritizeExits: boolean;
-  errorReporter?: ErrorReporter;
-  
-  // APEX v3.0 Protection Module State
-  hedgeStates: Map<string, HedgeState>; // Track active hedges by tokenId
-  priceHistory: Map<string, number[]>;  // Track price history for velocity detection
-  // Emergency Sell Configuration (APEX v3.0 PR #4)
-  emergencySellConfig: EmergencySellConfig;
-  lastEmergencyConfigLog: number; // Timestamp of last emergency config log
-  lastRecoveryTipLog: number; // Timestamp of last recovery tip log
-}
-
-const state: State = {
-  address: "",
-  liveTrading: false,
-  targets: [],
-  mode: "BALANCED",
-  modeConfig: getApexMode(),
-  tier: getAccountTier(0),
-  cycleCount: 0,
-  startTime: Date.now(),
-  startBalance: 0,
-  currentBalance: 0,
-  tradesExecuted: 0,
-  oracleState: createOracleState(),
-  strategyAllocations: new Map(),
-  hunterStats: {
-    scans: 0,
-    opportunitiesFound: 0,
-    trades: 0,
-  },
-  actedPositions: new Set(),
-  ratchetStates: new Map(),
-  ladderStates: new Map(),
-  // NOTE: volume24h and orderBookDepth are initialized to 0 but not currently populated.
-  // These are used by the reaper strategy for scavenger mode detection.
-  // Future enhancement: populate these from market data API calls.
-  volume24h: 0,
-  orderBookDepth: 0,
-  lastSummary: 0,
-  lastOracleReview: 0,
-  weekStartTime: Date.now(),
-  weekStartBalance: 0,
-  lastKnownBalance: 0,
-  lastBalanceCheck: 0,
-  tradingHalted: false,
-  haltReason: "",
-  lowBalanceWarned: false,
-  hourlySpendingLimitReached: false,
-  recoveryMode: false,
-  prioritizeExits: false,
-  errorReporter: undefined,
-  hedgeStates: new Map(),
-  priceHistory: new Map(),
-  emergencySellConfig: getEmergencySellConfig(),
-  lastEmergencyConfigLog: 0,
-  lastRecoveryTipLog: 0,
+// Helper to read numeric env vars
+const envNum = (key: string, defaultValue: number): number => {
+  const value = process.env[key];
+  if (value === undefined) return defaultValue;
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? defaultValue : parsed;
 };
 
-// ============================================
-// LOGGER
-// ============================================
-
-const logger: Logger = {
-  info: (msg) => console.log(`[${time()}] ${msg}`),
-  warn: (msg) => console.log(`[${time()}] ⚠️  ${msg}`),
-  error: (msg) => console.log(`[${time()}] ❌ ${msg}`),
-  debug: (msg) => {
-    if (process.env.DEBUG) console.log(`[${time()}] 🔍 ${msg}`);
-  },
+// Helper to read boolean env vars
+const envBool = (key: string, defaultValue: boolean): boolean => {
+  const value = process.env[key];
+  if (value === undefined) return defaultValue;
+  return value.toLowerCase() === "true";
 };
 
-function time(): string {
-  return new Date().toISOString().substring(11, 19);
+// Helper to read string env vars
+const envStr = (key: string, defaultValue: string): string => {
+  return process.env[key] ?? defaultValue;
+};
+
+interface ChurnConfig {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // USER CONFIGURABLE (the ONLY thing you should change)
+  // ═══════════════════════════════════════════════════════════════════════════
+  maxTradeUsd: number;  // Your bet size in USD (default: $25)
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FIXED BY THE MATH (do not change)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Capital & Position Sizing (fixed ratios)
+  tradeFraction: number;
+  maxDeployedFractionTotal: number;
+  maxOpenPositionsTotal: number;
+  maxOpenPositionsPerMarket: number;
+  cooldownSecondsPerToken: number;
+
+  // Entry/Exit Bands (cents)
+  entryBandCents: number;
+  tpCents: number;
+  hedgeTriggerCents: number;
+  maxAdverseCents: number;
+  maxHoldSeconds: number;
+
+  // Hedge Behavior
+  hedgeRatio: number;
+  maxHedgeRatio: number;
+
+  // Entry Price Bounds (cents)
+  minEntryPriceCents: number;
+  maxEntryPriceCents: number;
+  preferredEntryLowCents: number;
+  preferredEntryHighCents: number;
+  entryBufferCents: number;
+
+  // Liquidity Gates
+  minSpreadCents: number;
+  minDepthUsdAtExit: number;
+  minTradesLastX: number;
+  minBookUpdatesLastX: number;
+  activityWindowSeconds: number;
+
+  // EV / Casino Controls
+  rollingWindowTrades: number;
+  churnCostCentsEstimate: number;
+  minEvCents: number;
+  minProfitFactor: number;
+  pauseSeconds: number;
+
+  // Bias (Leaderboard Flow)
+  biasMode: string;
+  leaderboardTopN: number;
+  biasWindowSeconds: number;
+  biasMinNetUsd: number;
+  biasMinTrades: number;
+  biasStaleSeconds: number;
+  allowEntriesOnlyWithBias: boolean;
+  onBiasFlip: string;
+  onBiasNone: string;
+
+  // Polling / Ops
+  pollIntervalMs: number;
+  positionPollIntervalMs: number;
+  logLevel: string;
+
+  // Wallet / Reserve Management
+  reserveFraction: number;
+  minReserveUsd: number;
+  useAvailableBalanceOnly: boolean;
+
+  // Liquidation Mode
+  forceLiquidation: boolean;  // If true, start liquidating positions even with no effective bankroll
+  liquidationMaxSlippagePct: number;  // Max slippage for liquidation sells (default: 10%)
+  liquidationPollIntervalMs: number;  // Poll interval in liquidation mode (default: 1000ms)
+
+  // Auth
+  privateKey: string;
+  rpcUrl: string;
+  liveTradingEnabled: boolean;
+
+  // Telegram (optional)
+  telegramBotToken?: string;
+  telegramChatId?: string;
+
+  // POL Reserve (auto-fill gas)
+  polReserveEnabled: boolean;
+  polReserveTarget: number;
+  polReserveMin: number;
+  polReserveMaxSwapUsd: number;
+  polReserveCheckIntervalMin: number;
+  polReserveSlippagePct: number;
 }
 
-function $(n: number): string {
-  return `$${n.toFixed(2)}`;
-}
-
-// ============================================
-// APEX v3.0 - BANNER
-// ============================================
-
-function displayAPEXBanner(): void {
-  console.log(`
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃                                                              ┃
-┃      ⚡  █████╗ ██████╗ ███████╗██╗  ██╗  ⚡               ┃
-┃         ██╔══██╗██╔══██╗██╔════╝╚██╗██╔╝                   ┃
-┃         ███████║██████╔╝█████╗   ╚███╔╝                    ┃
-┃         ██╔══██║██╔═══╝ ██╔══╝   ██╔██╗                    ┃
-┃         ██║  ██║██║     ███████╗██╔╝ ██╗                   ┃
-┃         ╚═╝  ╚═╝╚═╝     ╚══════╝╚═╝  ╚═╝                   ┃
-┃                                                              ┃
-┃              AGGRESSIVE POLYMARKET EXECUTION                 ┃
-┃                      Version 3.0                             ┃
-┃                                                              ┃
-┃                 🌍 24/7 NEVER SLEEPS 🌍                     ┃
-┃                                                              ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-  `);
-}
-
-// ============================================
-// RECOVERY MODE - Liquidate positions when balance is low
-// ============================================
-
-// Recovery Mode Constants
-const RECOVERY_MODE_BALANCE_THRESHOLD = 20; // Balance below this triggers recovery mode
-const MINIMUM_OPERATING_BALANCE = 1; // Minimum balance to continue operations
-const PROFITABLE_POSITION_THRESHOLD = 0.5; // Minimum profit % to exit in recovery (0.5%)
-const NEAR_RESOLUTION_PRICE_THRESHOLD = 0.95; // Price threshold for near-resolution (95¢)
-const ACCEPTABLE_LOSS_THRESHOLD = -2; // Max loss % for near-resolution exits (-2%)
-const MAX_ACCEPTABLE_LOSS = -5; // Max loss % for emergency exits (-5%)
-
-// Note: Emergency sell thresholds are now configured via state.emergencySellConfig
-// See EMERGENCY_SELL_MODE and EMERGENCY_BALANCE_THRESHOLD environment variables
-
-/**
- * Calculate total portfolio value (balance + position value)
- * 
- * @param balance - Current USDC balance
- * @param positions - Array of open positions
- * @returns Portfolio metrics including total value, position value, and count
- */
-function calculatePortfolioValue(balance: number, positions: Position[]): {
-  totalValue: number;
-  positionValue: number;
-  positionCount: number;
-} {
-  const positionValue = positions.reduce((sum, p) => sum + p.value, 0);
-  const totalValue = balance + positionValue;
-  
+function loadConfig(): ChurnConfig {
   return {
-    totalValue,
-    positionValue,
-    positionCount: positions.length,
+    // ═══════════════════════════════════════════════════════════════════════
+    // USER CONFIGURABLE - This is the ONLY thing you should change
+    // ═══════════════════════════════════════════════════════════════════════
+    maxTradeUsd: envNum("MAX_TRADE_USD", 25),  // 💰 Your bet size (default: $25)
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIXED BY THE MATH - Do NOT change these values
+    // The math equation requires these exact parameters to work
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Capital sizing (fixed ratios that scale with MAX_TRADE_USD)
+    tradeFraction: 0.01,              // 1% of bankroll per trade
+    maxDeployedFractionTotal: 0.3,    // 30% max exposure
+    maxOpenPositionsTotal: 12,        // Max concurrent positions
+    maxOpenPositionsPerMarket: 2,     // Max per market
+    cooldownSecondsPerToken: 180,     // 3min between trades same token
+
+    // Entry/Exit bands - produces avg_win=14¢, avg_loss=9¢
+    entryBandCents: 12,               // Min price movement to enter
+    tpCents: 14,                      // Take profit = 14¢
+    hedgeTriggerCents: 16,            // Hedge at 16¢ adverse
+    maxAdverseCents: 30,              // HARD STOP at 30¢ loss
+    maxHoldSeconds: 3600,             // 1 hour max hold
+
+    // Hedge behavior - caps avg_loss to ~9¢ instead of 30¢
+    hedgeRatio: 0.4,                  // Hedge 40% on first trigger
+    maxHedgeRatio: 0.7,               // Never hedge more than 70%
+
+    // Entry price bounds - room to win, hedge, and be wrong
+    minEntryPriceCents: 30,           // <30¢ = one bad tick kills you
+    maxEntryPriceCents: 82,           // >82¢ = no room for TP
+    preferredEntryLowCents: 35,       // Ideal zone starts
+    preferredEntryHighCents: 65,      // Ideal zone ends
+    entryBufferCents: 4,              // Safety buffer
+
+    // Liquidity gates - keeps churn cost at ~2¢
+    minSpreadCents: 6,                // Max acceptable spread
+    minDepthUsdAtExit: 25,            // Need liquidity to exit
+    minTradesLastX: 10,               // Market must be active
+    minBookUpdatesLastX: 20,          // Book must be updating
+    activityWindowSeconds: 300,       // 5min activity window
+
+    // EV / Casino controls - bot stops itself when math says stop
+    rollingWindowTrades: 200,         // Sample size for stats
+    churnCostCentsEstimate: 2,        // 2¢ churn cost
+    minEvCents: 0,                    // Pause if EV < 0
+    minProfitFactor: 1.25,            // avg_win/avg_loss >= 1.25
+    pauseSeconds: 300,                // 5min pause when table closed
+
+    // Bias (Leaderboard flow) - permission, not prediction
+    biasMode: "leaderboard_flow",
+    leaderboardTopN: 50,              // Track top 50 wallets
+    biasWindowSeconds: 3600,          // 1 hour window
+    biasMinNetUsd: 300,               // $300 net flow minimum
+    biasMinTrades: 3,                 // At least 3 trades
+    biasStaleSeconds: 900,            // Bias expires after 15min
+    allowEntriesOnlyWithBias: true,
+    onBiasFlip: "MANAGE_EXITS_ONLY",
+    onBiasNone: "PAUSE_ENTRIES",
+
+    // Polling (fixed - fast polling for accurate position tracking)
+    pollIntervalMs: 200,              // 200ms = 5 req/sec
+    positionPollIntervalMs: 100,      // 100ms when holding positions
+    logLevel: envStr("LOG_LEVEL", "info"),
+
+    // Wallet / Reserve (fixed - survive variance)
+    reserveFraction: 0.25,            // 25% always reserved
+    minReserveUsd: 100,               // $100 minimum reserve
+    useAvailableBalanceOnly: true,
+
+    // Liquidation Mode - force sell existing positions when balance is too low
+    forceLiquidation: envBool("FORCE_LIQUIDATION", false),
+    liquidationMaxSlippagePct: envNum("LIQUIDATION_MAX_SLIPPAGE_PCT", 10),  // 10% default
+    liquidationPollIntervalMs: envNum("LIQUIDATION_POLL_INTERVAL_MS", 1000),  // 1s default
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AUTH & INTEGRATIONS (user provides these)
+    // ═══════════════════════════════════════════════════════════════════════
+    privateKey: process.env.PRIVATE_KEY ?? "",
+    rpcUrl: envStr("RPC_URL", "https://polygon-rpc.com"),
+    liveTradingEnabled:
+      envStr("LIVE_TRADING", "") === "I_UNDERSTAND_THE_RISKS",
+
+    // Telegram (optional)
+    telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
+    telegramChatId: process.env.TELEGRAM_CHAT_ID,
+
+    // POL Reserve - auto-fill gas (fixed settings)
+    polReserveEnabled: true,
+    polReserveTarget: envNum("POL_RESERVE_TARGET", 50),  // 50 POL target (user requested)
+    polReserveMin: 0.5,
+    polReserveMaxSwapUsd: 10,
+    polReserveCheckIntervalMin: 30,
+    polReserveSlippagePct: 3,
   };
 }
 
-/**
- * Display comprehensive startup dashboard
- */
-function displayStartupDashboard(
-  balance: number,
-  positions: Position[],
-  portfolio: ReturnType<typeof calculatePortfolioValue>,
-  recoveryMode: boolean,
-): void {
-  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  logger.info(`📊 STARTUP PORTFOLIO SUMMARY`);
-  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  logger.info(`💵 USDC Balance: ${$(balance)}`);
-  logger.info(`📦 Open Positions: ${portfolio.positionCount}`);
-  logger.info(`💰 Position Value: ${$(portfolio.positionValue)}`);
-  logger.info(`📈 Total Portfolio: ${$(portfolio.totalValue)}`);
-  
-  if (recoveryMode) {
-    logger.warn(`⚠️  RECOVERY MODE: ACTIVE`);
-    logger.warn(`   Low balance detected, prioritizing exits`);
-  }
-  
-  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  logger.info(``);
+interface ValidationError {
+  field: string;
+  message: string;
 }
 
-/**
- * Run auto-redeem check
- * Called periodically to claim resolved positions
- */
-async function runAutoRedeem(): Promise<number> {
-  if (!state.wallet) return 0;
+function validateConfig(config: ChurnConfig): ValidationError[] {
+  const errors: ValidationError[] = [];
 
-  // Check frequency depends on mode:
-  // - Recovery mode: every 10 cycles (more urgent - need liquidity)
-  // - Normal mode: every 50 cycles (periodic cleanup)
-  const checkInterval = state.recoveryMode ? 10 : 50;
-  if (state.cycleCount % checkInterval !== 0) return 0;
-
-  logger.debug?.(`Checking for redeemable positions...`);
-
-  const result = await redeemAllPositions(state.wallet, state.address, logger);
-
-  if (result.redeemed > 0) {
-    await sendTelegram(
-      "🎁 AUTO-REDEEM",
-      `Redeemed ${result.redeemed} market(s)\n` +
-        `Approximate value: $${result.totalValue.toFixed(2)}\n\n` +
-        `Check USDC balance for payouts!`,
-    );
+  // Required: wallet key
+  if (!config.privateKey) {
+    errors.push({ field: "PRIVATE_KEY", message: "Required" });
   }
 
-  return result.redeemed;
+  // User-configurable: bet size must be positive
+  if (config.maxTradeUsd <= 0) {
+    errors.push({ field: "MAX_TRADE_USD", message: "Must be positive" });
+  }
+
+  return errors;
 }
 
-/**
- * Run recovery exits - aggressively liquidate positions to free capital
- * Now with emergency sell mode support
- */
-async function runRecoveryExits(
-  positions: Position[],
-  balance: number,
-): Promise<number> {
-  let exitsExecuted = 0;
-  
-  // Enrich positions with entry time and price history
-  const enrichedPositions = enrichPositions(positions);
-  
-  const emergencyActive = shouldActivateEmergencySells(balance, state.emergencySellConfig);
-  
-  // Log emergency config at most once per minute (60 seconds)
-  const now = Date.now();
-  if (emergencyActive && (now - state.lastEmergencyConfigLog) > 60000) {
-    logEmergencyConfig(state.emergencySellConfig, logger);
-    state.lastEmergencyConfigLog = now;
+function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
+  log("");
+  log("🎰 POLYMARKET CASINO BOT");
+  log("═".repeat(50));
+  log("");
+  log("💰 YOUR SETTINGS:");
+  log(`   Bet size: $${config.maxTradeUsd} per trade`);
+  log(`   Live trading: ${config.liveTradingEnabled ? "✅ ENABLED" : "⚠️ SIMULATION"}`);
+  log(`   Telegram: ${config.telegramBotToken && config.telegramChatId ? "✅ ENABLED" : "❌ DISABLED"}`);
+  if (config.forceLiquidation) {
+    log(`   Force liquidation: ⚠️ ENABLED`);
   }
-  
-  logger.warn(`♻️ RECOVERY MODE (Cycle ${state.cycleCount})`);
-  logger.warn(`   Balance: $${balance.toFixed(2)} | Positions: ${positions.length}`);
-  logger.warn(`   Emergency mode: ${emergencyActive ? '🚨 ACTIVE' : '⏸️  Standby'}`);
-  
-  if (!emergencyActive) {
-    logger.info(`   Balance above $${state.emergencySellConfig.balanceThreshold} - using normal sells`);
-  }
-  
-  // Track positions that have been successfully exited to avoid duplicate attempts
-  const exitedTokenIds = new Set<string>();
-  
-  // Priority 1: Exit ANY profitable position (pnlPct > PROFITABLE_POSITION_THRESHOLD)
-  const profitablePositions = enrichedPositions
-    .filter((p) => p.pnlPct > PROFITABLE_POSITION_THRESHOLD)
-    .sort((a, b) => b.pnlPct - a.pnlPct); // Most profitable first
-  
-  for (const position of profitablePositions) {
-    logger.info(`🔄 Recovery: ${position.outcome} +${position.pnlPct.toFixed(1)}%`);
-    
-    const success = await sellPositionEmergency(
-      position, 
-      `Recovery: take ${position.pnlPct.toFixed(1)}% profit`,
-      emergencyActive
-    );
-    if (success) {
-      exitsExecuted++;
-      exitedTokenIds.add(position.tokenId);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-    }
-  }
-  
-  // Priority 2: Exit near-resolution (curPrice > NEAR_RESOLUTION_PRICE_THRESHOLD)
-  // Filter out already exited positions
-  const nearResolution = enrichedPositions
-    .filter((p) => 
-      !exitedTokenIds.has(p.tokenId) &&
-      p.curPrice > NEAR_RESOLUTION_PRICE_THRESHOLD && 
-      p.pnlPct > ACCEPTABLE_LOSS_THRESHOLD
-    );
-  
-  for (const position of nearResolution) {
-    logger.info(`🔄 Recovery: ${position.outcome} @ ${(position.curPrice * 100).toFixed(0)}¢`);
-    
-    const success = await sellPositionEmergency(
-      position,
-      "Recovery: near resolution",
-      emergencyActive
-    );
-    if (success) {
-      exitsExecuted++;
-      exitedTokenIds.add(position.tokenId);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-    }
-  }
-  
-  // Priority 3: If emergency AND desperate (balance < threshold), exit small losses
-  if (emergencyActive) {
-    const smallLosses = enrichedPositions
-      .filter((p) => 
-        !exitedTokenIds.has(p.tokenId) &&
-        p.pnlPct > MAX_ACCEPTABLE_LOSS && 
-        p.pnlPct <= PROFITABLE_POSITION_THRESHOLD
-      )
-      .sort((a, b) => b.pnlPct - a.pnlPct); // Least losing first
-    
-    for (const position of smallLosses) {
-      logger.warn(`🔄 Emergency: ${position.outcome} ${position.pnlPct.toFixed(1)}%`);
-      
-      const success = await sellPositionEmergency(
-        position,
-        `Emergency: free capital (${position.pnlPct.toFixed(1)}% loss)`,
-        true  // Force emergency mode
-      );
-      if (success) {
-        exitsExecuted++;
-        exitedTokenIds.add(position.tokenId);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-    }
-  }
-  
-  if (exitsExecuted > 0) {
-    logger.info(`✅ Recovery: Exited ${exitsExecuted} positions`);
-    
-    // Check if recovered
-    const newBalance = await getUsdcBalance(state.wallet!, state.address);
-    if (newBalance >= RECOVERY_MODE_BALANCE_THRESHOLD) {
-      logger.info(`🎉 RECOVERY COMPLETE! Balance: $${newBalance.toFixed(2)}`);
-      state.recoveryMode = false;
-      
-      await sendTelegram("✅ RECOVERY COMPLETE",
-        `Balance restored: $${newBalance.toFixed(2)}\n` +
-        `Exited ${exitsExecuted} positions\n\n` +
-        `Resuming normal trading`
-      );
-    } else {
-      logger.info(`📊 Recovery progress: $${newBalance.toFixed(2)} (need $${RECOVERY_MODE_BALANCE_THRESHOLD})`);
-    }
-  } else {
-    logger.warn(`⚠️ Recovery: No positions could be exited this cycle`);
-    
-    // Show tips at most once per 5 minutes (300 seconds)
-    const now = Date.now();
-    if ((now - state.lastRecoveryTipLog) > 300000) {
-      if (!emergencyActive) {
-        logger.info(`💡 Tip: Balance is $${balance.toFixed(2)}`);
-        logger.info(`   Emergency mode activates at < $${state.emergencySellConfig.balanceThreshold}`);
-      } else if (state.emergencySellConfig.mode === 'CONSERVATIVE') {
-        logger.warn(`💡 Tip: CONSERVATIVE mode may block very low bids`);
-        logger.warn(`   Consider MODERATE or NUCLEAR mode if desperate`);
-        logger.warn(`   Set: EMERGENCY_SELL_MODE=MODERATE or NUCLEAR`);
-      }
-      state.lastRecoveryTipLog = now;
-    }
-  }
-  
-  return exitsExecuted;
+  log("");
+  log("📊 THE MATH (fixed, don't change):");
+  log(`   Take profit: +${config.tpCents}¢ (avg win)`);
+  log(`   Hedge trigger: -${config.hedgeTriggerCents}¢`);
+  log(`   Hard stop: -${config.maxAdverseCents}¢`);
+  log(`   Avg loss after hedge: ~9¢`);
+  log(`   Break-even: 48% win rate`);
+  log("");
+  log("🐋 WHALE TRACKING:");
+  log(`   Following top ${config.leaderboardTopN} wallets`);
+  log(`   Min flow: $${config.biasMinNetUsd}`);
+  log("");
+  log("🛡️ RISK LIMITS:");
+  log(`   Reserve: ${config.reserveFraction * 100}% untouchable`);
+  log(`   Max exposure: ${config.maxDeployedFractionTotal * 100}%`);
+  log(`   Max positions: ${config.maxOpenPositionsTotal}`);
+  log("");
+  log("═".repeat(50));
 }
 
-/**
- * Check startup balance and enter recovery mode if needed
- */
-async function checkStartupBalance(
-  balance: number,
-  address: string,
-): Promise<{ shouldExit: boolean; recoveryMode: boolean }> {
-  // Check if user wants to skip balance check
-  if (process.env.SKIP_BALANCE_CHECK_ON_STARTUP === "true") {
-    logger.info(`⚠️  Skipping startup balance check (SKIP_BALANCE_CHECK_ON_STARTUP=true)`);
-    return { shouldExit: false, recoveryMode: false };
-  }
-  
-  // Fetch positions to calculate total portfolio value
-  let positions: Position[] = [];
-  try {
-    positions = await getPositions(address);
-  } catch (error) {
-    logger.error(`Failed to fetch positions for balance check: ${error}`);
-    positions = [];
-  }
-  
-  const portfolio = calculatePortfolioValue(balance, positions);
-  
-  // Display startup dashboard
-  displayStartupDashboard(balance, positions, portfolio, false);
-  
-  // Decision logic
-  if (balance < RECOVERY_MODE_BALANCE_THRESHOLD && positions.length > 0) {
-    // Low balance BUT positions exist - enter recovery mode
-    logger.warn(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    logger.warn(`🚨 RECOVERY MODE ACTIVATED`);
-    logger.warn(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    logger.warn(`   Balance: ${$(balance)} (below $${RECOVERY_MODE_BALANCE_THRESHOLD} threshold)`);
-    logger.warn(`   Positions: ${positions.length} (total value: ${$(portfolio.positionValue)})`);
-    logger.warn(`   Strategy: Aggressively liquidate positions to free capital`);
-    logger.warn(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    logger.info(``);
-    
-    await sendTelegram(
-      "🚨 Recovery Mode Activated",
-      `Balance: ${$(balance)}\n` +
-        `Positions: ${positions.length}\n` +
-        `Position Value: ${$(portfolio.positionValue)}\n` +
-        `Total Portfolio: ${$(portfolio.totalValue)}\n\n` +
-        `Bot will aggressively liquidate positions to free capital.`,
-    );
-    
-    return { shouldExit: false, recoveryMode: true };
-  } else if (balance < MINIMUM_OPERATING_BALANCE && positions.length === 0) {
-    // Low balance AND no positions - exit
-    logger.error("❌ Wallet has insufficient USDC balance");
-    logger.error(`   Address: ${address}`);
-    logger.error(`   Balance: ${$(balance)}`);
-    logger.error(`   Positions: 0`);
-    logger.error("   Please deposit USDC to continue");
-    logger.error("");
-    logger.error("   To bypass this check, set: SKIP_BALANCE_CHECK_ON_STARTUP=true");
-    
-    return { shouldExit: true, recoveryMode: false };
-  } else {
-    // Sufficient balance or positions to work with
-    return { shouldExit: false, recoveryMode: false };
-  }
-}
-
-// ============================================
-// APEX v3.0 - CORE TRADING FUNCTIONS
-// ============================================
-
-/**
- * Position cache for tracking entry time and price history
- */
-const positionCache = new Map<string, { 
-  entryTime: number; 
-  priceHistory: number[];
-}>();
-
-/**
- * Enrich positions with entry time and price history
- * These fields are needed by strategies but not provided by API
- */
-function enrichPositions(positions: Position[]): Position[] {
-  const now = Date.now();
-  
-  return positions.map(p => {
-    // Get or create cache entry
-    let cache = positionCache.get(p.tokenId);
-    if (!cache) {
-      cache = { entryTime: now, priceHistory: [] };
-      positionCache.set(p.tokenId, cache);
-    }
-    
-    // Update price history (only when price changes)
-    const lastPrice = cache.priceHistory[cache.priceHistory.length - 1];
-    if (cache.priceHistory.length === 0 || lastPrice !== p.curPrice) {
-      cache.priceHistory.push(p.curPrice);
-      if (cache.priceHistory.length > 100) {
-        cache.priceHistory = cache.priceHistory.slice(-100);
-      }
-    }
-    
-    return {
-      ...p,
-      entryTime: cache.entryTime,
-      priceHistory: [...cache.priceHistory],
-    };
-  });
-}
-
-// Max uint256 for infinite approval
-const MAX_UINT256 = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-
-/**
- * Ensure USDC is approved for trading
- * Auto-approves if allowance is low
- */
-async function ensureUSDCApproval(): Promise<void> {
-  if (!state.wallet) return;
-  
-  const allowance = await getUsdcAllowance(state.wallet, state.address);
-  
-  if (allowance >= 1000) {
-    logger.info(`✅ USDC allowance: $${allowance.toFixed(0)}`);
-    return;
-  }
-  
-  logger.warn(`⚠️ USDC allowance low: $${allowance.toFixed(2)}`);
-  logger.info(`🔧 Auto-approving USDC allowance...`);
-  
-  try {
-    const usdc = new Contract(
-      POLYGON.USDC_ADDRESS,
-      ["function approve(address spender, uint256 amount) returns (bool)"],
-      state.wallet
-    );
-    
-    const tx = await usdc.approve(POLYGON.CTF_EXCHANGE, MAX_UINT256);
-    logger.info(`⏳ Waiting for approval tx: ${tx.hash.slice(0, 16)}...`);
-    
-    await tx.wait();
-    
-    logger.info(`✅ USDC approval complete - infinite allowance granted`);
-    
-    await sendTelegram("✅ USDC Approved",
-      `Infinite USDC allowance granted\n` +
-      `TX: ${tx.hash.slice(0, 16)}...`
-    );
-  } catch (error) {
-    logger.error(`❌ Auto-approval failed: ${error}`);
-    logger.error(`   Please manually run: npm run set-token-allowance`);
-  }
-}
-
-/**
- * Check POL balance for gas
- * Warn if low, halt if critical
- */
-async function checkPolBalance(): Promise<void> {
-  if (!state.wallet) return;
-  
-  const polBalance = await getPolBalance(state.wallet, state.address);
-  
-  if (polBalance < 0.5) {
-    logger.warn(`⚠️ Low POL balance: ${polBalance.toFixed(3)} POL`);
-    logger.warn(`   You may run out of gas soon`);
-    logger.warn(`   Minimum recommended: 1 POL`);
-    
-    await sendTelegram("⚠️ LOW GAS WARNING",
-      `POL Balance: ${polBalance.toFixed(3)}\n` +
-      `Recommended: 1 POL minimum\n\n` +
-      `Please deposit POL to avoid stuck transactions`
-    );
-  }
-  
-  if (polBalance < 0.1) {
-    logger.error(`🚨 CRITICAL: POL balance too low to trade`);
-    state.tradingHalted = true;
-    state.haltReason = "INSUFFICIENT_GAS";
-    
-    await sendTelegram("🚨 TRADING HALTED: NO GAS",
-      `POL Balance: ${polBalance.toFixed(3)}\n\n` +
-      `Cannot execute trades without gas.\n` +
-      `Deposit POL immediately!`
-    );
-  } else if (state.tradingHalted && state.haltReason === "INSUFFICIENT_GAS" && polBalance >= 0.1) {
-    // Auto-resume trading when POL balance is restored
-    state.tradingHalted = false;
-    state.haltReason = "";
-    logger.info(`✅ POL balance restored: ${polBalance.toFixed(3)} POL - Trading resumed`);
-    
-    await sendTelegram("✅ TRADING RESUMED",
-      `POL Balance: ${polBalance.toFixed(3)}\n` +
-      `Gas restored - trading has resumed automatically`
-    );
-  }
-}
-
-/**
- * Sell a position using SmartSell with improved protections
- * 
- * IMPROVEMENTS over the old implementation:
- * 1. Orderbook depth analysis - calculates expected fill price before executing
- * 2. Dynamic slippage - adjusts based on position state (profit, loss, near-resolution)
- * 3. Liquidity checks - won't sell into thin orderbooks unless forced
- * 4. Better logging - shows expected vs actual fills
- * 
- * @param position - Position to sell
- * @param reason - Reason for selling (for logging/telegram)
- * @param forceSell - If true, sell regardless of liquidity conditions (for stop-loss)
- */
-async function sellPosition(
-  position: Position,
-  reason: string,
-  forceSell: boolean = false
-): Promise<boolean> {
-  
-  if (!state.client) return false;
-  
-  // Check live trading mode
-  if (!state.liveTrading) {
-    // Return true for simulation - this mirrors the behavior of buy() function.
-    // In simulation mode, we log what would happen and return success to allow
-    // the bot cycle to continue normally without executing real trades.
-    logger.info(
-      `🔸 [SIM] SELL ${position.outcome} $${position.value.toFixed(2)} | ${reason}`,
-    );
-    await sendTelegram(
-      "[SIM] POSITION SELL",
-      `${position.outcome}\n$${position.value.toFixed(2)}\n${reason}`,
-    );
-    return true;
-  }
-  
-  logger.info(`🔄 Selling ${position.outcome}`);
-  logger.info(`   Shares: ${position.size.toFixed(2)}`);
-  logger.info(`   Value: $${position.value.toFixed(2)}`);
-  logger.info(`   P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%`);
-  logger.info(`   Reason: ${reason}`);
-  
-  try {
-    // Configure smart sell based on position state
-    const config: SmartSellConfig = {
-      logger,
-      forceSell,
-    };
-    
-    // If this is a stop-loss scenario (significant loss), allow more slippage
-    if (position.pnlPct <= -SELL.LOSS_THRESHOLD_PCT) {
-      config.maxSlippagePct = SELL.LOSS_SLIPPAGE_PCT;
-      logger.info(`   ⚠️ Stop-loss mode: allowing ${SELL.LOSS_SLIPPAGE_PCT}% slippage`);
-    }
-    
-    // If position is near resolution ($0.95+), use tighter slippage
-    if (position.curPrice >= SELL.HIGH_PRICE_THRESHOLD) {
-      config.maxSlippagePct = SELL.HIGH_PRICE_SLIPPAGE_PCT;
-      logger.info(`   💎 High-probability position: using tight ${SELL.HIGH_PRICE_SLIPPAGE_PCT}% slippage`);
-    }
-    
-    // Execute smart sell (handles orderbook analysis, slippage protection internally)
-    const result = await smartSell(state.client, position, config);
-    
-    if (result.success) {
-      const filled = result.filledUsd ?? (position.size * (result.avgPrice ?? position.curPrice));
-      const actualSlippage = result.actualSlippagePct ?? 0;
-      
-      logger.info(`✅ Sold: $${filled.toFixed(2)}`);
-      if (result.analysis) {
-        logger.info(`   Best bid: ${(result.analysis.bestBid * 100).toFixed(1)}¢`);
-        logger.info(`   Avg fill: ${((result.avgPrice ?? position.curPrice) * 100).toFixed(1)}¢`);
-        logger.info(`   Slippage: ${actualSlippage.toFixed(2)}%`);
-        logger.info(`   Order type: ${result.orderType ?? 'FOK'}`);
-      }
-      
-      await sendTelegram("💰 POSITION SOLD",
-        `${position.outcome} @ ${((result.avgPrice ?? position.curPrice) * 100).toFixed(0)}¢\n` +
-        `P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%\n` +
-        `Received: $${filled.toFixed(2)}\n` +
-        `Slippage: ${actualSlippage.toFixed(2)}%\n` +
-        `Reason: ${reason}`
-      );
-      
-      return true;
-    } else {
-      logger.warn(`❌ Sell failed: ${result.reason}`);
-      
-      // Provide helpful context on why the sell failed
-      if (result.analysis) {
-        logger.warn(`   Best bid: ${(result.analysis.bestBid * 100).toFixed(1)}¢`);
-        logger.warn(`   Expected slippage: ${result.analysis.expectedSlippagePct.toFixed(2)}%`);
-        logger.warn(`   Liquidity: $${result.analysis.liquidityAtSlippage.toFixed(2)}`);
-        // Note: we skip calling getSellRecommendation here to avoid
-        // an additional orderbook fetch; the above analysis already explains
-        // why the sell failed.
-      }
-      
-      return false;
-    }
-  } catch (error) {
-    logger.error(`❌ Sell error: ${error}`);
-    
-    if (state.errorReporter) {
-      await state.errorReporter.reportError(error as Error, {
-        operation: "sell_position",
-        tokenId: position.tokenId,
-      });
-    }
-    
-    return false;
-  }
-}
-
-/**
- * Execute sell with emergency mode support
- * Uses postOrder with configurable price protection
- */
-async function sellPositionEmergency(
-  position: Position,
-  reason: string,
-  emergencyMode: boolean
-): Promise<boolean> {
-  
-  if (!state.client) return false;
-  
-  logger.info(`🔄 Selling ${position.outcome}`);
-  logger.info(`   Shares: ${position.size.toFixed(2)}`);
-  logger.info(`   Value: $${position.value.toFixed(2)}`);
-  logger.info(`   Entry: ${(position.avgPrice * 100).toFixed(1)}¢`);
-  logger.info(`   Current: ${(position.curPrice * 100).toFixed(1)}¢`);
-  logger.info(`   P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%`);
-  logger.info(`   Reason: ${reason}`);
-  
-  // Calculate minimum acceptable price based on emergency mode
-  let maxAcceptablePrice: number | undefined;
-  
-  if (emergencyMode) {
-    maxAcceptablePrice = calculateEmergencyMinPrice(
-      position.avgPrice,
-      state.emergencySellConfig
-    );
-    
-    if (maxAcceptablePrice !== undefined) {
-      logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (${state.emergencySellConfig.mode} mode)`);
-    } else {
-      logger.warn(`   ⚠️  NUCLEAR MODE - No price protection!`);
-    }
-  } else {
-    // Normal mode: 1% slippage tolerance
-    maxAcceptablePrice = position.avgPrice * 0.99;
-    logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (1% slippage)`);
-  }
-  
-  try {
-    // Use postOrder with emergency price protection
-    const result = await postOrder({
-      client: state.client,
-      tokenId: position.tokenId,
-      outcome: position.outcome as "YES" | "NO",
-      side: 'SELL',
-      sizeUsd: position.value,
-      maxAcceptablePrice, // undefined = NO PROTECTION in NUCLEAR mode
-      shares: position.size, // Specify exact shares to sell
-      logger,
-    });
-    
-    if (result.success) {
-      logger.info(`✅ Sold: $${result.filledUsd?.toFixed(2) || position.value.toFixed(2)}`);
-      
-      await sendTelegram("💰 POSITION SOLD",
-        `${position.outcome}\n` +
-        `Entry: ${(position.avgPrice * 100).toFixed(0)}¢\n` +
-        `Sold: ${(position.curPrice * 100).toFixed(0)}¢\n` +
-        `P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%\n` +
-        `Received: $${result.filledUsd?.toFixed(2) || position.value.toFixed(2)}\n` +
-        `Reason: ${reason}`
-      );
-      
-      return true;
-    } else {
-      logger.warn(`❌ Sell failed: ${result.reason}`);
-      
-      if (result.reason === 'PRICE_TOO_LOW') {
-        logger.warn(`   Bid price below ${state.emergencySellConfig.mode} threshold`);
-        logger.warn(`   To force sell, use NUCLEAR mode (⚠️  accepts massive losses)`);
-      }
-      
-      return false;
-    }
-  } catch (error) {
-    logger.error(`❌ Sell error: ${error}`);
-    
-    if (state.errorReporter) {
-      await state.errorReporter.reportError(error as Error, {
-        operation: "emergency_sell",
-        tokenId: position.tokenId,
-        mode: state.emergencySellConfig.mode,
-      });
-    }
-    
-    return false;
-  }
-}
-
-// ============================================
-// APEX v3.0 - INITIALIZATION
-// ============================================
-
-async function initializeAPEX(): Promise<void> {
-  console.clear();
-  displayAPEXBanner();
-
-  // Load mode from ENV
-  state.modeConfig = getApexMode();
-  state.mode = state.modeConfig.name;
-
-  logger.info(`⚡ APEX v3.0 INITIALIZING...`);
-  logger.info(``);
-  
-  // STEP 1: Check POL gas
-  await checkPolBalance();
-
-  // Auto-detect wallet balance
-  if (!state.wallet || !state.client) {
-    throw new Error("Wallet or client not initialized");
-  }
-
-  state.startBalance = await getUsdcBalance(state.wallet, state.address);
-  state.currentBalance = state.startBalance;
-  state.lastKnownBalance = state.startBalance;
-  state.lastBalanceCheck = Date.now();
-  
-  // Get positions for portfolio calculation
-  const positions = await getPositions(state.address);
-  const enrichedPositions = enrichPositions(positions);
-  const positionValue = enrichedPositions.reduce((sum, p) => sum + p.value, 0);
-  const totalValue = state.startBalance + positionValue;
-
-  // Detect account tier
-  state.tier = getAccountTier(state.startBalance);
-  logger.info(`💰 Balance Detected: ${$(state.startBalance)}`);
-  logger.info(`📊 Open Positions: ${enrichedPositions.length}`);
-  logger.info(`💼 Position Value: ${$(positionValue)}`);
-  logger.info(`💎 Total Portfolio: ${$(totalValue)}`);
-  logger.info(
-    `📊 Account Tier: ${state.tier.description} (${state.tier.multiplier}× multiplier)`,
+function calculateEffectiveBankroll(
+  walletBalance: number,
+  config: ChurnConfig,
+): { effectiveBankroll: number; reserveUsd: number } {
+  const reserveUsd = Math.max(
+    walletBalance * config.reserveFraction,
+    config.minReserveUsd,
   );
-  logger.info(``);
-
-  // Check for redeemable positions on startup
-  logger.info(`🎁 Checking for resolved positions to redeem...`);
-
-  const redeemResult = await redeemAllPositions(
-    state.wallet,
-    state.address,
-    logger,
-  );
-
-  if (redeemResult.redeemed > 0) {
-    logger.info(
-      `✅ Redeemed ${redeemResult.redeemed} position(s) on startup`,
-    );
-
-    // Refresh balance
-    state.startBalance = await getUsdcBalance(state.wallet, state.address);
-    state.currentBalance = state.startBalance;
-    state.lastKnownBalance = state.startBalance;
-
-    await sendTelegram(
-      "🎁 Startup Redemption",
-      `Redeemed ${redeemResult.redeemed} market(s)\n` +
-        `New balance: ${$(state.startBalance)}`,
-    );
-
-    // Recalculate tier with new balance
-    state.tier = getAccountTier(state.startBalance);
-  }
-
-  logger.info(``);
-
-  // STEP 2: Auto-approve USDC
-  await ensureUSDCApproval();
-
-  // Load mode settings
-  logger.info(`⚙️  MODE: ${state.mode}`);
-  logger.info(
-    `   Base Position: ${state.modeConfig.basePositionPct}% of balance`,
-  );
-  logger.info(`   Max Exposure: ${state.modeConfig.maxExposurePct}%`);
-  logger.info(`   Weekly Target: +${state.modeConfig.weeklyTargetPct}%`);
-  logger.info(`   Drawdown Halt: -${state.modeConfig.drawdownHaltPct}%`);
-  logger.info(``);
-
-  // Initialize Oracle with default allocations
-  state.oracleState = createOracleState();
-  state.strategyAllocations = new Map([
-    [Strategy.VELOCITY, 20],
-    [Strategy.SHADOW, 20],
-    [Strategy.BLITZ, 20],
-    [Strategy.GRINDER, 15],
-    [Strategy.CLOSER, 15],
-    [Strategy.AMPLIFIER, 10],
-  ]);
-
-  logger.info(`🧠 APEX Oracle: Initialized (24hr performance tracking)`);
-  logger.info(`🎯 APEX Hunter: Ready to scan 6 patterns`);
-  logger.info(``);
-
-  // Calculate target
-  const targetMultiplier =
-    state.mode === "AGGRESSIVE" ? 10 : state.mode === "BALANCED" ? 5 : 3;
-  const target = state.startBalance * targetMultiplier;
-  const weeksToTarget =
-    Math.log(targetMultiplier) /
-    Math.log(1 + state.modeConfig.weeklyTargetPct / 100);
-
-  logger.info(`🎯 Target: ${$(target)} (${targetMultiplier}×)`);
-  logger.info(`⏱️  Estimated: ${Math.ceil(weeksToTarget)} weeks`);
-  logger.info(``);
-
-  // Track weekly progress
-  state.weekStartTime = Date.now();
-  state.weekStartBalance = state.startBalance;
-  state.lastOracleReview = Date.now();
-
-  logger.info(`✅ APEX v3.0 ONLINE - 24/7 HUNTING MODE ENGAGED`);
-  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  logger.info(``);
-
-  // Send startup notification
-  await sendTelegram(
-    "⚡ APEX v3.0 ONLINE",
-    `Mode: ${state.mode}\n` +
-      `Balance: ${$(state.startBalance)}\n` +
-      `Target: ${$(target)} (${targetMultiplier}×)\n` +
-      `ETA: ~${Math.ceil(weeksToTarget)} weeks\n\n` +
-      `Status: 🟢 HUNTING FOR PROFITS`,
-  );
+  const effectiveBankroll = Math.max(0, walletBalance - reserveUsd);
+  return { effectiveBankroll, reserveUsd };
 }
 
-// ============================================
-// APEX v3.0 - FIREWALL (CIRCUIT BREAKER)
-// ============================================
-
-async function runFirewallCheck(
-  currentBalance: number,
-  positions: Position[],
-): Promise<void> {
-  // Calculate current exposure from positions
-  const currentExposure = calculateExposure(positions);
-  const maxExposure = currentBalance * (state.modeConfig.maxExposurePct / 100);
-  
-  // Use firewall module's halt check (includes drawdown)
-  const haltCheck = shouldHaltTrading(currentBalance, state.startBalance, state.modeConfig);
-  
-  if (haltCheck.halt) {
-    // Only alert/log on transition to halted state (not every cycle)
-    if (!state.tradingHalted) {
-      logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      logger.error(`🚨 APEX FIREWALL: ${haltCheck.reason}`);
-      logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      logger.error(`   Balance: ${$(currentBalance)}`);
-      logger.error(`   Start Balance: ${$(state.startBalance)}`);
-      logger.error(`   Exposure: ${$(currentExposure)} / ${$(maxExposure)}`);
-      logger.error(`   Status: TRADING HALTED ⛔`);
-      logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      
-      // Log firewall summary
-      const summary = getFirewallSummary(currentExposure, maxExposure, currentBalance, state.startBalance);
-      logger.error(summary);
-
-      await sendTelegram(
-        "🚨 APEX FIREWALL: TRADING HALTED",
-        `${haltCheck.reason}\n\n` +
-          `Balance: ${$(currentBalance)}\n` +
-          `Exposure: ${$(currentExposure)} / ${$(maxExposure)}\n\n` +
-          `New trades halted. Exits/redemptions continue.`,
-      );
-
-      state.tradingHalted = true;
-      state.haltReason = haltCheck.reason;
-    }
-    return;
-  }
-
-  // Reset halt if conditions cleared
-  if (state.tradingHalted && !haltCheck.halt) {
-    state.tradingHalted = false;
-    state.haltReason = "";
-    logger.info(
-      `✅ APEX Firewall: Trading resumed (balance: ${$(currentBalance)})`,
-    );
-    await sendTelegram(
-      "✅ APEX FIREWALL: TRADING RESUMED",
-      `Balance recovered: ${$(currentBalance)}\n` + `Trading has been resumed.`,
-    );
-  }
-
-  // WARNING: BALANCE GETTING LOW
-  if (currentBalance < 50 && !state.lowBalanceWarned) {
-    logger.warn(`⚠️ APEX FIREWALL: Low Balance Warning`);
-    logger.warn(`   Balance: ${$(currentBalance)}`);
-    logger.warn(getFirewallSummary(currentExposure, maxExposure, currentBalance, state.startBalance));
-
-    await sendTelegram(
-      "⚠️ LOW BALANCE WARNING",
-      `Balance: ${$(currentBalance)}\n` +
-        `Reducing position sizes\n` +
-        `Consider adding funds`,
-    );
-
-    state.lowBalanceWarned = true;
-  } else if (currentBalance >= 100 && state.lowBalanceWarned) {
-    // Reset warning if balance recovered
-    state.lowBalanceWarned = false;
-  }
-
-  // HOURLY REALIZED LOSS LIMIT
-  // Note: Only tracks realized losses from SELL orders (not total buy spend).
-  // This prevents runaway losses from poor trades rather than enforcing a hard buy cap.
-  const hourAgo = Date.now() - 60 * 60 * 1000;
-  const recentTrades = state.oracleState.trades.filter(
-    (t) => t.timestamp > hourAgo,
-  );
-  const recentLoss = recentTrades.reduce(
-    (sum, t) => sum + (t.pnl < 0 ? Math.abs(t.pnl) : 0),
-    0,
-  );
-
-  const maxLossPerHour =
-    currentBalance * (state.modeConfig.maxExposurePct / 100) * 0.5;
-
-  if (recentLoss >= maxLossPerHour) {
-    if (!state.hourlySpendingLimitReached) {
-      logger.warn(`⚠️ APEX Firewall: Hourly loss limit reached`);
-      logger.warn(`   Loss: ${$(recentLoss)}`);
-      logger.warn(`   Max loss: ${$(maxLossPerHour)}/hour`);
-    }
-    state.hourlySpendingLimitReached = true;
-  } else {
-    state.hourlySpendingLimitReached = false;
-  }
+function calculateTradeSize(
+  effectiveBankroll: number,
+  config: ChurnConfig,
+): number {
+  const fractionalSize = effectiveBankroll * config.tradeFraction;
+  return Math.min(fractionalSize, config.maxTradeUsd);
 }
 
-// ============================================
-// TRADING FUNCTIONS
-// ============================================
+// ═══════════════════════════════════════════════════════════════════════════
+// EV METRICS
+// ═══════════════════════════════════════════════════════════════════════════
 
-async function buy(
-  tokenId: string,
-  outcome: "YES" | "NO",
-  requestedSize: number,
-  reason: string,
-  strategy: StrategyType,
-  positions: Position[], // Pass positions from cycle to avoid extra RPC call
-  marketId?: string,
-  shares?: number,
-): Promise<boolean> {
-  if (!state.client || !state.wallet) return false;
-
-  // CRITICAL: Fetch current balance FIRST (always get fresh balance before trading)
-  let currentBalance: number;
-  try {
-    currentBalance = await getUsdcBalance(state.wallet, state.address);
-    state.lastKnownBalance = currentBalance;
-    state.lastBalanceCheck = Date.now();
-  } catch (error) {
-    logger.error(`❌ Failed to check balance: ${error}`);
-    
-    // Report balance check error
-    if (state.errorReporter) {
-      await state.errorReporter.reportError(error as Error, {
-        operation: "balance_check",
-        balance: state.lastKnownBalance,
-        cycleCount: state.cycleCount,
-      });
-    }
-    
-    return false;
-  }
-
-  // CRITICAL: Halt if balance too low
-  if (currentBalance < 10) {
-    logger.error(`🚨 BALANCE TOO LOW: ${$(currentBalance)}`);
-    
-    await sendTelegram(
-      "🚨 CRITICAL: LOW BALANCE",
-      `Balance: ${$(currentBalance)}\n` + `Cannot place orders! Minimum: $10`,
-    );
-    
-    // Report low balance error
-    if (state.errorReporter) {
-      await state.errorReporter.reportError(
-        new Error(`Insufficient balance: ${currentBalance}`),
-        {
-          operation: "trade_attempt",
-          balance: currentBalance,
-          cycleCount: state.cycleCount,
-        },
-      );
-    }
-    
-    return false;
-  }
-
-  // Calculate intelligent reserves using positions from current cycle
-  const reserves = calculateIntelligentReserves(currentBalance, positions);
-  const availableCapital = reserves.availableForTrading;
-
-  if (availableCapital <= 0) {
-    logger.warn(`⚠️ No capital available (all reserved)`);
-    return false;
-  }
-
-  // Calculate dynamic size based on balance and strategy
-  const dynamicSize = calculatePositionSize(
-    currentBalance,
-    state.modeConfig,
-    strategy,
-  );
-
-  // CRITICAL: Cap to available capital and requested size
-  let finalSize = Math.min(requestedSize, dynamicSize, availableCapital);
-
-  // CRITICAL: Minimum order size
-  if (finalSize < 5) {
-    if (logger.debug) {
-      logger.debug(`⏭️ Position too small: ${$(finalSize)} (min $5)`);
-    }
-    return false;
-  }
-
-  // CRITICAL: Verify sufficient balance (final safety check)
-  if (finalSize > currentBalance) {
-    logger.error(
-      `🚨 IMPOSSIBLE ORDER: Size ${$(finalSize)} > Balance ${$(currentBalance)}`,
-    );
-    return false;
-  }
-
-  // Log trade details
-  logger.info(`⚡ APEX ${strategy}: Buying ${outcome}`);
-  logger.info(`   Balance: ${$(currentBalance)}`);
-  logger.info(`   Available: ${$(availableCapital)}`);
-  logger.info(`   Requested: ${$(requestedSize)}`);
-  logger.info(`   Placing: ${$(finalSize)}`);
-
-  if (!state.liveTrading) {
-    logger.info(
-      `🔸 [SIM] ⚡ APEX ${strategy}: BUY ${outcome} ${$(finalSize)} | ${reason}`,
-    );
-    await sendTelegram(
-      `[SIM] APEX ${strategy} BUY`,
-      `${reason}\n${outcome} ${$(finalSize)}`,
-    );
-
-    // Update cached balance for simulation
-    state.lastKnownBalance = currentBalance - finalSize;
-
-    // Don't record simulated buys - only record sells with actual P&L
-    return true;
-  }
-
-  // Place order
-  try {
-    const result = await postOrder({
-      client: state.client,
-      tokenId,
-      outcome,
-      side: "BUY",
-      sizeUsd: finalSize,
-      marketId,
-      shares,
-      logger,
-    });
-
-    if (result.success) {
-      // Update cached balance
-      state.lastKnownBalance = currentBalance - finalSize;
-
-      logger.info(
-        `✅ ⚡ APEX ${strategy}: BUY ${outcome} ${$(result.filledUsd ?? finalSize)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢ | ${reason}`,
-      );
-      logger.info(`   New balance: ~${$(state.lastKnownBalance)}`);
-
-      await sendTelegram(
-        `⚡ APEX ${strategy} BUY`,
-        `${reason}\n${outcome} ${$(result.filledUsd ?? finalSize)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢\n` +
-          `Balance: ~${$(state.lastKnownBalance)}`,
-      );
-
-      // Don't record buy trades in Oracle - only record sells with actual P&L
-      state.tradesExecuted++;
-      invalidatePositions();
-      return true;
-    }
-
-    if (result.reason !== "SIMULATED") {
-      logger.warn(
-        `⚡ APEX ${strategy}: BUY failed - ${result.reason} | ${reason}`,
-      );
-      
-      // Report order failures to error reporter
-      if (state.errorReporter && result.reason) {
-        const errorMsg = result.reason;
-        
-        // Only report critical errors (balance, allowance, auth)
-        if (
-          errorMsg.includes("INSUFFICIENT_BALANCE") ||
-          errorMsg.includes("INSUFFICIENT_ALLOWANCE") ||
-          errorMsg.includes("401") ||
-          errorMsg.includes("CLOUDFLARE")
-        ) {
-          await state.errorReporter.reportError(
-            new Error(`Order failed: ${result.reason}`),
-            {
-              operation: "place_order",
-              balance: state.lastKnownBalance,
-              cycleCount: state.cycleCount,
-              tokenId,
-            },
-          );
-        }
-      }
-    }
-    return false;
-  } catch (error) {
-    logger.error(`❌ Order error: ${error}`);
-    
-    // Report unexpected order errors
-    if (state.errorReporter) {
-      await state.errorReporter.reportError(error as Error, {
-        operation: "place_order_exception",
-        balance: state.lastKnownBalance,
-        cycleCount: state.cycleCount,
-        tokenId,
-      });
-    }
-    
-    return false;
-  }
+interface TradeResult {
+  tokenId: string;
+  side: "LONG" | "SHORT";
+  entryPriceCents: number;
+  exitPriceCents: number;
+  sizeUsd: number;
+  timestamp: number;
+  pnlCents: number; // Per share
+  pnlUsd: number;
+  isWin: boolean;
 }
 
-// Note: The deprecated sell() function has been removed.
-// All sell operations now use sellPosition() which has:
-// - Proper price protection (5% slippage tolerance)
-// - Live trading mode checking  
-// - Better error handling
-// - Telegram notifications
-
-// ============================================
-// APEX v3.0 - HUNTER SCANNER
-// ============================================
-
-interface MarketData {
-  conditionId: string;
-  question: string;
-  tokens: { tokenId: string; outcome: string; price: number }[];
-  volume: number;
-  liquidity: number;
+interface EvMetrics {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  avgWinCents: number;
+  avgLossCents: number;
+  evCents: number;
+  profitFactor: number;
+  totalPnlUsd: number;
+  lastUpdated: number;
 }
 
-/**
- * Fetch active markets from Gamma API
- * NOTE: This function is currently unused but provides infrastructure
- * for future full-market scanning capabilities in APEX Hunter.
- * When integrated, it will enable scanning external markets beyond current positions.
- */
-async function fetchActiveMarkets(limit: number = 100): Promise<MarketData[]> {
-  try {
-    const url = `${POLYMARKET_API.GAMMA}/markets?limit=${limit}&active=true`;
-    const { data } = await axios.get(url, { timeout: 10000 });
-    
-    if (!Array.isArray(data)) return [];
-    
-    return data.map(m => ({
-      conditionId: m.conditionId,
-      question: m.question,
-      tokens: (m.tokens || []).map((t: any) => ({
-        tokenId: t.tokenId || t.token_id,
-        outcome: t.outcome,
-        price: Number(t.price) || 0,
-      })),
-      volume: Number(m.volume) || 0,
-      liquidity: Number(m.liquidity) || 0,
-    }));
-  } catch (error) {
-    if (logger.debug) {
-      logger.debug(`Market fetch error: ${error}`);
-    }
-    return [];
-  }
-}
+class EvTracker {
+  private trades: TradeResult[] = [];
+  private readonly config: ChurnConfig;
+  private pausedUntil = 0;
 
-async function runHunterScan(
-  positions: Position[],
-): Promise<HunterOpportunity[]> {
-  state.hunterStats.scans++;
-
-  if (process.env.DEBUG) {
-    logger.info(`🔍 APEX Hunter: Scanning markets...`);
+  constructor(config: ChurnConfig) {
+    this.config = config;
   }
 
-  const opportunities: HunterOpportunity[] = [];
-
-  // For now, use existing positions as market snapshots
-  // In a full implementation, you would fetch all active markets
-  for (const p of positions) {
-    // NOTE: Hunter currently uses limited data from existing positions
-    // For full functionality, this should fetch complete market data from the API
-    // including: real-time volume, liquidity, price history, whale trades, etc.
-    // Current implementation provides basic pattern detection as a foundation
-
-    // Create a simple market snapshot from position
-    const snapshot: MarketSnapshot = {
-      tokenId: p.tokenId,
-      conditionId: "", // Not available in position
-      marketId: p.marketId,
-      yesPrice: p.outcome === "YES" ? p.curPrice : 1 - p.curPrice,
-      noPrice: p.outcome === "NO" ? p.curPrice : 1 - p.curPrice,
-      volume24h: 0, // Would need to fetch from API
-      liquidity: 0,
-      createdAt: 0,
-      lastPrice: p.curPrice,
-      priceHistory: [p.curPrice], // Would need historical data
-      spread: 0,
-    };
-
-    // Skip detection for markets we've already acted on this cycle
-    if (state.actedPositions.has(p.tokenId)) continue;
-
-    // Run pattern detection (simplified - full implementation would fetch real market data)
-    const momentum = detectMomentum(snapshot);
-    if (momentum) opportunities.push(momentum);
-
-    const mispriced = detectMispricing(snapshot);
-    if (mispriced) opportunities.push(mispriced);
-
-    // Volume spike and whale detection need additional data - skip for now
-    // const volumeSpike = detectVolumeSpike(snapshot, normalVolume);
-    // const whaleActivity = detectWhaleActivity(snapshot, recentWhaleTrade);
-
-    const newMarket = detectNewMarket(snapshot);
-    if (newMarket) opportunities.push(newMarket);
-
-    const spreadComp = detectSpreadCompression(snapshot);
-    if (spreadComp) opportunities.push(spreadComp);
-  }
-
-  state.hunterStats.opportunitiesFound += opportunities.length;
-
-  if (opportunities.length > 0) {
-    logger.info(`🎯 APEX Hunter: Found ${opportunities.length} opportunities`);
-
-    // Log top 3
-    for (let i = 0; i < Math.min(3, opportunities.length); i++) {
-      const opp = opportunities[i];
-      logger.info(
-        `   ${i + 1}. ${opp.pattern}: ${opp.outcome} @ $${opp.price.toFixed(2)} (${opp.confidence}% conf)`,
-      );
-    }
-  }
-
-  return opportunities;
-}
-
-async function executeHunterOpportunities(
-  opportunities: HunterOpportunity[],
-  currentBalance: number,
-  positions: Position[],
-): Promise<void> {
-  if (opportunities.length === 0) return;
-
-  // Sort by confidence
-  opportunities.sort((a, b) => b.confidence - a.confidence);
-
-  // Execute top 3 opportunities
-  for (const opp of opportunities.slice(0, 3)) {
-    // Check if already acted on this market
-    if (state.actedPositions.has(opp.tokenId)) continue;
-
-    // Calculate position size using dynamic scaling
-    const positionSize = calculatePositionSize(
-      currentBalance,
-      state.modeConfig,
-      Strategy.HUNTER,
-    );
-
-    logger.info(`🎯 APEX Hunter: Executing ${opp.pattern}`);
-    logger.info(`   ${opp.outcome} @ $${opp.price.toFixed(2)} - ${opp.reason}`);
-    logger.info(`   Size: ${$(positionSize)}`);
-
-    // Place order
-    const success = await buy(
-      opp.tokenId,
-      opp.outcome,
-      positionSize,
-      `${opp.pattern}: ${opp.reason}`,
-      Strategy.HUNTER,
-      positions,
-      opp.marketId,
-    );
-
-    if (success) {
-      state.hunterStats.trades++;
-      state.actedPositions.add(opp.tokenId);
-
-      await sendTelegram(
-        "🎯 APEX HUNTER STRIKE",
-        `Pattern: ${opp.pattern}\n` +
-          `${opp.outcome} @ $${opp.price.toFixed(2)}\n` +
-          `Confidence: ${opp.confidence}%\n` +
-          `Reason: ${opp.reason}`,
-      );
-    }
-  }
-}
-
-// ============================================
-// APEX v3.0 - EXIT STRATEGIES
-// ============================================
-
-/**
- * Run all exit strategies
- * Priority order: Blitz → Command → Ratchet → Ladder → Reaper
- */
-async function runExitStrategies(positions: Position[]): Promise<number> {
-  let exitCount = 0;
-  
-  // Enrich positions with entry time and price history
-  const enrichedPositions = enrichPositions(positions);
-  
-  // Track which positions we've sold in this cycle to prevent double-selling
-  const soldTokenIds = new Set<string>();
-  
-  // BLITZ - Quick scalps (10%+ profit, high urgency)
-  for (const p of enrichedPositions) {
-    if (soldTokenIds.has(p.tokenId)) continue;
-    
-    const signal = detectBlitz(p, 10, 5);
-    if (signal && signal.urgency === "HIGH") {
-      const success = await sellPosition(p, signal.reason);
-      if (success) {
-        exitCount++;
-        soldTokenIds.add(p.tokenId);
-      }
-    }
-  }
-  
-  // COMMAND - AutoSell near $1 (99.5¢+)
-  for (const p of enrichedPositions) {
-    if (soldTokenIds.has(p.tokenId)) continue;
-    
-    const signal = detectAutoSell(p, 0.995);
-    if (signal) {
-      const success = await sellPosition(p, signal.reason);
-      if (success) {
-        exitCount++;
-        soldTokenIds.add(p.tokenId);
-      }
-    }
-  }
-  
-  // RATCHET - Trailing stops (adaptive based on volatility)
-  for (const p of enrichedPositions) {
-    if (soldTokenIds.has(p.tokenId)) continue;
-    
-    const ratchetState = state.ratchetStates.get(p.tokenId);
-    const trailingPct = calculateOptimalTrailing(p);
-    const updated = updateRatchet(p, ratchetState || null, trailingPct);
-    state.ratchetStates.set(p.tokenId, updated);
-    
-    const signal = isRatchetTriggered(p, updated);
-    if (signal) {
-      const success = await sellPosition(p, signal.reason);
-      if (success) {
-        exitCount++;
-        soldTokenIds.add(p.tokenId);
-        state.ratchetStates.delete(p.tokenId);
-      }
-    }
-  }
-  
-  // LADDER - Partial exits at profit milestones
-  for (const p of enrichedPositions) {
-    if (soldTokenIds.has(p.tokenId)) continue;
-    
-    const ladderState = state.ladderStates.get(p.tokenId);
-    const signal = detectLadder(p, ladderState || null, DEFAULT_LADDER);
-    if (signal) {
-      // Create partial position for partial sell
-      const partialSize = calculatePartialSize(p, signal.exitPct);
-      const partialPosition: Position = { 
-        ...p, 
-        size: partialSize, 
-        value: partialSize * p.curPrice,
-        // Scale P&L to the partial size
-        pnlUsd: p.size && p.size > 0 && p.pnlUsd !== undefined
-          ? (p.pnlUsd * partialSize) / p.size
-          : p.pnlUsd,
-        // Percentage P&L remains the same for the partial position
-        pnlPct: p.pnlPct,
-      };
-      
-      const success = await sellPosition(partialPosition, signal.reason);
-      if (success) {
-        exitCount++;
-        const updated = updateLadderState(
-          ladderState || {
-            tokenId: p.tokenId,
-            exitedPct: 0,
-            lastMilestone: 0,
-            exitHistory: [],
-          }, 
-          signal.exitPct, 
-          signal.milestone
-        );
-        state.ladderStates.set(p.tokenId, updated);
-        
-        // NOTE: We intentionally DO NOT delete the ladder state when exitedPct >= 100.
-        // If, due to any inconsistency, this position remains in the portfolio
-        // on a subsequent cycle, preserving the final ladder state prevents the
-        // ladder logic from being reinitialized from 0% exited for the same token.
-      }
-    }
-  }
-  
-  // REAPER - Scavenger mode opportunistic exits
-  const isLowLiquidity = shouldEnterScavengerMode(
-    state.volume24h || 0,
-    state.orderBookDepth || 0,
-    state.targets.length
-  );
-  
-  if (isLowLiquidity) {
-    const reaperSignals: ReaperSignal[] = [];
-    
-    for (const p of enrichedPositions) {
-      if (soldTokenIds.has(p.tokenId)) continue;
-      
-      const signal = detectReaper(p, {
-        isLowLiquidity: true,
-        volumeDry: true,
-        spreadWide: false,
-        targetInactive: state.targets.length === 0,
-      });
-      
-      if (signal) reaperSignals.push(signal);
-    }
-    
-    const prioritized = prioritizeReaperExits(reaperSignals);
-    
-    for (const signal of prioritized.filter(s => s.priority === "HIGH")) {
-      if (soldTokenIds.has(signal.position.tokenId)) continue;
-      
-      const success = await sellPosition(signal.position, signal.reason);
-      if (success) {
-        exitCount++;
-        soldTokenIds.add(signal.position.tokenId);
-      }
-    }
-  }
-  
-  return exitCount;
-}
-
-// ============================================
-// APEX v3.0 - PROTECTION STRATEGIES
-// ============================================
-
-/**
- * Run all protection strategies
- * Priority order: Guardian (stop-loss) → Sentinel (emergency) → Shield (hedging)
- */
-async function runProtectionStrategies(positions: Position[]): Promise<number> {
-  let protectionCount = 0;
-  
-  // Enrich positions with entry time and price history
-  const enrichedPositions = enrichPositions(positions);
-  
-  // Track which positions we've acted on
-  const actedTokenIds = new Set<string>();
-  
-  // Get mode-specific protection settings
-  const maxLossPct = state.mode === "CONSERVATIVE" ? 15 : 
-                     state.mode === "BALANCED" ? 20 : 25;
-  const hedgeTriggerPct = state.mode === "CONSERVATIVE" ? 15 : 
-                          state.mode === "BALANCED" ? 20 : 25;
-  
-  // GUARDIAN - Hard stop-loss protection
-  for (const p of enrichedPositions) {
-    if (actedTokenIds.has(p.tokenId)) continue;
-    
-    // Check if position already has a hedge (skip guardian if hedged)
-    const isHedged = state.hedgeStates.has(p.tokenId);
-    
-    // Check for danger zone warning
-    if (isInDangerZone(p, maxLossPct * 0.6)) {
-      logger.warn(`🛡️ APEX Guardian: ${p.outcome} in danger zone (${p.pnlPct.toFixed(1)}% loss)`);
-    }
-    
-    const signal = detectGuardian(p, maxLossPct, isHedged);
-    if (signal) {
-      logger.warn(`🛡️ APEX Guardian: STOP-LOSS triggered for ${p.outcome} (${signal.stopLossPct.toFixed(1)}% loss)`);
-      const success = await sellPosition(p, signal.reason, true /* forceSell */);
-      if (success) {
-        protectionCount++;
-        actedTokenIds.add(p.tokenId);
-        
-        // Clean up any associated hedge state
-        state.hedgeStates.delete(p.tokenId);
-        
-        // Gate protection Telegram behind liveTrading to avoid misleading sim messages
-        if (state.liveTrading) {
-          await sendTelegram(
-            "🛡️ GUARDIAN STOP-LOSS",
-            `${p.outcome} exited at ${signal.stopLossPct.toFixed(1)}% loss\n` +
-            `Value: $${p.value.toFixed(2)}\n` +
-            `Reason: ${signal.reason}`
-          );
-        }
-      }
-    }
-  }
-  
-  // SENTINEL - Emergency exit for markets closing soon
-  for (const p of enrichedPositions) {
-    if (actedTokenIds.has(p.tokenId)) continue;
-    
-    const signal = detectSentinel(p);
-    if (signal) {
-      const urgency = signal.minutesToClose !== undefined 
-        ? getSentinelUrgency(signal.minutesToClose) 
-        : "HIGH";
-      
-      // Force exit on CRITICAL urgency or if force flag is set
-      if (urgency === "CRITICAL" || signal.force) {
-        logger.warn(`🚨 APEX Sentinel: EMERGENCY EXIT for ${p.outcome} - ${signal.reason}`);
-        const success = await sellPosition(p, signal.reason, true /* forceSell */);
-        if (success) {
-          protectionCount++;
-          actedTokenIds.add(p.tokenId);
-          
-          // Gate protection Telegram behind liveTrading to avoid misleading sim messages
-          if (state.liveTrading) {
-            await sendTelegram(
-              "🚨 SENTINEL EMERGENCY",
-              `${p.outcome} force exited!\n` +
-              `Time remaining: ${signal.minutesToClose?.toFixed(1) ?? "Unknown"} min\n` +
-              `P&L: ${p.pnlPct.toFixed(1)}%\n` +
-              `Reason: ${signal.reason}`
-            );
-          }
-        }
-      } else if (urgency === "HIGH") {
-        // Warn but don't force exit
-        logger.warn(`⚠️ APEX Sentinel: WARNING for ${p.outcome} - market closing soon`);
-      }
-    }
-  }
-  
-  // SHIELD - Intelligent hedging for losing positions
-  for (const p of enrichedPositions) {
-    if (actedTokenIds.has(p.tokenId)) continue;
-    
-    const isHedged = state.hedgeStates.has(p.tokenId);
-    const signal = detectShield(p, isHedged, hedgeTriggerPct);
-    
-    if (signal) {
-      logger.info(`🛡️ APEX Shield: Hedge signal for ${p.outcome} (${p.pnlPct.toFixed(1)}% loss)`);
-      
-      // Calculate hedge position size
-      const positionSize = calculatePositionSize(
-        state.currentBalance,
-        state.modeConfig,
-        Strategy.SHADOW, // Use conservative weight for hedges
-      );
-      const hedgeSize = Math.min(signal.hedgeSize, positionSize * 0.5);
-      
-      // NOTE: Executing a hedge requires the tokenId of the opposite outcome, which
-      // we don't have directly. In a real implementation, we would need to:
-      // 1. Look up the market by marketId/conditionId
-      // 2. Find the opposite outcome's tokenId
-      // 3. Execute the buy on that tokenId
-      //
-      // For now, we log the hedge signal for manual follow-up and track that we've
-      // considered hedging this position. Full hedge implementation requires market
-      // data integration to resolve opposite tokenIds.
-      
-      if (hedgeSize >= 5) {
-        logger.warn(
-          `🛡️ APEX Shield: Hedge recommended for ${p.outcome} ` +
-          `(${p.pnlPct.toFixed(1)}% loss) → consider ${signal.hedgeOutcome} hedge of $${hedgeSize.toFixed(2)}`
-        );
-        
-        // Gate protection Telegram behind liveTrading to avoid misleading sim messages
-        if (state.liveTrading) {
-          await sendTelegram(
-            "🛡️ SHIELD HEDGE SIGNAL",
-            `⚠️ Manual hedge recommended:\n` +
-            `Position: ${p.outcome}\n` +
-            `Current loss: ${p.pnlPct.toFixed(1)}%\n` +
-            `Recommended: Buy ${signal.hedgeOutcome} for $${hedgeSize.toFixed(2)}\n\n` +
-            `Note: Automatic hedging requires market data integration.`
-          );
-        }
-        
-        // Mark that we've signaled this position to avoid spam
-        actedTokenIds.add(p.tokenId);
-      }
-    }
-  }
-  
-  // NOTE: Hedge stop-loss/take-profit monitoring is disabled until automatic
-  // hedge execution is implemented with proper tokenId resolution.
-  // The existing positions are already monitored by Guardian for stop-loss.
-  
-  return protectionCount;
-}
-
-// ============================================
-// APEX v3.0 - ENTRY STRATEGIES
-// ============================================
-
-async function runShadowStrategy(
-  positions: Position[],
-  currentBalance: number,
-): Promise<void> {
-  // APEX Shadow - Copy Trading using module functions
-  if (state.targets.length === 0) return;
-
-  const allocation = state.strategyAllocations.get(Strategy.SHADOW) || 0;
-  if (allocation === 0) return;
-
-  // Use module's fetchShadowTrades with config
-  const rawTrades = await fetchShadowTrades(state.targets, {
-    minTradeSize: 10,
-    maxTradeSize: 1000,
-    onlyBuys: true,
-    timeWindowSeconds: 60,
-  });
-  
-  // Use module's quality filtering
-  const qualityTrades = filterQualityTrades(rawTrades, 0.3);
-  
-  // Log trader stats periodically
-  if (state.cycleCount % 60 === 0 && qualityTrades.length > 0) {
-    const stats = getTraderStats(qualityTrades);
-    logger.info(`📊 APEX Shadow: Tracking ${stats.length} traders, ${qualityTrades.length} quality trades`);
-  }
-
-  // Calculate position size
-  const positionSize = calculatePositionSize(
-    currentBalance,
-    state.modeConfig,
-    Strategy.SHADOW,
-  );
-
-  for (const t of qualityTrades) {
-    const size = Math.min(t.sizeUsd * 1.0, positionSize);
-
-    await buy(
-      t.tokenId,
-      t.outcome as "YES" | "NO",
-      size,
-      `Shadow: Following ${t.trader.slice(0, 8)}... @ ${(t.price * 100).toFixed(0)}¢`,
-      Strategy.SHADOW,
-      positions,
-      t.marketId,
-    );
-  }
-}
-
-async function runCloserStrategy(
-  positions: Position[],
-  currentBalance: number,
-): Promise<void> {
-  // APEX Closer - Endgame Strategy using module functions
-  const allocation = state.strategyAllocations.get(Strategy.CLOSER) || 0;
-  if (allocation === 0) return;
-
-  const basePositionSize = calculatePositionSize(
-    currentBalance,
-    state.modeConfig,
-    Strategy.CLOSER,
-  );
-
-  for (const p of positions) {
-    // Use module's detectCloser to find opportunities
-    const signal = detectCloser(
-      p.marketEndTime,
-      p.curPrice,
-      p.outcome as "YES" | "NO",
-      p.tokenId,
-      p.conditionId,
-      p.marketId,
-    );
-    
-    if (signal && signal.confidence > 50) {
-      // Use module's risk-adjusted position sizing
-      const hoursToClose = signal.hoursToClose;
-      const closerSize = calculateCloserSize(basePositionSize, hoursToClose, p.curPrice);
-      
-      if (closerSize >= 5) {
-        logger.info(`📊 APEX Closer: ${signal.reason} (confidence: ${signal.confidence.toFixed(0)}%)`);
-        
-        await buy(
-          p.tokenId,
-          p.outcome as "YES" | "NO",
-          closerSize,
-          signal.reason,
-          Strategy.CLOSER,
-          positions,
-          p.marketId,
-        );
-      }
-    }
-    
-    // Check if positions should exit before close
-    if (shouldExitBeforeClose(p, 1)) {
-      logger.info(`📊 APEX Closer: Exit recommended - market closing soon`);
-      await sellPosition(p, "APEX Closer: Market closing soon");
-    }
-  }
-}
-
-async function runAmplifierStrategy(
-  positions: Position[],
-  currentBalance: number,
-): Promise<void> {
-  // APEX Amplifier - Stack Winners using module functions
-  const allocation = state.strategyAllocations.get(Strategy.AMPLIFIER) || 0;
-  if (allocation === 0) return;
-
-  const stackedTokens = new Set<string>();
-  
-  // Calculate current exposure for safety checks
-  const currentExposure = calculateExposure(positions);
-  const maxExposure = currentBalance * (state.modeConfig.maxExposurePct / 100);
-  
-  const maxStackSize = calculatePositionSize(
-    currentBalance,
-    state.modeConfig,
-    Strategy.AMPLIFIER,
-  );
-
-  for (const p of positions) {
-    if (stackedTokens.has(p.tokenId)) continue;
-    
-    // Check if already stacked (would need position history tracking)
-    const alreadyStacked = state.actedPositions.has(`stack:${p.tokenId}`);
-    
-    // Use module's detectAmplifier to find stacking opportunities
-    const signal = detectAmplifier(p, maxStackSize, alreadyStacked);
-    
-    if (signal && signal.confidence > 30) {
-      // Use module's safety check before stacking
-      if (!isSafeToStack(p, currentExposure, maxExposure)) {
-        logger.debug?.(`📊 APEX Amplifier: Skipping ${p.outcome} - unsafe to stack`);
-        continue;
-      }
-      
-      logger.info(`📊 APEX Amplifier: ${signal.reason} (confidence: ${signal.confidence.toFixed(0)}%)`);
-      
-      const success = await buy(
-        p.tokenId,
-        p.outcome as "YES" | "NO",
-        signal.stackSize,
-        signal.reason,
-        Strategy.AMPLIFIER,
-        positions,
-        p.marketId,
-      );
-
-      if (success) {
-        stackedTokens.add(p.tokenId);
-        state.actedPositions.add(`stack:${p.tokenId}`);
-      }
-    }
-  }
-}
-
-async function runGrinderStrategy(
-  positions: Position[],
-  currentBalance: number,
-): Promise<void> {
-  // APEX Grinder - High Volume Trades
-  const allocation = state.strategyAllocations.get(Strategy.GRINDER) || 0;
-  if (allocation === 0) return;
-
-  // Calculate position size for grinder strategy
-  const basePositionSize = calculatePositionSize(
-    currentBalance,
-    state.modeConfig,
-    Strategy.GRINDER,
-  );
-  
-  // Grinder uses smaller position sizes for more frequent trades
-  const grindSize = calculateGrindSize(basePositionSize);
-  
-  if (grindSize < 5) return; // Minimum $5 for grind trades
-  
-  // Check existing positions for grind exit conditions
-  for (const p of positions) {
-    // NOTE: Market metrics are approximated from available data.
-    // In production, these would come from market data API calls.
-    // The Grinder strategy currently uses conservative defaults that favor
-    // P&L-based exits rather than volume/spread-based exits.
-    const metrics: MarketMetrics = {
-      tokenId: p.tokenId,
-      volume24h: state.volume24h || 5000, // Use state or default
-      volume1h: (state.volume24h || 5000) / 24, // Approximate hourly volume
-      spread: 0.015, // Conservative 1.5% spread assumption
-      liquidity: 1000,
-      // Price stability: mid-range prices (20-80¢) are more stable
-      priceStability: p.curPrice > 0.2 && p.curPrice < 0.8 ? 0.8 : 0.5,
-    };
-    
-    // Check if should exit existing grind position
-    // Exit triggers: P&L >= 8%, or detected volume/spread issues
-    if (shouldExitGrind(p, metrics)) {
-      logger.info(`📊 APEX Grinder: Exit signal for ${p.outcome} (${p.pnlPct.toFixed(1)}%)`);
-      await sellPosition(p, `APEX Grinder: Exit (${p.pnlPct.toFixed(1)}% P&L)`);
-    }
-  }
-  
-  // Note: Entry signals would require market scanning with volume data
-  // For now, Grinder focuses on managing existing positions using P&L targets
-}
-
-async function runVelocityStrategy(
-  positions: Position[],
-  currentBalance: number,
-): Promise<void> {
-  // APEX Velocity - Momentum Trading
-  const allocation = state.strategyAllocations.get(Strategy.VELOCITY) || 0;
-  if (allocation === 0) return;
-
-  // Calculate position size for velocity strategy
-  const positionSize = calculatePositionSize(
-    currentBalance,
-    state.modeConfig,
-    Strategy.VELOCITY,
-  );
-  
-  if (positionSize < 5) return; // Minimum $5 for velocity trades
-  
-  // Prune price history for closed positions (memory leak prevention)
-  const currentTokenIds = new Set(positions.map(p => p.tokenId));
-  for (const tokenId of state.priceHistory.keys()) {
-    if (!currentTokenIds.has(tokenId)) {
-      state.priceHistory.delete(tokenId);
-    }
-  }
-  
-  // Update price history for all positions
-  for (const p of positions) {
-    const history = state.priceHistory.get(p.tokenId) || [];
-    history.push(p.curPrice);
-    
-    // Keep last 60 price points (approximately 5 minutes of data at 5-second intervals)
-    if (history.length > 60) history.shift();
-    state.priceHistory.set(p.tokenId, history);
-    
-    // Check for momentum reversal on existing positions (exit signal)
-    if (history.length >= 10) {
-      const currentVelocity = calculateVelocity(history);
-      
-      if (isMomentumReversing(p, currentVelocity)) {
-        logger.info(`⚡ APEX Velocity: Momentum reversal for ${p.outcome} (velocity: ${currentVelocity.toFixed(1)}%)`);
-        await sellPosition(p, `APEX Velocity: Momentum reversal (${currentVelocity.toFixed(1)}% velocity)`);
-      } else if (shouldRideMomentum(p, currentVelocity)) {
-        // Keep position, momentum still strong
-        logger.debug?.(`⚡ APEX Velocity: Riding momentum for ${p.outcome} (velocity: ${currentVelocity.toFixed(1)}%)`);
-      }
-    }
-  }
-  
-  // Note: New entry signals would require scanning markets with price history
-  // For now, Velocity focuses on managing existing positions based on momentum
-}
-
-// ============================================
-// APEX v3.0 - HELPER FUNCTIONS
-// ============================================
-
-/**
- * Send hourly summary
- */
-async function sendHourlySummary(balance: number): Promise<void> {
-  const hourAgo = Date.now() - 60 * 60 * 1000;
-  const recentTrades = state.oracleState.trades.filter(t => t.timestamp > hourAgo);
-  
-  const pnl = recentTrades.reduce((sum, t) => sum + t.pnl, 0);
-  const successfulTrades = recentTrades.filter(t => t.success);
-  const wins = successfulTrades.filter(t => t.pnl > 0).length;
-  const losses = successfulTrades.filter(t => t.pnl <= 0).length;
-  const winRate = successfulTrades.length > 0 ? (wins / successfulTrades.length) * 100 : 0;
-  
-  // Get current positions
-  if (!state.client) return;
-  const positions = await getPositions(state.address);
-  const enrichedPositions = enrichPositions(positions);
-  const positionValue = enrichedPositions.reduce((sum, p) => sum + p.value, 0);
-  const totalValue = balance + positionValue;
-  
-  await sendTelegram("📊 HOURLY SUMMARY",
-    `Last Hour:\n` +
-    `Trades: ${recentTrades.length}\n` +
-    `Wins: ${wins} | Losses: ${losses}\n` +
-    `Win rate: ${winRate.toFixed(1)}%\n` +
-    `P&L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}\n\n` +
-    `Current:\n` +
-    `Balance: $${balance.toFixed(2)}\n` +
-    `Positions: ${enrichedPositions.length} ($${positionValue.toFixed(2)})\n` +
-    `Total: $${totalValue.toFixed(2)}`
-  );
-}
-
-/**
- * Send weekly report
- */
-async function sendWeeklyReport(currentBalance: number): Promise<void> {
-  const weekGain = currentBalance - state.weekStartBalance;
-  const weekGainPct =
-    state.weekStartBalance > 0 ? (weekGain / state.weekStartBalance) * 100 : 0;
-
-  const targetMultiplier =
-    state.mode === "AGGRESSIVE" ? 10 : state.mode === "BALANCED" ? 5 : 3;
-  const target = state.startBalance * targetMultiplier;
-  const progressPct = (currentBalance / target) * 100;
-
-  await sendTelegram(
-    "📈 APEX WEEKLY REPORT",
-    `Week Complete!\n\n` +
-      `Starting: ${$(state.weekStartBalance)}\n` +
-      `Ending: ${$(currentBalance)}\n` +
-      `Gain: ${weekGain >= 0 ? "+" : ""}${$(weekGain)} (${weekGainPct >= 0 ? "+" : ""}${weekGainPct.toFixed(1)}%)\n\n` +
-      `Target: +${state.modeConfig.weeklyTargetPct}%\n` +
-      `Status: ${weekGainPct >= state.modeConfig.weeklyTargetPct ? "🟢 ON TRACK" : "🟡 BELOW TARGET"}\n\n` +
-      `Progress to Goal:\n` +
-      `${$(currentBalance)} / ${$(target)}\n` +
-      `${progressPct.toFixed(0)}% Complete`,
-  );
-}
-
-// ============================================
-// APEX v3.0 - ORACLE & REPORTING
-// ============================================
-
-async function runOracleReview(): Promise<void> {
-  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  logger.info(`🧠 APEX ORACLE - DAILY STRATEGY REVIEW`);
-  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-
-  // Review performance and get new allocations
-  const strategies: StrategyType[] = [
-    Strategy.VELOCITY,
-    Strategy.SHADOW,
-    Strategy.BLITZ,
-    Strategy.GRINDER,
-    Strategy.CLOSER,
-    Strategy.AMPLIFIER,
-    Strategy.HUNTER,
-  ];
-  const performance = analyzePerformance(state.oracleState, strategies);
-  const performanceWithAllocations = calculateAllocations(performance);
-
-  // Apply new allocations
-  for (const perf of performanceWithAllocations) {
-    state.strategyAllocations.set(perf.strategy, perf.allocation);
-  }
-
-  // Log results
-  logger.info(`📈 24HR PERFORMANCE:`);
-  for (const perf of performanceWithAllocations) {
-    const emoji =
-      perf.rank === "CHAMPION"
-        ? "🏆"
-        : perf.rank === "PERFORMING"
-          ? "✅"
-          : perf.rank === "TESTING"
-            ? "🧪"
-            : perf.rank === "STRUGGLING"
-              ? "⚠️"
-              : "❌";
-
-    logger.info(`${emoji} APEX ${perf.strategy}:`);
-    logger.info(
-      `   Trades: ${perf.totalTrades} | WR: ${perf.winRate.toFixed(0)}% | P&L: ${$(perf.totalPnL)}`,
-    );
-    logger.info(
-      `   Score: ${perf.score.toFixed(0)}/100 | Allocation: ${perf.allocation.toFixed(0)}%`,
-    );
-  }
-
-  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-
-  // Send Telegram report
-  const totalPnl = performanceWithAllocations.reduce(
-    (sum: number, p: StrategyPerformance) => sum + p.totalPnL,
-    0,
-  );
-  const totalTrades = performanceWithAllocations.reduce(
-    (sum: number, p: StrategyPerformance) => sum + p.totalTrades,
-    0,
-  );
-  const avgWinRate =
-    performanceWithAllocations.length > 0
-      ? performanceWithAllocations.reduce(
-          (sum: number, p: StrategyPerformance) => sum + p.winRate,
-          0,
-        ) / performanceWithAllocations.length
-      : 0;
-
-  const champion = performanceWithAllocations.find(
-    (p: StrategyPerformance) => p.rank === "CHAMPION",
-  );
-  const sorted = [...performanceWithAllocations].sort(
-    (a, b) => a.score - b.score,
-  );
-  const worst = sorted[0];
-
-  await sendTelegram(
-    "🧠 APEX ORACLE - DAILY REVIEW",
-    `24hr Performance:\n` +
-      `Total Trades: ${totalTrades}\n` +
-      `P&L: ${totalPnl >= 0 ? "+" : ""}${$(totalPnl)}\n` +
-      `Win Rate: ${avgWinRate.toFixed(0)}%\n\n` +
-      `🏆 Best: ${champion?.strategy || "None"} (+${$(champion?.totalPnL || 0)})\n` +
-      `⚠️ Worst: ${worst?.strategy || "None"} (${$(worst?.totalPnL || 0)})\n\n` +
-      `Capital reallocated for next 24hrs`,
-  );
-}
-
-// ============================================
-// APEX v3.0 - REDEMPTION
-// ============================================
-
-// ============================================
-// APEX v3.0 - MAIN EXECUTION CYCLE
-// ============================================
-
-async function runAPEXCycle(): Promise<void> {
-  state.cycleCount++;
-
-  // Update current balance with error handling
-  if (!state.wallet) return;
-  try {
-    state.currentBalance = await getUsdcBalance(state.wallet, state.address);
-    state.lastKnownBalance = state.currentBalance;
-    state.lastBalanceCheck = Date.now();
-  } catch (error) {
-    logger.error(
-      `Failed to update USDC balance; using last known balance: ${error}`,
-    );
-  }
-
-  // Get positions with error handling
-  let positions: Position[] = [];
-  try {
-    positions = await getPositions(state.address);
-  } catch (error) {
-    logger.error(
-      `Failed to fetch positions; continuing with empty positions: ${error}`,
-    );
-    positions = [];
-  }
-
-  // ============================================
-  // PRIORITY -1: RECOVERY MODE CHECK
-  // ============================================
-  
-  // Check if we should enter/exit recovery mode
-  if (state.recoveryMode || state.currentBalance < RECOVERY_MODE_BALANCE_THRESHOLD) {
-    if (!state.recoveryMode && state.currentBalance < RECOVERY_MODE_BALANCE_THRESHOLD && positions.length > 0) {
-      // Just entered recovery mode
-      state.recoveryMode = true;
-      state.prioritizeExits = true;
-      
-      logger.warn(`🚨 RECOVERY MODE ACTIVATED (balance: ${$(state.currentBalance)})`);
-      
-      await sendTelegram(
-        "🚨 Recovery Mode Activated",
-        `Balance dropped to ${$(state.currentBalance)}\n` +
-          `Positions: ${positions.length}\n` +
-          `Prioritizing exits to free capital.`,
-      );
-    }
-    
-    if (state.recoveryMode) {
-      // PRIORITY 0: Auto-redeem resolved markets (FREE MONEY!)
-      const redeemed = await runAutoRedeem();
-      if (redeemed > 0) {
-        logger.info(
-          `✅ Auto-redeemed ${redeemed} positions - checking new balance...`,
-        );
-
-        // Refresh balance after redemption
-        try {
-          const newBalance = await getUsdcBalance(state.wallet, state.address);
-          state.currentBalance = newBalance;
-          state.lastKnownBalance = newBalance;
-
-          if (newBalance >= RECOVERY_MODE_BALANCE_THRESHOLD) {
-            logger.info(
-              `🎉 RECOVERY COMPLETE! Balance: ${$(newBalance)}`,
-            );
-            state.recoveryMode = false;
-            state.prioritizeExits = false;
-
-            await sendTelegram(
-              "✅ RECOVERY COMPLETE (via redemption)",
-              `Balance restored: ${$(newBalance)}\n` +
-                `Redeemed ${redeemed} positions\n\n` +
-                `Resuming normal trading`,
-            );
-
-            return; // Exit recovery mode
-          }
-
-          logger.info(
-            `📊 Balance after redemption: ${$(newBalance)} (need $${RECOVERY_MODE_BALANCE_THRESHOLD})`,
-          );
-        } catch (error) {
-          logger.error(`Failed to update balance after redemption: ${error}`);
-        }
-      }
-
-      // Run recovery exits
-      const exitsCount = await runRecoveryExits(positions, state.currentBalance);
-      
-      if (exitsCount > 0) {
-        logger.info(`✅ Recovery: Exited ${exitsCount} position(s)`);
-        invalidatePositions(); // Force refresh
-        
-        // Recheck balance
-        try {
-          state.currentBalance = await getUsdcBalance(state.wallet, state.address);
-          state.lastKnownBalance = state.currentBalance;
-        } catch (error) {
-          logger.error(`Failed to update balance after recovery exits: ${error}`);
-        }
-      }
-      
-      // Check if we can exit recovery mode
-      if (state.currentBalance >= RECOVERY_MODE_BALANCE_THRESHOLD) {
-        state.recoveryMode = false;
-        state.prioritizeExits = false;
-        
-        logger.info(`✅ RECOVERY MODE COMPLETE - Balance restored to ${$(state.currentBalance)}`);
-        
-        await sendTelegram(
-          "✅ Recovery Mode Complete",
-          `Balance restored to ${$(state.currentBalance)}\n` +
-            `Resuming normal operations.`,
-        );
-      } else {
-        // Still in recovery, skip new entries
-        logger.info(`🚨 Recovery mode active - skipping new entries`);
-        return;
-      }
-    }
-  }
-
-  // ============================================
-  // PRIORITY -1: FIREWALL CHECK (CRITICAL!)
-  // ============================================
-  await runFirewallCheck(state.currentBalance, positions);
-
-  // HALT if trading disabled
-  if (state.tradingHalted) {
-    logger.error(`⛔ Trading halted: ${state.haltReason}`);
-    // Still allow exits and redemptions even when halted
-    const exitCount = await runExitStrategies(positions);
-    if (exitCount > 0) {
-      logger.info(`📤 Exited ${exitCount} positions while halted`);
-      invalidatePositions();
-    }
-    // Check for redemptions even when halted
-    const redeemed = await runAutoRedeem();
-    if (redeemed > 0) {
-      logger.info(`💰 Auto-redeemed ${redeemed} positions while halted`);
-      invalidatePositions();
-    }
-    return;
-  }
-
-  // Clear acted positions at start of each cycle
-  state.actedPositions.clear();
-
-  // ============================================
-  // PRIORITY 0: HUNTER - ACTIVE SCANNING
-  // ============================================
-  const opportunities = await runHunterScan(positions);
-
-  // ============================================
-  // PRIORITY 1: EXITS (Free capital first!)
-  // ============================================
-  const exitCount = await runExitStrategies(positions);
-  if (exitCount > 0) {
-    logger.info(`📤 Exited ${exitCount} positions this cycle`);
-    invalidatePositions(); // Force refresh after exits
-  }
-
-  // ============================================
-  // PRIORITY 1.5: PROTECTION (Guard remaining positions)
-  // ============================================
-  const protectionCount = await runProtectionStrategies(positions);
-  if (protectionCount > 0) {
-    logger.info(`🛡️ Protection actions: ${protectionCount} this cycle`);
-    invalidatePositions(); // Force refresh after protection actions
-  }
-
-  // ============================================
-  // PRIORITY 2: REDEMPTION (Convert wins to USDC)
-  // ============================================
-  // Auto-redeem runs every 50 cycles in normal mode, every 10 in recovery
-  const redeemed = await runAutoRedeem();
-  if (redeemed > 0) {
-    logger.info(`💰 Auto-redeemed ${redeemed} positions`);
-    invalidatePositions(); // Force refresh after redemption
-    
-    // Refresh balance after redemption
-    try {
-      state.currentBalance = await getUsdcBalance(state.wallet, state.address);
-      state.lastKnownBalance = state.currentBalance;
-    } catch (error) {
-      logger.error(`Failed to update balance after redemption: ${error}`);
-    }
-  }
-
-  // ============================================
-  // PRIORITY 3: ENTRIES (Deploy capital)
-  // ============================================
-
-  // Check if hourly spending limit reached
-  if (state.hourlySpendingLimitReached) {
-    if (logger.debug) {
-      logger.debug(`⏭️ Hourly spending limit reached, skipping new entries`);
-    }
-  } else {
-    // Calculate available capital
-    const reserves = calculateIntelligentReserves(
-      state.currentBalance,
-      positions,
-    );
-
-    if (reserves.availableForTrading > 5) {
-      // Execute Hunter opportunities first (highest priority)
-      await executeHunterOpportunities(
-        opportunities,
-        state.currentBalance,
-        positions,
-      );
-
-      // Then run strategy-based entries based on Oracle allocations
-      const allocations = state.strategyAllocations;
-
-      if ((allocations.get(Strategy.VELOCITY) ?? 0) > 0) {
-        await runVelocityStrategy(positions, state.currentBalance);
-      }
-
-      if ((allocations.get(Strategy.SHADOW) ?? 0) > 0) {
-        await runShadowStrategy(positions, state.currentBalance);
-      }
-
-      if ((allocations.get(Strategy.GRINDER) ?? 0) > 0) {
-        await runGrinderStrategy(positions, state.currentBalance);
-      }
-
-      if ((allocations.get(Strategy.CLOSER) ?? 0) > 0) {
-        await runCloserStrategy(positions, state.currentBalance);
-      }
-
-      if ((allocations.get(Strategy.AMPLIFIER) ?? 0) > 0) {
-        await runAmplifierStrategy(positions, state.currentBalance);
-      }
-    } else {
-      if (logger.debug) {
-        logger.debug(`⏭️ No capital available for new entries`);
-      }
-    }
-  }
-
-  // ============================================
-  // HOURLY: SUMMARY REPORT
-  // ============================================
-  if (Date.now() - state.lastSummary > 60 * 60 * 1000) {
-    await sendHourlySummary(state.currentBalance);
-    state.lastSummary = Date.now();
-  }
-
-  // ============================================
-  // DAILY: ORACLE REVIEW
-  // ============================================
-  if (Date.now() - state.lastOracleReview > 24 * 60 * 60 * 1000) {
-    await runOracleReview();
-    state.lastOracleReview = Date.now();
-  }
-
-  // ============================================
-  // WEEKLY: PROGRESS REPORT
-  // ============================================
-  if (Date.now() - state.weekStartTime > 7 * 24 * 60 * 60 * 1000) {
-    await sendWeeklyReport(state.currentBalance);
-    state.weekStartTime = Date.now();
-    state.weekStartBalance = state.currentBalance;
-  }
-}
-
-//============================================
-// MAIN ENTRY POINT
-// ============================================
-
-async function main(): Promise<void> {
-  // Initialize error reporter
-  const errorReporter = new ErrorReporter(logger, {
-    githubToken: process.env.GITHUB_ERROR_REPORTER_TOKEN,
-  });
-
-  try {
-    // Get environment variables
-    const privateKey = process.env.PRIVATE_KEY;
-    const rpcUrl = process.env.RPC_URL;
-
-    if (!privateKey || !rpcUrl) {
-      throw new Error("PRIVATE_KEY and RPC_URL must be set");
+  /**
+   * Record a completed trade
+   */
+  recordTrade(trade: TradeResult): void {
+    this.trades.push(trade);
+
+    // Trim to rolling window
+    while (this.trades.length > this.config.rollingWindowTrades) {
+      this.trades.shift();
     }
 
-    // VPN setup (if configured)
-    if (process.env.WIREGUARD_ENABLED === "true" || process.env.WG_CONFIG) {
-      logger.info("🔐 VPN: WireGuard enabled");
-      capturePreVpnRouting();
-      await startWireguard(logger);
-      await setupRpcBypass(rpcUrl, logger);
-      await setupPolymarketReadBypass(logger);
-    } else if (
-      process.env.OPENVPN_ENABLED === "true" ||
-      process.env.OVPN_CONFIG
-    ) {
-      logger.info("🔐 VPN: OpenVPN enabled");
-      capturePreVpnRouting();
-      await startOpenvpn(logger);
-      await setupRpcBypass(rpcUrl, logger);
-      await setupPolymarketReadBypass(logger);
-    }
-
-    // Validate live trading
-    state.liveTrading = isLiveTradingEnabled();
-    if (!state.liveTrading) {
-      logger.warn(
-        "⚠️  SIMULATION MODE - Set LIVE_TRADING=I_UNDERSTAND_THE_RISKS to enable",
-      );
-    }
-
-    // Initialize wallet and client
-    const authResult = await createClobClient(privateKey, rpcUrl);
+    // Check if we should pause
+    const metrics = this.getMetrics();
     if (
-      !authResult.success ||
-      !authResult.client ||
-      !authResult.wallet ||
-      !authResult.address
+      metrics.totalTrades >= 10 &&
+      (metrics.evCents < this.config.minEvCents ||
+        metrics.profitFactor < this.config.minProfitFactor)
     ) {
-      throw new Error(
-        `Authentication failed: ${authResult.error || "Unknown error"}`,
-      );
+      this.pausedUntil = Date.now() + this.config.pauseSeconds * 1000;
+    }
+  }
+
+  /**
+   * Get current EV metrics
+   */
+  getMetrics(): EvMetrics {
+    if (this.trades.length === 0) {
+      return {
+        totalTrades: 0,
+        wins: 0,
+        losses: 0,
+        winRate: 0,
+        avgWinCents: 0,
+        avgLossCents: 0,
+        evCents: 0,
+        profitFactor: 0,
+        totalPnlUsd: 0,
+        lastUpdated: Date.now(),
+      };
     }
 
-    state.client = authResult.client;
-    state.wallet = authResult.wallet;
-    state.address = authResult.address;
+    const wins = this.trades.filter((t) => t.isWin);
+    const losses = this.trades.filter((t) => !t.isWin);
 
-    // Initialize Error Reporter
-    state.errorReporter = errorReporter;
+    const totalTrades = this.trades.length;
+    const winCount = wins.length;
+    const lossCount = losses.length;
+    const winRate = winCount / totalTrades;
 
-    // Check startup balance and determine if recovery mode needed
-    const usdcBalance = await getUsdcBalance(
-      authResult.wallet,
-      authResult.address,
-    );
-    
-    const balanceCheck = await checkStartupBalance(usdcBalance, authResult.address);
-    
-    if (balanceCheck.shouldExit) {
-      process.exit(1);
+    // Average win/loss in cents per share
+    const avgWinCents =
+      winCount > 0
+        ? wins.reduce((sum, t) => sum + t.pnlCents, 0) / winCount
+        : 0;
+    const avgLossCents =
+      lossCount > 0
+        ? Math.abs(losses.reduce((sum, t) => sum + t.pnlCents, 0) / lossCount)
+        : 0;
+
+    // EV = p(win) * avg_win - p(loss) * avg_loss - churn_cost
+    const pWin = winRate;
+    const pLoss = 1 - winRate;
+    const evCents =
+      pWin * avgWinCents -
+      pLoss * avgLossCents -
+      this.config.churnCostCentsEstimate;
+
+    // Profit factor = avg_win / avg_loss
+    const profitFactor = avgLossCents > 0 ? avgWinCents / avgLossCents : 0;
+
+    // Total P&L
+    const totalPnlUsd = this.trades.reduce((sum, t) => sum + t.pnlUsd, 0);
+
+    return {
+      totalTrades,
+      wins: winCount,
+      losses: lossCount,
+      winRate,
+      avgWinCents,
+      avgLossCents,
+      evCents,
+      profitFactor,
+      totalPnlUsd,
+      lastUpdated: Date.now(),
+    };
+  }
+
+  /**
+   * Check if trading is allowed based on EV metrics
+   */
+  isTradingAllowed(): { allowed: boolean; reason?: string } {
+    // Check pause
+    if (this.pausedUntil > Date.now()) {
+      const remainingMs = this.pausedUntil - Date.now();
+      return {
+        allowed: false,
+        reason: `PAUSED (${Math.ceil(remainingMs / 1000)}s remaining)`,
+      };
     }
-    
-    // Set recovery mode if needed
-    state.recoveryMode = balanceCheck.recoveryMode;
-    state.prioritizeExits = balanceCheck.recoveryMode;
 
-    // Check USDC allowance
-    const allowance = await getUsdcAllowance(
-      authResult.wallet,
-      authResult.address,
-    );
-    if (allowance < 100) {
-      logger.warn(`⚠️  Low USDC allowance: $${allowance.toFixed(2)}`);
-      logger.warn(`   You may need to approve USDC spending`);
-      logger.warn(`   Run: npm run set-token-allowance`);
+    const metrics = this.getMetrics();
+
+    // Need minimum trades for meaningful metrics
+    if (metrics.totalTrades < 10) {
+      return { allowed: true }; // Allow during warmup
     }
 
-    // Get copy trading targets
-    const targets = await getTargetAddresses();
-    state.targets = targets;
-    if (state.targets.length > 0) {
-      logger.info(`🎯 Copy trading: ${state.targets.length} target(s)`);
+    // Check EV threshold
+    if (metrics.evCents < this.config.minEvCents) {
+      return {
+        allowed: false,
+        reason: `EV too low (${metrics.evCents.toFixed(2)}¢ < ${this.config.minEvCents}¢)`,
+      };
     }
 
-    // Initialize Telegram
-    await initTelegram();
+    // Check profit factor
+    if (metrics.profitFactor < this.config.minProfitFactor) {
+      return {
+        allowed: false,
+        reason: `Profit factor too low (${metrics.profitFactor.toFixed(2)} < ${this.config.minProfitFactor})`,
+      };
+    }
 
-    // Initialize APEX v3.0
-    await initializeAPEX();
+    return { allowed: true };
+  }
 
-    // Main loop
-    const intervalMs = parseInt(process.env.INTERVAL_MS || "5000");
-    logger.info(`⏱️  Cycle interval: ${intervalMs}ms`);
+  /**
+   * Force unpause (for testing or manual override)
+   */
+  unpause(): void {
+    this.pausedUntil = 0;
+  }
 
-    while (true) {
+  /**
+   * Get pause status
+   */
+  isPaused(): boolean {
+    return this.pausedUntil > Date.now();
+  }
+
+  /**
+   * Get remaining pause time in seconds
+   */
+  getPauseRemainingSeconds(): number {
+    if (!this.isPaused()) return 0;
+    return Math.ceil((this.pausedUntil - Date.now()) / 1000);
+  }
+
+  /**
+   * Clear all trades (for testing)
+   */
+  clear(): void {
+    this.trades = [];
+    this.pausedUntil = 0;
+  }
+
+  /**
+   * Get recent trades (for debugging)
+   */
+  getRecentTrades(count = 10): TradeResult[] {
+    return this.trades.slice(-count);
+  }
+
+  /**
+   * Convert to JSON log entry
+   */
+  toLogEntry(): object {
+    const metrics = this.getMetrics();
+    const tradingStatus = this.isTradingAllowed();
+    return {
+      type: "ev_metrics",
+      timestamp: new Date().toISOString(),
+      metrics: {
+        totalTrades: metrics.totalTrades,
+        wins: metrics.wins,
+        losses: metrics.losses,
+        winRate: parseFloat(metrics.winRate.toFixed(4)),
+        avgWinCents: parseFloat(metrics.avgWinCents.toFixed(2)),
+        avgLossCents: parseFloat(metrics.avgLossCents.toFixed(2)),
+        evCents: parseFloat(metrics.evCents.toFixed(2)),
+        profitFactor: parseFloat(metrics.profitFactor.toFixed(2)),
+        totalPnlUsd: parseFloat(metrics.totalPnlUsd.toFixed(2)),
+      },
+      tradingAllowed: tradingStatus.allowed,
+      tradingBlockedReason: tradingStatus.reason || null,
+      paused: this.isPaused(),
+      pauseRemainingSeconds: this.getPauseRemainingSeconds(),
+    };
+  }
+}
+
+function calculatePnlCents(
+  side: "LONG" | "SHORT",
+  entryPriceCents: number,
+  exitPriceCents: number,
+): number {
+  if (side === "LONG") {
+    return exitPriceCents - entryPriceCents;
+  } else {
+    return entryPriceCents - exitPriceCents;
+  }
+}
+
+function calculatePnlUsd(
+  pnlCents: number,
+  sizeUsd: number,
+  entryPriceCents: number,
+): number {
+  if (entryPriceCents === 0) return 0;
+  const shares = sizeUsd / (entryPriceCents / 100);
+  return (pnlCents / 100) * shares;
+}
+
+function createTradeResult(
+  tokenId: string,
+  side: "LONG" | "SHORT",
+  entryPriceCents: number,
+  exitPriceCents: number,
+  sizeUsd: number,
+): TradeResult {
+  const pnlCents = calculatePnlCents(side, entryPriceCents, exitPriceCents);
+  const pnlUsd = calculatePnlUsd(pnlCents, sizeUsd, entryPriceCents);
+  return {
+    tokenId,
+    side,
+    entryPriceCents,
+    exitPriceCents,
+    sizeUsd,
+    timestamp: Date.now(),
+    pnlCents,
+    pnlUsd,
+    isWin: pnlCents > 0,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BIAS ACCUMULATOR
+// ═══════════════════════════════════════════════════════════════════════════
+
+type BiasDirection = "LONG" | "SHORT" | "NONE";
+
+interface LeaderboardTrade {
+  tokenId: string;
+  marketId?: string;
+  wallet: string;
+  side: "BUY" | "SELL";
+  sizeUsd: number;
+  timestamp: number;
+}
+
+interface TokenBias {
+  tokenId: string;
+  marketId?: string;
+  direction: BiasDirection;
+  netUsd: number;
+  tradeCount: number;
+  lastActivityTime: number;
+  isStale: boolean;
+}
+
+interface BiasChangeEvent {
+  tokenId: string;
+  marketId?: string;
+  previousDirection: BiasDirection;
+  newDirection: BiasDirection;
+  netUsd: number;
+  tradeCount: number;
+  timestamp: number;
+}
+
+class BiasAccumulator {
+  private trades: Map<string, LeaderboardTrade[]> = new Map();
+  private leaderboardWallets: Set<string> = new Set();
+  private lastLeaderboardFetch = 0;
+  private readonly config: ChurnConfig;
+  private biasChangeCallbacks: ((event: BiasChangeEvent) => void)[] = [];
+
+  // API endpoints
+  private readonly GAMMA_API = "https://gamma-api.polymarket.com";
+  private readonly DATA_API = "https://data-api.polymarket.com";
+
+  constructor(config: ChurnConfig) {
+    this.config = config;
+  }
+
+  /**
+   * Register callback for bias changes
+   */
+  onBiasChange(callback: (event: BiasChangeEvent) => void): void {
+    this.biasChangeCallbacks.push(callback);
+  }
+
+  /**
+   * Fetch top leaderboard wallets
+   */
+  async refreshLeaderboard(): Promise<string[]> {
+    const now = Date.now();
+    // Only fetch every 5 minutes
+    if (now - this.lastLeaderboardFetch < 5 * 60 * 1000) {
+      return Array.from(this.leaderboardWallets);
+    }
+
+    try {
+      const url = `${this.GAMMA_API}/leaderboard?limit=${this.config.leaderboardTopN}`;
+      const { data } = await axios.get(url, { timeout: 10000 });
+
+      if (Array.isArray(data)) {
+        this.leaderboardWallets.clear();
+        for (const entry of data) {
+          if (entry.address) {
+            this.leaderboardWallets.add(entry.address.toLowerCase());
+          }
+        }
+        this.lastLeaderboardFetch = now;
+      }
+    } catch {
+      // Keep existing wallets on error
+    }
+
+    return Array.from(this.leaderboardWallets);
+  }
+
+  /**
+   * Fetch recent trades for leaderboard wallets
+   */
+  async fetchLeaderboardTrades(): Promise<LeaderboardTrade[]> {
+    const wallets = await this.refreshLeaderboard();
+    const newTrades: LeaderboardTrade[] = [];
+    const now = Date.now();
+    const windowStart = now - this.config.biasWindowSeconds * 1000;
+
+    // Limit concurrent requests
+    const batch = wallets.slice(0, 10);
+
+    for (const wallet of batch) {
       try {
-        await runAPEXCycle();
-      } catch (err) {
-        logger.error(`⚠️  Cycle error: ${err}`);
+        const url = `${this.DATA_API}/trades?user=${wallet}&limit=20`;
+        const { data } = await axios.get(url, { timeout: 5000 });
 
-        // Report error to GitHub
-        if (state.errorReporter) {
-          await state.errorReporter.reportError(err as Error, {
-            operation: "apex_main_cycle",
-            balance: state.lastKnownBalance,
-            cycleCount: state.cycleCount,
+        if (!Array.isArray(data)) continue;
+
+        for (const trade of data) {
+          const timestamp = new Date(
+            trade.timestamp || trade.createdAt,
+          ).getTime();
+
+          // Only trades within window
+          if (timestamp < windowStart) continue;
+
+          const tokenId = trade.asset || trade.tokenId;
+          if (!tokenId) continue;
+
+          const sizeUsd = Number(trade.size) * Number(trade.price) || 0;
+          if (sizeUsd <= 0) continue;
+
+          newTrades.push({
+            tokenId,
+            marketId: trade.marketId,
+            wallet: wallet,
+            side: trade.side?.toUpperCase() === "SELL" ? "SELL" : "BUY",
+            sizeUsd,
+            timestamp,
           });
         }
-
-        await sendTelegram("⚠️ Cycle Error", String(err));
+      } catch {
+        // Continue on error
       }
-
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    }
-  } catch (err) {
-    logger.error(`❌ Fatal error: ${err}`);
-
-    // Report fatal error to GitHub
-    if (state.errorReporter) {
-      await state.errorReporter.reportError(err as Error, {
-        operation: "apex_initialization",
-        balance: state.startBalance,
-      });
     }
 
-    await sendTelegram("❌ Fatal Error", String(err));
-    process.exit(1);
+    // Add to accumulator and prune old trades
+    this.addTrades(newTrades);
+
+    return newTrades;
+  }
+
+  /**
+   * Add trades and maintain window
+   */
+  private addTrades(trades: LeaderboardTrade[]): void {
+    const now = Date.now();
+    const windowStart = now - this.config.biasWindowSeconds * 1000;
+
+    for (const trade of trades) {
+      const existing = this.trades.get(trade.tokenId) || [];
+      existing.push(trade);
+      this.trades.set(trade.tokenId, existing);
+    }
+
+    // Prune old trades from all tokens
+    for (const [tokenId, tokenTrades] of this.trades.entries()) {
+      const recent = tokenTrades.filter((t) => t.timestamp >= windowStart);
+      if (recent.length === 0) {
+        this.trades.delete(tokenId);
+      } else {
+        this.trades.set(tokenId, recent);
+      }
+    }
+  }
+
+  /**
+   * Get bias for a specific token
+   */
+  getBias(tokenId: string): TokenBias {
+    const now = Date.now();
+    const windowStart = now - this.config.biasWindowSeconds * 1000;
+    const staleThreshold = now - this.config.biasStaleSeconds * 1000;
+
+    const tokenTrades = this.trades.get(tokenId) || [];
+    const recentTrades = tokenTrades.filter((t) => t.timestamp >= windowStart);
+
+    // Calculate net USD
+    let netUsd = 0;
+    let lastActivityTime = 0;
+
+    for (const trade of recentTrades) {
+      if (trade.side === "BUY") {
+        netUsd += trade.sizeUsd;
+      } else {
+        netUsd -= trade.sizeUsd;
+      }
+      if (trade.timestamp > lastActivityTime) {
+        lastActivityTime = trade.timestamp;
+      }
+    }
+
+    const tradeCount = recentTrades.length;
+    const isStale = lastActivityTime > 0 && lastActivityTime < staleThreshold;
+
+    // Determine direction
+    let direction: BiasDirection = "NONE";
+    if (!isStale && tradeCount >= this.config.biasMinTrades) {
+      if (netUsd >= this.config.biasMinNetUsd) {
+        direction = "LONG";
+      } else if (netUsd <= -this.config.biasMinNetUsd) {
+        direction = "SHORT";
+      }
+    }
+
+    return {
+      tokenId,
+      marketId: recentTrades[0]?.marketId,
+      direction,
+      netUsd,
+      tradeCount,
+      lastActivityTime,
+      isStale,
+    };
+  }
+
+  /**
+   * Get all tokens with active bias
+   */
+  getActiveBiases(): TokenBias[] {
+    const biases: TokenBias[] = [];
+
+    for (const tokenId of this.trades.keys()) {
+      const bias = this.getBias(tokenId);
+      if (bias.direction !== "NONE") {
+        biases.push(bias);
+      }
+    }
+
+    return biases;
+  }
+
+  /**
+   * Check if bias allows entry for a token
+   */
+  canEnter(tokenId: string): { allowed: boolean; reason?: string } {
+    if (!this.config.allowEntriesOnlyWithBias) {
+      return { allowed: true };
+    }
+
+    const bias = this.getBias(tokenId);
+
+    if (bias.direction === "NONE") {
+      if (bias.isStale) {
+        return { allowed: false, reason: "BIAS_STALE" };
+      }
+      if (bias.tradeCount < this.config.biasMinTrades) {
+        return {
+          allowed: false,
+          reason: `BIAS_INSUFFICIENT_TRADES (${bias.tradeCount} < ${this.config.biasMinTrades})`,
+        };
+      }
+      return {
+        allowed: false,
+        reason: `BIAS_NONE (net_usd=${bias.netUsd.toFixed(2)})`,
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * Record a manual trade observation (for testing or direct integration)
+   */
+  recordTrade(trade: LeaderboardTrade): void {
+    if (!this.leaderboardWallets.has(trade.wallet.toLowerCase())) {
+      return; // Ignore non-leaderboard wallets
+    }
+
+    const previousBias = this.getBias(trade.tokenId);
+    this.addTrades([trade]);
+    const newBias = this.getBias(trade.tokenId);
+
+    // Fire callback if direction changed
+    if (previousBias.direction !== newBias.direction) {
+      const event: BiasChangeEvent = {
+        tokenId: trade.tokenId,
+        marketId: trade.marketId,
+        previousDirection: previousBias.direction,
+        newDirection: newBias.direction,
+        netUsd: newBias.netUsd,
+        tradeCount: newBias.tradeCount,
+        timestamp: Date.now(),
+      };
+
+      for (const callback of this.biasChangeCallbacks) {
+        callback(event);
+      }
+    }
+  }
+
+  /**
+   * Add wallet to leaderboard manually (for testing)
+   */
+  addLeaderboardWallet(wallet: string): void {
+    this.leaderboardWallets.add(wallet.toLowerCase());
+  }
+
+  /**
+   * Clear all data (for testing)
+   */
+  clear(): void {
+    this.trades.clear();
+    this.leaderboardWallets.clear();
+    this.lastLeaderboardFetch = 0;
+  }
+
+  /**
+   * Convert to JSON log entry
+   */
+  toLogEntry(): object {
+    const activeBiases = this.getActiveBiases();
+    return {
+      type: "bias_state",
+      timestamp: new Date().toISOString(),
+      leaderboardWallets: this.leaderboardWallets.size,
+      totalTokensTracked: this.trades.size,
+      activeBiases: activeBiases.map((b) => ({
+        tokenId: b.tokenId.slice(0, 12) + "...",
+        direction: b.direction,
+        netUsd: parseFloat(b.netUsd.toFixed(2)),
+        tradeCount: b.tradeCount,
+        isStale: b.isStale,
+      })),
+    };
   }
 }
 
-main().catch((err) => {
-  console.error("❌ Unhandled error:", err);
-  process.exit(1);
-});
+// ═══════════════════════════════════════════════════════════════════════════
+// POSITION STATE MACHINE
+// ═══════════════════════════════════════════════════════════════════════════
+
+type PositionState = "OPEN" | "HEDGED" | "EXITING" | "CLOSED";
+
+type ExitReason =
+  | "TAKE_PROFIT"
+  | "STOP_LOSS"
+  | "TIME_STOP"
+  | "HARD_EXIT"
+  | "BIAS_FLIP"
+  | "EV_DEGRADED"
+  | "MANUAL";
+
+interface HedgeLeg {
+  tokenId: string; // Opposite side token
+  sizeUsd: number;
+  entryPriceCents: number;
+  entryTime: number;
+  pnlCents: number;
+}
+
+interface StateTransition {
+  positionId: string;
+  fromState: PositionState;
+  toState: PositionState;
+  reason: string;
+  timestamp: number;
+  pnlCents: number;
+  pnlUsd: number;
+  evSnapshot: EvMetrics | null;
+  biasDirection: BiasDirection;
+}
+
+interface ManagedPosition {
+  id: string;
+  tokenId: string;
+  marketId?: string;
+  side: "LONG" | "SHORT";
+  state: PositionState;
+
+  // Entry
+  entryPriceCents: number;
+  entrySizeUsd: number;
+  entryTime: number;
+
+  // Current
+  currentPriceCents: number;
+  unrealizedPnlCents: number;
+  unrealizedPnlUsd: number;
+
+  // Targets
+  takeProfitPriceCents: number;
+  hedgeTriggerPriceCents: number;
+  hardExitPriceCents: number;
+
+  // Hedge
+  hedges: HedgeLeg[];
+  totalHedgeRatio: number;
+
+  // Reference
+  referencePriceCents: number;
+
+  // History
+  transitions: StateTransition[];
+  lastUpdateTime: number;
+}
+
+interface PositionManagerConfig {
+  tpCents: number;
+  hedgeTriggerCents: number;
+  maxAdverseCents: number;
+  maxHoldSeconds: number;
+  hedgeRatio: number;
+  maxHedgeRatio: number;
+}
+
+class PositionManager {
+  private positions: Map<string, ManagedPosition> = new Map();
+  private readonly config: PositionManagerConfig;
+  private transitionCallbacks: ((t: StateTransition) => void)[] = [];
+
+  constructor(config: PositionManagerConfig) {
+    this.config = config;
+  }
+
+  /**
+   * Register callback for state transitions
+   */
+  onTransition(callback: (t: StateTransition) => void): void {
+    this.transitionCallbacks.push(callback);
+  }
+
+  /**
+   * Open a new position
+   */
+  openPosition(params: {
+    tokenId: string;
+    marketId?: string;
+    side: "LONG" | "SHORT";
+    entryPriceCents: number;
+    sizeUsd: number;
+    referencePriceCents: number;
+    evSnapshot: EvMetrics | null;
+    biasDirection: BiasDirection;
+  }): ManagedPosition {
+    const id = `${params.tokenId}-${Date.now()}`;
+    const now = Date.now();
+
+    // Calculate targets based on side
+    let takeProfitPriceCents: number;
+    let hedgeTriggerPriceCents: number;
+    let hardExitPriceCents: number;
+
+    if (params.side === "LONG") {
+      takeProfitPriceCents = params.entryPriceCents + this.config.tpCents;
+      hedgeTriggerPriceCents =
+        params.entryPriceCents - this.config.hedgeTriggerCents;
+      hardExitPriceCents = params.entryPriceCents - this.config.maxAdverseCents;
+    } else {
+      takeProfitPriceCents = params.entryPriceCents - this.config.tpCents;
+      hedgeTriggerPriceCents =
+        params.entryPriceCents + this.config.hedgeTriggerCents;
+      hardExitPriceCents = params.entryPriceCents + this.config.maxAdverseCents;
+    }
+
+    const position: ManagedPosition = {
+      id,
+      tokenId: params.tokenId,
+      marketId: params.marketId,
+      side: params.side,
+      state: "OPEN",
+      entryPriceCents: params.entryPriceCents,
+      entrySizeUsd: params.sizeUsd,
+      entryTime: now,
+      currentPriceCents: params.entryPriceCents,
+      unrealizedPnlCents: 0,
+      unrealizedPnlUsd: 0,
+      takeProfitPriceCents,
+      hedgeTriggerPriceCents,
+      hardExitPriceCents,
+      hedges: [],
+      totalHedgeRatio: 0,
+      referencePriceCents: params.referencePriceCents,
+      transitions: [],
+      lastUpdateTime: now,
+    };
+
+    this.positions.set(id, position);
+
+    // Record initial transition
+    this.recordTransition(position, "OPEN", "OPEN", "POSITION_OPENED", {
+      evSnapshot: params.evSnapshot,
+      biasDirection: params.biasDirection,
+    });
+
+    return position;
+  }
+
+  /**
+   * Update position with current price
+   */
+  updatePrice(
+    positionId: string,
+    currentPriceCents: number,
+    evSnapshot: EvMetrics | null,
+    biasDirection: BiasDirection,
+  ): {
+    action: "NONE" | "HEDGE" | "EXIT";
+    reason?: ExitReason;
+  } {
+    const position = this.positions.get(positionId);
+    if (!position || position.state === "CLOSED") {
+      return { action: "NONE" };
+    }
+
+    const now = Date.now();
+    position.currentPriceCents = currentPriceCents;
+    position.lastUpdateTime = now;
+
+    // Calculate unrealized P&L
+    if (position.side === "LONG") {
+      position.unrealizedPnlCents =
+        currentPriceCents - position.entryPriceCents;
+    } else {
+      position.unrealizedPnlCents =
+        position.entryPriceCents - currentPriceCents;
+    }
+
+    const shares = position.entrySizeUsd / (position.entryPriceCents / 100);
+    position.unrealizedPnlUsd = (position.unrealizedPnlCents / 100) * shares;
+
+    // Check exit conditions (ANY triggers exit)
+
+    // 1. Take profit
+    if (this.checkTakeProfit(position)) {
+      return { action: "EXIT", reason: "TAKE_PROFIT" };
+    }
+
+    // 2. Hard exit (max adverse)
+    if (this.checkHardExit(position)) {
+      return { action: "EXIT", reason: "HARD_EXIT" };
+    }
+
+    // 3. Time stop
+    const holdTime = (now - position.entryTime) / 1000;
+    if (holdTime >= this.config.maxHoldSeconds) {
+      return { action: "EXIT", reason: "TIME_STOP" };
+    }
+
+    // 4. Hedge trigger (if not already fully hedged)
+    if (
+      position.state === "OPEN" &&
+      position.totalHedgeRatio < this.config.maxHedgeRatio &&
+      this.checkHedgeTrigger(position)
+    ) {
+      return { action: "HEDGE" };
+    }
+
+    return { action: "NONE" };
+  }
+
+  /**
+   * Check if take profit is triggered
+   */
+  private checkTakeProfit(position: ManagedPosition): boolean {
+    if (position.side === "LONG") {
+      return position.currentPriceCents >= position.takeProfitPriceCents;
+    } else {
+      return position.currentPriceCents <= position.takeProfitPriceCents;
+    }
+  }
+
+  /**
+   * Check if hard exit is triggered
+   */
+  private checkHardExit(position: ManagedPosition): boolean {
+    if (position.side === "LONG") {
+      return position.currentPriceCents <= position.hardExitPriceCents;
+    } else {
+      return position.currentPriceCents >= position.hardExitPriceCents;
+    }
+  }
+
+  /**
+   * Check if hedge trigger is hit
+   */
+  private checkHedgeTrigger(position: ManagedPosition): boolean {
+    if (position.side === "LONG") {
+      return position.currentPriceCents <= position.hedgeTriggerPriceCents;
+    } else {
+      return position.currentPriceCents >= position.hedgeTriggerPriceCents;
+    }
+  }
+
+  /**
+   * Record a hedge being placed
+   */
+  recordHedge(
+    positionId: string,
+    hedge: Omit<HedgeLeg, "pnlCents">,
+    evSnapshot: EvMetrics | null,
+    biasDirection: BiasDirection,
+  ): void {
+    const position = this.positions.get(positionId);
+    if (!position) return;
+
+    const hedgeLeg: HedgeLeg = {
+      ...hedge,
+      pnlCents: 0,
+    };
+
+    position.hedges.push(hedgeLeg);
+    position.totalHedgeRatio += this.config.hedgeRatio;
+
+    // Transition to HEDGED state
+    if (position.state === "OPEN") {
+      this.recordTransition(position, "OPEN", "HEDGED", "HEDGE_PLACED", {
+        evSnapshot,
+        biasDirection,
+      });
+      position.state = "HEDGED";
+    }
+  }
+
+  /**
+   * Begin exit process
+   */
+  beginExit(
+    positionId: string,
+    reason: ExitReason,
+    evSnapshot: EvMetrics | null,
+    biasDirection: BiasDirection,
+  ): void {
+    const position = this.positions.get(positionId);
+    if (!position || position.state === "CLOSED") return;
+
+    this.recordTransition(position, position.state, "EXITING", reason, {
+      evSnapshot,
+      biasDirection,
+    });
+    position.state = "EXITING";
+  }
+
+  /**
+   * Complete exit and close position
+   */
+  closePosition(
+    positionId: string,
+    exitPriceCents: number,
+    evSnapshot: EvMetrics | null,
+    biasDirection: BiasDirection,
+  ): ManagedPosition | null {
+    const position = this.positions.get(positionId);
+    if (!position) return null;
+
+    // Calculate final P&L
+    if (position.side === "LONG") {
+      position.unrealizedPnlCents = exitPriceCents - position.entryPriceCents;
+    } else {
+      position.unrealizedPnlCents = position.entryPriceCents - exitPriceCents;
+    }
+
+    const shares = position.entrySizeUsd / (position.entryPriceCents / 100);
+    position.unrealizedPnlUsd = (position.unrealizedPnlCents / 100) * shares;
+    position.currentPriceCents = exitPriceCents;
+
+    this.recordTransition(position, position.state, "CLOSED", "POSITION_CLOSED", {
+      evSnapshot,
+      biasDirection,
+    });
+    position.state = "CLOSED";
+
+    return position;
+  }
+
+  /**
+   * Record a state transition
+   */
+  private recordTransition(
+    position: ManagedPosition,
+    fromState: PositionState,
+    toState: PositionState,
+    reason: string,
+    context: {
+      evSnapshot: EvMetrics | null;
+      biasDirection: BiasDirection;
+    },
+  ): void {
+    const transition: StateTransition = {
+      positionId: position.id,
+      fromState,
+      toState,
+      reason,
+      timestamp: Date.now(),
+      pnlCents: position.unrealizedPnlCents,
+      pnlUsd: position.unrealizedPnlUsd,
+      evSnapshot: context.evSnapshot,
+      biasDirection: context.biasDirection,
+    };
+
+    position.transitions.push(transition);
+
+    // Fire callbacks
+    for (const callback of this.transitionCallbacks) {
+      callback(transition);
+    }
+  }
+
+  /**
+   * Get position by ID
+   */
+  getPosition(positionId: string): ManagedPosition | undefined {
+    return this.positions.get(positionId);
+  }
+
+  /**
+   * Get all open positions
+   */
+  getOpenPositions(): ManagedPosition[] {
+    return Array.from(this.positions.values()).filter(
+      (p) => p.state !== "CLOSED",
+    );
+  }
+
+  /**
+   * Get positions by token
+   */
+  getPositionsByToken(tokenId: string): ManagedPosition[] {
+    return Array.from(this.positions.values()).filter(
+      (p) => p.tokenId === tokenId && p.state !== "CLOSED",
+    );
+  }
+
+  /**
+   * Get positions by market
+   */
+  getPositionsByMarket(marketId: string): ManagedPosition[] {
+    return Array.from(this.positions.values()).filter(
+      (p) => p.marketId === marketId && p.state !== "CLOSED",
+    );
+  }
+
+  /**
+   * Get total deployed USD
+   */
+  getTotalDeployedUsd(): number {
+    return this.getOpenPositions().reduce((sum, p) => sum + p.entrySizeUsd, 0);
+  }
+
+  /**
+   * Remove closed positions older than specified age
+   */
+  pruneClosedPositions(maxAgeMs: number): number {
+    const cutoff = Date.now() - maxAgeMs;
+    let pruned = 0;
+
+    for (const [id, position] of this.positions.entries()) {
+      if (position.state === "CLOSED" && position.lastUpdateTime < cutoff) {
+        this.positions.delete(id);
+        pruned++;
+      }
+    }
+
+    return pruned;
+  }
+
+  /**
+   * Clear all positions (for testing)
+   */
+  clear(): void {
+    this.positions.clear();
+  }
+
+  /**
+   * Convert position to JSON log entry
+   */
+  positionToLogEntry(position: ManagedPosition): object {
+    return {
+      type: "position",
+      timestamp: new Date().toISOString(),
+      id: position.id,
+      tokenId: position.tokenId.slice(0, 12) + "...",
+      marketId: position.marketId,
+      side: position.side,
+      state: position.state,
+      entryPriceCents: position.entryPriceCents,
+      currentPriceCents: position.currentPriceCents,
+      unrealizedPnlCents: parseFloat(position.unrealizedPnlCents.toFixed(2)),
+      unrealizedPnlUsd: parseFloat(position.unrealizedPnlUsd.toFixed(2)),
+      takeProfitCents: position.takeProfitPriceCents,
+      hedgeTriggerCents: position.hedgeTriggerPriceCents,
+      hardExitCents: position.hardExitPriceCents,
+      hedgeCount: position.hedges.length,
+      totalHedgeRatio: parseFloat(position.totalHedgeRatio.toFixed(2)),
+      holdTimeSeconds: Math.round(
+        (Date.now() - position.entryTime) / 1000,
+      ),
+    };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DECISION ENGINE
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface OrderbookState {
+  bestBidCents: number;
+  bestAskCents: number;
+  bidDepthUsd: number;
+  askDepthUsd: number;
+  spreadCents: number;
+  midPriceCents: number;
+}
+
+interface MarketActivity {
+  tradesInWindow: number;
+  bookUpdatesInWindow: number;
+  lastTradeTime: number;
+  lastUpdateTime: number;
+}
+
+interface EntryDecision {
+  allowed: boolean;
+  side?: "LONG" | "SHORT";
+  priceCents?: number;
+  sizeUsd?: number;
+  reason?: string;
+  checks: {
+    bias: { passed: boolean; value: BiasDirection; reason?: string };
+    liquidity: { passed: boolean; reason?: string };
+    priceDeviation: { passed: boolean; reason?: string };
+    priceBounds: { passed: boolean; reason?: string };
+    riskLimits: { passed: boolean; reason?: string };
+    evAllowed: { passed: boolean; reason?: string };
+  };
+}
+
+interface ExitDecision {
+  shouldExit: boolean;
+  reason?:
+    | "TAKE_PROFIT"
+    | "STOP_LOSS"
+    | "TIME_STOP"
+    | "HARD_EXIT"
+    | "BIAS_FLIP"
+    | "EV_DEGRADED";
+  urgency: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+}
+
+class DecisionEngine {
+  private readonly config: ChurnConfig;
+
+  constructor(config: ChurnConfig) {
+    this.config = config;
+  }
+
+  /**
+   * Evaluate entry conditions
+   */
+  evaluateEntry(params: {
+    tokenId: string;
+    bias: BiasDirection;
+    orderbook: OrderbookState;
+    activity: MarketActivity;
+    referencePriceCents: number;
+    evMetrics: EvMetrics;
+    evAllowed: { allowed: boolean; reason?: string };
+    currentPositions: ManagedPosition[];
+    effectiveBankroll: number;
+    totalDeployedUsd: number;
+  }): EntryDecision {
+    const checks: EntryDecision["checks"] = {
+      bias: { passed: false, value: params.bias },
+      liquidity: { passed: false },
+      priceDeviation: { passed: false },
+      priceBounds: { passed: false },
+      riskLimits: { passed: false },
+      evAllowed: { passed: false },
+    };
+
+    // 1) Check bias
+    if (params.bias === "NONE") {
+      checks.bias.reason = "No bias signal";
+    } else {
+      checks.bias.passed = true;
+    }
+
+    // 2) Check liquidity gates
+    const liquidityCheck = this.checkLiquidity(params.orderbook, params.activity);
+    checks.liquidity = liquidityCheck;
+
+    // 3) Check price deviation from reference
+    const currentPriceCents = params.orderbook.midPriceCents;
+    const deviation = Math.abs(currentPriceCents - params.referencePriceCents);
+    if (deviation >= this.config.entryBandCents) {
+      checks.priceDeviation.passed = true;
+    } else {
+      checks.priceDeviation.reason = `Deviation ${deviation.toFixed(1)}¢ < ${this.config.entryBandCents}¢`;
+    }
+
+    // 4) Check entry price bounds
+    const entryPriceCents =
+      params.bias === "LONG"
+        ? params.orderbook.bestAskCents
+        : params.orderbook.bestBidCents;
+
+    if (
+      entryPriceCents >= this.config.minEntryPriceCents &&
+      entryPriceCents <= this.config.maxEntryPriceCents
+    ) {
+      checks.priceBounds.passed = true;
+    } else {
+      checks.priceBounds.reason = `Price ${entryPriceCents}¢ outside [${this.config.minEntryPriceCents}, ${this.config.maxEntryPriceCents}]`;
+    }
+
+    // 5) Check risk limits
+    const riskCheck = this.checkRiskLimits(
+      params.tokenId,
+      params.currentPositions,
+      params.effectiveBankroll,
+      params.totalDeployedUsd,
+    );
+    checks.riskLimits = riskCheck;
+
+    // 6) Check EV allows trading
+    if (params.evAllowed.allowed) {
+      checks.evAllowed.passed = true;
+    } else {
+      checks.evAllowed.reason = params.evAllowed.reason;
+    }
+
+    // All checks must pass
+    const allPassed = Object.values(checks).every((c) => c.passed);
+
+    if (!allPassed) {
+      const failedChecks = Object.entries(checks)
+        .filter(([_, v]) => !v.passed)
+        .map(([k, v]) => `${k}: ${v.reason || "failed"}`)
+        .join("; ");
+
+      return {
+        allowed: false,
+        reason: failedChecks,
+        checks,
+      };
+    }
+
+    // Calculate size
+    const sizeUsd = this.calculateSize(params.effectiveBankroll);
+
+    return {
+      allowed: true,
+      side: params.bias as "LONG" | "SHORT",
+      priceCents: entryPriceCents,
+      sizeUsd,
+      checks,
+    };
+  }
+
+  /**
+   * Check liquidity gates
+   */
+  private checkLiquidity(
+    orderbook: OrderbookState,
+    activity: MarketActivity,
+  ): { passed: boolean; reason?: string } {
+    // Spread check
+    if (orderbook.spreadCents > this.config.minSpreadCents) {
+      return {
+        passed: false,
+        reason: `Spread ${orderbook.spreadCents}¢ > ${this.config.minSpreadCents}¢`,
+      };
+    }
+
+    // Depth check (need enough depth to exit)
+    const minDepth = Math.min(orderbook.bidDepthUsd, orderbook.askDepthUsd);
+    if (minDepth < this.config.minDepthUsdAtExit) {
+      return {
+        passed: false,
+        reason: `Depth $${minDepth.toFixed(0)} < $${this.config.minDepthUsdAtExit}`,
+      };
+    }
+
+    // Activity check
+    if (
+      activity.tradesInWindow < this.config.minTradesLastX &&
+      activity.bookUpdatesInWindow < this.config.minBookUpdatesLastX
+    ) {
+      return {
+        passed: false,
+        reason: `Activity too low (${activity.tradesInWindow} trades, ${activity.bookUpdatesInWindow} updates)`,
+      };
+    }
+
+    return { passed: true };
+  }
+
+  /**
+   * Check risk limits
+   */
+  private checkRiskLimits(
+    tokenId: string,
+    currentPositions: ManagedPosition[],
+    effectiveBankroll: number,
+    totalDeployedUsd: number,
+  ): { passed: boolean; reason?: string } {
+    // Max total positions
+    if (currentPositions.length >= this.config.maxOpenPositionsTotal) {
+      return {
+        passed: false,
+        reason: `Max positions (${this.config.maxOpenPositionsTotal})`,
+      };
+    }
+
+    // Max positions per market/token
+    const tokenPositions = currentPositions.filter(
+      (p) => p.tokenId === tokenId,
+    );
+    if (tokenPositions.length >= this.config.maxOpenPositionsPerMarket) {
+      return {
+        passed: false,
+        reason: `Max positions per market (${this.config.maxOpenPositionsPerMarket})`,
+      };
+    }
+
+    // Max deployed fraction
+    const maxDeployed = effectiveBankroll * this.config.maxDeployedFractionTotal;
+    if (totalDeployedUsd >= maxDeployed) {
+      return {
+        passed: false,
+        reason: `Max deployed $${maxDeployed.toFixed(0)}`,
+      };
+    }
+
+    // Effective bankroll must be positive
+    if (effectiveBankroll <= 0) {
+      return {
+        passed: false,
+        reason: "No effective bankroll",
+      };
+    }
+
+    return { passed: true };
+  }
+
+  /**
+   * Calculate trade size
+   */
+  private calculateSize(effectiveBankroll: number): number {
+    const fractionalSize = effectiveBankroll * this.config.tradeFraction;
+    return Math.min(fractionalSize, this.config.maxTradeUsd);
+  }
+
+  /**
+   * Check if entry is in preferred zone
+   */
+  isInPreferredZone(priceCents: number): boolean {
+    return (
+      priceCents >= this.config.preferredEntryLowCents &&
+      priceCents <= this.config.preferredEntryHighCents
+    );
+  }
+
+  /**
+   * Calculate entry score (higher = better entry)
+   */
+  calculateEntryScore(params: {
+    priceCents: number;
+    spreadCents: number;
+    depthUsd: number;
+    activityScore: number;
+  }): number {
+    let score = 0;
+
+    // Preferred zone bonus (0-30 points)
+    if (this.isInPreferredZone(params.priceCents)) {
+      // Center of preferred zone is ideal
+      const center =
+        (this.config.preferredEntryLowCents + this.config.preferredEntryHighCents) /
+        2;
+      const distFromCenter = Math.abs(params.priceCents - center);
+      const maxDist =
+        (this.config.preferredEntryHighCents - this.config.preferredEntryLowCents) /
+        2;
+      score += 30 * (1 - distFromCenter / maxDist);
+    }
+
+    // Tight spread bonus (0-25 points)
+    const spreadRatio = params.spreadCents / this.config.minSpreadCents;
+    score += Math.max(0, 25 * (2 - spreadRatio));
+
+    // Depth bonus (0-25 points)
+    const depthRatio = params.depthUsd / this.config.minDepthUsdAtExit;
+    score += Math.min(25, 25 * (depthRatio - 1));
+
+    // Activity bonus (0-20 points)
+    score += Math.min(20, params.activityScore * 20);
+
+    return Math.max(0, Math.min(100, score));
+  }
+
+  /**
+   * Evaluate exit conditions for a position
+   */
+  evaluateExit(params: {
+    position: ManagedPosition;
+    currentPriceCents: number;
+    bias: BiasDirection;
+    evAllowed: { allowed: boolean; reason?: string };
+  }): ExitDecision {
+    const { position, currentPriceCents, bias, evAllowed } = params;
+
+    // Calculate current P&L
+    let pnlCents: number;
+    if (position.side === "LONG") {
+      pnlCents = currentPriceCents - position.entryPriceCents;
+    } else {
+      pnlCents = position.entryPriceCents - currentPriceCents;
+    }
+
+    // 1) Take profit
+    if (pnlCents >= this.config.tpCents) {
+      return {
+        shouldExit: true,
+        reason: "TAKE_PROFIT",
+        urgency: "MEDIUM",
+      };
+    }
+
+    // 2) Hard exit (max adverse)
+    if (pnlCents <= -this.config.maxAdverseCents) {
+      return {
+        shouldExit: true,
+        reason: "HARD_EXIT",
+        urgency: "CRITICAL",
+      };
+    }
+
+    // 3) Time stop
+    const holdTimeSeconds = (Date.now() - position.entryTime) / 1000;
+    if (holdTimeSeconds >= this.config.maxHoldSeconds) {
+      return {
+        shouldExit: true,
+        reason: "TIME_STOP",
+        urgency: pnlCents > 0 ? "LOW" : "MEDIUM",
+      };
+    }
+
+    // 4) Bias flip (position direction no longer matches bias)
+    if (
+      (position.side === "LONG" && bias === "SHORT") ||
+      (position.side === "SHORT" && bias === "LONG")
+    ) {
+      // Only exit if we're profitable or at small loss
+      if (pnlCents > -this.config.hedgeTriggerCents) {
+        return {
+          shouldExit: true,
+          reason: "BIAS_FLIP",
+          urgency: "LOW",
+        };
+      }
+    }
+
+    // 5) EV degraded
+    if (!evAllowed.allowed && pnlCents > 0) {
+      return {
+        shouldExit: true,
+        reason: "EV_DEGRADED",
+        urgency: "LOW",
+      };
+    }
+
+    return {
+      shouldExit: false,
+      urgency: "LOW",
+    };
+  }
+
+  /**
+   * Check if position needs hedging
+   */
+  needsHedge(position: ManagedPosition, currentPriceCents: number): boolean {
+    if (position.totalHedgeRatio >= this.config.maxHedgeRatio) {
+      return false;
+    }
+
+    let adverseMove: number;
+    if (position.side === "LONG") {
+      adverseMove = position.entryPriceCents - currentPriceCents;
+    } else {
+      adverseMove = currentPriceCents - position.entryPriceCents;
+    }
+
+    return adverseMove >= this.config.hedgeTriggerCents;
+  }
+
+  /**
+   * Calculate hedge size
+   */
+  calculateHedgeSize(position: ManagedPosition): number {
+    const remainingHedgeRoom =
+      this.config.maxHedgeRatio - position.totalHedgeRatio;
+    const hedgeRatio = Math.min(this.config.hedgeRatio, remainingHedgeRoom);
+    return position.entrySizeUsd * hedgeRatio;
+  }
+
+  /**
+   * Convert to JSON log entry
+   */
+  toLogEntry(decision: EntryDecision): object {
+    return {
+      type: "entry_decision",
+      timestamp: new Date().toISOString(),
+      allowed: decision.allowed,
+      side: decision.side || null,
+      priceCents: decision.priceCents || null,
+      sizeUsd: decision.sizeUsd
+        ? parseFloat(decision.sizeUsd.toFixed(2))
+        : null,
+      reason: decision.reason || null,
+      checks: {
+        bias: {
+          passed: decision.checks.bias.passed,
+          value: decision.checks.bias.value,
+        },
+        liquidity: decision.checks.liquidity.passed,
+        priceDeviation: decision.checks.priceDeviation.passed,
+        priceBounds: decision.checks.priceBounds.passed,
+        riskLimits: decision.checks.riskLimits.passed,
+        evAllowed: decision.checks.evAllowed.passed,
+      },
+    };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXECUTION ENGINE
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface ExecutionResult {
+  success: boolean;
+  filledUsd?: number;
+  filledPriceCents?: number;
+  reason?: string;
+}
+
+interface TokenMarketData {
+  tokenId: string;
+  marketId?: string;
+  orderbook: OrderbookState;
+  activity: MarketActivity;
+  referencePriceCents: number;
+}
+
+interface ChurnLogger {
+  info(msg: string): void;
+  warn(msg: string): void;
+  error(msg: string): void;
+}
+
+class SimpleLogger implements ChurnLogger {
+  info(msg: string): void { console.log(msg); }
+  warn(msg: string): void { console.log(`⚠️ ${msg}`); }
+  error(msg: string): void { console.log(`❌ ${msg}`); }
+}
+
+class ExecutionEngine {
+  private config: ChurnConfig;
+  private evTracker: EvTracker;
+  private biasAccumulator: BiasAccumulator;
+  private positionManager: PositionManager;
+  private decisionEngine: DecisionEngine;
+  private logger: ChurnLogger;
+  private client: ClobClient | null = null;
+  private cooldowns: Map<string, number> = new Map();
+
+  constructor(
+    config: ChurnConfig,
+    evTracker: EvTracker,
+    biasAccumulator: BiasAccumulator,
+    positionManager: PositionManager,
+    decisionEngine: DecisionEngine,
+    logger: ChurnLogger,
+  ) {
+    this.config = config;
+    this.evTracker = evTracker;
+    this.biasAccumulator = biasAccumulator;
+    this.positionManager = positionManager;
+    this.decisionEngine = decisionEngine;
+    this.logger = logger;
+  }
+
+  setClient(client: ClobClient): void {
+    this.client = client;
+  }
+
+  getEffectiveBankroll(balance: number): { effectiveBankroll: number; reserveUsd: number } {
+    const reserveUsd = Math.max(balance * this.config.reserveFraction, this.config.minReserveUsd);
+    return { effectiveBankroll: Math.max(0, balance - reserveUsd), reserveUsd };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ENTRY
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async processEntry(tokenId: string, marketData: TokenMarketData, balance: number): Promise<ExecutionResult> {
+    // Cooldown check
+    const cooldownUntil = this.cooldowns.get(tokenId) || 0;
+    if (Date.now() < cooldownUntil) {
+      return { success: false, reason: "COOLDOWN" };
+    }
+
+    const bias = this.biasAccumulator.getBias(tokenId);
+    const evAllowed = this.evTracker.isTradingAllowed();
+    const { effectiveBankroll } = this.getEffectiveBankroll(balance);
+
+    if (effectiveBankroll <= 0) {
+      return { success: false, reason: "NO_BANKROLL" };
+    }
+
+    // Evaluate entry
+    const decision = this.decisionEngine.evaluateEntry({
+      tokenId,
+      bias: bias.direction,
+      orderbook: marketData.orderbook,
+      activity: marketData.activity,
+      referencePriceCents: marketData.referencePriceCents,
+      evMetrics: this.evTracker.getMetrics(),
+      evAllowed,
+      currentPositions: this.positionManager.getOpenPositions(),
+      effectiveBankroll,
+      totalDeployedUsd: this.positionManager.getTotalDeployedUsd(),
+    });
+
+    if (!decision.allowed) {
+      return { success: false, reason: decision.reason };
+    }
+
+    // Execute
+    const result = await this.executeEntry(
+      tokenId,
+      marketData.marketId,
+      decision.side!,
+      decision.priceCents!,
+      decision.sizeUsd!,
+      marketData.referencePriceCents,
+      bias.direction,
+    );
+
+    if (result.success) {
+      this.cooldowns.set(tokenId, Date.now() + this.config.cooldownSecondsPerToken * 1000);
+    }
+
+    return result;
+  }
+
+  private async executeEntry(
+    tokenId: string,
+    marketId: string | undefined,
+    side: "LONG" | "SHORT",
+    priceCents: number,
+    sizeUsd: number,
+    referencePriceCents: number,
+    biasDirection: BiasDirection,
+  ): Promise<ExecutionResult> {
+    const evMetrics = this.evTracker.getMetrics();
+
+    // Simulation mode
+    if (!this.config.liveTradingEnabled) {
+      this.positionManager.openPosition({
+        tokenId, marketId, side,
+        entryPriceCents: priceCents,
+        sizeUsd,
+        referencePriceCents,
+        evSnapshot: evMetrics,
+        biasDirection,
+      });
+      console.log(`🎲 [SIM] ${side} $${sizeUsd.toFixed(2)} @ ${priceCents.toFixed(1)}¢`);
+      return { success: true, filledUsd: sizeUsd, filledPriceCents: priceCents };
+    }
+
+    if (!this.client) return { success: false, reason: "NO_CLIENT" };
+
+    try {
+      const orderBook = await this.client.getOrderBook(tokenId);
+      const levels = side === "LONG" ? orderBook?.asks : orderBook?.bids;
+      if (!levels?.length) return { success: false, reason: "NO_LIQUIDITY" };
+
+      const price = parseFloat(levels[0].price);
+      const shares = sizeUsd / price;
+
+      const { Side, OrderType } = await import("@polymarket/clob-client");
+      const order = await this.client.createMarketOrder({
+        side: side === "LONG" ? Side.BUY : Side.SELL,
+        tokenID: tokenId,
+        amount: shares,
+        price,
+      });
+
+      const response = await this.client.postOrder(order, OrderType.FOK);
+
+      if (response.success) {
+        this.positionManager.openPosition({
+          tokenId, marketId, side,
+          entryPriceCents: price * 100,
+          sizeUsd,
+          referencePriceCents,
+          evSnapshot: evMetrics,
+          biasDirection,
+        });
+        console.log(`📥 ${side} $${sizeUsd.toFixed(2)} @ ${(price * 100).toFixed(1)}¢`);
+        return { success: true, filledUsd: sizeUsd, filledPriceCents: price * 100 };
+      }
+
+      return { success: false, reason: "ORDER_REJECTED" };
+    } catch (err) {
+      return { success: false, reason: err instanceof Error ? err.message : "ERROR" };
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // EXIT (uses smart-sell for reliable fills)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async processExits(marketDataMap: Map<string, TokenMarketData>): Promise<{ exited: string[]; hedged: string[] }> {
+    const exited: string[] = [];
+    const hedged: string[] = [];
+
+    for (const position of this.positionManager.getOpenPositions()) {
+      const marketData = marketDataMap.get(position.tokenId);
+      if (!marketData) continue;
+
+      const priceCents = marketData.orderbook.midPriceCents;
+      const bias = this.biasAccumulator.getBias(position.tokenId);
+      const evMetrics = this.evTracker.getMetrics();
+
+      // Update price and check triggers
+      const update = this.positionManager.updatePrice(position.id, priceCents, evMetrics, bias.direction);
+
+      if (update.action === "EXIT") {
+        const result = await this.executeExit(position, update.reason!, priceCents, bias.direction);
+        if (result.success) exited.push(position.id);
+      } else if (update.action === "HEDGE") {
+        const result = await this.executeHedge(position, bias.direction);
+        if (result.success) hedged.push(position.id);
+      } else {
+        // Check decision engine for other exit conditions
+        const exitCheck = this.decisionEngine.evaluateExit({
+          position,
+          currentPriceCents: priceCents,
+          bias: bias.direction,
+          evAllowed: this.evTracker.isTradingAllowed(),
+        });
+        if (exitCheck.shouldExit) {
+          const result = await this.executeExit(position, exitCheck.reason!, priceCents, bias.direction);
+          if (result.success) exited.push(position.id);
+        }
+      }
+    }
+
+    return { exited, hedged };
+  }
+
+  private async executeExit(
+    position: ManagedPosition,
+    reason: ExitReason,
+    priceCents: number,
+    biasDirection: BiasDirection,
+  ): Promise<ExecutionResult> {
+    const evMetrics = this.evTracker.getMetrics();
+    this.positionManager.beginExit(position.id, reason, evMetrics, biasDirection);
+
+    // Simulation mode
+    if (!this.config.liveTradingEnabled) {
+      return this.closeAndLog(position, priceCents, reason, biasDirection, "[SIM]");
+    }
+
+    if (!this.client) return { success: false, reason: "NO_CLIENT" };
+
+    /*
+     * SELL: Use smartSell which returns actual fill price.
+     * Slippage tolerances from EV math (churn_cost = 2¢):
+     * - TAKE_PROFIT: tight (protect gains)
+     * - NORMAL: standard churn allowance
+     * - URGENT: looser (losses capped at MAX_ADVERSE anyway)
+     */
+
+    const shares = position.entrySizeUsd / (position.entryPriceCents / 100);
+    const pnlUsd = (position.unrealizedPnlCents / 100) * shares;
+    const sellPosition: Position = {
+      tokenId: position.tokenId,
+      conditionId: position.tokenId,
+      outcome: position.side === "LONG" ? "YES" : "NO",
+      size: shares,
+      avgPrice: position.entryPriceCents / 100,
+      curPrice: priceCents / 100,
+      value: position.entrySizeUsd,
+      gainCents: position.unrealizedPnlCents,
+      pnlPct: (position.unrealizedPnlCents / position.entryPriceCents) * 100,
+      pnlUsd,
+      entryTime: position.entryTime,
+      lastPrice: priceCents / 100,
+    };
+
+    // Slippage based on exit type (derived from churn_cost = 2¢)
+    const isUrgent = reason === "HARD_EXIT" || reason === "STOP_LOSS";
+    const slippagePct = reason === "TAKE_PROFIT" ? 4 : (isUrgent ? 15 : 8);
+
+    console.log(`📤 Selling | ${reason} | ${slippagePct}% max slippage`);
+
+    const result = await smartSell(this.client, sellPosition, {
+      maxSlippagePct: slippagePct,
+      forceSell: isUrgent,
+      logger: this.logger,
+    });
+
+    if (result.success) {
+      // Use actual fill price from API response
+      const exitPrice = (result.avgPrice || priceCents / 100) * 100;
+      return this.closeAndLog(position, exitPrice, reason, biasDirection, "");
+    }
+
+    // Retry with more slippage if urgent
+    if (isUrgent && result.reason === "FOK_NOT_FILLED") {
+      console.log(`⚠️ Retrying with 25% slippage...`);
+      const retry = await smartSell(this.client, sellPosition, {
+        maxSlippagePct: 25,
+        forceSell: true,
+        logger: this.logger,
+      });
+      if (retry.success) {
+        const exitPrice = (retry.avgPrice || priceCents / 100) * 100;
+        return this.closeAndLog(position, exitPrice, reason, biasDirection, "(retry)");
+      }
+    }
+
+    console.log(`❌ Sell failed: ${result.reason}`);
+    return { success: false, reason: result.reason };
+  }
+
+  private closeAndLog(
+    position: ManagedPosition,
+    exitPriceCents: number,
+    reason: ExitReason,
+    biasDirection: BiasDirection,
+    tag: string,
+  ): ExecutionResult {
+    const evMetrics = this.evTracker.getMetrics();
+    const closed = this.positionManager.closePosition(position.id, exitPriceCents, evMetrics, biasDirection);
+
+    if (closed) {
+      this.evTracker.recordTrade(createTradeResult(
+        position.tokenId,
+        position.side,
+        position.entryPriceCents,
+        exitPriceCents,
+        position.entrySizeUsd,
+      ));
+
+      const emoji = closed.unrealizedPnlCents >= 0 ? "✅" : "❌";
+      const sign = closed.unrealizedPnlCents >= 0 ? "+" : "";
+      console.log(`${emoji} ${tag} ${reason} | ${sign}${closed.unrealizedPnlCents.toFixed(1)}¢ ($${closed.unrealizedPnlUsd.toFixed(2)})`);
+    }
+
+    return { success: true, filledPriceCents: exitPriceCents };
+  }
+
+  private async executeHedge(position: ManagedPosition, biasDirection: BiasDirection): Promise<ExecutionResult> {
+    const hedgeSize = this.decisionEngine.calculateHedgeSize(position);
+    const evMetrics = this.evTracker.getMetrics();
+
+    this.positionManager.recordHedge(position.id, {
+      tokenId: position.tokenId + "_HEDGE",
+      sizeUsd: hedgeSize,
+      entryPriceCents: position.currentPriceCents,
+      entryTime: Date.now(),
+    }, evMetrics, biasDirection);
+
+    const tag = this.config.liveTradingEnabled ? "" : "[SIM]";
+    console.log(`🛡️ ${tag} Hedged $${hedgeSize.toFixed(2)}`);
+    return { success: true, filledUsd: hedgeSize };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // STATS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  getSummary() {
+    const ev = this.evTracker.getMetrics();
+    return {
+      positions: this.positionManager.getOpenPositions().length,
+      deployed: this.positionManager.getTotalDeployedUsd(),
+      trades: ev.totalTrades,
+      winRate: ev.winRate,
+      evCents: ev.evCents,
+      pnl: ev.totalPnlUsd,
+    };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const POLYMARKET_API = {
+  CLOB: "https://clob.polymarket.com",
+  DATA: "https://data-api.polymarket.com",
+  GAMMA: "https://gamma-api.polymarket.com",
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POLYMARKET CASINO BOT
+// ═══════════════════════════════════════════════════════════════════════════
+
+class ChurnEngine {
+  private config: ChurnConfig;
+  private logger: SimpleLogger;
+  private evTracker: EvTracker;
+  private biasAccumulator: BiasAccumulator;
+  private positionManager: PositionManager;
+  private decisionEngine: DecisionEngine;
+  private executionEngine: ExecutionEngine;
+
+  private client: any = null;
+  private wallet: any = null;
+  private address: string = "";
+
+  private running = false;
+  private cycleCount = 0;
+  private lastRedeemTime = 0;
+  // Position tracking - no cache needed, API is fast
+  private lastSummaryTime = 0;
+  private lastPolCheckTime = 0;
+  // Liquidation mode - when true, prioritize selling existing positions
+  private liquidationMode = false;
+
+  // Intervals
+  private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+  private readonly SUMMARY_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+  constructor() {
+    this.config = loadConfig();
+    this.logger = new SimpleLogger();
+
+    this.evTracker = new EvTracker(this.config);
+    this.biasAccumulator = new BiasAccumulator(this.config);
+    this.positionManager = new PositionManager({
+      tpCents: this.config.tpCents,
+      hedgeTriggerCents: this.config.hedgeTriggerCents,
+      maxAdverseCents: this.config.maxAdverseCents,
+      maxHoldSeconds: this.config.maxHoldSeconds,
+      hedgeRatio: this.config.hedgeRatio,
+      maxHedgeRatio: this.config.maxHedgeRatio,
+    });
+    this.decisionEngine = new DecisionEngine(this.config);
+    this.executionEngine = new ExecutionEngine(
+      this.config,
+      this.evTracker,
+      this.biasAccumulator,
+      this.positionManager,
+      this.decisionEngine,
+      this.logger,
+    );
+
+    // Log position closes
+    this.positionManager.onTransition((t) => {
+      if (t.toState === "CLOSED" && this.config.telegramBotToken) {
+        const emoji = t.pnlCents >= 0 ? "✅" : "❌";
+        sendTelegram(
+          "Position Closed",
+          `${emoji} ${t.reason}\nP&L: ${t.pnlCents >= 0 ? "+" : ""}${t.pnlCents.toFixed(1)}¢ ($${t.pnlUsd.toFixed(2)})`,
+        ).catch(() => {});
+      }
+    });
+
+    // Log bias changes
+    this.biasAccumulator.onBiasChange((e) => {
+      console.log(`📊 Bias | ${e.tokenId.slice(0, 8)}... | ${e.previousDirection} → ${e.newDirection} | $${e.netUsd.toFixed(0)} flow`);
+    });
+  }
+
+  /**
+   * Initialize the engine
+   */
+  async initialize(): Promise<boolean> {
+    console.log("");
+    console.log("═".repeat(60));
+    console.log("  🎰 POLYMARKET CASINO BOT");
+    console.log("═".repeat(60));
+    console.log("");
+    console.log("  Load wallet. Start bot. Walk away.");
+    console.log("");
+    console.log("  The math:");
+    console.log("    avg_win  = 14¢   (take profit)");
+    console.log("    avg_loss = 9¢    (hedge-capped)");
+    console.log("    churn    = 2¢    (spread + slippage)");
+    console.log("    break-even = 48% win rate");
+    console.log("");
+    console.log("  Following whale flows → ~55% accuracy → profit");
+    console.log("");
+    console.log("═".repeat(60));
+    console.log("");
+
+    // Validate config
+    const errors = validateConfig(this.config);
+    if (errors.length > 0) {
+      for (const err of errors) {
+        console.error(`❌ Config error: ${err.field} - ${err.message}`);
+      }
+      return false;
+    }
+
+    // Log effective config
+    logConfig(this.config, (msg) => console.log(msg));
+
+    // Setup VPN if configured
+    await this.setupVpn();
+
+    // Initialize Telegram
+    if (this.config.telegramBotToken && this.config.telegramChatId) {
+      initTelegram();
+      console.log("📱 Telegram alerts enabled");
+    }
+
+    // Authenticate with CLOB
+    const auth = await createClobClient(
+      this.config.privateKey,
+      this.config.rpcUrl,
+      this.logger,
+    );
+
+    if (!auth.success || !auth.client || !auth.wallet) {
+      console.error(`❌ Auth failed: ${auth.error}`);
+      return false;
+    }
+
+    this.client = auth.client;
+    this.wallet = auth.wallet;
+    this.address = auth.address!;
+    this.executionEngine.setClient(this.client);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STARTUP REDEMPTION - Collect any settled positions first
+    // ═══════════════════════════════════════════════════════════════════════
+    console.log("🎁 Checking for redeemable positions...");
+    await this.processRedemptions();
+    this.lastRedeemTime = Date.now(); // Reset timer after startup redemption
+
+    // Get balances AFTER redemption
+    let usdcBalance = await getUsdcBalance(this.wallet, this.address);
+    const polBalance = await getPolBalance(this.wallet, this.address);
+    let { effectiveBankroll, reserveUsd } =
+      this.executionEngine.getEffectiveBankroll(usdcBalance);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CHECK FOR EXISTING POSITIONS (for liquidation mode)
+    // ═══════════════════════════════════════════════════════════════════════
+    let existingPositions: Position[] = [];
+    let positionValue = 0;
+    try {
+      existingPositions = await getPositions(this.address, true);
+      positionValue = existingPositions.reduce((sum, p) => sum + p.value, 0);
+    } catch (err) {
+      console.warn(`⚠️ Could not fetch existing positions: ${err instanceof Error ? err.message : err}`);
+    }
+
+    console.log("");
+    console.log(`💰 Balance: $${usdcBalance.toFixed(2)} USDC | ${polBalance.toFixed(4)} POL`);
+    console.log(`🏦 Reserve: $${reserveUsd.toFixed(2)} | Effective: $${effectiveBankroll.toFixed(2)}`);
+    if (existingPositions.length > 0) {
+      console.log(`📦 Existing Positions: ${existingPositions.length} (value: $${positionValue.toFixed(2)})`);
+    }
+    console.log(`🔴 Mode: ${this.config.liveTradingEnabled ? "LIVE TRADING" : "SIMULATION"}`);
+    console.log("");
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LIQUIDATION MODE - Start even with no effective bankroll if positions exist
+    // ═══════════════════════════════════════════════════════════════════════
+    if (effectiveBankroll <= 0) {
+      if (this.config.forceLiquidation && existingPositions.length > 0) {
+        console.log("━".repeat(60));
+        console.log("🔥 LIQUIDATION MODE ACTIVATED");
+        console.log("━".repeat(60));
+        console.log(`   No effective bankroll ($${usdcBalance.toFixed(2)} < $${reserveUsd.toFixed(2)} reserve)`);
+        console.log(`   But you have ${existingPositions.length} positions worth $${positionValue.toFixed(2)}`);
+        console.log(`   Will liquidate positions to free up capital`);
+        console.log("━".repeat(60));
+        console.log("");
+
+        this.liquidationMode = true;
+
+        if (this.config.telegramBotToken) {
+          await sendTelegram(
+            "🔥 Liquidation Mode Activated",
+            `Balance: $${usdcBalance.toFixed(2)}\n` +
+              `Positions: ${existingPositions.length} ($${positionValue.toFixed(2)})\n` +
+              `Will sell positions to free capital`,
+          ).catch(() => {});
+        }
+
+        return true;
+      } else if (existingPositions.length > 0) {
+        console.error("❌ No effective bankroll available");
+        console.error(`   You have ${existingPositions.length} positions worth $${positionValue.toFixed(2)}`);
+        console.error(`   Set FORCE_LIQUIDATION=true to sell them and free up capital`);
+        return false;
+      } else {
+        console.error("❌ No effective bankroll available");
+        console.error(`   Deposit more USDC or wait for positions to settle`);
+        return false;
+      }
+    }
+
+    // Send startup notification
+    if (this.config.telegramBotToken) {
+      await sendTelegram(
+        "🎰 Casino Bot Started",
+        `Balance: $${usdcBalance.toFixed(2)}\n` +
+          `Reserve: $${reserveUsd.toFixed(2)}\n` +
+          `Effective: $${effectiveBankroll.toFixed(2)}\n` +
+          `${this.config.liveTradingEnabled ? "🔴 LIVE" : "🟢 SIM"}`,
+      ).catch(() => {});
+    }
+
+    return true;
+  }
+
+  /**
+   * Setup VPN if configured
+   */
+  private async setupVpn(): Promise<void> {
+    const wgEnabled =
+      process.env.WIREGUARD_ENABLED === "true" || process.env.WG_CONFIG;
+    const ovpnEnabled =
+      process.env.OPENVPN_ENABLED === "true" ||
+      process.env.OVPN_CONFIG ||
+      process.env.OPENVPN_CONFIG;
+
+    if (!wgEnabled && !ovpnEnabled) {
+      return;
+    }
+
+    try {
+      capturePreVpnRouting();
+
+      if (wgEnabled) {
+        console.log("🔒 Starting WireGuard...");
+        await startWireguard();
+        console.log("🔒 WireGuard connected");
+      } else if (ovpnEnabled) {
+        console.log("🔒 Starting OpenVPN...");
+        await startOpenvpn();
+        console.log("🔒 OpenVPN connected");
+      }
+
+      // Setup bypass routes
+      if (process.env.VPN_BYPASS_RPC !== "false") {
+        await setupRpcBypass(this.config.rpcUrl, this.logger);
+      }
+      if (process.env.VPN_BYPASS_POLYMARKET_READS === "true") {
+        await setupPolymarketReadBypass(this.logger);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`⚠️ VPN setup failed: ${msg}`);
+    }
+  }
+
+  /**
+   * Main run loop - aggressive polling
+   * API allows 150 req/sec for orderbook, we can go fast!
+   */
+  async run(): Promise<void> {
+    this.running = true;
+    
+    if (this.liquidationMode) {
+      console.log("🔥 Running in LIQUIDATION MODE...\n");
+    } else {
+      console.log("🎲 Running...\n");
+    }
+
+    while (this.running) {
+      try {
+        if (this.liquidationMode) {
+          await this.liquidationCycle();
+        } else {
+          await this.cycle();
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`❌ Cycle error: ${msg}`);
+      }
+
+      // Aggressive polling: 100ms with positions, 200ms without
+      // In liquidation mode, use configurable slower interval to avoid rate limits
+      const openCount = this.positionManager.getOpenPositions().length;
+      const pollInterval = this.liquidationMode
+        ? this.config.liquidationPollIntervalMs
+        : (openCount > 0
+          ? this.config.positionPollIntervalMs  // 100ms - track positions fast
+          : this.config.pollIntervalMs);        // 200ms - scan for opportunities
+      
+      await this.sleep(pollInterval);
+    }
+
+    console.log("🛑 Stopped");
+  }
+
+  /**
+   * Liquidation cycle - Sell existing Polymarket positions to free capital
+   * Once enough capital is freed, transition back to normal trading mode
+   */
+  private async liquidationCycle(): Promise<void> {
+    this.cycleCount++;
+    const now = Date.now();
+
+    // ─────────────────────────────────────────────────────────────────
+    // 1. GET BALANCES & CHECK IF WE CAN EXIT LIQUIDATION MODE
+    // ─────────────────────────────────────────────────────────────────
+    const usdcBalance = await getUsdcBalance(this.wallet, this.address);
+    const { effectiveBankroll, reserveUsd } = this.executionEngine.getEffectiveBankroll(usdcBalance);
+
+    if (effectiveBankroll > 0) {
+      // We have enough capital now - exit liquidation mode
+      console.log("━".repeat(60));
+      console.log("✅ LIQUIDATION MODE COMPLETE");
+      console.log("━".repeat(60));
+      console.log(`   Balance: $${usdcBalance.toFixed(2)}`);
+      console.log(`   Effective bankroll: $${effectiveBankroll.toFixed(2)}`);
+      console.log(`   Transitioning to normal trading mode`);
+      console.log("━".repeat(60));
+      console.log("");
+
+      this.liquidationMode = false;
+
+      if (this.config.telegramBotToken) {
+        await sendTelegram(
+          "✅ Liquidation Complete",
+          `Balance: $${usdcBalance.toFixed(2)}\n` +
+            `Effective: $${effectiveBankroll.toFixed(2)}\n` +
+            `Now entering normal trading mode`,
+        ).catch(() => {});
+      }
+
+      return;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 2. REDEEM SETTLED POSITIONS
+    // ─────────────────────────────────────────────────────────────────
+    if (now - this.lastRedeemTime >= this.REDEEM_INTERVAL_MS) {
+      await this.processRedemptions();
+      this.lastRedeemTime = now;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 3. FETCH AND LIQUIDATE EXISTING POLYMARKET POSITIONS
+    // ─────────────────────────────────────────────────────────────────
+    let positions: Position[] = [];
+    try {
+      positions = await getPositions(this.address, true);
+    } catch (err) {
+      console.warn(`⚠️ Could not fetch positions: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+
+    if (positions.length === 0) {
+      console.log("📦 No positions to liquidate");
+      console.log(`   Balance: $${usdcBalance.toFixed(2)} (need $${reserveUsd.toFixed(2)} for trading)`);
+      console.log(`   Waiting for deposits or position settlements...`);
+      return;
+    }
+
+    // Sort by value descending - sell largest positions first for fastest capital recovery
+    const sortedPositions = [...positions].sort((a, b) => b.value - a.value);
+
+    console.log(`🔥 Liquidating ${sortedPositions.length} positions (total value: $${sortedPositions.reduce((s, p) => s + p.value, 0).toFixed(2)})`);
+
+    // Sell one position per cycle to avoid overwhelming the API
+    const positionToSell = sortedPositions[0];
+    if (positionToSell) {
+      console.log(`📤 Selling: $${positionToSell.value.toFixed(2)} @ ${(positionToSell.curPrice * 100).toFixed(1)}¢ (P&L: ${positionToSell.pnlPct >= 0 ? '+' : ''}${positionToSell.pnlPct.toFixed(1)}%)`);
+
+      if (!this.config.liveTradingEnabled) {
+        console.log(`   [SIM] Would sell ${positionToSell.size.toFixed(2)} shares`);
+      } else if (!this.client) {
+        console.warn(`   ⚠️ No client available for selling`);
+      } else {
+        try {
+          const result = await smartSell(this.client, positionToSell, {
+            maxSlippagePct: this.config.liquidationMaxSlippagePct,
+            forceSell: true,     // Force sell even if conditions aren't ideal
+            logger: this.logger,
+          });
+
+          if (result.success) {
+            console.log(`   ✅ Sold for $${result.filledUsd?.toFixed(2) || 'unknown'}`);
+
+            // Invalidate position cache after successful sell to prevent stale data
+            invalidatePositions();
+
+            if (this.config.telegramBotToken) {
+              await sendTelegram(
+                "🔥 Position Liquidated",
+                `Sold: $${result.filledUsd?.toFixed(2) || positionToSell.value.toFixed(2)}\n` +
+                  `P&L: ${positionToSell.pnlPct >= 0 ? '+' : ''}${positionToSell.pnlPct.toFixed(1)}%`,
+              ).catch(() => {});
+            }
+          } else {
+            console.log(`   ❌ Sell failed: ${result.reason}`);
+          }
+        } catch (err) {
+          console.warn(`   ⚠️ Sell error: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+    }
+
+    // Status update
+    if (now - this.lastSummaryTime >= this.SUMMARY_INTERVAL_MS) {
+      const totalValue = positions.reduce((s, p) => s + p.value, 0);
+      console.log("");
+      console.log(`📊 LIQUIDATION STATUS`);
+      console.log(`   Balance: $${usdcBalance.toFixed(2)} | Need: $${reserveUsd.toFixed(2)}`);
+      console.log(`   Positions remaining: ${positions.length} ($${totalValue.toFixed(2)})`);
+      console.log("");
+      this.lastSummaryTime = now;
+    }
+  }
+
+  /**
+   * Single trading cycle - SIMPLE
+   * 
+   * 1. Check our positions (direct API)
+   * 2. Exit if needed (TP, stop loss, time stop)
+   * 3. Poll whale flow for bias
+   * 4. Enter if bias allows
+   * 5. Periodic housekeeping
+   */
+  private async cycle(): Promise<void> {
+    this.cycleCount++;
+    const now = Date.now();
+
+    // ─────────────────────────────────────────────────────────────────
+    // 1. GET BALANCES
+    // ─────────────────────────────────────────────────────────────────
+    const usdcBalance = await getUsdcBalance(this.wallet, this.address);
+    const polBalance = await getPolBalance(this.wallet, this.address);
+    const { effectiveBankroll } = this.executionEngine.getEffectiveBankroll(usdcBalance);
+
+    if (effectiveBankroll <= 0) {
+      return; // No money to trade
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 2. CHECK OUR POSITIONS - DIRECT API, NO CACHE
+    // ─────────────────────────────────────────────────────────────────
+    const openPositions = this.positionManager.getOpenPositions();
+    
+    if (openPositions.length > 0) {
+      // Get fresh prices for all positions
+      const marketDataMap = await this.buildMarketData(openPositions);
+      
+      // Process exits (TP, stop loss, hedge, time stop)
+      const exitResult = await this.executionEngine.processExits(marketDataMap);
+      
+      if (exitResult.exited.length > 0) {
+        console.log(`📤 Exited ${exitResult.exited.length} position(s)`);
+      }
+      if (exitResult.hedged.length > 0) {
+        console.log(`🛡️ Hedged ${exitResult.hedged.length} position(s)`);
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 3. POLL WHALE FLOW FOR BIAS
+    // ─────────────────────────────────────────────────────────────────
+    if (this.cycleCount % 3 === 0) {
+      await this.biasAccumulator.fetchLeaderboardTrades();
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 4. ENTER IF BIAS ALLOWS
+    // ─────────────────────────────────────────────────────────────────
+    const evAllowed = this.evTracker.isTradingAllowed();
+    const activeBiases = this.biasAccumulator.getActiveBiases();
+    
+    if (evAllowed.allowed && activeBiases.length > 0) {
+      for (const bias of activeBiases.slice(0, 3)) {
+        const marketData = await this.fetchTokenMarketData(bias.tokenId);
+        if (marketData) {
+          await this.executionEngine.processEntry(bias.tokenId, marketData, usdcBalance);
+        }
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 5. PERIODIC HOUSEKEEPING
+    // ─────────────────────────────────────────────────────────────────
+    
+    // Auto-redeem resolved positions
+    if (now - this.lastRedeemTime >= this.REDEEM_INTERVAL_MS) {
+      await this.processRedemptions();
+      this.lastRedeemTime = now;
+    }
+
+    // Auto-fill POL for gas
+    const polCheckInterval = this.config.polReserveCheckIntervalMin * 60 * 1000;
+    if (this.config.polReserveEnabled && now - this.lastPolCheckTime >= polCheckInterval) {
+      await this.checkPolReserve(polBalance, usdcBalance);
+      this.lastPolCheckTime = now;
+    }
+
+    // Status update
+    if (now - this.lastSummaryTime >= this.SUMMARY_INTERVAL_MS) {
+      await this.logStatus(usdcBalance, effectiveBankroll);
+      this.lastSummaryTime = now;
+    }
+
+    // Cleanup old closed positions
+    if (this.cycleCount % 100 === 0) {
+      this.positionManager.pruneClosedPositions(60 * 60 * 1000);
+    }
+  }
+
+  /**
+   * Log status - clean and simple
+   */
+  private async logStatus(usdcBalance: number, effectiveBankroll: number): Promise<void> {
+    const metrics = this.evTracker.getMetrics();
+    const positions = this.positionManager.getOpenPositions();
+    
+    const winPct = (metrics.winRate * 100).toFixed(0);
+    const evSign = metrics.evCents >= 0 ? "+" : "";
+    const pnlSign = metrics.totalPnlUsd >= 0 ? "+" : "";
+    
+    console.log("");
+    console.log(`📊 STATUS | ${new Date().toLocaleTimeString()}`);
+    console.log(`   💰 Balance: $${usdcBalance.toFixed(2)} | Bankroll: $${effectiveBankroll.toFixed(2)}`);
+    console.log(`   📈 Positions: ${positions.length} | Trades: ${metrics.totalTrades}`);
+    console.log(`   🎯 Win: ${winPct}% | EV: ${evSign}${metrics.evCents.toFixed(1)}¢ | P&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`);
+    console.log("");
+    
+    // Telegram update
+    if (this.config.telegramBotToken && metrics.totalTrades > 0) {
+      await sendTelegram(
+        "📊 Status",
+        `Balance: $${usdcBalance.toFixed(2)}\nPositions: ${positions.length}\nWin: ${winPct}%\nP&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`
+      ).catch(() => {});
+    }
+  }
+
+  /**
+   * Get current price for a token - straight API call, no cache
+   * API allows 150 req/sec, we can afford to be direct
+   */
+  private async getCurrentPrice(tokenId: string): Promise<number | null> {
+    try {
+      const orderbook = await this.client.getOrderBook(tokenId);
+      if (!orderbook?.bids?.length) return null;
+      
+      // Best bid = what we'd get if we sold right now
+      return parseFloat(orderbook.bids[0].price) * 100;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get orderbook state for a token - straight API call
+   */
+  private async getOrderbookState(tokenId: string): Promise<OrderbookState | null> {
+    try {
+      const orderbook = await this.client.getOrderBook(tokenId);
+      if (!orderbook?.bids?.length || !orderbook?.asks?.length) return null;
+
+      const bestBid = parseFloat(orderbook.bids[0].price);
+      const bestAsk = parseFloat(orderbook.asks[0].price);
+      
+      // Sum up depth
+      let bidDepth = 0, askDepth = 0;
+      for (const level of orderbook.bids.slice(0, 5)) {
+        bidDepth += parseFloat(level.size) * parseFloat(level.price);
+      }
+      for (const level of orderbook.asks.slice(0, 5)) {
+        askDepth += parseFloat(level.size) * parseFloat(level.price);
+      }
+
+      return {
+        bestBidCents: bestBid * 100,
+        bestAskCents: bestAsk * 100,
+        bidDepthUsd: bidDepth,
+        askDepthUsd: askDepth,
+        spreadCents: (bestAsk - bestBid) * 100,
+        midPriceCents: ((bestBid + bestAsk) / 2) * 100,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Build market data for positions - direct API calls
+   */
+  private async buildMarketData(positions: any[]): Promise<Map<string, TokenMarketData>> {
+    const map = new Map<string, TokenMarketData>();
+    
+    // Fetch all orderbooks in parallel - API can handle it
+    const fetchPromises = positions.map(async (pos) => {
+      const orderbook = await this.getOrderbookState(pos.tokenId);
+      return { pos, orderbook };
+    });
+    
+    const results = await Promise.all(fetchPromises);
+    
+    for (const { pos, orderbook } of results) {
+      if (!orderbook) continue;
+      
+      const activity: MarketActivity = {
+        tradesInWindow: 15,  // Assume active - can enhance later
+        bookUpdatesInWindow: 25,
+        lastTradeTime: Date.now(),
+        lastUpdateTime: Date.now(),
+      };
+
+      map.set(pos.tokenId, {
+        tokenId: pos.tokenId,
+        marketId: pos.marketId,
+        orderbook,
+        activity,
+        referencePriceCents: pos.referencePriceCents || orderbook.midPriceCents,
+      });
+    }
+
+    return map;
+  }
+
+  /**
+   * Check and refill POL reserve if needed
+   */
+  private async checkPolReserve(
+    polBalance: number,
+    usdcBalance: number,
+  ): Promise<void> {
+    const config: PolReserveConfig = {
+      enabled: this.config.polReserveEnabled,
+      targetPol: this.config.polReserveTarget,
+      minPol: this.config.polReserveMin,
+      maxSwapUsd: this.config.polReserveMaxSwapUsd,
+      checkIntervalMin: this.config.polReserveCheckIntervalMin,
+      slippagePct: this.config.polReserveSlippagePct,
+    };
+
+    if (!shouldRebalance(polBalance, config.minPol, config.enabled)) {
+      return;
+    }
+
+    console.log(`⛽ Gas low! POL: ${polBalance.toFixed(3)} (min: ${config.minPol})`);
+
+    if (!this.config.liveTradingEnabled) {
+      console.log("⛽ Skipping swap (simulation mode)");
+      return;
+    }
+
+    const result = await runPolReserve(
+      this.wallet,
+      this.address,
+      polBalance,
+      usdcBalance,
+      config,
+      this.logger,
+    );
+
+    if (result?.success) {
+      console.log(`⛽ Refilled! Swapped $${result.usdcSwapped?.toFixed(2)} → ${result.polReceived?.toFixed(2)} POL`);
+
+      if (this.config.telegramBotToken) {
+        await sendTelegram(
+          "⛽ Gas Refilled",
+          `Swapped $${result.usdcSwapped?.toFixed(2)} USDC for ${result.polReceived?.toFixed(2)} POL`,
+        ).catch(() => {});
+      }
+    }
+  }
+
+  /**
+   * Fetch market data for a single token - DIRECT API CALL
+   * No caching! Stale prices caused exit failures before.
+   */
+  private async fetchTokenMarketData(tokenId: string): Promise<TokenMarketData | null> {
+    const orderbook = await this.getOrderbookState(tokenId);
+    if (!orderbook) return null;
+
+    const activity: MarketActivity = {
+      tradesInWindow: 15,
+      bookUpdatesInWindow: 25,
+      lastTradeTime: Date.now(),
+      lastUpdateTime: Date.now(),
+    };
+
+    return {
+      tokenId,
+      orderbook,
+      activity,
+      referencePriceCents: orderbook.midPriceCents,
+    };
+  }
+
+  /**
+   * Process position redemptions
+   */
+  private async processRedemptions(): Promise<void> {
+    try {
+      const redeemable = await fetchRedeemablePositions(this.address);
+      if (redeemable.length === 0) return;
+
+      console.log(`🎁 Found ${redeemable.length} position(s) to redeem`);
+
+      const result = await redeemAllPositions(
+        this.wallet,
+        this.address,
+        this.logger,
+      );
+
+      if (result.redeemed > 0) {
+        console.log(`🎁 Redeemed ${result.redeemed} position(s) worth $${result.totalValue.toFixed(2)}`);
+
+        if (this.config.telegramBotToken) {
+          await sendTelegram(
+            "🎁 Positions Redeemed",
+            `Collected ${result.redeemed} settled position(s)\nValue: $${result.totalValue.toFixed(2)}`,
+          ).catch(() => {});
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`⚠️ Redemption error: ${msg}`);
+    }
+  }
+
+  /**
+   * Stop the engine
+   */
+  stop(): void {
+    this.running = false;
+    console.log("\n🛑 Stopping...");
+
+    if (this.config.telegramBotToken) {
+      sendTelegram("🛑 Bot Stopped", "Polymarket Casino Bot has been stopped").catch(() => {});
+    }
+  }
+
+  /**
+   * Sleep helper
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENTRY POINT
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function main(): Promise<void> {
+  const engine = new ChurnEngine();
+
+  // Handle shutdown
+  process.on("SIGINT", () => {
+    console.log("\nReceived SIGINT, shutting down...");
+    engine.stop();
+  });
+
+  process.on("SIGTERM", () => {
+    console.log("\nReceived SIGTERM, shutting down...");
+    engine.stop();
+  });
+
+  // Initialize
+  const initialized = await engine.initialize();
+  if (!initialized) {
+    console.error("Failed to initialize engine");
+    process.exit(1);
+  }
+
+  // Run
+  await engine.run();
+}
+
+// Run if executed directly
+// Check if this file is the entry point by examining the call stack
+function isDirectlyExecuted(): boolean {
+  // If we're in a test environment, don't run
+  if (process.env.NODE_ENV === "test") return false;
+  
+  // Check if process.argv[1] contains our filename
+  const scriptPath = process.argv[1] || "";
+  return scriptPath.includes("churn-start");
+}
+
+if (isDirectlyExecuted()) {
+  main().catch((err) => {
+    console.error("Fatal error:", err);
+    process.exit(1);
+  });
+}
+
+// Exports for testing
+export {
+  ChurnEngine,
+  ChurnConfig,
+  ValidationError,
+  loadConfig,
+  validateConfig,
+  logConfig,
+  calculateEffectiveBankroll,
+  calculateTradeSize,
+  TradeResult,
+  EvMetrics,
+  EvTracker,
+  calculatePnlCents,
+  calculatePnlUsd,
+  createTradeResult,
+  BiasDirection,
+  LeaderboardTrade,
+  TokenBias,
+  BiasChangeEvent,
+  BiasAccumulator,
+  PositionState,
+  ExitReason,
+  HedgeLeg,
+  StateTransition,
+  ManagedPosition,
+  PositionManagerConfig,
+  PositionManager,
+  OrderbookState,
+  MarketActivity,
+  EntryDecision,
+  ExitDecision,
+  DecisionEngine,
+  ExecutionResult,
+  TokenMarketData,
+  ChurnLogger,
+  SimpleLogger,
+  ExecutionEngine,
+};

@@ -1,30 +1,35 @@
 /**
  * V2 Positions - Fetch positions from Polymarket API
+ * 
+ * IMPORTANT: This module fetches FRESH data from the API on every call.
+ * Position data should never be stale in a trading bot - caching can cause
+ * serious issues like showing positions that have already been liquidated.
+ * 
+ * The cache is ONLY used as a fallback when the API call fails.
  */
 
 import axios from "axios";
-import { POLYMARKET_API, TIMING } from "./constants";
+import { POLYMARKET_API } from "./constants";
 import type { Position } from "./types";
 
-let cache: Position[] = [];
-let lastFetch = 0;
+// Cache is ONLY used as fallback when API fails - not for normal operation
+let fallbackCache: Position[] = [];
 
 /**
- * Fetch positions for wallet
+ * Fetch positions for wallet - ALWAYS fetches fresh data from API
+ * 
+ * @param address - Wallet address to fetch positions for
+ * @param _force - Deprecated parameter, kept for backwards compatibility. 
+ *                 Positions are always fetched fresh now.
  */
-export async function getPositions(address: string, force = false): Promise<Position[]> {
-  const now = Date.now();
-  if (!force && now - lastFetch < TIMING.POSITION_CACHE_MS && cache.length > 0) {
-    return cache;
-  }
-
+export async function getPositions(address: string, _force = false): Promise<Position[]> {
   try {
     const url = `${POLYMARKET_API.DATA}/positions?user=${address}&limit=500`;
     const { data } = await axios.get(url, { timeout: 10000 });
 
-    if (!Array.isArray(data)) return cache;
+    if (!Array.isArray(data)) return fallbackCache;
 
-    cache = data
+    const positions = data
       .filter((p: any) => Number(p.size) > 0 && !p.redeemable)
       .map((p: any) => {
         const size = Number(p.size) || 0;
@@ -50,23 +55,27 @@ export async function getPositions(address: string, force = false): Promise<Posi
         };
       });
 
-    lastFetch = now;
-    return cache;
+    // Update fallback cache with fresh data
+    fallbackCache = positions;
+    return positions;
   } catch {
-    return cache;
+    // Only use cache as fallback when API fails
+    return fallbackCache;
   }
 }
 
 /**
- * Invalidate cache
+ * Invalidate cache - clears the fallback cache
+ * Call this after any trade action to ensure stale data isn't used as fallback
  */
 export function invalidatePositions(): void {
-  lastFetch = 0;
+  fallbackCache = [];
 }
 
 /**
- * Get cached positions
+ * Get cached positions (fallback data only)
+ * WARNING: This returns potentially stale data. Use getPositions() for fresh data.
  */
 export function getCachedPositions(): Position[] {
-  return cache;
+  return fallbackCache;
 }

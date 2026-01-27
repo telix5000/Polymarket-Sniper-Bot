@@ -1,7 +1,7 @@
 /**
- * Churn Engine Tests - EV Math, Entry Bounds, Hedge Logic
+ * Trading Engine Tests - EV Math, Entry Bounds, Hedge Logic
  *
- * These tests verify the core casino math that makes the system work:
+ * These tests verify the core math that makes the system work:
  * - Break-even win rate calculation
  * - EV computation
  * - Entry price bounds
@@ -23,7 +23,7 @@ import {
   createTradeResult,
   PositionManager,
   DecisionEngine,
-} from "../src/churn-start";
+} from "../src/start";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TEST CONFIG
