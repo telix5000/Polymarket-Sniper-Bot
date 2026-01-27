@@ -78,7 +78,10 @@ Position sizes automatically scale with your balance:
 - **⚡ APEX Ladder**: Partial profit taking
 - **⚡ APEX Reaper**: Strategy performance cleanup
 
-📚 **[Complete Selling Logic Documentation](docs/SELLING_LOGIC.md)** - Comprehensive guide to all sell pathways, error messages, and troubleshooting
+📚 **Documentation:**
+- **[Selling Logic Guide](docs/SELLING_LOGIC.md)** - Complete documentation of all sell pathways
+- **[Quick Reference](docs/SELL_QUICK_REFERENCE.md)** - Fast troubleshooting guide
+- **[Emergency Sells](docs/EMERGENCY_SELLS.md)** - CONSERVATIVE/MODERATE/NUCLEAR modes
 
 ### Performance Tracking
 - **🧠 APEX Oracle**: Analyzes last 24 hours of trades
