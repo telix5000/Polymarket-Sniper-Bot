@@ -180,6 +180,39 @@ import {
   type MarketMetrics,
 } from "./strategies/grinder";
 
+// APEX v3.0 Firewall Module
+import {
+  checkFirewall,
+  calculateExposure,
+  shouldHaltTrading,
+  getFirewallSummary,
+  type FirewallStatus,
+} from "./strategies/firewall";
+
+// APEX v3.0 Closer Module
+import {
+  detectCloser,
+  shouldExitBeforeClose,
+  calculateCloserSize,
+  type CloserSignal,
+} from "./strategies/closer";
+
+// APEX v3.0 Amplifier Module
+import {
+  detectAmplifier,
+  isSafeToStack,
+  type AmplifierSignal,
+} from "./strategies/amplifier";
+
+// APEX v3.0 Shadow Module
+import {
+  fetchShadowTrades,
+  filterQualityTrades,
+  getTraderStats,
+  type ShadowConfig,
+  type TraderStats,
+} from "./strategies/shadow";
+
 import { POLYMARKET_API } from "./lib/constants";
 
 // APEX v3.0 Monitoring
@@ -892,7 +925,7 @@ async function sellPositionEmergency(
     const result = await postOrder({
       client: state.client,
       tokenId: position.tokenId,
-      outcome: position.outcome as OrderOutcome,
+      outcome: position.outcome as "YES" | "NO",
       side: 'SELL',
       sizeUsd: position.value,
       maxAcceptablePrice, // undefined = NO PROTECTION in NUCLEAR mode
@@ -924,15 +957,12 @@ async function sellPositionEmergency(
       return false;
     }
   } catch (error) {
-    logger.error(`❌ Sell error:`, error);
+    logger.error(`❌ Sell error: ${error}`);
     
     if (state.errorReporter) {
       await state.errorReporter.reportError(error as Error, {
         operation: "emergency_sell",
         tokenId: position.tokenId,
-        value: position.value,
-        emergencyMode: emergencyMode,
-        mode: state.emergencySellConfig.mode,
       });
     }
     
@@ -1053,33 +1083,45 @@ async function runFirewallCheck(
   currentBalance: number,
   positions: Position[],
 ): Promise<void> {
-  // CRITICAL: HALT IF BALANCE TOO LOW
-  if (currentBalance < 20) {
+  // Calculate current exposure from positions
+  const currentExposure = calculateExposure(positions);
+  const maxExposure = currentBalance * (state.modeConfig.maxExposurePct / 100);
+  
+  // Use firewall module's halt check (includes drawdown)
+  const haltCheck = shouldHaltTrading(currentBalance, state.startBalance, state.modeConfig);
+  
+  if (haltCheck.halt) {
     // Only alert/log on transition to halted state (not every cycle)
     if (!state.tradingHalted) {
       logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      logger.error(`🚨 APEX FIREWALL: CRITICAL LOW BALANCE`);
+      logger.error(`🚨 APEX FIREWALL: ${haltCheck.reason}`);
       logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       logger.error(`   Balance: ${$(currentBalance)}`);
-      logger.error(`   Minimum: $20.00`);
+      logger.error(`   Start Balance: ${$(state.startBalance)}`);
+      logger.error(`   Exposure: ${$(currentExposure)} / ${$(maxExposure)}`);
       logger.error(`   Status: TRADING HALTED ⛔`);
       logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      
+      // Log firewall summary
+      const summary = getFirewallSummary(currentExposure, maxExposure, currentBalance, state.startBalance);
+      logger.error(summary);
 
       await sendTelegram(
         "🚨 APEX FIREWALL: TRADING HALTED",
-        `Balance critically low: ${$(currentBalance)}\n\n` +
-          `New trades halted. Exits/redemptions continue.\n` +
-          `Will auto-resume when balance ≥ $20.00`,
+        `${haltCheck.reason}\n\n` +
+          `Balance: ${$(currentBalance)}\n` +
+          `Exposure: ${$(currentExposure)} / ${$(maxExposure)}\n\n` +
+          `New trades halted. Exits/redemptions continue.`,
       );
 
       state.tradingHalted = true;
-      state.haltReason = "CRITICAL_LOW_BALANCE";
+      state.haltReason = haltCheck.reason;
     }
     return;
   }
 
-  // Reset halt if balance recovered
-  if (state.tradingHalted && currentBalance >= 20) {
+  // Reset halt if conditions cleared
+  if (state.tradingHalted && !haltCheck.halt) {
     state.tradingHalted = false;
     state.haltReason = "";
     logger.info(
@@ -1095,6 +1137,7 @@ async function runFirewallCheck(
   if (currentBalance < 50 && !state.lowBalanceWarned) {
     logger.warn(`⚠️ APEX FIREWALL: Low Balance Warning`);
     logger.warn(`   Balance: ${$(currentBalance)}`);
+    logger.warn(getFirewallSummary(currentExposure, maxExposure, currentBalance, state.startBalance));
 
     await sendTelegram(
       "⚠️ LOW BALANCE WARNING",
@@ -1811,32 +1854,44 @@ async function runShadowStrategy(
   positions: Position[],
   currentBalance: number,
 ): Promise<void> {
-  // APEX Shadow - Copy Trading
+  // APEX Shadow - Copy Trading using module functions
   if (state.targets.length === 0) return;
 
   const allocation = state.strategyAllocations.get(Strategy.SHADOW) || 0;
   if (allocation === 0) return;
 
-  const trades = await fetchRecentTrades(state.targets);
-  const minBuyPrice = 0.05; // 5¢ minimum
+  // Use module's fetchShadowTrades with config
+  const rawTrades = await fetchShadowTrades(state.targets, {
+    minTradeSize: 10,
+    maxTradeSize: 1000,
+    onlyBuys: true,
+    timeWindowSeconds: 60,
+  });
+  
+  // Use module's quality filtering
+  const qualityTrades = filterQualityTrades(rawTrades, 0.3);
+  
+  // Log trader stats periodically
+  if (state.cycleCount % 60 === 0 && qualityTrades.length > 0) {
+    const stats = getTraderStats(qualityTrades);
+    logger.info(`📊 APEX Shadow: Tracking ${stats.length} traders, ${qualityTrades.length} quality trades`);
+  }
 
-  for (const t of trades) {
-    if (t.side !== "BUY") continue;
-    if (t.price < minBuyPrice) continue;
+  // Calculate position size
+  const positionSize = calculatePositionSize(
+    currentBalance,
+    state.modeConfig,
+    Strategy.SHADOW,
+  );
 
-    // Calculate dynamic position size
-    const positionSize = calculatePositionSize(
-      currentBalance,
-      state.modeConfig,
-      Strategy.SHADOW,
-    );
+  for (const t of qualityTrades) {
     const size = Math.min(t.sizeUsd * 1.0, positionSize);
 
     await buy(
       t.tokenId,
       t.outcome as "YES" | "NO",
       size,
-      `Shadow: Following ${t.trader.slice(0, 8)}...`,
+      `Shadow: Following ${t.trader.slice(0, 8)}... @ ${(t.price * 100).toFixed(0)}¢`,
       Strategy.SHADOW,
       positions,
       t.marketId,
@@ -1848,31 +1903,52 @@ async function runCloserStrategy(
   positions: Position[],
   currentBalance: number,
 ): Promise<void> {
-  // APEX Closer - Endgame (92-97¢)
-  // NOTE: This strategy adds MORE to existing profitable positions in endgame range
-  // Consider adding position tracking to prevent over-concentration in single markets
+  // APEX Closer - Endgame Strategy using module functions
   const allocation = state.strategyAllocations.get(Strategy.CLOSER) || 0;
   if (allocation === 0) return;
 
+  const basePositionSize = calculatePositionSize(
+    currentBalance,
+    state.modeConfig,
+    Strategy.CLOSER,
+  );
+
   for (const p of positions) {
-    if (p.curPrice < 0.92 || p.curPrice > 0.97) continue;
-    if (p.pnlPct <= 0) continue;
-
-    const positionSize = calculatePositionSize(
-      currentBalance,
-      state.modeConfig,
-      Strategy.CLOSER,
-    );
-
-    await buy(
-      p.tokenId,
+    // Use module's detectCloser to find opportunities
+    const signal = detectCloser(
+      p.marketEndTime,
+      p.curPrice,
       p.outcome as "YES" | "NO",
-      positionSize,
-      `Closer: Endgame @ ${(p.curPrice * 100).toFixed(0)}¢`,
-      Strategy.CLOSER,
-      positions,
+      p.tokenId,
+      p.conditionId,
       p.marketId,
     );
+    
+    if (signal && signal.confidence > 50) {
+      // Use module's risk-adjusted position sizing
+      const hoursToClose = signal.hoursToClose;
+      const closerSize = calculateCloserSize(basePositionSize, hoursToClose, p.curPrice);
+      
+      if (closerSize >= 5) {
+        logger.info(`📊 APEX Closer: ${signal.reason} (confidence: ${signal.confidence.toFixed(0)}%)`);
+        
+        await buy(
+          p.tokenId,
+          p.outcome as "YES" | "NO",
+          closerSize,
+          signal.reason,
+          Strategy.CLOSER,
+          positions,
+          p.marketId,
+        );
+      }
+    }
+    
+    // Check if positions should exit before close
+    if (shouldExitBeforeClose(p, 1)) {
+      logger.info(`📊 APEX Closer: Exit recommended - market closing soon`);
+      await sellPosition(p, "APEX Closer: Market closing soon");
+    }
   }
 }
 
@@ -1880,35 +1956,55 @@ async function runAmplifierStrategy(
   positions: Position[],
   currentBalance: number,
 ): Promise<void> {
-  // APEX Amplifier - Stack Winners
+  // APEX Amplifier - Stack Winners using module functions
   const allocation = state.strategyAllocations.get(Strategy.AMPLIFIER) || 0;
   if (allocation === 0) return;
 
   const stackedTokens = new Set<string>();
+  
+  // Calculate current exposure for safety checks
+  const currentExposure = calculateExposure(positions);
+  const maxExposure = currentBalance * (state.modeConfig.maxExposurePct / 100);
+  
+  const maxStackSize = calculatePositionSize(
+    currentBalance,
+    state.modeConfig,
+    Strategy.AMPLIFIER,
+  );
 
   for (const p of positions) {
     if (stackedTokens.has(p.tokenId)) continue;
-    if (p.gainCents < 1.5) continue; // Minimum 1.5¢ gain
-    if (p.curPrice > 0.75) continue; // Max price 75¢
-    if (p.curPrice < ORDER.GLOBAL_MIN_BUY_PRICE) continue;
+    
+    // Check if already stacked (would need position history tracking)
+    const alreadyStacked = state.actedPositions.has(`stack:${p.tokenId}`);
+    
+    // Use module's detectAmplifier to find stacking opportunities
+    const signal = detectAmplifier(p, maxStackSize, alreadyStacked);
+    
+    if (signal && signal.confidence > 30) {
+      // Use module's safety check before stacking
+      if (!isSafeToStack(p, currentExposure, maxExposure)) {
+        logger.debug?.(`📊 APEX Amplifier: Skipping ${p.outcome} - unsafe to stack`);
+        continue;
+      }
+      
+      logger.info(`📊 APEX Amplifier: ${signal.reason} (confidence: ${signal.confidence.toFixed(0)}%)`);
+      
+      const success = await buy(
+        p.tokenId,
+        p.outcome as "YES" | "NO",
+        signal.stackSize,
+        signal.reason,
+        Strategy.AMPLIFIER,
+        positions,
+        p.marketId,
+      );
 
-    const positionSize = calculatePositionSize(
-      currentBalance,
-      state.modeConfig,
-      Strategy.AMPLIFIER,
-    );
-
-    const success = await buy(
-      p.tokenId,
-      p.outcome as "YES" | "NO",
-      positionSize,
-      `Amplifier: Stack +${p.gainCents.toFixed(1)}¢`,
-      Strategy.AMPLIFIER,
-      positions,
-      p.marketId,
-    );
-
-    if (success) stackedTokens.add(p.tokenId);
+      if (success) {
+        stackedTokens.add(p.tokenId);
+        state.actedPositions.add(`stack:${p.tokenId}`);
+      }
+    }
   }
 }
 
