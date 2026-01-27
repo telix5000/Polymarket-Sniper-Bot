@@ -146,6 +146,11 @@ interface State {
   haltReason: string;
   lowBalanceWarned: boolean;
   hourlySpendingLimitReached: boolean;
+
+  // Recovery Mode (CRITICAL for v3.0)
+  recoveryMode: boolean;
+  prioritizeExits: boolean;
+  errorReporter?: ErrorReporter;
 }
 
 const state: State = {
@@ -179,6 +184,9 @@ const state: State = {
   haltReason: "",
   lowBalanceWarned: false,
   hourlySpendingLimitReached: false,
+  recoveryMode: false,
+  prioritizeExits: false,
+  errorReporter: undefined,
 };
 
 // ============================================
@@ -224,6 +232,236 @@ function displayAPEXBanner(): void {
 ┃                                                              ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
   `);
+}
+
+// ============================================
+// RECOVERY MODE - Liquidate positions when balance is low
+// ============================================
+
+// Recovery Mode Constants
+const RECOVERY_MODE_BALANCE_THRESHOLD = 20; // Balance below this triggers recovery mode
+const MINIMUM_OPERATING_BALANCE = 1; // Minimum balance to continue operations
+const PROFITABLE_POSITION_THRESHOLD = 0.5; // Minimum profit % to exit in recovery (0.5%)
+const NEAR_RESOLUTION_PRICE_THRESHOLD = 0.95; // Price threshold for near-resolution (95¢)
+const ACCEPTABLE_LOSS_THRESHOLD = -2; // Max loss % for near-resolution exits (-2%)
+const EMERGENCY_BALANCE_THRESHOLD = 10; // Balance below this triggers emergency exits
+const MAX_ACCEPTABLE_LOSS = -5; // Max loss % for emergency exits (-5%)
+
+/**
+ * Calculate total portfolio value (balance + position value)
+ * 
+ * @param balance - Current USDC balance
+ * @param positions - Array of open positions
+ * @returns Portfolio metrics including total value, position value, and count
+ */
+function calculatePortfolioValue(balance: number, positions: Position[]): {
+  totalValue: number;
+  positionValue: number;
+  positionCount: number;
+} {
+  const positionValue = positions.reduce((sum, p) => sum + p.value, 0);
+  const totalValue = balance + positionValue;
+  
+  return {
+    totalValue,
+    positionValue,
+    positionCount: positions.length,
+  };
+}
+
+/**
+ * Display comprehensive startup dashboard
+ */
+function displayStartupDashboard(
+  balance: number,
+  positions: Position[],
+  portfolio: ReturnType<typeof calculatePortfolioValue>,
+  recoveryMode: boolean,
+): void {
+  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  logger.info(`📊 STARTUP PORTFOLIO SUMMARY`);
+  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  logger.info(`💵 USDC Balance: ${$(balance)}`);
+  logger.info(`📦 Open Positions: ${portfolio.positionCount}`);
+  logger.info(`💰 Position Value: ${$(portfolio.positionValue)}`);
+  logger.info(`📈 Total Portfolio: ${$(portfolio.totalValue)}`);
+  
+  if (recoveryMode) {
+    logger.warn(`⚠️  RECOVERY MODE: ACTIVE`);
+    logger.warn(`   Low balance detected, prioritizing exits`);
+  }
+  
+  logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  logger.info(``);
+}
+
+/**
+ * Run recovery exits - aggressively liquidate positions to free capital
+ */
+async function runRecoveryExits(
+  positions: Position[],
+  balance: number,
+): Promise<number> {
+  let exitsExecuted = 0;
+  
+  logger.info(`🚨 RECOVERY MODE: Attempting to liquidate positions...`);
+  
+  // Priority 1: Exit ANY profitable position (pnlPct > PROFITABLE_POSITION_THRESHOLD)
+  const profitablePositions = positions
+    .filter((p) => p.pnlPct > PROFITABLE_POSITION_THRESHOLD)
+    .sort((a, b) => b.pnlPct - a.pnlPct); // Most profitable first
+  
+  for (const position of profitablePositions) {
+    logger.info(
+      `💰 Exiting profitable position: ${position.tokenId.substring(0, 20)}... (+${position.pnlPct.toFixed(1)}%)`,
+    );
+    
+    const result = await attemptExit(position, "RECOVERY_PROFIT");
+    if (result.success) {
+      exitsExecuted++;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+  
+  // Priority 2: Exit near-resolution (curPrice > NEAR_RESOLUTION_PRICE_THRESHOLD)
+  const nearResolution = positions
+    .filter((p) => p.curPrice > NEAR_RESOLUTION_PRICE_THRESHOLD && p.pnlPct > ACCEPTABLE_LOSS_THRESHOLD);
+  
+  for (const position of nearResolution) {
+    logger.info(
+      `🎯 Exiting near-resolution: ${position.tokenId.substring(0, 20)}... (${(position.curPrice * 100).toFixed(1)}¢)`,
+    );
+    
+    const result = await attemptExit(position, "RECOVERY_RESOLUTION");
+    if (result.success) {
+      exitsExecuted++;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+  
+  // Priority 3: If balance < EMERGENCY_BALANCE_THRESHOLD, exit small losers
+  if (balance < EMERGENCY_BALANCE_THRESHOLD) {
+    const smallLosers = positions
+      .filter((p) => p.pnlPct > MAX_ACCEPTABLE_LOSS && p.pnlPct <= PROFITABLE_POSITION_THRESHOLD)
+      .sort((a, b) => b.pnlPct - a.pnlPct); // Least losing first
+    
+    for (const position of smallLosers) {
+      logger.warn(
+        `⚠️  Cutting small loser: ${position.tokenId.substring(0, 20)}... (${position.pnlPct.toFixed(1)}%)`,
+      );
+      
+      const result = await attemptExit(position, "RECOVERY_EMERGENCY");
+      if (result.success) {
+        exitsExecuted++;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+  }
+  
+  return exitsExecuted;
+}
+
+/**
+ * Attempt to exit a position with proper error handling
+ */
+async function attemptExit(
+  position: Position,
+  reason: string,
+): Promise<{ success: boolean; error?: string }> {
+  if (!state.client || !state.liveTrading) {
+    if (logger.debug) {
+      logger.debug(`[DRY-RUN] Would exit: ${position.tokenId.substring(0, 20)}...`);
+    }
+    return { success: true };
+  }
+  
+  try {
+    const result = await postOrder({
+      client: state.client,
+      tokenId: position.tokenId,
+      outcome: position.outcome as "YES" | "NO",
+      side: "SELL",
+      sizeUsd: position.value,
+      logger,
+    });
+    
+    if (result.success) {
+      logger.info(`✅ Exit successful`);
+      return { success: true };
+    } else {
+      logger.warn(`⚠️  Exit failed: ${result.reason || "Unknown error"}`);
+      return { success: false, error: result.reason };
+    }
+  } catch (error) {
+    logger.error(`❌ Exit error: ${error}`);
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Check startup balance and enter recovery mode if needed
+ */
+async function checkStartupBalance(
+  balance: number,
+  address: string,
+): Promise<{ shouldExit: boolean; recoveryMode: boolean }> {
+  // Check if user wants to skip balance check
+  if (process.env.SKIP_BALANCE_CHECK_ON_STARTUP === "true") {
+    logger.info(`⚠️  Skipping startup balance check (SKIP_BALANCE_CHECK_ON_STARTUP=true)`);
+    return { shouldExit: false, recoveryMode: false };
+  }
+  
+  // Fetch positions to calculate total portfolio value
+  let positions: Position[] = [];
+  try {
+    positions = await getPositions(address);
+  } catch (error) {
+    logger.error(`Failed to fetch positions for balance check: ${error}`);
+    positions = [];
+  }
+  
+  const portfolio = calculatePortfolioValue(balance, positions);
+  
+  // Display startup dashboard
+  displayStartupDashboard(balance, positions, portfolio, false);
+  
+  // Decision logic
+  if (balance < RECOVERY_MODE_BALANCE_THRESHOLD && positions.length > 0) {
+    // Low balance BUT positions exist - enter recovery mode
+    logger.warn(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    logger.warn(`🚨 RECOVERY MODE ACTIVATED`);
+    logger.warn(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    logger.warn(`   Balance: ${$(balance)} (below $${RECOVERY_MODE_BALANCE_THRESHOLD} threshold)`);
+    logger.warn(`   Positions: ${positions.length} (total value: ${$(portfolio.positionValue)})`);
+    logger.warn(`   Strategy: Aggressively liquidate positions to free capital`);
+    logger.warn(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    logger.info(``);
+    
+    await sendTelegram(
+      "🚨 Recovery Mode Activated",
+      `Balance: ${$(balance)}\n` +
+        `Positions: ${positions.length}\n` +
+        `Position Value: ${$(portfolio.positionValue)}\n` +
+        `Total Portfolio: ${$(portfolio.totalValue)}\n\n` +
+        `Bot will aggressively liquidate positions to free capital.`,
+    );
+    
+    return { shouldExit: false, recoveryMode: true };
+  } else if (balance < MINIMUM_OPERATING_BALANCE && positions.length === 0) {
+    // Low balance AND no positions - exit
+    logger.error("❌ Wallet has insufficient USDC balance");
+    logger.error(`   Address: ${address}`);
+    logger.error(`   Balance: ${$(balance)}`);
+    logger.error(`   Positions: 0`);
+    logger.error("   Please deposit USDC to continue");
+    logger.error("");
+    logger.error("   To bypass this check, set: SKIP_BALANCE_CHECK_ON_STARTUP=true");
+    
+    return { shouldExit: true, recoveryMode: false };
+  } else {
+    // Sufficient balance or positions to work with
+    return { shouldExit: false, recoveryMode: false };
+  }
 }
 
 // ============================================
@@ -431,16 +669,40 @@ async function buy(
     state.lastBalanceCheck = Date.now();
   } catch (error) {
     logger.error(`❌ Failed to check balance: ${error}`);
+    
+    // Report balance check error
+    if (state.errorReporter) {
+      await state.errorReporter.reportError(error as Error, {
+        operation: "balance_check",
+        balance: state.lastKnownBalance,
+        cycleCount: state.cycleCount,
+      });
+    }
+    
     return false;
   }
 
   // CRITICAL: Halt if balance too low
   if (currentBalance < 10) {
     logger.error(`🚨 BALANCE TOO LOW: ${$(currentBalance)}`);
+    
     await sendTelegram(
       "🚨 CRITICAL: LOW BALANCE",
       `Balance: ${$(currentBalance)}\n` + `Cannot place orders! Minimum: $10`,
     );
+    
+    // Report low balance error
+    if (state.errorReporter) {
+      await state.errorReporter.reportError(
+        new Error(`Insufficient balance: ${currentBalance}`),
+        {
+          operation: "trade_attempt",
+          balance: currentBalance,
+          cycleCount: state.cycleCount,
+        },
+      );
+    }
+    
     return false;
   }
 
@@ -540,10 +802,44 @@ async function buy(
       logger.warn(
         `⚡ APEX ${strategy}: BUY failed - ${result.reason} | ${reason}`,
       );
+      
+      // Report order failures to error reporter
+      if (state.errorReporter && result.reason) {
+        const errorMsg = result.reason;
+        
+        // Only report critical errors (balance, allowance, auth)
+        if (
+          errorMsg.includes("INSUFFICIENT_BALANCE") ||
+          errorMsg.includes("INSUFFICIENT_ALLOWANCE") ||
+          errorMsg.includes("401") ||
+          errorMsg.includes("CLOUDFLARE")
+        ) {
+          await state.errorReporter.reportError(
+            new Error(`Order failed: ${result.reason}`),
+            {
+              operation: "place_order",
+              balance: state.lastKnownBalance,
+              cycleCount: state.cycleCount,
+              tokenId,
+            },
+          );
+        }
+      }
     }
     return false;
   } catch (error) {
     logger.error(`❌ Order error: ${error}`);
+    
+    // Report unexpected order errors
+    if (state.errorReporter) {
+      await state.errorReporter.reportError(error as Error, {
+        operation: "place_order_exception",
+        balance: state.lastKnownBalance,
+        cycleCount: state.cycleCount,
+        tokenId,
+      });
+    }
+    
     return false;
   }
 }
@@ -1112,6 +1408,64 @@ async function runAPEXCycle(): Promise<void> {
   }
 
   // ============================================
+  // PRIORITY -1: RECOVERY MODE CHECK
+  // ============================================
+  
+  // Check if we should enter/exit recovery mode
+  if (state.recoveryMode || state.currentBalance < RECOVERY_MODE_BALANCE_THRESHOLD) {
+    if (!state.recoveryMode && state.currentBalance < RECOVERY_MODE_BALANCE_THRESHOLD && positions.length > 0) {
+      // Just entered recovery mode
+      state.recoveryMode = true;
+      state.prioritizeExits = true;
+      
+      logger.warn(`🚨 RECOVERY MODE ACTIVATED (balance: ${$(state.currentBalance)})`);
+      
+      await sendTelegram(
+        "🚨 Recovery Mode Activated",
+        `Balance dropped to ${$(state.currentBalance)}\n` +
+          `Positions: ${positions.length}\n` +
+          `Prioritizing exits to free capital.`,
+      );
+    }
+    
+    if (state.recoveryMode) {
+      // Run recovery exits
+      const exitsCount = await runRecoveryExits(positions, state.currentBalance);
+      
+      if (exitsCount > 0) {
+        logger.info(`✅ Recovery: Exited ${exitsCount} position(s)`);
+        invalidatePositions(); // Force refresh
+        
+        // Recheck balance
+        try {
+          state.currentBalance = await getUsdcBalance(state.wallet, state.address);
+          state.lastKnownBalance = state.currentBalance;
+        } catch (error) {
+          logger.error(`Failed to update balance after recovery exits: ${error}`);
+        }
+      }
+      
+      // Check if we can exit recovery mode
+      if (state.currentBalance >= RECOVERY_MODE_BALANCE_THRESHOLD) {
+        state.recoveryMode = false;
+        state.prioritizeExits = false;
+        
+        logger.info(`✅ RECOVERY MODE COMPLETE - Balance restored to ${$(state.currentBalance)}`);
+        
+        await sendTelegram(
+          "✅ Recovery Mode Complete",
+          `Balance restored to ${$(state.currentBalance)}\n` +
+            `Resuming normal operations.`,
+        );
+      } else {
+        // Still in recovery, skip new entries
+        logger.info(`🚨 Recovery mode active - skipping new entries`);
+        return;
+      }
+    }
+  }
+
+  // ============================================
   // PRIORITY -1: FIREWALL CHECK (CRITICAL!)
   // ============================================
   await runFirewallCheck(state.currentBalance, positions);
@@ -1286,18 +1640,24 @@ async function main(): Promise<void> {
     state.wallet = authResult.wallet;
     state.address = authResult.address;
 
-    // Validate wallet has funds
+    // Initialize Error Reporter
+    state.errorReporter = new ErrorReporter(logger);
+
+    // Check startup balance and determine if recovery mode needed
     const usdcBalance = await getUsdcBalance(
       authResult.wallet,
       authResult.address,
     );
-    if (usdcBalance < 1) {
-      logger.error("❌ Wallet has insufficient USDC balance");
-      logger.error(`   Address: ${authResult.address}`);
-      logger.error(`   Balance: $${usdcBalance.toFixed(2)}`);
-      logger.error("   Please deposit USDC to continue");
+    
+    const balanceCheck = await checkStartupBalance(usdcBalance, authResult.address);
+    
+    if (balanceCheck.shouldExit) {
       process.exit(1);
     }
+    
+    // Set recovery mode if needed
+    state.recoveryMode = balanceCheck.recoveryMode;
+    state.prioritizeExits = balanceCheck.recoveryMode;
 
     // Check USDC allowance
     const allowance = await getUsdcAllowance(
@@ -1334,11 +1694,13 @@ async function main(): Promise<void> {
         logger.error(`⚠️  Cycle error: ${err}`);
 
         // Report error to GitHub
-        await errorReporter.reportError(err as Error, {
-          operation: "apex_main_cycle",
-          balance: state.lastKnownBalance,
-          cycleCount: state.cycleCount,
-        });
+        if (state.errorReporter) {
+          await state.errorReporter.reportError(err as Error, {
+            operation: "apex_main_cycle",
+            balance: state.lastKnownBalance,
+            cycleCount: state.cycleCount,
+          });
+        }
 
         await sendTelegram("⚠️ Cycle Error", String(err));
       }
@@ -1349,10 +1711,12 @@ async function main(): Promise<void> {
     logger.error(`❌ Fatal error: ${err}`);
 
     // Report fatal error to GitHub
-    await errorReporter.reportError(err as Error, {
-      operation: "apex_initialization",
-      balance: state.startBalance,
-    });
+    if (state.errorReporter) {
+      await state.errorReporter.reportError(err as Error, {
+        operation: "apex_initialization",
+        balance: state.startBalance,
+      });
+    }
 
     await sendTelegram("❌ Fatal Error", String(err));
     process.exit(1);

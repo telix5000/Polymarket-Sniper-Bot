@@ -158,6 +158,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     let totalFilled = 0;
     let weightedPrice = 0;
     let retryCount = 0;
+    let lastErrorReason = "NO_ERROR"; // Track last error for better reporting
 
     // For SELL orders with shares specified, also check if remainingShares is exhausted
     const shouldContinue = () => {
@@ -224,15 +225,40 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           retryCount = 0; // Reset retry count on success
         } else {
           retryCount++;
-          // Check for Cloudflare block in response
-          const errorMsg = response.errorMsg || response.error || "Unknown error";
-          if (isCloudflareBlock(errorMsg) || isCloudflareBlock(response)) {
+          // Extract clean error message from response
+          const errorObj = response as any;
+          let cleanMessage = "";
+          let reasonCode = "";
+          
+          if (errorObj?.errorMsg) {
+            cleanMessage = errorObj.errorMsg;
+          } else if (errorObj?.error) {
+            cleanMessage = errorObj.error;
+          } else {
+            cleanMessage = "Unknown error";
+          }
+          
+          // Check for Cloudflare block
+          if (isCloudflareBlock(cleanMessage) || isCloudflareBlock(response)) {
             logger?.error?.(
               `Order blocked by Cloudflare (403). Your IP may be geo-blocked. Consider using a VPN.`,
             );
             return { success: false, reason: "CLOUDFLARE_BLOCKED" };
           }
-          logger?.warn?.(`Order attempt failed: ${formatErrorForLog(errorMsg)}`);
+          
+          // Check for specific error types
+          const lowerMsg = cleanMessage.toLowerCase();
+          
+          if (lowerMsg.includes("not enough balance") || lowerMsg.includes("insufficient balance")) {
+            reasonCode = "INSUFFICIENT_BALANCE";
+          } else if (lowerMsg.includes("not enough allowance") || lowerMsg.includes("insufficient allowance")) {
+            reasonCode = "INSUFFICIENT_ALLOWANCE";
+          } else if (lowerMsg.includes("price exceeds max") || lowerMsg.includes("slippage")) {
+            reasonCode = "PRICE_SLIPPAGE";
+          }
+          
+          lastErrorReason = reasonCode || cleanMessage; // Track for final return
+          logger?.warn?.(`Order attempt failed: ${lastErrorReason}`);
         }
       } catch (err) {
         retryCount++;
@@ -243,10 +269,45 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           );
           return { success: false, reason: "CLOUDFLARE_BLOCKED" };
         }
-        const msg = formatErrorForLog(err);
-        logger?.warn?.(`Order execution error: ${msg}`);
+        
+        // Extract clean error message
+        const errorObj = err as any;
+        let cleanMessage = "";
+        let reasonCode = "";
+        
+        // Try to extract the actual error message from common CLOB response structures
+        if (errorObj?.response?.data?.error) {
+          cleanMessage = errorObj.response.data.error;
+        } else if (errorObj?.data?.error) {
+          cleanMessage = errorObj.data.error;
+        } else if (errorObj?.message) {
+          cleanMessage = errorObj.message;
+        } else {
+          cleanMessage = String(err);
+        }
+        
+        // Check for specific error types and assign reason codes
+        const lowerMsg = cleanMessage.toLowerCase();
+        
+        if (lowerMsg.includes("not enough balance") || lowerMsg.includes("insufficient balance")) {
+          reasonCode = "INSUFFICIENT_BALANCE";
+          cleanMessage = `Insufficient balance: ${cleanMessage}`;
+        } else if (lowerMsg.includes("not enough allowance") || lowerMsg.includes("insufficient allowance")) {
+          reasonCode = "INSUFFICIENT_ALLOWANCE";
+          cleanMessage = `Insufficient allowance: ${cleanMessage}`;
+        } else if (lowerMsg.includes("price exceeds max") || lowerMsg.includes("slippage")) {
+          reasonCode = "PRICE_SLIPPAGE";
+          cleanMessage = `Price slippage: ${cleanMessage}`;
+        } else {
+          reasonCode = formatErrorForLog(err);
+        }
+        
+        logger?.warn?.(`Order execution error: ${cleanMessage}`);
+        
+        lastErrorReason = reasonCode || cleanMessage; // Track for final return
+        
         if (retryCount >= ORDER.MAX_RETRIES) {
-          return { success: false, reason: msg };
+          return { success: false, reason: lastErrorReason };
         }
       }
     }
@@ -260,7 +321,10 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     }
 
     logger?.debug?.(`Order rejected: NO_FILLS after ${ORDER.MAX_RETRIES} retries for ${tokenId.slice(0, 8)}...`);
-    return { success: false, reason: "NO_FILLS" };
+    return { 
+      success: false, 
+      reason: lastErrorReason !== "NO_ERROR" ? lastErrorReason : "NO_FILLS" 
+    };
   } catch (err) {
     // Check for Cloudflare block
     if (isCloudflareBlock(err)) {
