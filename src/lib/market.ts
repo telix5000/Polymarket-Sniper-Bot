@@ -59,11 +59,14 @@ const cacheTimestamps = new Map<string, number>();
 
 /**
  * Check if cache entry is still valid
+ * Verifies both timestamp exists, is within TTL, and the cache entry exists
  */
 function isCacheValid(key: string): boolean {
   const timestamp = cacheTimestamps.get(key);
   if (!timestamp) return false;
-  return Date.now() - timestamp < CACHE_TTL_MS;
+  if (Date.now() - timestamp >= CACHE_TTL_MS) return false;
+  // Also verify the cache entry actually exists
+  return tokenToMarketCache.has(key) || conditionToMarketCache.has(key);
 }
 
 /**
@@ -166,9 +169,23 @@ function parseMarketResponse(market: GammaMarketResponse): MarketTokenPair | nul
       return null;
     }
 
+    // Validate that both token IDs are valid non-empty strings
+    const yesTokenId = tokenIds[0];
+    const noTokenId = tokenIds[1];
+    
+    if (!yesTokenId || typeof yesTokenId !== "string" || yesTokenId.trim() === "") {
+      console.warn(`[Market] Invalid YES token ID for market ${market.id}`);
+      return null;
+    }
+    
+    if (!noTokenId || typeof noTokenId !== "string" || noTokenId.trim() === "") {
+      console.warn(`[Market] Invalid NO token ID for market ${market.id}`);
+      return null;
+    }
+
     const pair: MarketTokenPair = {
-      yesTokenId: tokenIds[0],
-      noTokenId: tokenIds[1],
+      yesTokenId,
+      noTokenId,
       conditionId: market.conditionId,
       marketId: market.id,
       question: market.question,

@@ -73,8 +73,6 @@ import {
   type OnChainPriceUpdate,
   // Market utilities for hedge token lookup
   getOppositeTokenId,
-  getMarketTokenPair,
-  type MarketTokenPair,
 } from "./lib";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2403,7 +2401,22 @@ class ExecutionEngine {
       }
 
       const price = parseFloat(asks[0].price);
+      
+      // Validate price is above minimum tradeable
+      const MIN_TRADEABLE_PRICE = 0.001;
+      if (!price || price <= MIN_TRADEABLE_PRICE) {
+        console.warn(`⚠️ [HEDGE] Price ${price} is too low for hedge order`);
+        return { success: false, reason: "PRICE_TOO_LOW" };
+      }
+      
       const shares = hedgeSize / price;
+      
+      // Validate shares is above minimum threshold
+      const MIN_SHARES = 0.0001;
+      if (shares < MIN_SHARES) {
+        console.warn(`⚠️ [HEDGE] Calculated shares ${shares} is below minimum ${MIN_SHARES}`);
+        return { success: false, reason: "SIZE_TOO_SMALL" };
+      }
 
       console.log(`🛡️ [HEDGE] Placing hedge order: BUY ${shares.toFixed(4)} shares @ ${(price * 100).toFixed(1)}¢`);
 
