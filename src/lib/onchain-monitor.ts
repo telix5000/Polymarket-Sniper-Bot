@@ -918,7 +918,8 @@ export function createOnChainMonitorConfig(
     whaleWallets,
     ourWallet: ourWallet?.toLowerCase(),
     watchedTokens: new Set(), // Start empty, tokens added when positions opened
-    minWhaleTradeUsd: Number(process.env.ONCHAIN_MIN_WHALE_TRADE_USD) || 500,
+    // Support both WHALE_TRADE_USD (simpler) and ONCHAIN_MIN_WHALE_TRADE_USD (legacy)
+    minWhaleTradeUsd: Number(process.env.WHALE_TRADE_USD) || Number(process.env.ONCHAIN_MIN_WHALE_TRADE_USD) || 500,
     enabled,
     reconnectDelayMs: Number(process.env.ONCHAIN_RECONNECT_DELAY_MS) || 1000,
     maxReconnectAttempts: Number(process.env.ONCHAIN_MAX_RECONNECT_ATTEMPTS) || 10,

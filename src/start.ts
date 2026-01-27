@@ -214,7 +214,7 @@ function loadConfig(): ChurnConfig {
     tradeFraction: 0.01,              // 1% of bankroll per trade
     maxDeployedFractionTotal: 0.3,    // 30% max exposure
     maxOpenPositionsTotal: 12,        // Max concurrent positions
-    maxOpenPositionsPerMarket: 2,     // Max per market
+    maxOpenPositionsPerMarket: 1,     // 1 entry per token (hedges are stored inside position, not as separate entries)
     cooldownSecondsPerToken: 180,     // 3min between trades same token
 
     // Entry/Exit bands - produces avg_win=14¢, avg_loss=9¢
@@ -308,7 +308,9 @@ function loadConfig(): ChurnConfig {
     // This provides faster whale detection than API polling (blockchain-level speed)
     // Requires Infura RPC URL with WebSocket support
     onchainMonitorEnabled: envBool("ONCHAIN_MONITOR_ENABLED", true),
-    onchainMinWhaleTradeUsd: envNum("ONCHAIN_MIN_WHALE_TRADE_USD", 500),  // Min trade size to track
+    // Min trade size to detect as a "whale trade" - supports both env names for convenience
+    // WHALE_TRADE_USD is the simpler name, ONCHAIN_MIN_WHALE_TRADE_USD for backward compatibility
+    onchainMinWhaleTradeUsd: envNum("WHALE_TRADE_USD", envNum("ONCHAIN_MIN_WHALE_TRADE_USD", 500)),
     // Infura tier plan: "core" (free), "developer" ($50/mo), "team" ($225/mo), "growth" (enterprise)
     // Affects rate limiting to avoid hitting API caps
     infuraTier: parseInfuraTierEnv(process.env.INFURA_TIER),
@@ -372,8 +374,9 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log("");
   log("🐋 WHALE TRACKING:");
   log(`   Following top ${config.leaderboardTopN} wallets`);
+  log(`   Min trade size: $${config.onchainMinWhaleTradeUsd} (WHALE_TRADE_USD)`);
   if (config.copyAnyWhaleBuy) {
-    log(`   Mode: AGGRESSIVE - copy ANY whale buy (no $${config.biasMinNetUsd} flow requirement)`);
+    log(`   Mode: AGGRESSIVE - copy ANY whale buy ≥ $${config.onchainMinWhaleTradeUsd}`);
   } else {
     log(`   Mode: CONSERVATIVE - need $${config.biasMinNetUsd} flow + ${config.biasMinTrades} trades`);
   }
@@ -1777,14 +1780,16 @@ class DecisionEngine {
       };
     }
 
-    // Max positions per market/token
+    // Max positions per market/token - prevents duplicate entries on same token
+    // NOTE: Hedges are stored inside the position object (position.hedges[]), not as separate positions
+    // So this check only blocks NEW entries, not hedging operations
     const tokenPositions = currentPositions.filter(
-      (p) => p.tokenId === tokenId,
+      (p) => p.tokenId === tokenId && p.state !== "CLOSED",
     );
     if (tokenPositions.length >= this.config.maxOpenPositionsPerMarket) {
       return {
         passed: false,
-        reason: `Max positions per market (${this.config.maxOpenPositionsPerMarket})`,
+        reason: `Already holding position on this token (${tokenPositions.length}/${this.config.maxOpenPositionsPerMarket})`,
       };
     }
 

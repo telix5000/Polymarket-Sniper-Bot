@@ -48,18 +48,19 @@ else
 fi
 echo ""
 
-# Check 3: ONCHAIN_MIN_WHALE_TRADE_USD
+# Check 3: WHALE_TRADE_USD (supports both names)
 echo "3️⃣  Whale Trade Threshold"
-THRESHOLD=${ONCHAIN_MIN_WHALE_TRADE_USD:-500}
+# Check both WHALE_TRADE_USD (preferred) and ONCHAIN_MIN_WHALE_TRADE_USD (legacy)
+THRESHOLD=${WHALE_TRADE_USD:-${ONCHAIN_MIN_WHALE_TRADE_USD:-500}}
 if [ "$THRESHOLD" -le 100 ]; then
-    echo "   ✅ ONCHAIN_MIN_WHALE_TRADE_USD=$THRESHOLD"
+    echo "   ✅ WHALE_TRADE_USD=$THRESHOLD"
     echo "   📊 Will detect whale trades >= \$$THRESHOLD"
 elif [ "$THRESHOLD" -le 200 ]; then
-    echo "   ⚠️  ONCHAIN_MIN_WHALE_TRADE_USD=$THRESHOLD (moderate)"
+    echo "   ⚠️  WHALE_TRADE_USD=$THRESHOLD (moderate)"
     echo "   📝 Consider lowering to 100 for more signals"
 else
-    echo "   ⚠️  ONCHAIN_MIN_WHALE_TRADE_USD=$THRESHOLD (high threshold)"
-    echo "   📝 Recommended: ONCHAIN_MIN_WHALE_TRADE_USD=100"
+    echo "   ⚠️  WHALE_TRADE_USD=$THRESHOLD (high threshold)"
+    echo "   📝 Recommended: WHALE_TRADE_USD=100"
     echo "   📊 Default is \$500 - may miss smaller whale trades"
 fi
 echo ""
@@ -128,7 +129,7 @@ if [ "$COPY_ANY_WHALE_BUY" != "true" ]; then
     WARNINGS=$((WARNINGS + 1))
 fi
 
-THRESHOLD=${ONCHAIN_MIN_WHALE_TRADE_USD:-500}
+THRESHOLD=${WHALE_TRADE_USD:-${ONCHAIN_MIN_WHALE_TRADE_USD:-500}}
 if [ "$THRESHOLD" -gt 200 ]; then
     echo "⚠️  WARNING: High whale threshold ($THRESHOLD) - may miss signals"
     WARNINGS=$((WARNINGS + 1))
@@ -155,7 +156,7 @@ if [ $ISSUES -gt 0 ]; then
         echo "   COPY_ANY_WHALE_BUY=true"
     fi
     if [ "$THRESHOLD" -gt 200 ]; then
-        echo "   ONCHAIN_MIN_WHALE_TRADE_USD=100"
+        echo "   WHALE_TRADE_USD=100"
     fi
     echo ""
 elif [ $WARNINGS -gt 0 ]; then
@@ -167,7 +168,7 @@ elif [ $WARNINGS -gt 0 ]; then
         echo "   COPY_ANY_WHALE_BUY=true"
     fi
     if [ "$THRESHOLD" -gt 200 ]; then
-        echo "   ONCHAIN_MIN_WHALE_TRADE_USD=100"
+        echo "   WHALE_TRADE_USD=100"
     fi
     echo ""
 else
