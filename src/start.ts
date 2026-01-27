@@ -131,6 +131,47 @@ import {
   type ReaperSignal,
 } from "./strategies/reaper";
 
+// APEX v3.0 Protection Modules
+import {
+  detectShield,
+  shouldStopHedge,
+  shouldTakeProfitHedge,
+  type ShieldSignal,
+  type HedgeState,
+} from "./strategies/shield";
+
+import {
+  detectGuardian,
+  calculateDynamicStopLoss,
+  isInDangerZone,
+  type GuardianSignal,
+} from "./strategies/guardian";
+
+import {
+  detectSentinel,
+  getSentinelUrgency,
+  shouldForceExit,
+  type SentinelSignal,
+} from "./strategies/sentinel";
+
+// APEX v3.0 Entry Strategies
+import {
+  detectVelocity,
+  calculateVelocity,
+  shouldRideMomentum,
+  isMomentumReversing,
+  type VelocitySignal,
+} from "./strategies/velocity";
+
+import {
+  detectGrinder,
+  isGrindable,
+  calculateGrindSize,
+  shouldExitGrind,
+  type GrinderSignal,
+  type MarketMetrics,
+} from "./strategies/grinder";
+
 import { POLYMARKET_API } from "./lib/constants";
 
 // APEX v3.0 Monitoring
@@ -199,6 +240,10 @@ interface State {
   recoveryMode: boolean;
   prioritizeExits: boolean;
   errorReporter?: ErrorReporter;
+  
+  // APEX v3.0 Protection Module State
+  hedgeStates: Map<string, HedgeState>; // Track active hedges by tokenId
+  priceHistory: Map<string, number[]>;  // Track price history for velocity detection
 }
 
 const state: State = {
@@ -242,6 +287,8 @@ const state: State = {
   recoveryMode: false,
   prioritizeExits: false,
   errorReporter: undefined,
+  hedgeStates: new Map(),
+  priceHistory: new Map(),
 };
 
 // ============================================
@@ -1122,78 +1169,12 @@ async function buy(
   }
 }
 
-/**
- * @deprecated This function is not currently used. All sell operations use `sellPosition()` instead.
- * 
- * ISSUE: This function passes `outcome` to `postOrder()` but `postOrder()` ignores the outcome parameter.
- * ISSUE: No price protection is applied (maxAcceptablePrice not provided).
- * 
- * Use `sellPosition()` for selling positions as it has:
- * - Proper price protection (5% slippage tolerance)
- * - Live trading mode checking
- * - Better error handling
- * 
- * TODO: Either remove this function or integrate it properly with the sell flow.
- */
-async function sell(
-  tokenId: string,
-  outcome: "YES" | "NO",
-  sizeUsd: number,
-  reason: string,
-  strategy: StrategyType,
-  pnl: number = 0,
-  shares?: number,
-): Promise<boolean> {
-  if (!state.client) return false;
-
-  if (!state.liveTrading) {
-    logger.info(
-      `🔸 [SIM] ⚡ APEX ${strategy}: SELL ${outcome} ${$(sizeUsd)} | ${reason}`,
-    );
-    await sendTelegram(
-      `[SIM] APEX ${strategy} SELL`,
-      `${reason}\n${outcome} ${$(sizeUsd)}`,
-    );
-
-    // Record simulated trade with P&L
-    recordTrade(state.oracleState, strategy, pnl, true, tokenId, reason);
-    return true;
-  }
-
-  const result = await postOrder({
-    client: state.client,
-    tokenId,
-    outcome,
-    side: "SELL",
-    sizeUsd,
-    shares,
-    skipDuplicateCheck: true,
-    logger,
-  });
-
-  if (result.success) {
-    logger.info(
-      `✅ ⚡ APEX ${strategy}: SELL ${outcome} ${$(result.filledUsd ?? sizeUsd)} @ ${((result.avgPrice ?? 0) * 100).toFixed(1)}¢ | ${reason}`,
-    );
-    await sendTelegram(
-      `⚡ APEX ${strategy} SELL`,
-      `${reason}\n${outcome} ${$(result.filledUsd ?? sizeUsd)}\nP&L: ${pnl >= 0 ? "+" : ""}${$(pnl)}`,
-    );
-
-    // Record trade with P&L
-    recordTrade(state.oracleState, strategy, pnl, true, tokenId, reason);
-    state.tradesExecuted++;
-    invalidatePositions();
-    return true;
-  }
-
-  if (result.reason !== "SIMULATED") {
-    logger.warn(
-      `⚡ APEX ${strategy}: SELL failed - ${result.reason} | ${reason}`,
-    );
-  }
-  return false;
-}
+// Note: The deprecated sell() function has been removed.
+// All sell operations now use sellPosition() which has:
+// - Proper price protection (5% slippage tolerance)
+// - Live trading mode checking  
+// - Better error handling
+// - Telegram notifications
 
 // ============================================
 // APEX v3.0 - HUNTER SCANNER
@@ -1512,6 +1493,151 @@ async function runExitStrategies(positions: Position[]): Promise<number> {
 }
 
 // ============================================
+// APEX v3.0 - PROTECTION STRATEGIES
+// ============================================
+
+/**
+ * Run all protection strategies
+ * Priority order: Guardian (stop-loss) → Sentinel (emergency) → Shield (hedging)
+ */
+async function runProtectionStrategies(positions: Position[]): Promise<number> {
+  let protectionCount = 0;
+  
+  // Enrich positions with entry time and price history
+  const enrichedPositions = enrichPositions(positions);
+  
+  // Track which positions we've acted on
+  const actedTokenIds = new Set<string>();
+  
+  // Get mode-specific protection settings
+  const maxLossPct = state.mode === "CONSERVATIVE" ? 15 : 
+                     state.mode === "BALANCED" ? 20 : 25;
+  const hedgeTriggerPct = state.mode === "CONSERVATIVE" ? 15 : 
+                          state.mode === "BALANCED" ? 20 : 25;
+  
+  // GUARDIAN - Hard stop-loss protection
+  for (const p of enrichedPositions) {
+    if (actedTokenIds.has(p.tokenId)) continue;
+    
+    // Check if position already has a hedge (skip guardian if hedged)
+    const isHedged = state.hedgeStates.has(p.tokenId);
+    
+    // Check for danger zone warning
+    if (isInDangerZone(p, maxLossPct * 0.6)) {
+      logger.warn(`🛡️ APEX Guardian: ${p.outcome} in danger zone (${p.pnlPct.toFixed(1)}% loss)`);
+    }
+    
+    const signal = detectGuardian(p, maxLossPct, isHedged);
+    if (signal) {
+      logger.warn(`🛡️ APEX Guardian: STOP-LOSS triggered for ${p.outcome} (${signal.stopLossPct.toFixed(1)}% loss)`);
+      const success = await sellPosition(p, signal.reason);
+      if (success) {
+        protectionCount++;
+        actedTokenIds.add(p.tokenId);
+        
+        // Clean up any associated hedge state
+        state.hedgeStates.delete(p.tokenId);
+        
+        await sendTelegram(
+          "🛡️ GUARDIAN STOP-LOSS",
+          `${p.outcome} exited at ${signal.stopLossPct.toFixed(1)}% loss\n` +
+          `Value: $${p.value.toFixed(2)}\n` +
+          `Reason: ${signal.reason}`
+        );
+      }
+    }
+  }
+  
+  // SENTINEL - Emergency exit for markets closing soon
+  for (const p of enrichedPositions) {
+    if (actedTokenIds.has(p.tokenId)) continue;
+    
+    const signal = detectSentinel(p);
+    if (signal) {
+      const urgency = signal.minutesToClose !== undefined 
+        ? getSentinelUrgency(signal.minutesToClose) 
+        : "HIGH";
+      
+      // Force exit on CRITICAL urgency or if force flag is set
+      if (urgency === "CRITICAL" || signal.force) {
+        logger.warn(`🚨 APEX Sentinel: EMERGENCY EXIT for ${p.outcome} - ${signal.reason}`);
+        const success = await sellPosition(p, signal.reason);
+        if (success) {
+          protectionCount++;
+          actedTokenIds.add(p.tokenId);
+          
+          await sendTelegram(
+            "🚨 SENTINEL EMERGENCY",
+            `${p.outcome} force exited!\n` +
+            `Time remaining: ${signal.minutesToClose?.toFixed(1) ?? "Unknown"} min\n` +
+            `P&L: ${p.pnlPct.toFixed(1)}%\n` +
+            `Reason: ${signal.reason}`
+          );
+        }
+      } else if (urgency === "HIGH") {
+        // Warn but don't force exit
+        logger.warn(`⚠️ APEX Sentinel: WARNING for ${p.outcome} - market closing soon`);
+      }
+    }
+  }
+  
+  // SHIELD - Intelligent hedging for losing positions
+  for (const p of enrichedPositions) {
+    if (actedTokenIds.has(p.tokenId)) continue;
+    
+    const isHedged = state.hedgeStates.has(p.tokenId);
+    const signal = detectShield(p, isHedged, hedgeTriggerPct);
+    
+    if (signal) {
+      logger.info(`🛡️ APEX Shield: Hedge signal for ${p.outcome} (${p.pnlPct.toFixed(1)}% loss)`);
+      
+      // Calculate hedge position size
+      const positionSize = calculatePositionSize(
+        state.currentBalance,
+        state.modeConfig,
+        Strategy.SHADOW, // Use conservative weight for hedges
+      );
+      const hedgeSize = Math.min(signal.hedgeSize, positionSize * 0.5);
+      
+      // NOTE: Executing a hedge requires the tokenId of the opposite outcome, which
+      // we don't have directly. In a real implementation, we would need to:
+      // 1. Look up the market by marketId/conditionId
+      // 2. Find the opposite outcome's tokenId
+      // 3. Execute the buy on that tokenId
+      //
+      // For now, we log the hedge signal for manual follow-up and track that we've
+      // considered hedging this position. Full hedge implementation requires market
+      // data integration to resolve opposite tokenIds.
+      
+      if (hedgeSize >= 5) {
+        logger.warn(
+          `🛡️ APEX Shield: Hedge recommended for ${p.outcome} ` +
+          `(${p.pnlPct.toFixed(1)}% loss) → consider ${signal.hedgeOutcome} hedge of $${hedgeSize.toFixed(2)}`
+        );
+        
+        await sendTelegram(
+          "🛡️ SHIELD HEDGE SIGNAL",
+          `⚠️ Manual hedge recommended:\n` +
+          `Position: ${p.outcome}\n` +
+          `Current loss: ${p.pnlPct.toFixed(1)}%\n` +
+          `Recommended: Buy ${signal.hedgeOutcome} for $${hedgeSize.toFixed(2)}\n\n` +
+          `Note: Automatic hedging requires market data integration.`
+        );
+        
+        // Mark that we've signaled this position to avoid spam
+        actedTokenIds.add(p.tokenId);
+      }
+    }
+  }
+  
+  // NOTE: Hedge stop-loss/take-profit monitoring is disabled until automatic
+  // hedge execution is implemented with proper tokenId resolution.
+  // The existing positions are already monitored by Guardian for stop-loss.
+  
+  return protectionCount;
+}
+
+// ============================================
 // APEX v3.0 - ENTRY STRATEGIES
 // ============================================
 
@@ -1628,8 +1754,44 @@ async function runGrinderStrategy(
   const allocation = state.strategyAllocations.get(Strategy.GRINDER) || 0;
   if (allocation === 0) return;
 
-  // For now, Grinder is placeholder - would need volume data from API
-  // Placeholder only logs in debug mode
+  // Calculate position size for grinder strategy
+  const basePositionSize = calculatePositionSize(
+    currentBalance,
+    state.modeConfig,
+    Strategy.GRINDER,
+  );
+  
+  // Grinder uses smaller position sizes for more frequent trades
+  const grindSize = calculateGrindSize(basePositionSize);
+  
+  if (grindSize < 5) return; // Minimum $5 for grind trades
+  
+  // Check existing positions for grind exit conditions
+  for (const p of positions) {
+    // NOTE: Market metrics are approximated from available data.
+    // In production, these would come from market data API calls.
+    // The Grinder strategy currently uses conservative defaults that favor
+    // P&L-based exits rather than volume/spread-based exits.
+    const metrics: MarketMetrics = {
+      tokenId: p.tokenId,
+      volume24h: state.volume24h || 5000, // Use state or default
+      volume1h: (state.volume24h || 5000) / 24, // Approximate hourly volume
+      spread: 0.015, // Conservative 1.5% spread assumption
+      liquidity: 1000,
+      // Price stability: mid-range prices (20-80¢) are more stable
+      priceStability: p.curPrice > 0.2 && p.curPrice < 0.8 ? 0.8 : 0.5,
+    };
+    
+    // Check if should exit existing grind position
+    // Exit triggers: P&L >= 8%, or detected volume/spread issues
+    if (shouldExitGrind(p, metrics)) {
+      logger.info(`📊 APEX Grinder: Exit signal for ${p.outcome} (${p.pnlPct.toFixed(1)}%)`);
+      await sellPosition(p, `APEX Grinder: Exit (${p.pnlPct.toFixed(1)}% P&L)`);
+    }
+  }
+  
+  // Note: Entry signals would require market scanning with volume data
+  // For now, Grinder focuses on managing existing positions using P&L targets
 }
 
 async function runVelocityStrategy(
@@ -1640,9 +1802,40 @@ async function runVelocityStrategy(
   const allocation = state.strategyAllocations.get(Strategy.VELOCITY) || 0;
   if (allocation === 0) return;
 
-  // Velocity detection would need price history data
-  // For now, this is a placeholder that would integrate with real market data
-  // Placeholder only logs in debug mode
+  // Calculate position size for velocity strategy
+  const positionSize = calculatePositionSize(
+    currentBalance,
+    state.modeConfig,
+    Strategy.VELOCITY,
+  );
+  
+  if (positionSize < 5) return; // Minimum $5 for velocity trades
+  
+  // Update price history for all positions
+  for (const p of positions) {
+    const history = state.priceHistory.get(p.tokenId) || [];
+    history.push(p.curPrice);
+    
+    // Keep last 60 price points (approximately 5 minutes of data at 5-second intervals)
+    if (history.length > 60) history.shift();
+    state.priceHistory.set(p.tokenId, history);
+    
+    // Check for momentum reversal on existing positions (exit signal)
+    if (history.length >= 10) {
+      const currentVelocity = calculateVelocity(history);
+      
+      if (isMomentumReversing(p, currentVelocity)) {
+        logger.info(`⚡ APEX Velocity: Momentum reversal for ${p.outcome} (velocity: ${currentVelocity.toFixed(1)}%)`);
+        await sellPosition(p, `APEX Velocity: Momentum reversal (${currentVelocity.toFixed(1)}% velocity)`);
+      } else if (shouldRideMomentum(p, currentVelocity)) {
+        // Keep position, momentum still strong
+        logger.debug?.(`⚡ APEX Velocity: Riding momentum for ${p.outcome} (velocity: ${currentVelocity.toFixed(1)}%)`);
+      }
+    }
+  }
+  
+  // Note: New entry signals would require scanning markets with price history
+  // For now, Velocity focuses on managing existing positions based on momentum
 }
 
 // ============================================
@@ -1946,6 +2139,15 @@ async function runAPEXCycle(): Promise<void> {
   if (exitCount > 0) {
     logger.info(`📤 Exited ${exitCount} positions this cycle`);
     invalidatePositions(); // Force refresh after exits
+  }
+
+  // ============================================
+  // PRIORITY 1.5: PROTECTION (Guard remaining positions)
+  // ============================================
+  const protectionCount = await runProtectionStrategies(positions);
+  if (protectionCount > 0) {
+    logger.info(`🛡️ Protection actions: ${protectionCount} this cycle`);
+    invalidatePositions(); // Force refresh after protection actions
   }
 
   // ============================================
