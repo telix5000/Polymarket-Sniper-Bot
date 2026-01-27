@@ -318,6 +318,12 @@ const NEAR_RESOLUTION_PRICE_THRESHOLD = 0.95; // Price threshold for near-resolu
 const ACCEPTABLE_LOSS_THRESHOLD = -2; // Max loss % for near-resolution exits (-2%)
 const MAX_ACCEPTABLE_LOSS = -5; // Max loss % for emergency exits (-5%)
 
+// Sell price slippage constants
+const NORMAL_SELL_SLIPPAGE = 0.95; // 5% slippage allowed in normal sells
+const CONSERVATIVE_EMERGENCY_SLIPPAGE = 0.95; // 5% slippage in conservative emergency mode
+const MODERATE_EMERGENCY_SLIPPAGE = 0.90; // 10% slippage in moderate emergency mode
+const PRICE_DISCREPANCY_WARNING_THRESHOLD = 0.10; // Warn when orderbook differs >10% from curPrice
+
 // Note: Emergency sell thresholds are now configured via state.emergencySellConfig
 // See EMERGENCY_SELL_MODE and EMERGENCY_BALANCE_THRESHOLD environment variables
 
@@ -742,15 +748,15 @@ async function sellPosition(
     
     // Use curPrice (current market value) for validation, allow 5% slippage
     // This is critical: we must use curPrice, NOT avgPrice, to allow selling losing positions
-    const minPrice = position.curPrice * 0.95;
+    const minPrice = position.curPrice * NORMAL_SELL_SLIPPAGE;
     
     // Log price comparison for debugging
     logger.info(`   Orderbook bid: ${(bestBid * 100).toFixed(1)}¢`);
-    logger.info(`   Min acceptable: ${(minPrice * 100).toFixed(1)}¢ (5% slippage from curPrice)`);
+    logger.info(`   Min acceptable: ${(minPrice * 100).toFixed(1)}¢ (${((1 - NORMAL_SELL_SLIPPAGE) * 100).toFixed(0)}% slippage from curPrice)`);
     
     // Warn if there's a large discrepancy between curPrice and orderbook bid
     const priceDiscrepancy = Math.abs(bestBid - position.curPrice) / position.curPrice;
-    if (priceDiscrepancy > 0.10) {
+    if (priceDiscrepancy > PRICE_DISCREPANCY_WARNING_THRESHOLD) {
       logger.warn(`⚠️  Large price discrepancy: orderbook ${(bestBid * 100).toFixed(1)}¢ vs curPrice ${(position.curPrice * 100).toFixed(1)}¢ (${(priceDiscrepancy * 100).toFixed(1)}% diff)`);
     }
     
@@ -840,16 +846,16 @@ async function sellPositionEmergency(
       logger.warn(`   ⚠️  NUCLEAR MODE - No price protection!`);
     } else {
       // Apply slippage to current price, not entry price
-      // CONSERVATIVE: 5% slippage from current price
-      // MODERATE: 10% slippage from current price
-      const slippagePct = state.emergencySellConfig.mode === 'CONSERVATIVE' ? 0.95 : 0.90;
+      const slippagePct = state.emergencySellConfig.mode === 'CONSERVATIVE' 
+        ? CONSERVATIVE_EMERGENCY_SLIPPAGE 
+        : MODERATE_EMERGENCY_SLIPPAGE;
       maxAcceptablePrice = position.curPrice * slippagePct;
       logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (${state.emergencySellConfig.mode} mode, ${((1-slippagePct)*100).toFixed(0)}% slippage from curPrice)`);
     }
   } else {
-    // Normal mode: 5% slippage tolerance from current price
-    maxAcceptablePrice = position.curPrice * 0.95;
-    logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (5% slippage from curPrice)`);
+    // Normal mode: use standard slippage tolerance from current price
+    maxAcceptablePrice = position.curPrice * NORMAL_SELL_SLIPPAGE;
+    logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (${((1 - NORMAL_SELL_SLIPPAGE) * 100).toFixed(0)}% slippage from curPrice)`);
   }
   
   try {
