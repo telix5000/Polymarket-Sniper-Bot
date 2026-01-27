@@ -582,7 +582,7 @@ async function ensureUSDCApproval(): Promise<void> {
       `TX: ${tx.hash.slice(0, 16)}...`
     );
   } catch (error) {
-    logger.error(`❌ Auto-approval failed:`, error);
+    logger.error(`❌ Auto-approval failed: ${error}`);
     logger.error(`   Please manually run: npm run set-token-allowance`);
   }
 }
@@ -685,14 +685,12 @@ async function sellPosition(
       return false;
     }
   } catch (error) {
-    logger.error(`❌ Sell error:`, error);
+    logger.error(`❌ Sell error: ${error}`);
     
     if (state.errorReporter) {
       await state.errorReporter.reportError(error as Error, {
         operation: "sell_position",
         tokenId: position.tokenId,
-        value: position.value,
-        reason,
       });
     }
     
@@ -729,7 +727,7 @@ async function initializeAPEX(): Promise<void> {
   state.lastBalanceCheck = Date.now();
   
   // Get positions for portfolio calculation
-  const positions = await getPositions(state.client, state.address);
+  const positions = await getPositions(state.address);
   const enrichedPositions = enrichPositions(positions);
   const positionValue = enrichedPositions.reduce((sum, p) => sum + p.value, 0);
   const totalValue = state.startBalance + positionValue;
@@ -1189,7 +1187,9 @@ async function fetchActiveMarkets(limit: number = 100): Promise<MarketData[]> {
       liquidity: Number(m.liquidity) || 0,
     }));
   } catch (error) {
-    logger.debug(`Market fetch error:`, error);
+    if (logger.debug) {
+      logger.debug(`Market fetch error: ${error}`);
+    }
     return [];
   }
 }
@@ -1435,48 +1435,6 @@ async function runExitStrategies(positions: Position[]): Promise<number> {
   return exitCount;
 }
 
-async function runBlitzExits(positions: Position[]): Promise<void> {
-  // APEX Blitz - Quick Scalps (0.6-3%)
-  for (const p of positions) {
-    if (p.pnlPct >= 0.6 && p.pnlPct <= 3) {
-      logger.info(
-        `⚡ APEX Blitz: Quick exit ${p.outcome} +${p.pnlPct.toFixed(1)}%`,
-      );
-      await sell(
-        p.tokenId,
-        p.outcome as "YES" | "NO",
-        p.value,
-        `Blitz scalp +${p.pnlPct.toFixed(1)}%`,
-        Strategy.BLITZ,
-        p.pnlUsd,
-        p.size,
-      );
-    }
-  }
-}
-
-async function runCommandExits(positions: Position[]): Promise<void> {
-  // APEX Command - AutoSell at 99.5¢
-  const threshold = 0.995;
-
-  for (const p of positions) {
-    if (p.curPrice >= threshold) {
-      logger.info(
-        `⚡ APEX Command: AutoSell ${p.outcome} @ ${(p.curPrice * 100).toFixed(0)}¢`,
-      );
-      await sell(
-        p.tokenId,
-        p.outcome as "YES" | "NO",
-        p.value,
-        `Command AutoSell (${(p.curPrice * 100).toFixed(0)}¢)`,
-        Strategy.BLITZ, // Attribute to BLITZ (exit strategy)
-        p.pnlUsd,
-        p.size,
-      );
-    }
-  }
-}
-
 // ============================================
 // APEX v3.0 - ENTRY STRATEGIES
 // ============================================
@@ -1595,8 +1553,8 @@ async function runGrinderStrategy(
   if (allocation === 0) return;
 
   // For now, Grinder is placeholder - would need volume data from API
-  if (process.env.DEBUG) {
-    logger.info(`⚡ APEX Grinder: Monitoring volume (placeholder)`);
+  if (process.env.DEBUG && logger.debug) {
+    logger.debug(`⚡ APEX Grinder: Monitoring volume (placeholder)`);
   }
 }
 
@@ -1610,8 +1568,8 @@ async function runVelocityStrategy(
 
   // Velocity detection would need price history data
   // For now, this is a placeholder that would integrate with real market data
-  if (process.env.DEBUG) {
-    logger.info(`⚡ APEX Velocity: Monitoring momentum (placeholder)`);
+  if (process.env.DEBUG && logger.debug) {
+    logger.debug(`⚡ APEX Velocity: Monitoring momentum (placeholder)`);
   }
 }
 
@@ -1644,7 +1602,7 @@ async function sendHourlySummary(balance: number): Promise<void> {
   
   // Get current positions
   if (!state.client) return;
-  const positions = await getPositions(state.client, state.address);
+  const positions = await getPositions(state.address);
   const enrichedPositions = enrichPositions(positions);
   const positionValue = enrichedPositions.reduce((sum, p) => sum + p.value, 0);
   const totalValue = balance + positionValue;
@@ -1658,6 +1616,33 @@ async function sendHourlySummary(balance: number): Promise<void> {
     `Balance: $${balance.toFixed(2)}\n` +
     `Positions: ${enrichedPositions.length} ($${positionValue.toFixed(2)})\n` +
     `Total: $${totalValue.toFixed(2)}`
+  );
+}
+
+/**
+ * Send weekly report
+ */
+async function sendWeeklyReport(currentBalance: number): Promise<void> {
+  const weekGain = currentBalance - state.weekStartBalance;
+  const weekGainPct =
+    state.weekStartBalance > 0 ? (weekGain / state.weekStartBalance) * 100 : 0;
+
+  const targetMultiplier =
+    state.mode === "AGGRESSIVE" ? 10 : state.mode === "BALANCED" ? 5 : 3;
+  const target = state.startBalance * targetMultiplier;
+  const progressPct = (currentBalance / target) * 100;
+
+  await sendTelegram(
+    "📈 APEX WEEKLY REPORT",
+    `Week Complete!\n\n` +
+      `Starting: ${$(state.weekStartBalance)}\n` +
+      `Ending: ${$(currentBalance)}\n` +
+      `Gain: ${weekGain >= 0 ? "+" : ""}${$(weekGain)} (${weekGainPct >= 0 ? "+" : ""}${weekGainPct.toFixed(1)}%)\n\n` +
+      `Target: +${state.modeConfig.weeklyTargetPct}%\n` +
+      `Status: ${weekGainPct >= state.modeConfig.weeklyTargetPct ? "🟢 ON TRACK" : "🟡 BELOW TARGET"}\n\n` +
+      `Progress to Goal:\n` +
+      `${$(currentBalance)} / ${$(target)}\n` +
+      `${progressPct.toFixed(0)}% Complete`,
   );
 }
 
@@ -1747,51 +1732,6 @@ async function runOracleReview(): Promise<void> {
       `🏆 Best: ${champion?.strategy || "None"} (+${$(champion?.totalPnL || 0)})\n` +
       `⚠️ Worst: ${worst?.strategy || "None"} (${$(worst?.totalPnL || 0)})\n\n` +
       `Capital reallocated for next 24hrs`,
-  );
-}
-
-async function sendHourlySummary(currentBalance: number): Promise<void> {
-  const hourStart = Date.now() - 60 * 60 * 1000;
-  const recentTrades = state.oracleState.trades.filter(
-    (t) => t.timestamp > hourStart,
-  );
-
-  const wins = recentTrades.filter((t) => t.pnl > 0).length;
-  const losses = recentTrades.filter((t) => t.pnl < 0).length;
-  const totalPnl = recentTrades.reduce((sum, t) => sum + t.pnl, 0);
-  const winRate = (wins / Math.max(1, wins + losses)) * 100;
-
-  await sendTelegram(
-    "📊 APEX HOURLY SUMMARY",
-    `Last Hour:\n` +
-      `Trades: ${recentTrades.length}\n` +
-      `P&L: ${totalPnl >= 0 ? "+" : ""}${$(totalPnl)}\n` +
-      `Win Rate: ${winRate.toFixed(0)}%\n` +
-      `Balance: ${$(currentBalance)}`,
-  );
-}
-
-async function sendWeeklyReport(currentBalance: number): Promise<void> {
-  const weekGain = currentBalance - state.weekStartBalance;
-  const weekGainPct =
-    state.weekStartBalance > 0 ? (weekGain / state.weekStartBalance) * 100 : 0;
-
-  const targetMultiplier =
-    state.mode === "AGGRESSIVE" ? 10 : state.mode === "BALANCED" ? 5 : 3;
-  const target = state.startBalance * targetMultiplier;
-  const progressPct = (currentBalance / target) * 100;
-
-  await sendTelegram(
-    "📈 APEX WEEKLY REPORT",
-    `Week Complete!\n\n` +
-      `Starting: ${$(state.weekStartBalance)}\n` +
-      `Ending: ${$(currentBalance)}\n` +
-      `Gain: ${weekGain >= 0 ? "+" : ""}${$(weekGain)} (${weekGainPct >= 0 ? "+" : ""}${weekGainPct.toFixed(1)}%)\n\n` +
-      `Target: +${state.modeConfig.weeklyTargetPct}%\n` +
-      `Status: ${weekGainPct >= state.modeConfig.weeklyTargetPct ? "🟢 ON TRACK" : "🟡 BELOW TARGET"}\n\n` +
-      `Progress to Goal:\n` +
-      `${$(currentBalance)} / ${$(target)}\n` +
-      `${progressPct.toFixed(0)}% Complete`,
   );
 }
 
@@ -1919,8 +1859,11 @@ async function runAPEXCycle(): Promise<void> {
   if (state.tradingHalted) {
     logger.error(`⛔ Trading halted: ${state.haltReason}`);
     // Still allow exits and redemptions even when halted
-    await runBlitzExits(positions);
-    await runCommandExits(positions);
+    const exitCount = await runExitStrategies(positions);
+    if (exitCount > 0) {
+      logger.info(`📤 Exited ${exitCount} positions while halted`);
+      invalidatePositions();
+    }
     await runRedeem();
     return;
   }
