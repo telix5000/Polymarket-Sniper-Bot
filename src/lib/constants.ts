@@ -59,6 +59,74 @@ export const ORDER = {
 } as const;
 
 /**
+ * Order Type Settings - Controls FOK vs GTC for all orders
+ *
+ * ORDER TYPE DIFFERENCES:
+ *
+ * FOK (Fill-Or-Kill) - DEFAULT:
+ *   - Order fills IMMEDIATELY and COMPLETELY, or is cancelled
+ *   - Best for: Fast-moving markets, whale copy trades
+ *   - Risk: May miss opportunities if price moves
+ *   - DOES NOT sit on orderbook - instant execution only
+ *
+ * GTC (Good-Til-Cancelled) - LIMIT ORDER:
+ *   - Order posts to orderbook and WAITS until filled
+ *   - Best for: Getting specific price, capturing price deviance
+ *   - Risk: May never fill if price moves away
+ *   - SITS on orderbook until filled, cancelled, or expired
+ *
+ * CRITICAL: FOK orders do NOT "sit there until filled" - they either
+ * fill instantly or fail. Use GTC if you want a limit order that waits!
+ *
+ * CONFIGURATION PRIORITY:
+ *   1. BUY_ORDER_TYPE / SELL_ORDER_TYPE (specific override)
+ *   2. ORDER_TYPE (master setting for both)
+ *   3. Default: FOK
+ */
+
+// Master order type setting - applies to BOTH buys and sells
+const MASTER_ORDER_TYPE = envStr<"FOK" | "GTC" | "">("ORDER_TYPE", "", [
+  "FOK",
+  "GTC",
+  "",
+]);
+
+/**
+ * Get order type with fallback logic:
+ * specific env > master ORDER_TYPE > default
+ */
+function getOrderType(specificEnv: string, defaultValue: "FOK" | "GTC"): "FOK" | "GTC" {
+  const specific = process.env[specificEnv];
+  if (specific === "FOK" || specific === "GTC") {
+    return specific;
+  }
+  if (MASTER_ORDER_TYPE === "FOK" || MASTER_ORDER_TYPE === "GTC") {
+    return MASTER_ORDER_TYPE;
+  }
+  return defaultValue;
+}
+
+/**
+ * Buy Order Settings
+ */
+export const BUY = {
+  // Order type for buys: "FOK" (Fill-Or-Kill) or "GTC" (Good-Til-Cancelled)
+  // Priority: BUY_ORDER_TYPE > ORDER_TYPE > FOK (default)
+  DEFAULT_ORDER_TYPE: getOrderType("BUY_ORDER_TYPE", "FOK"),
+
+  // For GTC orders, default expiration in seconds (1 hour default)
+  // Shorter than SELL because market conditions change faster for entries
+  GTC_EXPIRATION_SECONDS: envNum("BUY_GTC_EXPIRATION_SECONDS", 3600),
+
+  // Default slippage tolerance for BUY orders (percentage, e.g., 2 = 2%)
+  // Only used with FOK orders - GTC orders use exact price
+  DEFAULT_SLIPPAGE_PCT: envNum("BUY_DEFAULT_SLIPPAGE_PCT", 2),
+
+  // Maximum slippage allowed even for urgent buys (e.g., 5 = 5%)
+  MAX_SLIPPAGE_PCT: envNum("BUY_MAX_SLIPPAGE_PCT", 5),
+} as const;
+
+/**
  * Sell Order Settings - Best practices from Polymarket docs and community
  *
  * These protect against losing money to bad bids by:
@@ -91,13 +159,9 @@ export const SELL = {
   // If we can't fill at least this much at acceptable price, don't execute
   MIN_FILL_RATIO: envNum("SELL_MIN_FILL_RATIO", 0.8),
 
-  // Default order type for sells: "FOK" (Fill-Or-Kill) or "GTC" (Good-Til-Cancelled)
-  // FOK = aggressive, instant fill or nothing
-  // GTC = patient, waits on orderbook for better price
-  DEFAULT_ORDER_TYPE: envStr<"FOK" | "GTC">("SELL_ORDER_TYPE", "FOK", [
-    "FOK",
-    "GTC",
-  ]),
+  // Order type for sells: "FOK" (Fill-Or-Kill) or "GTC" (Good-Til-Cancelled)
+  // Priority: SELL_ORDER_TYPE > ORDER_TYPE > FOK (default)
+  DEFAULT_ORDER_TYPE: getOrderType("SELL_ORDER_TYPE", "FOK"),
 
   // For GTC orders, default expiration in seconds (24 hours)
   GTC_EXPIRATION_SECONDS: envNum("SELL_GTC_EXPIRATION_SECONDS", 86400),

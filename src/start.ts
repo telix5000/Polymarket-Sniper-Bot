@@ -172,6 +172,9 @@ interface ChurnConfig {
   liquidationMaxSlippagePct: number;  // Max slippage for liquidation sells (default: 10%)
   liquidationPollIntervalMs: number;  // Poll interval in liquidation mode (default: 1000ms)
 
+  // Aggressive Whale Copy Mode
+  copyAnyWhaleBuy: boolean;  // If true, copy ANY whale buy without waiting for bias confirmation
+
   // Auth
   privateKey: string;
   rpcUrl: string;
@@ -273,6 +276,11 @@ function loadConfig(): ChurnConfig {
     liquidationMaxSlippagePct: envNum("LIQUIDATION_MAX_SLIPPAGE_PCT", 10),  // 10% default
     liquidationPollIntervalMs: envNum("LIQUIDATION_POLL_INTERVAL_MS", 1000),  // 1s default
 
+    // Aggressive Whale Copy Mode - copy ANY whale buy without waiting for bias
+    // When true: sees whale buy → immediately copies (no $300 flow / 3 trade requirement)
+    // When false (default): requires bias confirmation (multiple whale trades in same direction)
+    copyAnyWhaleBuy: envBool("COPY_ANY_WHALE_BUY", false),
+
     // ═══════════════════════════════════════════════════════════════════════
     // AUTH & INTEGRATIONS (user provides these)
     // ═══════════════════════════════════════════════════════════════════════
@@ -351,6 +359,9 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   if (config.forceLiquidation) {
     log(`   Force liquidation: ⚠️ ENABLED`);
   }
+  if (config.copyAnyWhaleBuy) {
+    log(`   Copy any whale buy: ⚠️ AGGRESSIVE MODE (no bias confirmation)`);
+  }
   log("");
   log("📊 THE MATH (fixed, don't change):");
   log(`   Take profit: +${config.tpCents}¢ (avg win)`);
@@ -361,7 +372,11 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log("");
   log("🐋 WHALE TRACKING:");
   log(`   Following top ${config.leaderboardTopN} wallets`);
-  log(`   Min flow: $${config.biasMinNetUsd}`);
+  if (config.copyAnyWhaleBuy) {
+    log(`   Mode: AGGRESSIVE - copy ANY whale buy (no $${config.biasMinNetUsd} flow requirement)`);
+  } else {
+    log(`   Mode: CONSERVATIVE - need $${config.biasMinNetUsd} flow + ${config.biasMinTrades} trades`);
+  }
   log("");
   log("🛡️ RISK LIMITS:");
   log(`   Reserve: ${config.reserveFraction * 100}% untouchable`);
@@ -723,6 +738,7 @@ class BiasAccumulator {
   /**
    * Fetch top leaderboard wallets from v1 API
    * Uses proxyWallet from response (that's where positions are held)
+   * Handles pagination since API may limit results per page
    */
   async refreshLeaderboard(): Promise<string[]> {
     const now = Date.now();
@@ -732,18 +748,42 @@ class BiasAccumulator {
     }
 
     try {
-      // Use v1 leaderboard API with PNL ordering to get top performers
-      const url = `${this.DATA_API}/v1/leaderboard?category=OVERALL&timePeriod=WEEK&orderBy=PNL&limit=${this.config.leaderboardTopN}`;
-      const { data } = await axios.get(url, { timeout: 10000 });
+      // Fetch with pagination to get the full requested count
+      // API may limit to 50 per page, so we paginate if needed
+      const pageSize = 50; // Max per page (API limit)
+      const targetCount = this.config.leaderboardTopN;
+      const allEntries: any[] = [];
+      
+      let offset = 0;
+      while (allEntries.length < targetCount) {
+        const remaining = targetCount - allEntries.length;
+        const limit = Math.min(pageSize, remaining);
+        
+        // Use v1 leaderboard API with PNL ordering to get top performers
+        const url = `${this.DATA_API}/v1/leaderboard?category=OVERALL&timePeriod=WEEK&orderBy=PNL&limit=${limit}&offset=${offset}`;
+        const { data } = await axios.get(url, { timeout: 10000 });
+        
+        if (!Array.isArray(data) || data.length === 0) {
+          break; // No more results
+        }
+        
+        allEntries.push(...data);
+        offset += data.length;
+        
+        // If we got less than requested, no more pages
+        if (data.length < limit) {
+          break;
+        }
+      }
 
-      if (Array.isArray(data)) {
+      if (allEntries.length > 0) {
         this.leaderboardWallets.clear();
         
         // Show top 10 at startup to verify it's working
         const isFirstFetch = this.lastLeaderboardFetch === 0;
-        if (isFirstFetch && data.length > 0) {
-          console.log(`\n🐋 TOP 10 TRADERS (from ${data.length} tracked):`);
-          for (const entry of data.slice(0, 10)) {
+        if (isFirstFetch) {
+          console.log(`\n🐋 TOP 10 TRADERS (from ${allEntries.length} tracked):`);
+          for (const entry of allEntries.slice(0, 10)) {
             const wallet = (entry.proxyWallet || entry.address || '').slice(0, 12);
             const pnl = Number(entry.pnl || 0);
             const vol = Number(entry.vol || 0);
@@ -753,7 +793,7 @@ class BiasAccumulator {
           console.log('');
         }
         
-        for (const entry of data) {
+        for (const entry of allEntries) {
           // Use proxyWallet (where trades happen) or fallback to address
           const wallet = entry.proxyWallet || entry.address;
           if (wallet) {
@@ -761,7 +801,7 @@ class BiasAccumulator {
           }
         }
         this.lastLeaderboardFetch = now;
-        console.log(`🐋 Tracking ${this.leaderboardWallets.size} top traders`);
+        console.log(`🐋 Tracking ${this.leaderboardWallets.size} top traders (requested: ${targetCount})`);
       }
     } catch (err) {
       // Keep existing wallets on error
@@ -943,6 +983,17 @@ class BiasAccumulator {
    * Check if bias allows entry for a token
    */
   canEnter(tokenId: string): { allowed: boolean; reason?: string } {
+    // COPY_ANY_WHALE_BUY mode: allow entry if we've seen ANY whale buy on this token
+    // No need for $300 flow or 3 trades - just one whale buy is enough
+    if (this.config.copyAnyWhaleBuy) {
+      const bias = this.getBias(tokenId);
+      // Allow if we've seen at least 1 trade (which must be a BUY since we only track buys)
+      if (bias.tradeCount >= 1) {
+        return { allowed: true };
+      }
+      return { allowed: false, reason: "NO_WHALE_BUY_SEEN" };
+    }
+
     if (!this.config.allowEntriesOnlyWithBias) {
       return { allowed: true };
     }
@@ -2525,32 +2576,37 @@ class ChurnEngine {
     console.log("");
 
     // ═══════════════════════════════════════════════════════════════════════
-    // LIQUIDATION MODE - Start even with no effective bankroll if positions exist
+    // LIQUIDATION MODE - Force sell ALL existing positions when enabled
     // ═══════════════════════════════════════════════════════════════════════
+    // FORCE_LIQUIDATION=true will sell positions regardless of bankroll status
+    // This allows users to exit all positions even when they have sufficient balance
+    if (this.config.forceLiquidation && existingPositions.length > 0) {
+      console.log("━".repeat(60));
+      console.log("🔥 LIQUIDATION MODE ACTIVATED");
+      console.log("━".repeat(60));
+      console.log(`   FORCE_LIQUIDATION=true - selling ALL existing positions`);
+      console.log(`   Current balance: $${usdcBalance.toFixed(2)}`);
+      console.log(`   Positions to liquidate: ${existingPositions.length} (worth $${positionValue.toFixed(2)})`);
+      console.log("━".repeat(60));
+      console.log("");
+
+      this.liquidationMode = true;
+
+      if (this.config.telegramBotToken) {
+        await sendTelegram(
+          "🔥 Liquidation Mode Activated",
+          `Balance: $${usdcBalance.toFixed(2)}\n` +
+            `Positions: ${existingPositions.length} ($${positionValue.toFixed(2)})\n` +
+            `Will sell ALL positions`,
+        ).catch(() => {});
+      }
+
+      return true;
+    }
+
+    // If no effective bankroll and positions exist, suggest enabling liquidation
     if (effectiveBankroll <= 0) {
-      if (this.config.forceLiquidation && existingPositions.length > 0) {
-        console.log("━".repeat(60));
-        console.log("🔥 LIQUIDATION MODE ACTIVATED");
-        console.log("━".repeat(60));
-        console.log(`   No effective bankroll ($${usdcBalance.toFixed(2)} < $${reserveUsd.toFixed(2)} reserve)`);
-        console.log(`   But you have ${existingPositions.length} positions worth $${positionValue.toFixed(2)}`);
-        console.log(`   Will liquidate positions to free up capital`);
-        console.log("━".repeat(60));
-        console.log("");
-
-        this.liquidationMode = true;
-
-        if (this.config.telegramBotToken) {
-          await sendTelegram(
-            "🔥 Liquidation Mode Activated",
-            `Balance: $${usdcBalance.toFixed(2)}\n` +
-              `Positions: ${existingPositions.length} ($${positionValue.toFixed(2)})\n` +
-              `Will sell positions to free capital`,
-          ).catch(() => {});
-        }
-
-        return true;
-      } else if (existingPositions.length > 0) {
+      if (existingPositions.length > 0) {
         console.error("❌ No effective bankroll available");
         console.error(`   You have ${existingPositions.length} positions worth $${positionValue.toFixed(2)}`);
         console.error(`   Set FORCE_LIQUIDATION=true to sell them and free up capital`);
@@ -2780,43 +2836,23 @@ class ChurnEngine {
     const now = Date.now();
 
     // ─────────────────────────────────────────────────────────────────
-    // 1. GET BALANCES & CHECK IF WE CAN EXIT LIQUIDATION MODE
+    // 1. REDEEM SETTLED POSITIONS FIRST (every cycle in liquidation mode!)
+    // In liquidation mode, we want to redeem aggressively - every cycle
+    // This includes $0 value positions (losers) that need to be cleared
     // ─────────────────────────────────────────────────────────────────
-    const usdcBalance = await getUsdcBalance(this.wallet, this.address);
-    const { effectiveBankroll, reserveUsd } = this.executionEngine.getEffectiveBankroll(usdcBalance);
-
-    if (effectiveBankroll > 0) {
-      // We have enough capital now - exit liquidation mode
-      console.log("━".repeat(60));
-      console.log("✅ LIQUIDATION MODE COMPLETE");
-      console.log("━".repeat(60));
-      console.log(`   Balance: $${usdcBalance.toFixed(2)}`);
-      console.log(`   Effective bankroll: $${effectiveBankroll.toFixed(2)}`);
-      console.log(`   Transitioning to normal trading mode`);
-      console.log("━".repeat(60));
-      console.log("");
-
-      this.liquidationMode = false;
-
-      if (this.config.telegramBotToken) {
-        await sendTelegram(
-          "✅ Liquidation Complete",
-          `Balance: $${usdcBalance.toFixed(2)}\n` +
-            `Effective: $${effectiveBankroll.toFixed(2)}\n` +
-            `Now entering normal trading mode`,
-        ).catch(() => {});
-      }
-
-      return;
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // 2. REDEEM SETTLED POSITIONS
-    // ─────────────────────────────────────────────────────────────────
-    if (now - this.lastRedeemTime >= this.REDEEM_INTERVAL_MS) {
+    // Run redemption every 60 seconds in liquidation mode (vs 10 min normally)
+    const LIQUIDATION_REDEEM_INTERVAL_MS = 60 * 1000; // 1 minute
+    if (now - this.lastRedeemTime >= LIQUIDATION_REDEEM_INTERVAL_MS) {
+      console.log("🎁 Checking for redeemable positions (liquidation mode)...");
       await this.processRedemptions();
       this.lastRedeemTime = now;
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 2. GET BALANCES
+    // ─────────────────────────────────────────────────────────────────
+    const usdcBalance = await getUsdcBalance(this.wallet, this.address);
+    const { reserveUsd } = this.executionEngine.getEffectiveBankroll(usdcBalance);
 
     // ─────────────────────────────────────────────────────────────────
     // 3. FETCH AND LIQUIDATE EXISTING POLYMARKET POSITIONS

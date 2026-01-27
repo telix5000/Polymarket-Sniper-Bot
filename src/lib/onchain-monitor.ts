@@ -100,6 +100,21 @@ export interface OnChainPriceUpdate {
 }
 
 /**
+ * Price deviance between on-chain and API prices
+ * Positive deviance = on-chain is HIGHER than API (sell opportunity)
+ * Negative deviance = on-chain is LOWER than API (buy opportunity)
+ */
+export interface PriceDeviance {
+  tokenId: string;
+  onChainPrice: number;      // Last seen on-chain price
+  apiPrice: number;          // Current API/CLOB price
+  devianceCents: number;     // Difference in cents (onChain - api)
+  deviancePct: number;       // Percentage difference
+  timestamp: number;         // When deviance was calculated
+  opportunity: "BUY" | "SELL" | "NONE";  // Which side benefits from this deviance
+}
+
+/**
  * Infura tier plans with their rate limits
  * Based on Infura's credit-based pricing model (2024):
  * - Core (Free): 500 credits/sec, 3M credits/day
@@ -223,6 +238,14 @@ export class OnChainMonitor {
   private running = false;
   private reconnectAttempts = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PRICE DEVIANCE TRACKING - Track on-chain prices to compare with API
+  // ═══════════════════════════════════════════════════════════════════════════
+  /** Last known on-chain prices by tokenId */
+  private onChainPrices: Map<string, { price: number; timestamp: number; sizeUsd: number }> = new Map();
+  /** Price staleness threshold - on-chain prices older than this are considered stale */
+  private readonly PRICE_STALE_MS = 60000; // 1 minute
 
   constructor(config: OnChainMonitorConfig) {
     this.config = config;
@@ -251,6 +274,101 @@ export class OnChainMonitor {
    */
   onPriceUpdate(callback: PriceUpdateCallback): void {
     this.priceUpdateCallbacks.push(callback);
+  }
+
+  /**
+   * Get last known on-chain price for a token
+   * Returns null if no price is known or price is stale
+   */
+  getOnChainPrice(tokenId: string): { price: number; timestamp: number; sizeUsd: number } | null {
+    const data = this.onChainPrices.get(tokenId);
+    if (!data) return null;
+    
+    // Check if price is stale
+    if (Date.now() - data.timestamp > this.PRICE_STALE_MS) {
+      return null; // Too old to be useful
+    }
+    
+    return data;
+  }
+
+  /**
+   * Calculate price deviance between on-chain and API prices
+   * 
+   * @param tokenId - The token to check
+   * @param apiPrice - Current price from Polymarket API/CLOB (0-1 scale)
+   * @returns PriceDeviance object or null if no on-chain price available
+   * 
+   * TRADING IMPLICATIONS:
+   * - Negative deviance (on-chain < API): BUY opportunity - use on-chain price for GTC
+   * - Positive deviance (on-chain > API): SELL opportunity - use on-chain price for GTC
+   */
+  calculateDeviance(tokenId: string, apiPrice: number): PriceDeviance | null {
+    const onChainData = this.getOnChainPrice(tokenId);
+    if (!onChainData) return null;
+    
+    const onChainPrice = onChainData.price;
+    const devianceCents = (onChainPrice - apiPrice) * 100;
+    const deviancePct = apiPrice > 0 ? ((onChainPrice - apiPrice) / apiPrice) * 100 : 0;
+    
+    // Determine opportunity direction
+    // If on-chain is lower, it's a buy opportunity (buy at lower on-chain price)
+    // If on-chain is higher, it's a sell opportunity (sell at higher on-chain price)
+    let opportunity: "BUY" | "SELL" | "NONE" = "NONE";
+    if (Math.abs(devianceCents) >= 0.5) { // At least 0.5¢ deviance to matter
+      opportunity = devianceCents < 0 ? "BUY" : "SELL";
+    }
+    
+    return {
+      tokenId,
+      onChainPrice,
+      apiPrice,
+      devianceCents,
+      deviancePct,
+      timestamp: Date.now(),
+      opportunity,
+    };
+  }
+
+  /**
+   * Get all current price deviances for watched tokens
+   * Useful for status reporting
+   */
+  getAllDeviances(apiPrices: Map<string, number>): PriceDeviance[] {
+    const deviances: PriceDeviance[] = [];
+    
+    for (const [tokenId, apiPrice] of apiPrices) {
+      const deviance = this.calculateDeviance(tokenId, apiPrice);
+      if (deviance) {
+        deviances.push(deviance);
+      }
+    }
+    
+    return deviances;
+  }
+
+  /**
+   * Get recommended GTC price based on deviance
+   * Returns the better of on-chain or API price for the given side
+   * 
+   * @param tokenId - Token to get price for  
+   * @param apiPrice - Current API price
+   * @param side - "BUY" or "SELL"
+   * @returns Recommended price for GTC order (takes the favorable price)
+   */
+  getRecommendedGtcPrice(tokenId: string, apiPrice: number, side: "BUY" | "SELL"): number {
+    const onChainData = this.getOnChainPrice(tokenId);
+    if (!onChainData) return apiPrice; // No on-chain data, use API price
+    
+    const onChainPrice = onChainData.price;
+    
+    if (side === "BUY") {
+      // For buys, we want the LOWER price (pay less)
+      return Math.min(onChainPrice, apiPrice);
+    } else {
+      // For sells, we want the HIGHER price (receive more)
+      return Math.max(onChainPrice, apiPrice);
+    }
   }
 
   /**
@@ -527,17 +645,6 @@ export class OnChainMonitor {
     event: ethers.EventLog
   ): Promise<void> {
     try {
-      // Check if this is a whale trade
-      const makerLower = maker.toLowerCase();
-      const takerLower = taker.toLowerCase();
-
-      const isMakerWhale = this.config.whaleWallets.has(makerLower);
-      const isTakerWhale = this.config.whaleWallets.has(takerLower);
-
-      if (!isMakerWhale && !isTakerWhale) {
-        return; // Not a whale trade
-      }
-
       // CTF Exchange: one asset is the outcome token, the other is USDC collateral.
       // Protocol invariant: USDC collateral has asset ID 0n, outcome tokens are non-zero.
       const USDC_ASSET_ID = 0n;
@@ -565,11 +672,6 @@ export class OnChainMonitor {
         : makerAmountFilled;
       const sizeUsd = Number(usdAmount) / 1e6;
 
-      // Skip small trades
-      if (sizeUsd < this.config.minWhaleTradeUsd) {
-        return;
-      }
-
       // Calculate price (outcome tokens have same decimals as USDC)
       const outcomeAmount = isOutcomeTokenMakerSide
         ? makerAmountFilled
@@ -577,6 +679,37 @@ export class OnChainMonitor {
       const price = outcomeAmount > 0n
         ? Number(usdAmount) / Number(outcomeAmount)
         : 0;
+
+      const timestamp = Date.now();
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // ALWAYS track on-chain price for deviance calculation
+      // This is the SOURCE OF TRUTH - what actually traded on-chain
+      // Use this to scope GTC orders ahead of the market!
+      // ═══════════════════════════════════════════════════════════════════════
+      if (price > 0 && sizeUsd >= 10) { // Only track meaningful trades ($10+)
+        this.onChainPrices.set(tokenId, {
+          price,
+          timestamp,
+          sizeUsd,
+        });
+      }
+
+      // Check if this is a whale trade
+      const makerLower = maker.toLowerCase();
+      const takerLower = taker.toLowerCase();
+
+      const isMakerWhale = this.config.whaleWallets.has(makerLower);
+      const isTakerWhale = this.config.whaleWallets.has(takerLower);
+
+      // Skip whale callbacks if not a whale trade or too small
+      if (!isMakerWhale && !isTakerWhale) {
+        return;
+      }
+
+      if (sizeUsd < this.config.minWhaleTradeUsd) {
+        return;
+      }
 
       // Determine side from whale's perspective
       // If whale is maker and selling outcome tokens → SELL
@@ -593,10 +726,6 @@ export class OnChainMonitor {
         side = isOutcomeTokenMakerSide ? "BUY" : "SELL";
         whaleWallet = taker;
       }
-
-      // Use Date.now() for timestamp to avoid RPC call latency
-      // Block timestamp would require getBlock() which adds latency and credits
-      const timestamp = Date.now();
 
       const tradeEvent: OnChainTradeEvent = {
         tokenId,
