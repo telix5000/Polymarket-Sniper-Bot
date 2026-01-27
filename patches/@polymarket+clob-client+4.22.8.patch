@@ -1,0 +1,32 @@
+diff --git a/node_modules/@polymarket/clob-client/dist/http-helpers/index.js b/node_modules/@polymarket/clob-client/dist/http-helpers/index.js
+index e270f4e..d98b4fc 100644
+--- a/node_modules/@polymarket/clob-client/dist/http-helpers/index.js
++++ b/node_modules/@polymarket/clob-client/dist/http-helpers/index.js
+@@ -65,12 +65,7 @@ const errorHandling = (err) => {
+     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
+     if (axios_1.default.isAxiosError(err)) {
+         if (err.response) {
+-            console.error("[CLOB Client] request error", JSON.stringify({
+-                status: (_a = err.response) === null || _a === void 0 ? void 0 : _a.status,
+-                statusText: (_b = err.response) === null || _b === void 0 ? void 0 : _b.statusText,
+-                data: (_c = err.response) === null || _c === void 0 ? void 0 : _c.data,
+-                config: (_d = err.response) === null || _d === void 0 ? void 0 : _d.config,
+-            }));
++            // Error is returned to caller for proper handling - verbose logging removed
+             if ((_e = err.response) === null || _e === void 0 ? void 0 : _e.data) {
+                 if (typeof ((_f = err.response) === null || _f === void 0 ? void 0 : _f.data) === "string" ||
+                     ((_g = err.response) === null || _g === void 0 ? void 0 : _g.data) instanceof String) {
+@@ -84,13 +79,9 @@ const errorHandling = (err) => {
+             }
+         }
+         if (err.message) {
+-            console.error("[CLOB Client] request error", JSON.stringify({
+-                error: err.message,
+-            }));
+             return { error: err.message };
+         }
+     }
+-    console.error("[CLOB Client] request error", err);
+     return { error: err };
+ };
+ const parseOrdersScoringParams = (orderScoringParams) => {
