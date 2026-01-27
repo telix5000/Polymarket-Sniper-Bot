@@ -868,7 +868,8 @@ async function sellPosition(
   if (!state.client) return false;
   
   logger.info(`🔄 [SELL] ${position.outcome}`);
-  logger.info(`   Pathway: Standard sell (1% slippage protection)`);
+  logger.info(`   Pathway: Standard sell (smart sell with slippage protection)`);
+  
   // Check live trading mode
   if (!state.liveTrading) {
     // Return true for simulation - this mirrors the behavior of buy() function.
@@ -884,19 +885,12 @@ async function sellPosition(
     return true;
   }
   
-  logger.info(`🔄 Selling ${position.outcome}`);
   logger.info(`   Shares: ${position.size.toFixed(2)}`);
   logger.info(`   Value: $${position.value.toFixed(2)}`);
   logger.info(`   P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%`);
   logger.info(`   Reason: ${reason}`);
   
   try {
-    // Get orderbook
-    const book = await state.client.getOrderBook(position.tokenId);
-    if (!book?.bids?.length) {
-      logger.warn(`❌ Sell failed: NO_BIDS (no buyers in orderbook)`);
-      logger.info(`   Tip: Wait for market activity or check if market is resolved`);
-      return false;
     // Configure smart sell based on position state
     const config: SmartSellConfig = {
       logger,
@@ -909,25 +903,6 @@ async function sellPosition(
       logger.info(`   ⚠️ Stop-loss mode: allowing ${SELL.LOSS_SLIPPAGE_PCT}% slippage`);
     }
     
-    // Minimum price check (allow 1% slippage)
-    const minPrice = position.avgPrice * 0.99;
-    if (bestBid < minPrice) {
-      logger.warn(`❌ Sell failed: PRICE_TOO_LOW`);
-      logger.warn(`   Best bid: ${(bestBid * 100).toFixed(0)}¢ < Min acceptable: ${(minPrice * 100).toFixed(0)}¢`);
-      logger.info(`   Protection: 1% slippage (entry was ${(position.avgPrice * 100).toFixed(0)}¢)`);
-      logger.info(`   Tip: Wait for better liquidity or use emergency mode if needed`);
-      return false;
-    }
-
-    logger.info(`   Best bid: ${(bestBid * 100).toFixed(0)}¢ (acceptable, min ${(minPrice * 100).toFixed(0)}¢)`);
-
-    // Create and sign SELL order (THIS IS THE CRITICAL PART!)
-    const signed = await state.client.createMarketOrder({
-      side: Side.SELL,  // ← This is what makes it a SELL
-      tokenID: position.tokenId,
-      amount: position.size,
-      price: bestBid,
-    });
     // If position is near resolution ($0.95+), use tighter slippage
     if (position.curPrice >= SELL.HIGH_PRICE_THRESHOLD) {
       config.maxSlippagePct = SELL.HIGH_PRICE_SLIPPAGE_PCT;
@@ -959,7 +934,6 @@ async function sellPosition(
       
       return true;
     } else {
-      logger.warn(`❌ Sell failed: ${resp.errorMsg || 'ORDER_FAILED'}`);
       logger.warn(`❌ Sell failed: ${result.reason}`);
       
       // Provide helpful context on why the sell failed
@@ -967,6 +941,7 @@ async function sellPosition(
         logger.warn(`   Best bid: ${(result.analysis.bestBid * 100).toFixed(1)}¢`);
         logger.warn(`   Expected slippage: ${result.analysis.expectedSlippagePct.toFixed(2)}%`);
         logger.warn(`   Liquidity: $${result.analysis.liquidityAtSlippage.toFixed(2)}`);
+        logger.info(`   Tip: Wait for better liquidity or consider emergency mode if needed`);
         // Note: we skip calling getSellRecommendation here to avoid
         // an additional orderbook fetch; the above analysis already explains
         // why the sell failed.
