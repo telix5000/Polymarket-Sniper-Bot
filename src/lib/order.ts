@@ -6,12 +6,16 @@
  * - amount = number of shares to buy/sell
  * - price = limit price for the order
  *
- * Uses Fill-Or-Kill (FOK) order type to ensure orders fill completely or not at all.
+ * Supports both FOK (Fill-Or-Kill) and GTC (Good-Til-Cancelled) order types:
+ * - FOK: Immediate fill or nothing. Orders do NOT sit on orderbook.
+ * - GTC: Limit orders that post to orderbook and wait until filled.
+ *
+ * Use BUY_ORDER_TYPE env variable to control order type (default: FOK).
  */
 
 import type { ClobClient } from "@polymarket/clob-client";
 import { OrderType, Side } from "@polymarket/clob-client";
-import { ORDER } from "./constants";
+import { ORDER, BUY } from "./constants";
 import type { OrderSide, OrderOutcome, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
 import { isCloudflareBlock, formatErrorForLog } from "./error-handling";
@@ -43,6 +47,12 @@ export interface PostOrderInput {
    * For BUY orders, this parameter is ignored.
    */
   shares?: number;
+  /**
+   * Optional: Order type override. If not provided, uses BUY_ORDER_TYPE env for BUY orders.
+   * - "FOK": Fill-Or-Kill - immediate execution only, does NOT sit on orderbook
+   * - "GTC": Good-Til-Cancelled - posts limit order to orderbook, waits for fill
+   */
+  orderType?: "FOK" | "GTC";
 }
 
 /**
@@ -52,17 +62,23 @@ export interface PostOrderInput {
  * - For BUY: uses orderbook.asks
  * - For SELL: uses orderbook.bids (CORRECT!)
  * - If maxAcceptablePrice undefined → sells at ANY price (NUCLEAR mode)
- * - Uses FOK (Fill-or-Kill) for immediate execution
  *
- * Calculates the number of shares based on sizeUsd and current orderbook price,
- * then executes the order using Fill-Or-Kill (FOK) execution.
+ * Order Types:
+ * - FOK (Fill-or-Kill): Immediate execution or fail. Does NOT wait on orderbook.
+ * - GTC (Good-Til-Cancelled): Posts limit order, WAITS on orderbook until filled.
+ *
+ * IMPORTANT: FOK orders do NOT "sit there until filled" - they are instant or cancelled!
+ * Use GTC if you want a limit order that waits for your price.
  */
 export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
   const { client, tokenId, side, sizeUsd, logger, maxAcceptablePrice } = input;
+  
+  // Determine order type - use override, or default based on side
+  const orderType = input.orderType ?? (side === "BUY" ? BUY.DEFAULT_ORDER_TYPE : "FOK");
 
   // Check live trading
   if (!isLiveTradingEnabled()) {
-    logger?.warn?.(`[SIM] ${side} ${sizeUsd.toFixed(2)} USD - live trading disabled`);
+    logger?.warn?.(`[SIM] ${side} ${sizeUsd.toFixed(2)} USD (${orderType}) - live trading disabled`);
     return { success: true, reason: "SIMULATED" };
   }
 
@@ -223,7 +239,11 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           price: levelPrice,
         });
 
-        const response = await client.postOrder(signedOrder, OrderType.FOK);
+        // Use the appropriate order type
+        // FOK = Fill immediately or fail (does NOT sit on orderbook)
+        // GTC = Post as limit order and WAIT for fill (sits on orderbook)
+        const clobOrderType = orderType === "GTC" ? OrderType.GTC : OrderType.FOK;
+        const response = await client.postOrder(signedOrder, clobOrderType);
 
         if (response.success) {
           const filledValue = amount * levelPrice;
@@ -235,6 +255,13 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
             remainingShares -= amount;
           }
           retryCount = 0; // Reset retry count on success
+          
+          // For GTC orders, the order might be posted but not filled yet
+          // Return success with orderId for tracking
+          if (orderType === "GTC") {
+            const orderIdForLog = (response as any).orderId || (response as any).orderHashes?.[0] || 'unknown';
+            logger?.info?.(`GTC ${side} order posted: ${orderIdForLog} @ ${(levelPrice * 100).toFixed(1)}¢`);
+          }
         } else {
           retryCount++;
           // Extract clean error message from response
@@ -362,3 +389,187 @@ export function clearCooldowns(): void {
   inFlight.clear();
   marketCooldown.clear();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GTC ORDER TRACKING - Monitor and cancel stale/unfavorable GTC orders
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Tracked GTC order for monitoring and potential cancellation
+ */
+export interface TrackedGtcOrder {
+  orderId: string;
+  tokenId: string;
+  side: OrderSide;
+  price: number;           // Price the order was placed at
+  sizeUsd: number;         // Original order size in USD
+  createdAt: number;       // Timestamp when order was placed
+  expiresAt: number;       // When to auto-cancel (internal timeout)
+  reason: string;          // Why this order was placed (e.g., "whale_copy", "deviance_arb")
+}
+
+/**
+ * GTC Order Tracker - Monitors open GTC orders and cancels them when appropriate
+ * 
+ * CRITICAL: GTC orders sit on the orderbook and can fill at any time!
+ * We need to monitor them and cancel when:
+ * - Price drifts too far from our target (market moved against us)
+ * - Order is too old (conditions may have changed)
+ * - Whale flow reverses (our thesis is now wrong)
+ * - We want to reposition at a better price
+ */
+export class GtcOrderTracker {
+  private orders: Map<string, TrackedGtcOrder> = new Map();
+  private readonly maxPriceDriftPct: number;
+  private readonly defaultExpiryMs: number;
+
+  constructor(options?: { maxPriceDriftPct?: number; defaultExpiryMs?: number }) {
+    // Cancel GTC if price drifts more than 3% from our order price
+    this.maxPriceDriftPct = options?.maxPriceDriftPct ?? 3;
+    // Default expiry: 1 hour (can be overridden per-order)
+    this.defaultExpiryMs = options?.defaultExpiryMs ?? BUY.GTC_EXPIRATION_SECONDS * 1000;
+  }
+
+  /**
+   * Track a new GTC order
+   */
+  track(order: Omit<TrackedGtcOrder, "createdAt" | "expiresAt"> & { expiresAt?: number }): void {
+    const now = Date.now();
+    this.orders.set(order.orderId, {
+      ...order,
+      createdAt: now,
+      expiresAt: order.expiresAt ?? now + this.defaultExpiryMs,
+    });
+    console.log(`📋 Tracking GTC ${order.side}: ${order.orderId.slice(0, 12)}... @ ${(order.price * 100).toFixed(1)}¢`);
+  }
+
+  /**
+   * Stop tracking an order (filled or cancelled)
+   */
+  untrack(orderId: string): void {
+    if (this.orders.delete(orderId)) {
+      console.log(`📋 Untracked GTC order: ${orderId.slice(0, 12)}...`);
+    }
+  }
+
+  /**
+   * Get all tracked orders
+   */
+  getOrders(): TrackedGtcOrder[] {
+    return Array.from(this.orders.values());
+  }
+
+  /**
+   * Get orders for a specific token
+   */
+  getOrdersForToken(tokenId: string): TrackedGtcOrder[] {
+    return this.getOrders().filter(o => o.tokenId === tokenId);
+  }
+
+  /**
+   * Check which orders should be cancelled based on current conditions
+   * 
+   * @param currentPrices - Map of tokenId → current market price
+   * @returns Array of orderIds that should be cancelled
+   */
+  checkForCancellations(currentPrices: Map<string, number>): TrackedGtcOrder[] {
+    const now = Date.now();
+    const toCancel: TrackedGtcOrder[] = [];
+
+    for (const order of this.orders.values()) {
+      // Check 1: Time expiry
+      if (now >= order.expiresAt) {
+        console.log(`⏰ GTC order expired: ${order.orderId.slice(0, 12)}... (${order.side} @ ${(order.price * 100).toFixed(1)}¢)`);
+        toCancel.push(order);
+        continue;
+      }
+
+      // Check 2: Price drift
+      const currentPrice = currentPrices.get(order.tokenId);
+      if (currentPrice !== undefined) {
+        const driftPct = Math.abs((currentPrice - order.price) / order.price) * 100;
+        
+        if (driftPct > this.maxPriceDriftPct) {
+          // For BUY orders: cancel if price went UP significantly (we'd overpay)
+          // For SELL orders: cancel if price went DOWN significantly (we'd undersell)
+          const priceWentUp = currentPrice > order.price;
+          const shouldCancel = (order.side === "BUY" && priceWentUp) || 
+                               (order.side === "SELL" && !priceWentUp);
+          
+          if (shouldCancel) {
+            console.log(
+              `📉 GTC order price drifted: ${order.orderId.slice(0, 12)}... ` +
+              `${order.side} @ ${(order.price * 100).toFixed(1)}¢ → now ${(currentPrice * 100).toFixed(1)}¢ ` +
+              `(${driftPct.toFixed(1)}% drift)`
+            );
+            toCancel.push(order);
+          }
+        }
+      }
+    }
+
+    return toCancel;
+  }
+
+  /**
+   * Cancel orders via CLOB client
+   * 
+   * @param client - CLOB client for cancellation
+   * @param orders - Orders to cancel
+   * @returns Number of successfully cancelled orders
+   */
+  async cancelOrders(client: ClobClient, orders: TrackedGtcOrder[]): Promise<number> {
+    if (orders.length === 0) return 0;
+
+    try {
+      // Use batch cancel API with order IDs
+      const orderIds = orders.map(o => o.orderId);
+      await client.cancelOrders(orderIds);
+      
+      // Untrack all cancelled orders
+      for (const order of orders) {
+        this.untrack(order.orderId);
+        console.log(`✅ Cancelled GTC: ${order.orderId.slice(0, 12)}... (${order.side} @ ${(order.price * 100).toFixed(1)}¢)`);
+      }
+      
+      return orders.length;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`⚠️ Failed to cancel GTC orders: ${msg}`);
+      
+      // Try to untrack orders that might already be filled/cancelled
+      for (const order of orders) {
+        this.untrack(order.orderId);
+      }
+      
+      return 0;
+    }
+  }
+
+  /**
+   * Cancel all orders for a token (e.g., when whale flow reverses)
+   */
+  async cancelOrdersForToken(client: ClobClient, tokenId: string, reason: string): Promise<number> {
+    const orders = this.getOrdersForToken(tokenId);
+    if (orders.length > 0) {
+      console.log(`🔄 Cancelling ${orders.length} GTC orders for token ${tokenId.slice(0, 8)}... (${reason})`);
+    }
+    return this.cancelOrders(client, orders);
+  }
+
+  /**
+   * Get summary stats for logging
+   */
+  getStats(): { total: number; buys: number; sells: number; totalValueUsd: number } {
+    const orders = this.getOrders();
+    return {
+      total: orders.length,
+      buys: orders.filter(o => o.side === "BUY").length,
+      sells: orders.filter(o => o.side === "SELL").length,
+      totalValueUsd: orders.reduce((sum, o) => sum + o.sizeUsd, 0),
+    };
+  }
+}
+
+// Global GTC order tracker instance
+export const gtcOrderTracker = new GtcOrderTracker();

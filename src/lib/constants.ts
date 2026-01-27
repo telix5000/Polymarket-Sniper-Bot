@@ -59,6 +59,49 @@ export const ORDER = {
 } as const;
 
 /**
+ * Buy Order Settings
+ *
+ * ORDER TYPE DIFFERENCES:
+ *
+ * FOK (Fill-Or-Kill) - DEFAULT:
+ *   - Order fills IMMEDIATELY and COMPLETELY, or is cancelled
+ *   - Best for: Fast-moving markets, whale copy trades
+ *   - Risk: May miss opportunities if price moves
+ *   - DOES NOT sit on orderbook - instant execution only
+ *
+ * GTC (Good-Til-Cancelled) - LIMIT ORDER:
+ *   - Order posts to orderbook and WAITS until filled
+ *   - Best for: Getting specific price, patient entry
+ *   - Risk: May never fill if price moves away
+ *   - SITS on orderbook until filled, cancelled, or expired
+ *
+ * CRITICAL: FOK orders do NOT "sit there until filled" - they either
+ * fill instantly or fail. Use GTC if you want a limit order that waits!
+ *
+ * All values can be overridden via environment variables.
+ */
+export const BUY = {
+  // Default order type for buys: "FOK" (Fill-Or-Kill) or "GTC" (Good-Til-Cancelled)
+  // FOK = aggressive, instant fill or nothing (default for whale-copy strategy)
+  // GTC = patient, posts limit order and waits for price
+  DEFAULT_ORDER_TYPE: envStr<"FOK" | "GTC">("BUY_ORDER_TYPE", "FOK", [
+    "FOK",
+    "GTC",
+  ]),
+
+  // For GTC orders, default expiration in seconds (1 hour default)
+  // Shorter than SELL because market conditions change faster for entries
+  GTC_EXPIRATION_SECONDS: envNum("BUY_GTC_EXPIRATION_SECONDS", 3600),
+
+  // Default slippage tolerance for BUY orders (percentage, e.g., 2 = 2%)
+  // Only used with FOK orders - GTC orders use exact price
+  DEFAULT_SLIPPAGE_PCT: envNum("BUY_DEFAULT_SLIPPAGE_PCT", 2),
+
+  // Maximum slippage allowed even for urgent buys (e.g., 5 = 5%)
+  MAX_SLIPPAGE_PCT: envNum("BUY_MAX_SLIPPAGE_PCT", 5),
+} as const;
+
+/**
  * Sell Order Settings - Best practices from Polymarket docs and community
  *
  * These protect against losing money to bad bids by:
