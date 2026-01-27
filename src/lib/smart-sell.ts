@@ -385,7 +385,8 @@ export async function smartSell(
       // The API returns success=true when the order is accepted, but FOK orders may not fill
       // Check the status field and takingAmount/makingAmount to confirm actual fill
       if (orderType === "FOK") {
-        const status = respAny?.status?.toUpperCase?.() || "";
+        const rawStatus = respAny?.status;
+        const status = typeof rawStatus === "string" ? rawStatus.toUpperCase() : "";
         const takingAmount = parseFloat(respAny?.takingAmount || "0");
         const makingAmount = parseFloat(respAny?.makingAmount || "0");
         
@@ -395,16 +396,27 @@ export async function smartSell(
         const isMatched = status === "MATCHED" || status === "FILLED";
         const hasFilledAmount = takingAmount > 0 || makingAmount > 0;
         
-        // If we have status info, use it to determine success
-        // If status is explicitly unmatched or amounts are 0 when we expected a fill, it failed
-        if (status && !isMatched) {
+        // Track what info we have from the response
+        const hasStatusInfo = typeof rawStatus === "string" && rawStatus.length > 0;
+        const hasAmountInfo =
+          respAny?.takingAmount !== undefined || respAny?.makingAmount !== undefined;
+        
+        // If we have status info and it's not matched, fail
+        if (hasStatusInfo && !isMatched) {
           logger?.warn?.(`⚠️ FOK order not filled (status: ${status})`);
           return { success: false, reason: "FOK_NOT_FILLED", analysis };
         }
         
         // If we have amount info and it shows no fill, fail
-        if (respAny?.takingAmount !== undefined && !hasFilledAmount) {
+        if (hasAmountInfo && !hasFilledAmount) {
           logger?.warn?.(`⚠️ FOK order not filled (zero amount)`);
+          return { success: false, reason: "FOK_NOT_FILLED", analysis };
+        }
+        
+        // If we have neither status nor amount information, we cannot confirm a fill.
+        // For FOK orders, treat missing evidence as not filled rather than assuming success.
+        if (!hasStatusInfo && !hasAmountInfo) {
+          logger?.warn?.(`⚠️ FOK order response missing fill evidence (no status or amounts)`);
           return { success: false, reason: "FOK_NOT_FILLED", analysis };
         }
       }
@@ -423,8 +435,11 @@ export async function smartSell(
         success: true,
         filledUsd,
         avgPrice: orderPrice,
-        // API returns orderID (capital ID) per types.d.ts OrderResponse interface
-        orderId: respAny?.orderID || respAny?.orderHashes?.[0],
+        // Normalise possible order id fields from API and fall back to first order hash
+        orderId:
+          respAny?.orderId ??
+          respAny?.orderID ??
+          respAny?.orderHashes?.[0],
         analysis,
         actualPrice: orderPrice,
         actualSlippagePct: expectedSlippage,
