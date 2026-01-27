@@ -17,17 +17,13 @@ import {
   calculateEffectiveBankroll,
   calculateTradeSize,
   type ChurnConfig,
-} from "../src/churn/config";
-
-import {
   EvTracker,
   calculatePnlCents,
   calculatePnlUsd,
   createTradeResult,
-} from "../src/churn/ev-metrics";
-
-import { PositionManager } from "../src/churn/state-machine";
-import { DecisionEngine } from "../src/churn/decision-engine";
+  PositionManager,
+  DecisionEngine,
+} from "../src/churn-start";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TEST CONFIG
