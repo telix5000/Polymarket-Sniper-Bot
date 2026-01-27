@@ -64,6 +64,13 @@ import {
   invalidatePositions,
   smartSell,
   type Position,
+  // On-chain event monitoring (FAST - blockchain speed!)
+  OnChainMonitor,
+  createOnChainMonitorConfig,
+  type OnChainTradeEvent,
+  type OnChainMonitorConfig,
+  type PositionChangeEvent,
+  type OnChainPriceUpdate,
 } from "./lib";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -181,6 +188,11 @@ interface ChurnConfig {
   polReserveMaxSwapUsd: number;
   polReserveCheckIntervalMin: number;
   polReserveSlippagePct: number;
+
+  // On-Chain Monitoring (Infura WebSocket)
+  onchainMonitorEnabled: boolean;
+  onchainMinWhaleTradeUsd: number;
+  infuraTier: "core" | "developer" | "team" | "growth";
 }
 
 function loadConfig(): ChurnConfig {
@@ -283,7 +295,27 @@ function loadConfig(): ChurnConfig {
     polReserveMaxSwapUsd: envNum("POL_RESERVE_MAX_SWAP_USD", 10),  // Max USDC per swap
     polReserveCheckIntervalMin: envNum("POL_RESERVE_CHECK_INTERVAL_MIN", 5),  // Check every 5 min
     polReserveSlippagePct: 3,
+
+    // On-Chain Monitoring - Watch CTF Exchange contract via Infura WebSocket
+    // This provides faster whale detection than API polling (blockchain-level speed)
+    // Requires Infura RPC URL with WebSocket support
+    onchainMonitorEnabled: envBool("ONCHAIN_MONITOR_ENABLED", true),
+    onchainMinWhaleTradeUsd: envNum("ONCHAIN_MIN_WHALE_TRADE_USD", 500),  // Min trade size to track
+    // Infura tier plan: "core" (free), "developer" ($50/mo), "team" ($225/mo), "growth" (enterprise)
+    // Affects rate limiting to avoid hitting API caps
+    infuraTier: parseInfuraTierEnv(process.env.INFURA_TIER),
   };
+}
+
+/**
+ * Parse Infura tier from environment variable
+ */
+function parseInfuraTierEnv(tierStr?: string): "core" | "developer" | "team" | "growth" {
+  const normalized = (tierStr || "").toLowerCase().trim();
+  if (normalized === "developer" || normalized === "dev") return "developer";
+  if (normalized === "team") return "team";
+  if (normalized === "growth" || normalized === "enterprise") return "growth";
+  return "core"; // Default to free tier
 }
 
 interface ValidationError {
@@ -807,6 +839,8 @@ class BiasAccumulator {
 
   /**
    * Add trades and maintain window
+   * Deduplicates by txHash+tokenId+wallet to prevent counting the same trade twice
+   * (e.g., from both on-chain events and API polling)
    */
   private addTrades(trades: LeaderboardTrade[]): void {
     const now = Date.now();
@@ -814,8 +848,20 @@ class BiasAccumulator {
 
     for (const trade of trades) {
       const existing = this.trades.get(trade.tokenId) || [];
-      existing.push(trade);
-      this.trades.set(trade.tokenId, existing);
+      
+      // Deduplication: check if this trade already exists
+      // Use a composite key of timestamp + wallet + size to identify duplicates
+      // (On-chain and API trades may have slightly different timestamps)
+      const isDuplicate = existing.some(t => 
+        t.wallet.toLowerCase() === trade.wallet.toLowerCase() &&
+        Math.abs(t.sizeUsd - trade.sizeUsd) < 0.01 && // Same size (within rounding)
+        Math.abs(t.timestamp - trade.timestamp) < 60000 // Within 1 minute
+      );
+      
+      if (!isDuplicate) {
+        existing.push(trade);
+        this.trades.set(trade.tokenId, existing);
+      }
     }
 
     // Prune old trades from all tokens
@@ -964,6 +1010,14 @@ class BiasAccumulator {
    */
   getTrackedWalletCount(): number {
     return this.leaderboardWallets.size;
+  }
+
+  /**
+   * Get the set of tracked whale wallets (for on-chain monitoring)
+   * Returns a reference to the internal Set - updates automatically when leaderboard refreshes
+   */
+  getWhaleWallets(): Set<string> {
+    return this.leaderboardWallets;
   }
 
   /**
@@ -2316,6 +2370,7 @@ class ChurnEngine {
   private positionManager: PositionManager;
   private decisionEngine: DecisionEngine;
   private executionEngine: ExecutionEngine;
+  private onchainMonitor: OnChainMonitor | null = null;
 
   private client: any = null;
   private wallet: any = null;
@@ -2507,6 +2562,17 @@ class ChurnEngine {
       }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // ON-CHAIN MONITORING - Real-time whale trade detection via WebSocket
+    // Runs completely in PARALLEL - does NOT block the main loop
+    // ═══════════════════════════════════════════════════════════════════════
+    if (this.config.onchainMonitorEnabled) {
+      // Fire and forget - don't await, let it run in parallel
+      this.initializeOnChainMonitor().catch((err) => {
+        console.warn(`⚠️ On-chain monitor background init failed: ${err instanceof Error ? err.message : err}`);
+      });
+    }
+
     // Send startup notification
     if (this.config.telegramBotToken) {
       await sendTelegram(
@@ -2519,6 +2585,109 @@ class ChurnEngine {
     }
 
     return true;
+  }
+
+  /**
+   * Initialize on-chain monitor for real-time whale detection AND position monitoring
+   * Connects to CTF Exchange contract via Infura WebSocket
+   * 
+   * RUNS IN PARALLEL - WebSocket events fire independently of main loop
+   * This gives us blockchain-speed detection while API polling continues
+   * 
+   * DATA PRIORITY: On-chain signals are FASTER than API and take precedence!
+   */
+  private async initializeOnChainMonitor(): Promise<void> {
+    try {
+      // Fetch initial leaderboard in parallel with other startup tasks
+      // The BiasAccumulator will update the whale wallets Set
+      await this.biasAccumulator.refreshLeaderboard();
+      
+      // Create on-chain monitor config - shares the whale wallets Set reference
+      // When BiasAccumulator refreshes wallets, the monitor automatically sees updates
+      // Also pass our wallet address for position monitoring
+      const monitorConfig = createOnChainMonitorConfig(
+        this.config.rpcUrl,
+        this.biasAccumulator.getWhaleWallets(), // Shared reference - auto-updates!
+        this.address, // Our wallet - for position monitoring
+        {
+          enabled: this.config.onchainMonitorEnabled,
+          minWhaleTradeUsd: this.config.onchainMinWhaleTradeUsd,
+          infuraTier: this.config.infuraTier,
+        }
+      );
+
+      this.onchainMonitor = new OnChainMonitor(monitorConfig);
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // WHALE TRADE CALLBACK - On-chain signals take PRIORITY over API!
+      // Deduplication is handled by BiasAccumulator.addTrades()
+      // ═══════════════════════════════════════════════════════════════════════
+      this.onchainMonitor.onWhaleTrade((trade) => {
+        // Only record BUY trades (matching existing bias accumulator logic)
+        if (trade.side === "BUY") {
+          // Determine which address is the whale with defensive validation
+          const whaleWallets = this.biasAccumulator.getWhaleWallets();
+          const makerLower = trade.maker.toLowerCase();
+          const takerLower = trade.taker.toLowerCase();
+
+          let whaleWallet: string | null = null;
+          if (whaleWallets.has(makerLower)) {
+            whaleWallet = trade.maker;
+          } else if (whaleWallets.has(takerLower)) {
+            whaleWallet = trade.taker;
+          } else {
+            // Defensive: on-chain monitor emitted a whale trade but neither
+            // participant is currently in the whale set. This can happen due
+            // to leaderboard refresh timing. Skip to avoid misattributing.
+            return;
+          }
+
+          // Feed to bias accumulator - this is the speed advantage!
+          // On-chain signals arrive BEFORE Polymarket API reports them
+          // Deduplication prevents double-counting with API data
+          this.biasAccumulator.recordTrade({
+            tokenId: trade.tokenId,
+            wallet: whaleWallet,
+            side: "BUY",
+            sizeUsd: trade.sizeUsd,
+            timestamp: trade.timestamp,
+          });
+          
+          console.log(`⚡ On-chain → Bias | Block #${trade.blockNumber} | $${trade.sizeUsd.toFixed(0)} BUY | PRIORITY SIGNAL`);
+        }
+      });
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // POSITION CHANGE CALLBACK - Real-time position monitoring
+      // See our fills instantly at blockchain level!
+      // ═══════════════════════════════════════════════════════════════════════
+      this.onchainMonitor.onPositionChange((change) => {
+        if (change.isIncoming) {
+          // We received tokens - likely an order filled!
+          console.log(`⚡ Position FILLED | +${change.amountFormatted.toFixed(2)} tokens | Block #${change.blockNumber}`);
+          
+          // Invalidate position cache to force refresh
+          invalidatePositions();
+        } else {
+          // We sent tokens - we sold or transferred
+          console.log(`⚡ Position SOLD | -${change.amountFormatted.toFixed(2)} tokens | Block #${change.blockNumber}`);
+          
+          // Invalidate position cache
+          invalidatePositions();
+        }
+      });
+
+      // Start the monitor - WebSocket runs in background, events fire in parallel
+      const started = await this.onchainMonitor.start();
+      if (started) {
+        const stats = this.onchainMonitor.getStats();
+        console.log(`📡 On-chain monitor: Infura ${stats.infuraTier} tier | ${stats.trackedWallets} whales | Position monitoring: ${stats.monitoringOwnPositions ? 'ON' : 'OFF'}`);
+        console.log(`📡 Data priority: ON-CHAIN > API (blockchain-speed edge)`);
+      }
+    } catch (err) {
+      console.warn(`⚠️ On-chain monitor init failed: ${err instanceof Error ? err.message : err}`);
+      console.warn(`   Falling back to API polling only (still works, just slower)`);
+    }
   }
 
   /**
