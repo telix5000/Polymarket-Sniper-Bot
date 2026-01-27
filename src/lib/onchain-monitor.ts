@@ -112,72 +112,47 @@ export interface OnChainPriceUpdate {
  */
 export type InfuraTier = "core" | "developer" | "team" | "growth";
 
+/**
+ * Infura tier limits - Reference values for documentation
+ * 
+ * NOTE: WebSocket event subscriptions are the primary mechanism and don't
+ * consume credits per event (only per subscription). These limits are
+ * documented for reference when implementing future polling fallbacks.
+ * 
+ * Current implementation uses WebSocket subscriptions which are very
+ * credit-efficient (10 credits per subscription, events are FREE).
+ */
 export interface InfuraTierLimits {
   creditsPerSecond: number;
   creditsPerDay: number;
-  /** 
-   * Calculated for MAXIMUM throughput based on daily allocation
-   * Formula: (credits/day) / 86400 sec / ~20 credits per typical call
-   */
-  maxCallsPerSecond: number;
-  /** Minimum delay between calls in ms to hit max throughput */
-  minCallDelayMs: number;
-  /** Max concurrent WebSocket subscriptions */
-  maxWsSubscriptions: number;
 }
 
 /**
- * FULL BORE LIMITS - Use every credit we're paying for!
+ * Infura tier reference limits
  * 
- * Calculation methodology:
- * - Daily credits spread across 86,400 seconds
- * - Average call cost ~20 credits (mix of getBlock, getLogs, etc.)
- * - WebSocket subscriptions are CHEAP (10 credits once) - events are FREE
- * - We optimize for sustained throughput, not just burst
+ * WebSocket subscriptions are CHEAP (10 credits once) - events are FREE!
+ * This is why we use WebSocket for monitoring instead of polling.
  */
 export const INFURA_TIER_LIMITS: Record<InfuraTier, InfuraTierLimits> = {
   // FREE TIER: 3M credits/day, 500/sec burst
-  // Sustained: 3,000,000 / 86,400 = 34.7 credits/sec
-  // At ~20 credits/call = 1.7 calls/sec sustained, but can burst higher
   core: {
     creditsPerSecond: 500,
     creditsPerDay: 3_000_000,
-    maxCallsPerSecond: 25,      // Use burst capacity, stay under 500 credits/sec
-    minCallDelayMs: 40,         // 25 req/sec - aggressive but sustainable
-    maxWsSubscriptions: 10,     // WebSocket subs are cheap, use them!
   },
-  
   // DEVELOPER: 15M credits/day, 4,000/sec burst
-  // Sustained: 15,000,000 / 86,400 = 173.6 credits/sec
-  // At ~20 credits/call = 8.7 calls/sec sustained, can burst to 200
   developer: {
     creditsPerSecond: 4_000,
     creditsPerDay: 15_000_000,
-    maxCallsPerSecond: 200,     // Use burst! 200 * 20 = 4000 credits/sec
-    minCallDelayMs: 5,          // 200 req/sec - FULL BORE
-    maxWsSubscriptions: 50,     // More subs = more parallel monitoring
   },
-  
   // TEAM: 75M credits/day, 40,000/sec burst
-  // Sustained: 75,000,000 / 86,400 = 868 credits/sec
-  // At ~20 credits/call = 43 calls/sec sustained, can burst to 2000
   team: {
     creditsPerSecond: 40_000,
     creditsPerDay: 75_000_000,
-    maxCallsPerSecond: 2000,    // Use burst! 2000 * 20 = 40000 credits/sec
-    minCallDelayMs: 1,          // 1000 req/sec - MAXIMUM SPEED
-    maxWsSubscriptions: 200,    // Heavy parallel monitoring
   },
-  
   // GROWTH/ENTERPRISE: 200M+ credits/day, 100,000/sec burst
-  // Sustained: 200,000,000 / 86,400 = 2,315 credits/sec
-  // At ~20 credits/call = 116 calls/sec sustained, can burst to 5000
   growth: {
     creditsPerSecond: 100_000,
     creditsPerDay: 200_000_000,
-    maxCallsPerSecond: 5000,    // Use burst! 5000 * 20 = 100000 credits/sec
-    minCallDelayMs: 0,          // NO DELAY - UNLIMITED SPEED
-    maxWsSubscriptions: 1000,   // Maximum parallel monitoring
   },
 };
 
@@ -240,6 +215,7 @@ export class OnChainMonitor {
   private config: OnChainMonitorConfig;
   private wsProvider: ethers.WebSocketProvider | null = null;
   private exchangeContract: ethers.Contract | null = null;
+  private negRiskExchangeContract: ethers.Contract | null = null;
   private ctfContract: ethers.Contract | null = null;
   private whaleTradeCallbacks: WhaleTradeCallback[] = [];
   private positionChangeCallbacks: PositionChangeCallback[] = [];
@@ -411,6 +387,7 @@ export class OnChainMonitor {
 
     // ═══════════════════════════════════════════════════════════════════════
     // SUBSCRIBE TO CTF EXCHANGE - Whale trade detection
+    // Monitor BOTH standard and negative risk exchanges to catch ALL trades
     // ═══════════════════════════════════════════════════════════════════════
     this.exchangeContract = new ethers.Contract(
       POLYGON.CTF_EXCHANGE,
@@ -419,9 +396,17 @@ export class OnChainMonitor {
     );
     this.exchangeContract.on("OrderFilled", this.handleOrderFilled.bind(this));
 
+    // Also subscribe to NEG_RISK_CTF_EXCHANGE for negative risk markets
+    this.negRiskExchangeContract = new ethers.Contract(
+      POLYGON.NEG_RISK_CTF_EXCHANGE,
+      CTF_EXCHANGE_ABI,
+      this.wsProvider
+    );
+    this.negRiskExchangeContract.on("OrderFilled", this.handleOrderFilled.bind(this));
+
     // ═══════════════════════════════════════════════════════════════════════
     // SUBSCRIBE TO CTF TOKEN - Our position monitoring (if wallet configured)
-    // This lets us see our position changes in real-time!
+    // Use filtered subscriptions to only receive events for our wallet
     // ═══════════════════════════════════════════════════════════════════════
     if (this.config.ourWallet) {
       this.ctfContract = new ethers.Contract(
@@ -429,12 +414,43 @@ export class OnChainMonitor {
         CTF_TOKEN_ABI,
         this.wsProvider
       );
-      
-      // Subscribe to TransferSingle and TransferBatch events
-      // Filter for transfers involving our wallet (from or to)
-      this.ctfContract.on("TransferSingle", this.handleTransferSingle.bind(this));
-      this.ctfContract.on("TransferBatch", this.handleTransferBatch.bind(this));
-      
+
+      const wallet = this.config.ourWallet;
+
+      // Subscribe to TransferSingle events involving our wallet
+      // Incoming transfers: to == wallet
+      const transferSingleIncomingFilter =
+        this.ctfContract.filters.TransferSingle(null, null, wallet);
+      this.ctfContract.on(
+        transferSingleIncomingFilter,
+        this.handleTransferSingle.bind(this)
+      );
+
+      // Outgoing transfers: from == wallet
+      const transferSingleOutgoingFilter =
+        this.ctfContract.filters.TransferSingle(null, wallet, null);
+      this.ctfContract.on(
+        transferSingleOutgoingFilter,
+        this.handleTransferSingle.bind(this)
+      );
+
+      // Subscribe to TransferBatch events involving our wallet
+      // Incoming transfers: to == wallet
+      const transferBatchIncomingFilter =
+        this.ctfContract.filters.TransferBatch(null, null, wallet);
+      this.ctfContract.on(
+        transferBatchIncomingFilter,
+        this.handleTransferBatch.bind(this)
+      );
+
+      // Outgoing transfers: from == wallet
+      const transferBatchOutgoingFilter =
+        this.ctfContract.filters.TransferBatch(null, wallet, null);
+      this.ctfContract.on(
+        transferBatchOutgoingFilter,
+        this.handleTransferBatch.bind(this)
+      );
+
       console.log(`📡 Position monitoring enabled for ${this.config.ourWallet.slice(0, 8)}...`);
     }
 
@@ -442,6 +458,7 @@ export class OnChainMonitor {
     this.reconnectAttempts = 0;
 
     console.log(`📡 Connected to CTF Exchange at ${POLYGON.CTF_EXCHANGE}`);
+    console.log(`📡 Connected to NEG_RISK Exchange at ${POLYGON.NEG_RISK_CTF_EXCHANGE}`);
   }
 
   private cleanup(): void {
@@ -453,6 +470,11 @@ export class OnChainMonitor {
     if (this.exchangeContract) {
       this.exchangeContract.removeAllListeners();
       this.exchangeContract = null;
+    }
+
+    if (this.negRiskExchangeContract) {
+      this.negRiskExchangeContract.removeAllListeners();
+      this.negRiskExchangeContract = null;
     }
 
     if (this.ctfContract) {
@@ -471,6 +493,7 @@ export class OnChainMonitor {
 
     if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
       console.error(`📡 Max reconnect attempts (${this.config.maxReconnectAttempts}) reached, giving up`);
+      this.cleanup(); // Ensure timer is cleared
       this.running = false;
       return;
     }
@@ -515,20 +538,28 @@ export class OnChainMonitor {
         return; // Not a whale trade
       }
 
-      // Parse trade details
-      // CTF Exchange: makerAssetId is the outcome token, takerAssetId is USDC (or vice versa)
-      // If maker is selling outcome tokens, makerAssetId is the token ID
-      // If taker is buying outcome tokens, takerAssetId is the token ID
+      // CTF Exchange: one asset is the outcome token, the other is USDC collateral.
+      // Protocol invariant: USDC collateral has asset ID 0n, outcome tokens are non-zero.
+      const USDC_ASSET_ID = 0n;
+      const isMakerUsdc = makerAssetId === USDC_ASSET_ID;
+      const isTakerUsdc = takerAssetId === USDC_ASSET_ID;
 
-      // Determine which is the outcome token (larger value = token ID)
-      // USDC has asset ID 0 or small value
-      const isOutcomeTokenMakerSide = makerAssetId > takerAssetId;
+      if (!isMakerUsdc && !isTakerUsdc) {
+        // Neither side is USDC – skip (might be a different trade type)
+        return;
+      }
+
+      if (isMakerUsdc && isTakerUsdc) {
+        // Both sides look like USDC – cannot determine outcome token
+        return;
+      }
+
+      const isOutcomeTokenMakerSide = !isMakerUsdc;
       const tokenId = isOutcomeTokenMakerSide
         ? makerAssetId.toString()
         : takerAssetId.toString();
 
       // Calculate trade size in USD (USDC has 6 decimals)
-      // The USD amount is on the opposite side of the outcome token
       const usdAmount = isOutcomeTokenMakerSide
         ? takerAmountFilled
         : makerAmountFilled;
@@ -550,22 +581,22 @@ export class OnChainMonitor {
       // Determine side from whale's perspective
       // If whale is maker and selling outcome tokens → SELL
       // If whale is taker and buying outcome tokens → BUY
+      // NOTE: If both are whales, we record from maker's perspective only
+      // to avoid double-counting. Whale-to-whale trades are counted once.
       let side: "BUY" | "SELL";
       let whaleWallet: string;
 
       if (isMakerWhale) {
-        // Maker provides makerAssetId
         side = isOutcomeTokenMakerSide ? "SELL" : "BUY";
         whaleWallet = maker;
       } else {
-        // Taker provides takerAssetId
         side = isOutcomeTokenMakerSide ? "BUY" : "SELL";
         whaleWallet = taker;
       }
 
-      // Get block timestamp
-      const block = await event.getBlock();
-      const timestamp = block ? block.timestamp * 1000 : Date.now();
+      // Use Date.now() for timestamp to avoid RPC call latency
+      // Block timestamp would require getBlock() which adds latency and credits
+      const timestamp = Date.now();
 
       const tradeEvent: OnChainTradeEvent = {
         tokenId,
@@ -577,7 +608,7 @@ export class OnChainMonitor {
         timestamp,
         txHash: event.transactionHash,
         blockNumber: event.blockNumber,
-        source: "onchain", // On-chain signals are FASTER and take priority!
+        source: "onchain",
       };
 
       console.log(
@@ -644,21 +675,23 @@ export class OnChainMonitor {
     amount: bigint,
     event: ethers.EventLog
   ): Promise<void> {
+    // Note: With filtered subscriptions, we only receive events for our wallet
+    // The filter ensures from==wallet OR to==wallet, so no additional check needed
     if (!this.config.ourWallet) return;
 
     const ourWalletLower = this.config.ourWallet.toLowerCase();
     const fromLower = from.toLowerCase();
     const toLower = to.toLowerCase();
 
-    // Check if this transfer involves our wallet
     const isIncoming = toLower === ourWalletLower;
     const isOutgoing = fromLower === ourWalletLower;
 
+    // Defensive check (should be guaranteed by filter)
     if (!isIncoming && !isOutgoing) return;
 
     try {
-      const block = await event.getBlock();
-      const timestamp = block ? block.timestamp * 1000 : Date.now();
+      // Use Date.now() to avoid RPC call latency from getBlock()
+      const timestamp = Date.now();
 
       const positionChange: PositionChangeEvent = {
         tokenId: tokenId.toString(),

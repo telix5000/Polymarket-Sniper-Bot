@@ -839,6 +839,8 @@ class BiasAccumulator {
 
   /**
    * Add trades and maintain window
+   * Deduplicates by txHash+tokenId+wallet to prevent counting the same trade twice
+   * (e.g., from both on-chain events and API polling)
    */
   private addTrades(trades: LeaderboardTrade[]): void {
     const now = Date.now();
@@ -846,8 +848,20 @@ class BiasAccumulator {
 
     for (const trade of trades) {
       const existing = this.trades.get(trade.tokenId) || [];
-      existing.push(trade);
-      this.trades.set(trade.tokenId, existing);
+      
+      // Deduplication: check if this trade already exists
+      // Use a composite key of timestamp + wallet + size to identify duplicates
+      // (On-chain and API trades may have slightly different timestamps)
+      const isDuplicate = existing.some(t => 
+        t.wallet.toLowerCase() === trade.wallet.toLowerCase() &&
+        Math.abs(t.sizeUsd - trade.sizeUsd) < 0.01 && // Same size (within rounding)
+        Math.abs(t.timestamp - trade.timestamp) < 60000 // Within 1 minute
+      );
+      
+      if (!isDuplicate) {
+        existing.push(trade);
+        this.trades.set(trade.tokenId, existing);
+      }
     }
 
     // Prune old trades from all tokens
@@ -2606,19 +2620,31 @@ class ChurnEngine {
 
       // ═══════════════════════════════════════════════════════════════════════
       // WHALE TRADE CALLBACK - On-chain signals take PRIORITY over API!
+      // Deduplication is handled by BiasAccumulator.addTrades()
       // ═══════════════════════════════════════════════════════════════════════
       this.onchainMonitor.onWhaleTrade((trade) => {
         // Only record BUY trades (matching existing bias accumulator logic)
         if (trade.side === "BUY") {
-          // Determine which address is the whale
+          // Determine which address is the whale with defensive validation
           const whaleWallets = this.biasAccumulator.getWhaleWallets();
-          const whaleWallet = whaleWallets.has(trade.maker.toLowerCase()) 
-            ? trade.maker 
-            : trade.taker;
+          const makerLower = trade.maker.toLowerCase();
+          const takerLower = trade.taker.toLowerCase();
+
+          let whaleWallet: string | null = null;
+          if (whaleWallets.has(makerLower)) {
+            whaleWallet = trade.maker;
+          } else if (whaleWallets.has(takerLower)) {
+            whaleWallet = trade.taker;
+          } else {
+            // Defensive: on-chain monitor emitted a whale trade but neither
+            // participant is currently in the whale set. This can happen due
+            // to leaderboard refresh timing. Skip to avoid misattributing.
+            return;
+          }
 
           // Feed to bias accumulator - this is the speed advantage!
           // On-chain signals arrive BEFORE Polymarket API reports them
-          // The bias accumulator now has the signal first, giving us an edge
+          // Deduplication prevents double-counting with API data
           this.biasAccumulator.recordTrade({
             tokenId: trade.tokenId,
             wallet: whaleWallet,
