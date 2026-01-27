@@ -313,6 +313,9 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     }
 
     if (totalFilled > 0) {
+      // Note: if totalFilled > 0 then totalShares must also be > 0 since
+      // totalFilled = sum(amount * price) and amount is always added to totalShares
+      // The conditional check is defensive programming for edge cases.
       return {
         success: true,
         filledUsd: totalFilled,

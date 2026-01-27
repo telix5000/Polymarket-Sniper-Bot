@@ -646,6 +646,9 @@ async function sellPosition(
   
   // Check live trading mode
   if (!state.liveTrading) {
+    // Return true for simulation - this mirrors the behavior of buy() function.
+    // In simulation mode, we log what would happen and return success to allow
+    // the bot cycle to continue normally without executing real trades.
     logger.info(
       `🔸 [SIM] SELL ${position.outcome} $${position.value.toFixed(2)} | ${reason}`,
     );
