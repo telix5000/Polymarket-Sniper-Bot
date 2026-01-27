@@ -520,6 +520,11 @@ export function analyzeMarketConditions(
  * IMPORTANT: The minPrice validation is applied to the orderbook's best bid.
  * Callers should pass a minPrice based on curPrice (current market price), 
  * NOT avgPrice (entry price), to allow selling positions that have lost value.
+/**
+ * Execute a sell order
+ * 
+ * NOTE: This function is used by processGreenExit() and processRedRecovery()
+ * for the scavenger mode. It is a core sell mechanism for this module.
  */
 async function executeSell(client: ClobClient, position: Position, minPrice: number): Promise<OrderResult> {
   try {
