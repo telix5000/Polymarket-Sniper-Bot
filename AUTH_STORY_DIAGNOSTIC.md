@@ -40,7 +40,7 @@
 1. WebSocket listens for OrderFilled events on CTF/NEG_RISK exchanges
 2. handleOrderFilled() processes each event
 3. Checks if maker OR taker is in whale set
-4. Filters by ONCHAIN_MIN_WHALE_TRADE_USD (default: $500)
+4. Filters by WHALE_TRADE_USD (default: $500)
 5. Fires onWhaleTrade callback
 ```
 
@@ -89,13 +89,13 @@
 **Hypothesis**: Whale trades ARE happening, but below $500 threshold
 
 **Evidence**:
-- `ONCHAIN_MIN_WHALE_TRADE_USD` defaults to 500 (src/lib/onchain-monitor.ts:921)
-- User wants `ONCHAIN_MIN_WHALE_TRADE_USD=100`
+- `WHALE_TRADE_USD` defaults to 500 (src/lib/onchain-monitor.ts:921)
+- User wants `WHALE_TRADE_USD=100`
 - Logs show "📦 API returned 8 positions" but NO on-chain trade events
 
 **Fix Required**:
 ```bash
-ONCHAIN_MIN_WHALE_TRADE_USD=100
+WHALE_TRADE_USD=100
 ```
 
 ### Issue 2: CONSERVATIVE Mode Too Strict 🚫
@@ -132,7 +132,7 @@ Add to `.env`:
 LIVE_TRADING=I_UNDERSTAND_THE_RISKS
 
 # Lower whale trade threshold
-ONCHAIN_MIN_WHALE_TRADE_USD=100
+WHALE_TRADE_USD=100
 
 # Enable aggressive copy mode (copy ANY whale buy immediately)
 COPY_ANY_WHALE_BUY=true
@@ -191,7 +191,7 @@ ORDER_TYPE=GTC
 
 | Phase | Status | Issue | Fix |
 |-------|--------|-------|-----|
-| On-chain monitor | ✓ Connected | Threshold too high ($500) | Set `ONCHAIN_MIN_WHALE_TRADE_USD=100` |
+| On-chain monitor | ✓ Connected | Threshold too high ($500) | Set `WHALE_TRADE_USD=100` |
 | Whale trade detection | ❌ No events | See above + possibly no whale activity | Lower threshold + wait longer |
 | Bias formation | ❌ Not triggered | Too strict (3 trades + $300) | Set `COPY_ANY_WHALE_BUY=true` |
 | Entry evaluation | ❌ Not reached | No LONG signals | See above fixes |
@@ -205,4 +205,4 @@ ORDER_TYPE=GTC
 
 **TERTIARY ISSUE**: Possibly live trading not enabled (can't confirm from logs).
 
-**RECOMMENDATION**: Apply all three config changes and monitor for 15-30 minutes. With `COPY_ANY_WHALE_BUY=true` and `ONCHAIN_MIN_WHALE_TRADE_USD=100`, should see first copy trade within 5-15 minutes if whales are active.
+**RECOMMENDATION**: Apply all three config changes and monitor for 15-30 minutes. With `COPY_ANY_WHALE_BUY=true` and `WHALE_TRADE_USD=100`, should see first copy trade within 5-15 minutes if whales are active.

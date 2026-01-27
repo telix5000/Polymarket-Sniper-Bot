@@ -157,14 +157,14 @@
       "required_changes": {
         "LIVE_TRADING": "I_UNDERSTAND_THE_RISKS",
         "COPY_ANY_WHALE_BUY": "true",
-        "ONCHAIN_MIN_WHALE_TRADE_USD": "100",
+        "WHALE_TRADE_USD": "100",
         "MAX_TRADE_USD": "5",
         "ORDER_TYPE": "GTC"
       },
       "explanation": {
         "LIVE_TRADING": "Enable actual order execution (not simulation)",
         "COPY_ANY_WHALE_BUY": "Copy immediately on 1 whale buy (not 3 trades + $300)",
-        "ONCHAIN_MIN_WHALE_TRADE_USD": "Detect whale trades >= $100 (not $500)",
+        "WHALE_TRADE_USD": "Detect whale trades >= $100 (not $500)",
         "MAX_TRADE_USD": "Small trade size for testing",
         "ORDER_TYPE": "Use GTC limit orders (optional)"
       }

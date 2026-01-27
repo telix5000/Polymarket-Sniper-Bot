@@ -10,7 +10,7 @@ LIVE_TRADING=I_UNDERSTAND_THE_RISKS
 COPY_ANY_WHALE_BUY=true
 
 # Lower whale detection threshold from $500 to $100
-ONCHAIN_MIN_WHALE_TRADE_USD=100
+WHALE_TRADE_USD=100
 
 # Smaller trade size for testing
 MAX_TRADE_USD=5
@@ -28,10 +28,10 @@ Then restart the bot.
 Your bot is connected and monitoring whale wallets correctly, but **three configuration issues** are preventing it from copying trades:
 
 ### Issue 1: Whale Trade Threshold Too High ❌
-- **Current**: `ONCHAIN_MIN_WHALE_TRADE_USD=500` (default)
+- **Current**: `WHALE_TRADE_USD=500` (default)
 - **Problem**: Only detects whale trades >= $500
 - **Your requirement**: Detect trades >= $100
-- **Fix**: Set `ONCHAIN_MIN_WHALE_TRADE_USD=100`
+- **Fix**: Set `WHALE_TRADE_USD=100`
 
 ### Issue 2: Too Conservative ❌
 - **Current**: `COPY_ANY_WHALE_BUY=false` (default)

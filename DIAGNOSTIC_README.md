@@ -13,7 +13,7 @@
 ```bash
 LIVE_TRADING=I_UNDERSTAND_THE_RISKS
 COPY_ANY_WHALE_BUY=true
-ONCHAIN_MIN_WHALE_TRADE_USD=100
+WHALE_TRADE_USD=100
 MAX_TRADE_USD=5
 ORDER_TYPE=GTC
 ```
@@ -109,7 +109,7 @@ Phase 6: Order Execution
 ## 📊 Root Cause Analysis
 
 ### Issue #1: Whale Trade Threshold Too High 🚫
-- **What**: `ONCHAIN_MIN_WHALE_TRADE_USD` defaults to $500
+- **What**: `WHALE_TRADE_USD` defaults to $500
 - **Problem**: User wants to detect trades >= $100
 - **Impact**: Whale trades exist but ignored (below threshold)
 - **Evidence**: No "⚡ On-chain → Bias" logs in 5+ minutes
@@ -178,7 +178,7 @@ biasMinTrades: 3,        // Requires 3 whale trades
 copyAnyWhaleBuy: false,  // Wait for confirmation
 
 // Recommended (AGGRESSIVE)
-ONCHAIN_MIN_WHALE_TRADE_USD=100  // Detect $100+ trades
+WHALE_TRADE_USD=100  // Detect $100+ trades
 COPY_ANY_WHALE_BUY=true          // Copy immediately
 ```
 

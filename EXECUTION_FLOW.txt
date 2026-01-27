@@ -16,7 +16,7 @@
 │   CHECK 1: Is maker OR taker in whale set?                                  │
 │            └─ If NO → Skip event                                            │
 │                                                                              │
-│   CHECK 2: Is trade >= ONCHAIN_MIN_WHALE_TRADE_USD?                         │
+│   CHECK 2: Is trade >= WHALE_TRADE_USD?                         │
 │            └─ Current: $500 (default)                                       │
 │            └─ User wants: $100                                              │
 │            └─ If trade < $500 → Skip event ❌ BLOCKING ISSUE #1             │
@@ -157,10 +157,10 @@
 
 BLOCKING ISSUE #1: Whale Trade Threshold Too High
   Location:      src/lib/onchain-monitor.ts:921
-  Current:       ONCHAIN_MIN_WHALE_TRADE_USD defaults to $500
+  Current:       WHALE_TRADE_USD defaults to $500
   User wants:    $100
   Impact:        Whale trades exist but below $500 → not detected
-  Fix:           Set ONCHAIN_MIN_WHALE_TRADE_USD=100 in .env
+  Fix:           Set WHALE_TRADE_USD=100 in .env
   Evidence:      No "⚡ On-chain → Bias" logs appearing
 
 BLOCKING ISSUE #2: Conservative Mode Too Strict
@@ -186,7 +186,7 @@ BLOCKING ISSUE #3: Live Trading Possibly Disabled
 Add to .env file:
 
     COPY_ANY_WHALE_BUY=true
-    ONCHAIN_MIN_WHALE_TRADE_USD=100
+    WHALE_TRADE_USD=100
     LIVE_TRADING=I_UNDERSTAND_THE_RISKS
     MAX_TRADE_USD=5
     ORDER_TYPE=GTC
