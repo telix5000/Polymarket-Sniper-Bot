@@ -151,6 +151,9 @@ export interface ChurnConfig {
   minReserveUsd: number;
   useAvailableBalanceOnly: boolean;
 
+  // Liquidation Mode
+  forceLiquidation: boolean;  // If true, start liquidating positions even with no effective bankroll
+
   // Auth
   privateKey: string;
   rpcUrl: string;
@@ -274,6 +277,9 @@ export function loadConfig(): ChurnConfig {
     minReserveUsd: 100,               // $100 minimum reserve
     useAvailableBalanceOnly: true,
 
+    // Liquidation Mode - force sell existing positions when balance is too low
+    forceLiquidation: envBool("FORCE_LIQUIDATION", false),
+
     // ═══════════════════════════════════════════════════════════════════════
     // AUTH & INTEGRATIONS (user provides these)
     // ═══════════════════════════════════════════════════════════════════════
@@ -336,6 +342,9 @@ export function logConfig(config: ChurnConfig, log: (msg: string) => void): void
   log(`   Bet size: $${config.maxTradeUsd} per trade`);
   log(`   Live trading: ${config.liveTradingEnabled ? "✅ ENABLED" : "⚠️ SIMULATION"}`);
   log(`   Telegram: ${config.telegramBotToken && config.telegramChatId ? "✅ ENABLED" : "❌ DISABLED"}`);
+  if (config.forceLiquidation) {
+    log(`   Force liquidation: ⚠️ ENABLED`);
+  }
   log("");
   log("📊 THE MATH (fixed, don't change):");
   log(`   Take profit: +${config.tpCents}¢ (avg win)`);

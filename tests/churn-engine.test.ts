@@ -73,10 +73,12 @@ function createTestConfig(): ChurnConfig {
     onBiasFlip: "MANAGE_EXITS_ONLY",
     onBiasNone: "PAUSE_ENTRIES",
     pollIntervalMs: 1500,
+    positionPollIntervalMs: 100,
     logLevel: "info",
     reserveFraction: 0.25,
     minReserveUsd: 100,
     useAvailableBalanceOnly: true,
+    forceLiquidation: false,
     privateKey: "test",
     rpcUrl: "https://polygon-rpc.com",
     liveTradingEnabled: false,
@@ -459,6 +461,32 @@ describe("Reserve & Sizing", () => {
       const size = calculateTradeSize(effectiveBankroll, config);
 
       assert.strictEqual(size, config.maxTradeUsd, `Trade size should be capped at $${config.maxTradeUsd}`);
+    });
+  });
+
+  describe("Force Liquidation Config", () => {
+    it("forceLiquidation defaults to false", () => {
+      const config = createTestConfig();
+      assert.strictEqual(config.forceLiquidation, false, "forceLiquidation should default to false");
+    });
+
+    it("forceLiquidation can be enabled", () => {
+      const config = createTestConfig();
+      config.forceLiquidation = true;
+      assert.strictEqual(config.forceLiquidation, true, "forceLiquidation can be set to true");
+    });
+
+    it("zero effective bankroll is valid with force liquidation", () => {
+      const config = createTestConfig();
+      config.forceLiquidation = true;
+      // Balance of $50 with $100 min reserve = $0 effective bankroll
+      const balance = 50;
+      const { effectiveBankroll, reserveUsd } = calculateEffectiveBankroll(balance, config);
+      
+      assert.strictEqual(effectiveBankroll, 0, "Effective bankroll should be $0");
+      assert.strictEqual(reserveUsd, 100, "Reserve should be $100");
+      // With forceLiquidation=true, bot should still start in liquidation mode
+      // (this is validated in the churn-start.ts logic, not here)
     });
   });
 });

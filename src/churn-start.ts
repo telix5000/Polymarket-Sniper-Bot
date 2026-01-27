@@ -59,6 +59,10 @@ import {
   runPolReserve,
   shouldRebalance,
   type PolReserveConfig,
+  // Position fetching for liquidation mode
+  getPositions,
+  smartSell,
+  type Position,
 } from "./lib";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -94,6 +98,8 @@ class ChurnEngine {
   // Position tracking - no cache needed, API is fast
   private lastSummaryTime = 0;
   private lastPolCheckTime = 0;
+  // Liquidation mode - when true, prioritize selling existing positions
+  private liquidationMode = false;
 
   // Intervals
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
@@ -200,21 +206,76 @@ class ChurnEngine {
     this.address = auth.address!;
     this.executionEngine.setClient(this.client);
 
-    // Log wallet info
-    const usdcBalance = await getUsdcBalance(this.wallet, this.address);
+    // ═══════════════════════════════════════════════════════════════════════
+    // STARTUP REDEMPTION - Collect any settled positions first
+    // ═══════════════════════════════════════════════════════════════════════
+    console.log("🎁 Checking for redeemable positions...");
+    await this.processRedemptions();
+    this.lastRedeemTime = Date.now(); // Reset timer after startup redemption
+
+    // Get balances AFTER redemption
+    let usdcBalance = await getUsdcBalance(this.wallet, this.address);
     const polBalance = await getPolBalance(this.wallet, this.address);
-    const { effectiveBankroll, reserveUsd } =
+    let { effectiveBankroll, reserveUsd } =
       this.executionEngine.getEffectiveBankroll(usdcBalance);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CHECK FOR EXISTING POSITIONS (for liquidation mode)
+    // ═══════════════════════════════════════════════════════════════════════
+    let existingPositions: Position[] = [];
+    let positionValue = 0;
+    try {
+      existingPositions = await getPositions(this.address, true);
+      positionValue = existingPositions.reduce((sum, p) => sum + p.value, 0);
+    } catch (err) {
+      console.warn(`⚠️ Could not fetch existing positions: ${err instanceof Error ? err.message : err}`);
+    }
 
     console.log("");
     console.log(`💰 Balance: $${usdcBalance.toFixed(2)} USDC | ${polBalance.toFixed(4)} POL`);
     console.log(`🏦 Reserve: $${reserveUsd.toFixed(2)} | Effective: $${effectiveBankroll.toFixed(2)}`);
+    if (existingPositions.length > 0) {
+      console.log(`📦 Existing Positions: ${existingPositions.length} (value: $${positionValue.toFixed(2)})`);
+    }
     console.log(`🔴 Mode: ${this.config.liveTradingEnabled ? "LIVE TRADING" : "SIMULATION"}`);
     console.log("");
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // LIQUIDATION MODE - Start even with no effective bankroll if positions exist
+    // ═══════════════════════════════════════════════════════════════════════
     if (effectiveBankroll <= 0) {
-      console.error("❌ No effective bankroll available");
-      return false;
+      if (this.config.forceLiquidation && existingPositions.length > 0) {
+        console.log("━".repeat(60));
+        console.log("🔥 LIQUIDATION MODE ACTIVATED");
+        console.log("━".repeat(60));
+        console.log(`   No effective bankroll ($${usdcBalance.toFixed(2)} < $${reserveUsd.toFixed(2)} reserve)`);
+        console.log(`   But you have ${existingPositions.length} positions worth $${positionValue.toFixed(2)}`);
+        console.log(`   Will liquidate positions to free up capital`);
+        console.log("━".repeat(60));
+        console.log("");
+
+        this.liquidationMode = true;
+
+        if (this.config.telegramBotToken) {
+          await sendTelegram(
+            "🔥 Liquidation Mode Activated",
+            `Balance: $${usdcBalance.toFixed(2)}\n` +
+              `Positions: ${existingPositions.length} ($${positionValue.toFixed(2)})\n` +
+              `Will sell positions to free capital`,
+          ).catch(() => {});
+        }
+
+        return true;
+      } else if (existingPositions.length > 0) {
+        console.error("❌ No effective bankroll available");
+        console.error(`   You have ${existingPositions.length} positions worth $${positionValue.toFixed(2)}`);
+        console.error(`   Set FORCE_LIQUIDATION=true to sell them and free up capital`);
+        return false;
+      } else {
+        console.error("❌ No effective bankroll available");
+        console.error(`   Deposit more USDC or wait for positions to settle`);
+        return false;
+      }
     }
 
     // Send startup notification
@@ -278,26 +339,159 @@ class ChurnEngine {
    */
   async run(): Promise<void> {
     this.running = true;
-    console.log("🎲 Running...\n");
+    
+    if (this.liquidationMode) {
+      console.log("🔥 Running in LIQUIDATION MODE...\n");
+    } else {
+      console.log("🎲 Running...\n");
+    }
 
     while (this.running) {
       try {
-        await this.cycle();
+        if (this.liquidationMode) {
+          await this.liquidationCycle();
+        } else {
+          await this.cycle();
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`❌ Cycle error: ${msg}`);
       }
 
       // Aggressive polling: 100ms with positions, 200ms without
+      // In liquidation mode, use slower interval (1s) to avoid rate limits
       const openCount = this.positionManager.getOpenPositions().length;
-      const pollInterval = openCount > 0
-        ? this.config.positionPollIntervalMs  // 100ms - track positions fast
-        : this.config.pollIntervalMs;         // 200ms - scan for opportunities
+      const pollInterval = this.liquidationMode
+        ? 1000  // 1s in liquidation mode
+        : (openCount > 0
+          ? this.config.positionPollIntervalMs  // 100ms - track positions fast
+          : this.config.pollIntervalMs);        // 200ms - scan for opportunities
       
       await this.sleep(pollInterval);
     }
 
     console.log("🛑 Stopped");
+  }
+
+  /**
+   * Liquidation cycle - Sell existing Polymarket positions to free capital
+   * Once enough capital is freed, transition back to normal trading mode
+   */
+  private async liquidationCycle(): Promise<void> {
+    this.cycleCount++;
+    const now = Date.now();
+
+    // ─────────────────────────────────────────────────────────────────
+    // 1. GET BALANCES & CHECK IF WE CAN EXIT LIQUIDATION MODE
+    // ─────────────────────────────────────────────────────────────────
+    const usdcBalance = await getUsdcBalance(this.wallet, this.address);
+    const { effectiveBankroll, reserveUsd } = this.executionEngine.getEffectiveBankroll(usdcBalance);
+
+    if (effectiveBankroll > 0) {
+      // We have enough capital now - exit liquidation mode
+      console.log("━".repeat(60));
+      console.log("✅ LIQUIDATION MODE COMPLETE");
+      console.log("━".repeat(60));
+      console.log(`   Balance: $${usdcBalance.toFixed(2)}`);
+      console.log(`   Effective bankroll: $${effectiveBankroll.toFixed(2)}`);
+      console.log(`   Transitioning to normal trading mode`);
+      console.log("━".repeat(60));
+      console.log("");
+
+      this.liquidationMode = false;
+
+      if (this.config.telegramBotToken) {
+        await sendTelegram(
+          "✅ Liquidation Complete",
+          `Balance: $${usdcBalance.toFixed(2)}\n` +
+            `Effective: $${effectiveBankroll.toFixed(2)}\n` +
+            `Now entering normal trading mode`,
+        ).catch(() => {});
+      }
+
+      return;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 2. REDEEM SETTLED POSITIONS
+    // ─────────────────────────────────────────────────────────────────
+    if (now - this.lastRedeemTime >= this.REDEEM_INTERVAL_MS) {
+      await this.processRedemptions();
+      this.lastRedeemTime = now;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 3. FETCH AND LIQUIDATE EXISTING POLYMARKET POSITIONS
+    // ─────────────────────────────────────────────────────────────────
+    let positions: Position[] = [];
+    try {
+      positions = await getPositions(this.address, true);
+    } catch (err) {
+      console.warn(`⚠️ Could not fetch positions: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+
+    if (positions.length === 0) {
+      console.log("📦 No positions to liquidate");
+      console.log(`   Balance: $${usdcBalance.toFixed(2)} (need $${reserveUsd.toFixed(2)} for trading)`);
+      console.log(`   Waiting for deposits or position settlements...`);
+      return;
+    }
+
+    // Sort by value descending - sell largest positions first for fastest capital recovery
+    const sortedPositions = [...positions].sort((a, b) => b.value - a.value);
+
+    console.log(`🔥 Liquidating ${sortedPositions.length} positions (total value: $${sortedPositions.reduce((s, p) => s + p.value, 0).toFixed(2)})`);
+
+    // Try to sell one position per cycle to avoid overwhelming the API
+    for (const position of sortedPositions.slice(0, 1)) {
+      console.log(`📤 Selling: $${position.value.toFixed(2)} @ ${(position.curPrice * 100).toFixed(1)}¢ (P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%)`);
+
+      if (!this.config.liveTradingEnabled) {
+        console.log(`   [SIM] Would sell ${position.size.toFixed(2)} shares`);
+        continue;
+      }
+
+      if (!this.client) {
+        console.warn(`   ⚠️ No client available for selling`);
+        continue;
+      }
+
+      try {
+        const result = await smartSell(this.client, position, {
+          maxSlippagePct: 10,  // Allow higher slippage in liquidation mode
+          forceSell: true,     // Force sell even if conditions aren't ideal
+          logger: this.logger,
+        });
+
+        if (result.success) {
+          console.log(`   ✅ Sold for $${result.filledUsd?.toFixed(2) || 'unknown'}`);
+
+          if (this.config.telegramBotToken) {
+            await sendTelegram(
+              "🔥 Position Liquidated",
+              `Sold: $${result.filledUsd?.toFixed(2) || position.value.toFixed(2)}\n` +
+                `P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%`,
+            ).catch(() => {});
+          }
+        } else {
+          console.log(`   ❌ Sell failed: ${result.reason}`);
+        }
+      } catch (err) {
+        console.warn(`   ⚠️ Sell error: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    // Status update
+    if (now - this.lastSummaryTime >= this.SUMMARY_INTERVAL_MS) {
+      const totalValue = positions.reduce((s, p) => s + p.value, 0);
+      console.log("");
+      console.log(`📊 LIQUIDATION STATUS`);
+      console.log(`   Balance: $${usdcBalance.toFixed(2)} | Need: $${reserveUsd.toFixed(2)}`);
+      console.log(`   Positions remaining: ${positions.length} ($${totalValue.toFixed(2)})`);
+      console.log("");
+      this.lastSummaryTime = now;
+    }
   }
 
   /**
