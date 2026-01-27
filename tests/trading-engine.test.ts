@@ -35,7 +35,7 @@ function createTestConfig(): ChurnConfig {
     maxTradeUsd: 25,
     maxDeployedFractionTotal: 0.3,
     maxOpenPositionsTotal: 12,
-    maxOpenPositionsPerMarket: 2,
+    maxOpenPositionsPerMarket: 1,
     cooldownSecondsPerToken: 180,
     entryBandCents: 12,
     tpCents: 14,

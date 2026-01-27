@@ -216,7 +216,7 @@ function loadConfig(): ChurnConfig {
     tradeFraction: 0.01,              // 1% of bankroll per trade
     maxDeployedFractionTotal: 0.3,    // 30% max exposure
     maxOpenPositionsTotal: 12,        // Max concurrent positions
-    maxOpenPositionsPerMarket: 2,     // Max per market
+    maxOpenPositionsPerMarket: 1,     // 1 entry per token (hedges are stored inside position, not as separate entries)
     cooldownSecondsPerToken: 180,     // 3min between trades same token
 
     // Entry/Exit bands - produces avg_win=14¢, avg_loss=9¢
@@ -310,7 +310,9 @@ function loadConfig(): ChurnConfig {
     // This provides faster whale detection than API polling (blockchain-level speed)
     // Requires Infura RPC URL with WebSocket support
     onchainMonitorEnabled: envBool("ONCHAIN_MONITOR_ENABLED", true),
-    onchainMinWhaleTradeUsd: envNum("ONCHAIN_MIN_WHALE_TRADE_USD", 500),  // Min trade size to track
+    // Min trade size to detect as a "whale trade" - supports both env names for convenience
+    // WHALE_TRADE_USD is the simpler name, ONCHAIN_MIN_WHALE_TRADE_USD for backward compatibility
+    onchainMinWhaleTradeUsd: envNum("WHALE_TRADE_USD", envNum("ONCHAIN_MIN_WHALE_TRADE_USD", 500)),
     // Infura tier plan: "core" (free), "developer" ($50/mo), "team" ($225/mo), "growth" (enterprise)
     // Affects rate limiting to avoid hitting API caps
     infuraTier: parseInfuraTierEnv(process.env.INFURA_TIER),
@@ -374,8 +376,9 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log("");
   log("🐋 WHALE TRACKING:");
   log(`   Following top ${config.leaderboardTopN} wallets`);
+  log(`   Min trade size: $${config.onchainMinWhaleTradeUsd} (WHALE_TRADE_USD)`);
   if (config.copyAnyWhaleBuy) {
-    log(`   Mode: AGGRESSIVE - copy ANY whale buy (no $${config.biasMinNetUsd} flow requirement)`);
+    log(`   Mode: AGGRESSIVE - copy ANY whale buy ≥ $${config.onchainMinWhaleTradeUsd}`);
   } else {
     log(`   Mode: CONSERVATIVE - need $${config.biasMinNetUsd} flow + ${config.biasMinTrades} trades`);
   }
@@ -1799,14 +1802,16 @@ class DecisionEngine {
       };
     }
 
-    // Max positions per market/token
+    // Max positions per market/token - prevents duplicate entries on same token
+    // NOTE: Hedges are stored inside the position object (position.hedges[]), not as separate positions
+    // So this check only blocks NEW entries, not hedging operations
     const tokenPositions = currentPositions.filter(
-      (p) => p.tokenId === tokenId,
+      (p) => p.tokenId === tokenId && p.state !== "CLOSED",
     );
     if (tokenPositions.length >= this.config.maxOpenPositionsPerMarket) {
       return {
         passed: false,
-        reason: `Max positions per market (${this.config.maxOpenPositionsPerMarket})`,
+        reason: `Already holding position on this token (${tokenPositions.length}/${this.config.maxOpenPositionsPerMarket})`,
       };
     }
 
@@ -2853,7 +2858,10 @@ class ChurnEngine {
       // Deduplication is handled by BiasAccumulator.addTrades()
       // ═══════════════════════════════════════════════════════════════════════
       this.onchainMonitor.onWhaleTrade((trade) => {
-        // Only record BUY trades (matching existing bias accumulator logic)
+        // Log ALL whale trades for visibility
+        console.log(`🐋 Whale ${trade.side} detected | $${trade.sizeUsd.toFixed(0)} @ ${(trade.price * 100).toFixed(1)}¢ | Block #${trade.blockNumber}`);
+        
+        // Only record BUY trades for bias (we copy buys, not sells)
         if (trade.side === "BUY") {
           // Determine which address is the whale with defensive validation
           const whaleWallets = this.biasAccumulator.getWhaleWallets();
@@ -2869,6 +2877,7 @@ class ChurnEngine {
             // Defensive: on-chain monitor emitted a whale trade but neither
             // participant is currently in the whale set. This can happen due
             // to leaderboard refresh timing. Skip to avoid misattributing.
+            console.log(`   ⚠️ Whale not in current tracking set, skipping`);
             return;
           }
 
@@ -2884,6 +2893,13 @@ class ChurnEngine {
           });
           
           console.log(`⚡ On-chain → Bias | Block #${trade.blockNumber} | $${trade.sizeUsd.toFixed(0)} BUY | PRIORITY SIGNAL`);
+          
+          // In COPY_ANY_WHALE_BUY mode, log that we should copy this
+          if (this.config.copyAnyWhaleBuy) {
+            console.log(`   🎯 COPY_ANY_WHALE_BUY: Signal ready to copy!`);
+          }
+        } else {
+          console.log(`   ℹ️ SELL trade - not copying (we only copy buys)`);
         }
       });
 
@@ -3276,11 +3292,22 @@ class ChurnEngine {
       ? `${actualPositions.length} (${managedPositions.length} managed)`
       : `${managedPositions.length}`;
     
+    // Get active biases count for diagnostic
+    const activeBiases = this.biasAccumulator.getActiveBiases();
+    
     console.log("");
     console.log(`📊 STATUS | ${new Date().toLocaleTimeString()}`);
     console.log(`   💰 Balance: $${usdcBalance.toFixed(2)} | Bankroll: $${effectiveBankroll.toFixed(2)} | ⛽ POL: ${polBalance.toFixed(1)}${polWarning}`);
     console.log(`   📈 Positions: ${positionDisplay} | Trades: ${metrics.totalTrades} | 🐋 Following: ${trackedWallets}`);
     console.log(`   🎯 Win: ${winPct}% | EV: ${evSign}${metrics.evCents.toFixed(1)}¢ | P&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`);
+    
+    // Show whale copy mode status
+    if (this.config.copyAnyWhaleBuy) {
+      console.log(`   🔥 Mode: AGGRESSIVE (copy any whale buy ≥ $${this.config.onchainMinWhaleTradeUsd})`);
+    } else {
+      console.log(`   🐢 Mode: CONSERVATIVE (need $${this.config.biasMinNetUsd} flow + ${this.config.biasMinTrades} trades)`);
+    }
+    console.log(`   📡 Active signals: ${activeBiases.length} | Live trading: ${this.config.liveTradingEnabled ? 'ON' : 'OFF (simulation)'}`);
     console.log("");
     
     // Telegram update

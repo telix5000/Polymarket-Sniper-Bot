@@ -1,0 +1,221 @@
+```
+                    POLYMARKET SNIPER BOT - TRADE EXECUTION FLOW
+                           (Why No Trades Are Being Copied)
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 1: ON-CHAIN WHALE DETECTION                                          │
+│  File: src/lib/onchain-monitor.ts:515-758                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Infura WebSocket → OrderFilled Event → handleOrderFilled()                │
+│                                                                              │
+│   ✓ Connected to CTF Exchange: 0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E   │
+│   ✓ Connected to NEG_RISK Exchange: 0xC5d563A36AE78145C45a50134d48A1215220f80a│
+│   ✓ Tracking 100 whale wallets                                              │
+│                                                                              │
+│   CHECK 1: Is maker OR taker in whale set?                                  │
+│            └─ If NO → Skip event                                            │
+│                                                                              │
+│   CHECK 2: Is trade >= WHALE_TRADE_USD?                         │
+│            └─ Current: $500 (default)                                       │
+│            └─ User wants: $100                                              │
+│            └─ If trade < $500 → Skip event ❌ BLOCKING ISSUE #1             │
+│                                                                              │
+│   Expected Log: ⚡ On-chain → Bias | Block #... | $... BUY                  │
+│   Current State: ❌ NOT APPEARING (no trades above $500 detected)           │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 2: BIAS ACCUMULATION                                                 │
+│  File: src/start.ts:2681-2713 (onWhaleTrade callback)                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Callback receives: { tokenId, side, sizeUsd, maker, taker, timestamp }    │
+│                                                                              │
+│   CHECK 3: Is side === "BUY"?                                               │
+│            └─ Only copy whale BUYS (not sells)                              │
+│            └─ If SELL → Skip                                                │
+│                                                                              │
+│   CHECK 4: Is maker or taker in current whale set?                          │
+│            └─ Defensive check for leaderboard refresh timing                │
+│            └─ If neither → Skip                                             │
+│                                                                              │
+│   biasAccumulator.recordTrade(trade)                                        │
+│   └─ Stores trade in memory for tokenId                                     │
+│   └─ Deduplicates with API data                                             │
+│                                                                              │
+│   Expected Log: ⚡ On-chain → Bias | Block #... | $... BUY | PRIORITY       │
+│   Current State: ❌ NOT REACHED (Phase 1 blocking)                          │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 3: BIAS DIRECTION CALCULATION                                        │
+│  File: src/start.ts:922-964 (getBias method)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Called when: getActiveBiases() or canEnter() checks direction             │
+│                                                                              │
+│   1. Get all trades for tokenId in last 1 hour (biasWindowSeconds=3600)     │
+│   2. Sum sizeUsd (all trades are BUY, so netUsd = total buy volume)         │
+│   3. Count trades                                                            │
+│                                                                              │
+│   MODE A: copyAnyWhaleBuy = true (AGGRESSIVE)                               │
+│           └─ If tradeCount >= 1 → direction = "LONG" ✅                     │
+│           └─ Copies FIRST whale buy immediately                             │
+│                                                                              │
+│   MODE B: copyAnyWhaleBuy = false (CONSERVATIVE) ❌ BLOCKING ISSUE #2      │
+│           └─ Requires: tradeCount >= 3 AND netUsd >= $300                   │
+│           └─ Current config: biasMinTrades=3, biasMinNetUsd=300             │
+│           └─ If not met → direction = "NONE"                                │
+│           └─ Takes 30-60 minutes to accumulate                              │
+│                                                                              │
+│   Expected Log (on change): 📊 Bias | ... | NONE → LONG | $... flow        │
+│   Current State: ❌ NOT REACHED (no trades accumulated)                     │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 4: ACTIVE BIAS DETECTION                                             │
+│  File: src/start.ts:969-980 (getActiveBiases)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   Every cycle (200ms): main loop calls getActiveBiases()                    │
+│                                                                              │
+│   For each tokenId with trades:                                             │
+│     bias = getBias(tokenId)                                                 │
+│     if bias.direction !== "NONE":                                           │
+│       add to activeBiases[]                                                 │
+│                                                                              │
+│   Returns: TokenBias[] with LONG or SHORT signals                           │
+│                                                                              │
+│   Current State: ❌ Returns empty array (no LONG signals)                   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 5: ENTRY EVALUATION                                                  │
+│  File: src/start.ts:2986-3011 (main cycle)                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   if (activeBiases.length > 0):                                             │
+│     for each bias (max 3 parallel):                                         │
+│       marketData = fetchTokenMarketData(tokenId)                            │
+│       executionEngine.processEntry(tokenId, marketData, balance)            │
+│                                                                              │
+│   processEntry() → evaluateEntry() checks:                                  │
+│     ✓ Bias is LONG or SHORT (not NONE)                                      │
+│     ✓ Liquidity gates (spread < 6¢, depth > $25)                           │
+│     ✓ Price deviation from reference (>12¢ move)                            │
+│     ✓ Entry price bounds (30¢ - 82¢)                                        │
+│     ✓ Risk limits (max positions, max exposure)                             │
+│     ✓ EV allows trading (profit factor > 1.25)                              │
+│                                                                              │
+│   If ALL pass → executeEntry()                                              │
+│                                                                              │
+│   Current State: ❌ NOT REACHED (no active biases)                          │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 6: ORDER EXECUTION                                                   │
+│  File: src/start.ts:2122-2184 (executeEntry)                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   CHECK 5: Is LIVE_TRADING=I_UNDERSTAND_THE_RISKS? ❌ BLOCKING ISSUE #3    │
+│            └─ If NO → Simulation mode                                       │
+│            └─ Log: 🎲 [SIM] LONG $5.00 @ 45.0¢                             │
+│            └─ No actual order placed                                        │
+│                                                                              │
+│   CHECK 6: Is client connected?                                             │
+│            └─ If NO → return "NO_CLIENT"                                    │
+│                                                                              │
+│   1. Fetch orderbook for tokenId                                            │
+│   2. Get best ask (for LONG) or best bid (for SHORT)                        │
+│   3. Calculate shares = sizeUsd / price                                     │
+│   4. Create market order (FOK or GTC based on config)                       │
+│   5. Post order to CLOB                                                     │
+│                                                                              │
+│   Expected Logs:                                                            │
+│     Success: 📥 LONG $5.00 @ 45.0¢                                          │
+│     Failure: ❌ ORDER_REJECTED or error message                             │
+│                                                                              │
+│   Current State: ❌ NOT REACHED (blocked at Phase 1-3)                      │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                              ROOT CAUSE ANALYSIS
+═══════════════════════════════════════════════════════════════════════════════
+
+BLOCKING ISSUE #1: Whale Trade Threshold Too High
+  Location:      src/lib/onchain-monitor.ts:921
+  Current:       WHALE_TRADE_USD defaults to $500
+  User wants:    $100
+  Impact:        Whale trades exist but below $500 → not detected
+  Fix:           Set WHALE_TRADE_USD=100 in .env
+  Evidence:      No "⚡ On-chain → Bias" logs appearing
+
+BLOCKING ISSUE #2: Conservative Mode Too Strict
+  Location:      src/start.ts:282, 256-258
+  Current:       copyAnyWhaleBuy=false (requires 3 trades + $300 flow)
+  User wants:    Immediate copy (like reference repo)
+  Impact:        Even if whale trades detected, takes 30-60 min to form signal
+  Fix:           Set COPY_ANY_WHALE_BUY=true in .env
+  Evidence:      No "📊 Bias | NONE → LONG" logs appearing
+
+BLOCKING ISSUE #3: Live Trading Possibly Disabled
+  Location:      src/start.ts:2134-2144
+  Current:       Unknown (not shown in user logs)
+  Impact:        Orders simulated but not actually placed
+  Fix:           Set LIVE_TRADING=I_UNDERSTAND_THE_RISKS in .env
+  Evidence:      No confirmation either way from logs provided
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                              SOLUTION SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+Add to .env file:
+
+    COPY_ANY_WHALE_BUY=true
+    WHALE_TRADE_USD=100
+    LIVE_TRADING=I_UNDERSTAND_THE_RISKS
+    MAX_TRADE_USD=5
+    ORDER_TYPE=GTC
+
+Expected behavior after fix:
+  1. Within 5-15 minutes: "⚡ On-chain → Bias | Block #... | $... BUY"
+  2. Immediately after: "📊 Bias | ... | NONE → LONG | $... flow"
+  3. Within 200-600ms: Entry evaluation and execution
+  4. Success: "📥 LONG $5.00 @ 45.0¢" or failure reason
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                            VALIDATION PROCEDURE
+═══════════════════════════════════════════════════════════════════════════════
+
+Run diagnostic:
+    ./scripts/diagnose-no-trades.sh
+
+Start bot:
+    npm run start
+
+Monitor logs for these markers:
+    ✓ "⚡ On-chain → Bias"     = Whale trade detected (Phase 1-2 working)
+    ✓ "📊 Bias | NONE → LONG"  = Bias formed (Phase 3 working)  
+    ✓ "📥 LONG $..."            = Order executed (Phase 6 working)
+    ✗ No logs after 15 min     = Whales not active in tracked markets
+
+If still no trades after 30 minutes:
+    - Whales may not be actively trading
+    - Try different time of day (US market hours more active)
+    - Verify RPC_URL is WebSocket: wss://polygon-mainnet.infura.io/ws/v3/...
+```
