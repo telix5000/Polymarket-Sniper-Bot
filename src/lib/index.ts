@@ -18,3 +18,4 @@ export * from "./pol-reserve";
 export * from "./scavenger";
 export * from "./ethers-compat";
 export * from "./error-handling";
+export * from "./smart-sell";

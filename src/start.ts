@@ -23,7 +23,6 @@
 
 import "dotenv/config";
 import type { ClobClient } from "@polymarket/clob-client";
-import { Side, OrderType } from "@polymarket/clob-client";
 import type { Wallet } from "ethers";
 import { Contract } from "ethers";
 import axios from "axios";
@@ -36,11 +35,10 @@ import {
   // Auth
   createClobClient,
   isLiveTradingEnabled,
-  getAuthDiagnostics,
   // Config
-  TIMING,
   ORDER,
   POLYGON,
+  SELL,
   // Data
   getPositions,
   invalidatePositions,
@@ -49,6 +47,9 @@ import {
   getUsdcAllowance,
   // Trading
   postOrder,
+  // Smart Sell (improved sell execution)
+  smartSell,
+  type SmartSellConfig,
   // Copy trading
   getTargetAddresses,
   fetchRecentTrades,
@@ -63,7 +64,6 @@ import {
   startOpenvpn,
   setupRpcBypass,
   setupPolymarketReadBypass,
-  checkVpnForTrading,
 } from "./lib";
 
 // APEX v3.0 Core Modules
@@ -709,12 +709,22 @@ async function checkPolBalance(): Promise<void> {
 }
 
 /**
- * Sell a position using scavenger's proven sell logic
- * Based on src/lib/scavenger.ts executeSell() (lines 519-541)
+ * Sell a position using SmartSell with improved protections
+ * 
+ * IMPROVEMENTS over the old implementation:
+ * 1. Orderbook depth analysis - calculates expected fill price before executing
+ * 2. Dynamic slippage - adjusts based on position state (profit, loss, near-resolution)
+ * 3. Liquidity checks - won't sell into thin orderbooks unless forced
+ * 4. Better logging - shows expected vs actual fills
+ * 
+ * @param position - Position to sell
+ * @param reason - Reason for selling (for logging/telegram)
+ * @param forceSell - If true, sell regardless of liquidity conditions (for stop-loss)
  */
 async function sellPosition(
   position: Position,
-  reason: string
+  reason: string,
+  forceSell: boolean = false
 ): Promise<boolean> {
   
   if (!state.client) return false;
@@ -726,50 +736,61 @@ async function sellPosition(
   logger.info(`   Reason: ${reason}`);
   
   try {
-    // Get orderbook
-    const book = await state.client.getOrderBook(position.tokenId);
-    if (!book?.bids?.length) {
-      logger.warn(`❌ No bids available for ${position.tokenId}`);
-      return false;
-    }
-
-    const bestBid = parseFloat(book.bids[0].price);
+    // Configure smart sell based on position state
+    const config: SmartSellConfig = {
+      logger,
+      forceSell,
+    };
     
-    // Minimum price check (allow 1% slippage)
-    const minPrice = position.avgPrice * 0.99;
-    if (bestBid < minPrice) {
-      logger.warn(`❌ Price too low: ${(bestBid * 100).toFixed(0)}¢ < ${(minPrice * 100).toFixed(0)}¢`);
-      return false;
+    // If this is a stop-loss scenario (significant loss), allow more slippage
+    if (position.pnlPct <= -SELL.LOSS_THRESHOLD_PCT) {
+      config.maxSlippagePct = SELL.LOSS_SLIPPAGE_PCT;
+      logger.info(`   ⚠️ Stop-loss mode: allowing ${SELL.LOSS_SLIPPAGE_PCT}% slippage`);
     }
-
-    // Create and sign SELL order (THIS IS THE CRITICAL PART!)
-    const signed = await state.client.createMarketOrder({
-      side: Side.SELL,  // ← This is what makes it a SELL
-      tokenID: position.tokenId,
-      amount: position.size,
-      price: bestBid,
-    });
     
-    const resp = await state.client.postOrder(signed, OrderType.FOK);
-
-    if (resp.success) {
-      const filled = position.size * bestBid;
-      logger.info(`✅ Sold: $${filled.toFixed(2)}`);
+    // If position is near resolution ($0.95+), use tighter slippage
+    if (position.curPrice >= SELL.HIGH_PRICE_THRESHOLD) {
+      config.maxSlippagePct = SELL.HIGH_PRICE_SLIPPAGE_PCT;
+      logger.info(`   💎 High-probability position: using tight ${SELL.HIGH_PRICE_SLIPPAGE_PCT}% slippage`);
+    }
+    
+    // Execute smart sell
+    const result = await smartSell(state.client, position, config);
+    
+    if (result.success) {
+      const filled = result.filledUsd ?? (position.size * (result.avgPrice ?? position.curPrice));
+      const actualSlippage = result.actualSlippagePct ?? 0;
       
-      // Note: We intentionally keep the positionCache entry here.
-      // It will be cleaned up naturally when the position no longer appears in getPositions.
-      // This avoids issues where subsequent strategies in the same cycle might reference stale data.
+      logger.info(`✅ Sold: $${filled.toFixed(2)}`);
+      if (result.analysis) {
+        logger.info(`   Best bid: ${(result.analysis.bestBid * 100).toFixed(1)}¢`);
+        logger.info(`   Avg fill: ${((result.avgPrice ?? position.curPrice) * 100).toFixed(1)}¢`);
+        logger.info(`   Slippage: ${actualSlippage.toFixed(2)}%`);
+        logger.info(`   Order type: ${result.orderType ?? 'FOK'}`);
+      }
       
       await sendTelegram("💰 POSITION SOLD",
-        `${position.outcome} @ ${(bestBid * 100).toFixed(0)}¢\n` +
+        `${position.outcome} @ ${((result.avgPrice ?? position.curPrice) * 100).toFixed(0)}¢\n` +
         `P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%\n` +
         `Received: $${filled.toFixed(2)}\n` +
+        `Slippage: ${actualSlippage.toFixed(2)}%\n` +
         `Reason: ${reason}`
       );
       
       return true;
     } else {
-      logger.warn(`❌ Sell failed: ${resp.errorMsg || 'Unknown error'}`);
+      logger.warn(`❌ Sell failed: ${result.reason}`);
+      
+      // Provide helpful context on why the sell failed
+      if (result.analysis) {
+        logger.warn(`   Best bid: ${(result.analysis.bestBid * 100).toFixed(1)}¢`);
+        logger.warn(`   Expected slippage: ${result.analysis.expectedSlippagePct.toFixed(2)}%`);
+        logger.warn(`   Liquidity: $${result.analysis.liquidityAtSlippage.toFixed(2)}`);
+        // Note: we skip calling getSellRecommendation here to avoid
+        // an additional orderbook fetch; the above analysis already explains
+        // why the sell failed.
+      }
+      
       return false;
     }
   } catch (error) {
