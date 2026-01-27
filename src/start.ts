@@ -58,6 +58,8 @@ import {
   sendTelegram,
   // Redemption
   redeemAll,
+  redeemAllPositions,
+  fetchRedeemablePositions,
   // VPN
   capturePreVpnRouting,
   startWireguard,
@@ -190,7 +192,6 @@ interface State {
   orderBookDepth: number;
 
   // Timing
-  lastRedeem: number;
   lastSummary: number;
   lastOracleReview: number;
   weekStartTime: number;
@@ -242,7 +243,6 @@ const state: State = {
   // Future enhancement: populate these from market data API calls.
   volume24h: 0,
   orderBookDepth: 0,
-  lastRedeem: 0,
   lastSummary: 0,
   lastOracleReview: 0,
   weekStartTime: Date.now(),
@@ -367,6 +367,35 @@ function displayStartupDashboard(
   
   logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   logger.info(``);
+}
+
+/**
+ * Run auto-redeem check
+ * Called periodically to claim resolved positions
+ */
+async function runAutoRedeem(): Promise<number> {
+  if (!state.wallet) return 0;
+
+  // Check frequency depends on mode:
+  // - Recovery mode: every 10 cycles (more urgent - need liquidity)
+  // - Normal mode: every 50 cycles (periodic cleanup)
+  const checkInterval = state.recoveryMode ? 10 : 50;
+  if (state.cycleCount % checkInterval !== 0) return 0;
+
+  logger.debug?.(`Checking for redeemable positions...`);
+
+  const result = await redeemAllPositions(state.wallet, state.address, logger);
+
+  if (result.redeemed > 0) {
+    await sendTelegram(
+      "🎁 AUTO-REDEEM",
+      `Redeemed ${result.redeemed} market(s)\n` +
+        `Approximate value: $${result.totalValue.toFixed(2)}\n\n` +
+        `Check USDC balance for payouts!`,
+    );
+  }
+
+  return result.redeemed;
 }
 
 /**
@@ -942,7 +971,38 @@ async function initializeAPEX(): Promise<void> {
     `📊 Account Tier: ${state.tier.description} (${state.tier.multiplier}× multiplier)`,
   );
   logger.info(``);
-  
+
+  // Check for redeemable positions on startup
+  logger.info(`🎁 Checking for resolved positions to redeem...`);
+
+  const redeemResult = await redeemAllPositions(
+    state.wallet,
+    state.address,
+    logger,
+  );
+
+  if (redeemResult.redeemed > 0) {
+    logger.info(
+      `✅ Redeemed ${redeemResult.redeemed} position(s) on startup`,
+    );
+
+    // Refresh balance
+    state.startBalance = await getUsdcBalance(state.wallet, state.address);
+    state.currentBalance = state.startBalance;
+    state.lastKnownBalance = state.startBalance;
+
+    await sendTelegram(
+      "🎁 Startup Redemption",
+      `Redeemed ${redeemResult.redeemed} market(s)\n` +
+        `New balance: ${$(state.startBalance)}`,
+    );
+
+    // Recalculate tier with new balance
+    state.tier = getAccountTier(state.startBalance);
+  }
+
+  logger.info(``);
+
   // STEP 2: Auto-approve USDC
   await ensureUSDCApproval();
 
@@ -1960,29 +2020,6 @@ async function runOracleReview(): Promise<void> {
 // APEX v3.0 - REDEMPTION
 // ============================================
 
-async function runRedeem(): Promise<void> {
-  if (!state.wallet) return;
-
-  const now = Date.now();
-  const intervalMin = 60; // Redeem every 60 minutes
-  if (now - state.lastRedeem < intervalMin * 60 * 1000) return;
-
-  state.lastRedeem = now;
-  const minPositionUsd = 0.1; // Minimum $0.10 to redeem
-  const count = await redeemAll(
-    state.wallet,
-    state.address,
-    minPositionUsd,
-    logger,
-  );
-
-  if (count > 0) {
-    logger.info(`💰 Redeemed ${count} positions`);
-    await sendTelegram("💰 Redeem", `Redeemed ${count} positions`);
-    invalidatePositions();
-  }
-}
-
 // ============================================
 // APEX v3.0 - MAIN EXECUTION CYCLE
 // ============================================
@@ -2035,6 +2072,44 @@ async function runAPEXCycle(): Promise<void> {
     }
     
     if (state.recoveryMode) {
+      // PRIORITY 0: Auto-redeem resolved markets (FREE MONEY!)
+      const redeemed = await runAutoRedeem();
+      if (redeemed > 0) {
+        logger.info(
+          `✅ Auto-redeemed ${redeemed} positions - checking new balance...`,
+        );
+
+        // Refresh balance after redemption
+        try {
+          const newBalance = await getUsdcBalance(state.wallet, state.address);
+          state.currentBalance = newBalance;
+          state.lastKnownBalance = newBalance;
+
+          if (newBalance >= RECOVERY_MODE_BALANCE_THRESHOLD) {
+            logger.info(
+              `🎉 RECOVERY COMPLETE! Balance: ${$(newBalance)}`,
+            );
+            state.recoveryMode = false;
+            state.prioritizeExits = false;
+
+            await sendTelegram(
+              "✅ RECOVERY COMPLETE (via redemption)",
+              `Balance restored: ${$(newBalance)}\n` +
+                `Redeemed ${redeemed} positions\n\n` +
+                `Resuming normal trading`,
+            );
+
+            return; // Exit recovery mode
+          }
+
+          logger.info(
+            `📊 Balance after redemption: ${$(newBalance)} (need $${RECOVERY_MODE_BALANCE_THRESHOLD})`,
+          );
+        } catch (error) {
+          logger.error(`Failed to update balance after redemption: ${error}`);
+        }
+      }
+
       // Run recovery exits
       const exitsCount = await runRecoveryExits(positions, state.currentBalance);
       
@@ -2085,7 +2160,12 @@ async function runAPEXCycle(): Promise<void> {
       logger.info(`📤 Exited ${exitCount} positions while halted`);
       invalidatePositions();
     }
-    await runRedeem();
+    // Check for redemptions even when halted
+    const redeemed = await runAutoRedeem();
+    if (redeemed > 0) {
+      logger.info(`💰 Auto-redeemed ${redeemed} positions while halted`);
+      invalidatePositions();
+    }
     return;
   }
 
@@ -2109,7 +2189,20 @@ async function runAPEXCycle(): Promise<void> {
   // ============================================
   // PRIORITY 2: REDEMPTION (Convert wins to USDC)
   // ============================================
-  await runRedeem();
+  // Auto-redeem runs every 50 cycles in normal mode, every 10 in recovery
+  const redeemed = await runAutoRedeem();
+  if (redeemed > 0) {
+    logger.info(`💰 Auto-redeemed ${redeemed} positions`);
+    invalidatePositions(); // Force refresh after redemption
+    
+    // Refresh balance after redemption
+    try {
+      state.currentBalance = await getUsdcBalance(state.wallet, state.address);
+      state.lastKnownBalance = state.currentBalance;
+    } catch (error) {
+      logger.error(`Failed to update balance after redemption: ${error}`);
+    }
+  }
 
   // ============================================
   // PRIORITY 3: ENTRIES (Deploy capital)
