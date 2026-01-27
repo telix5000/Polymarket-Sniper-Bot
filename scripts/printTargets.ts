@@ -9,7 +9,7 @@
  *
  * Environment variables:
  *   TARGET_ADDRESSES - If set, prints these instead of fetching from leaderboard
- *   LEADERBOARD_LIMIT - Number of addresses to fetch (default: 20, max: 50)
+ *   LEADERBOARD_LIMIT - Number of addresses to fetch (default: 100, max: 500)
  *   LEADERBOARD_TTL_SECONDS - Cache TTL in seconds (default: 3600)
  *   LEADERBOARD_CACHE_FILE - Cache file path (default: .leaderboard-cache.json)
  */

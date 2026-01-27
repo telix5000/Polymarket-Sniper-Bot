@@ -2466,7 +2466,7 @@ class ChurnEngine {
     if (existingPositions.length > 0) {
       console.log(`📦 Existing Positions: ${existingPositions.length} (value: $${positionValue.toFixed(2)})`);
     }
-    console.log(`🔴 Mode: ${this.config.liveTradingEnabled ? "LIVE TRADING" : "SIMULATION"}`);
+    console.log(`${this.config.liveTradingEnabled ? "🟢" : "🔴"} Mode: ${this.config.liveTradingEnabled ? "LIVE TRADING" : "SIMULATION"}`);
     console.log("");
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2514,7 +2514,7 @@ class ChurnEngine {
         `Balance: $${usdcBalance.toFixed(2)}\n` +
           `Reserve: $${reserveUsd.toFixed(2)}\n` +
           `Effective: $${effectiveBankroll.toFixed(2)}\n` +
-          `${this.config.liveTradingEnabled ? "🔴 LIVE" : "🟢 SIM"}`,
+          `${this.config.liveTradingEnabled ? "🟢 LIVE" : "🔴 SIM"}`,
       ).catch(() => {});
     }
 
