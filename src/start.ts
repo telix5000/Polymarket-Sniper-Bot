@@ -81,10 +81,7 @@ import {
   type StrategyPerformance,
 } from "./core/oracle";
 
-import {
-  calculateIntelligentReserves,
-  type ReserveBreakdown,
-} from "./core/reserves";
+import { calculateIntelligentReserves } from "./core/reserves";
 
 // APEX v3.0 Strategy Modules
 import {
@@ -329,23 +326,26 @@ async function runFirewallCheck(
 ): Promise<void> {
   // CRITICAL: HALT IF BALANCE TOO LOW
   if (currentBalance < 20) {
-    logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    logger.error(`🚨 APEX FIREWALL: CRITICAL LOW BALANCE`);
-    logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    logger.error(`   Balance: ${$(currentBalance)}`);
-    logger.error(`   Minimum: $20.00`);
-    logger.error(`   Status: TRADING HALTED ⛔`);
-    logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    // Only alert/log on transition to halted state (not every cycle)
+    if (!state.tradingHalted) {
+      logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      logger.error(`🚨 APEX FIREWALL: CRITICAL LOW BALANCE`);
+      logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      logger.error(`   Balance: ${$(currentBalance)}`);
+      logger.error(`   Minimum: $20.00`);
+      logger.error(`   Status: TRADING HALTED ⛔`);
+      logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
-    await sendTelegram(
-      "🚨 APEX FIREWALL: TRADING HALTED",
-      `Balance critically low: ${$(currentBalance)}\n\n` +
-        `Trading halted until manual intervention.\n` +
-        `Minimum balance: $20.00`,
-    );
+      await sendTelegram(
+        "🚨 APEX FIREWALL: TRADING HALTED",
+        `Balance critically low: ${$(currentBalance)}\n\n` +
+          `New trades halted. Exits/redemptions continue.\n` +
+          `Will auto-resume when balance ≥ $20.00`,
+      );
 
-    state.tradingHalted = true;
-    state.haltReason = "CRITICAL_LOW_BALANCE";
+      state.tradingHalted = true;
+      state.haltReason = "CRITICAL_LOW_BALANCE";
+    }
     return;
   }
 
@@ -380,24 +380,26 @@ async function runFirewallCheck(
     state.lowBalanceWarned = false;
   }
 
-  // HOURLY SPENDING LIMIT
+  // HOURLY REALIZED LOSS LIMIT
+  // Note: Only tracks realized losses from SELL orders (not total buy spend).
+  // This prevents runaway losses from poor trades rather than enforcing a hard buy cap.
   const hourAgo = Date.now() - 60 * 60 * 1000;
   const recentTrades = state.oracleState.trades.filter(
     (t) => t.timestamp > hourAgo,
   );
-  const recentSpending = recentTrades.reduce(
+  const recentLoss = recentTrades.reduce(
     (sum, t) => sum + (t.pnl < 0 ? Math.abs(t.pnl) : 0),
     0,
   );
 
-  const maxSpendPerHour =
+  const maxLossPerHour =
     currentBalance * (state.modeConfig.maxExposurePct / 100) * 0.5;
 
-  if (recentSpending >= maxSpendPerHour) {
+  if (recentLoss >= maxLossPerHour) {
     if (!state.hourlySpendingLimitReached) {
-      logger.warn(`⚠️ APEX Firewall: Hourly spending limit reached`);
-      logger.warn(`   Spent: ${$(recentSpending)}`);
-      logger.warn(`   Limit: ${$(maxSpendPerHour)}/hour`);
+      logger.warn(`⚠️ APEX Firewall: Hourly loss limit reached`);
+      logger.warn(`   Loss: ${$(recentLoss)}`);
+      logger.warn(`   Max loss: ${$(maxLossPerHour)}/hour`);
     }
     state.hourlySpendingLimitReached = true;
   } else {
@@ -415,6 +417,7 @@ async function buy(
   requestedSize: number,
   reason: string,
   strategy: StrategyType,
+  positions: Position[], // Pass positions from cycle to avoid extra RPC call
   marketId?: string,
   shares?: number,
 ): Promise<boolean> {
@@ -441,17 +444,7 @@ async function buy(
     return false;
   }
 
-  // Get current positions for reserve calculation
-  let positions: Position[] = [];
-  try {
-    positions = await getPositions(state.address);
-  } catch (error) {
-    logger.warn(
-      `⚠️ Failed to fetch positions for reserve calculation, using empty list`,
-    );
-  }
-
-  // Calculate intelligent reserves
+  // Calculate intelligent reserves using positions from current cycle
   const reserves = calculateIntelligentReserves(currentBalance, positions);
   const availableCapital = reserves.availableForTrading;
 
@@ -694,6 +687,7 @@ async function runHunterScan(
 async function executeHunterOpportunities(
   opportunities: HunterOpportunity[],
   currentBalance: number,
+  positions: Position[],
 ): Promise<void> {
   if (opportunities.length === 0) return;
 
@@ -723,6 +717,7 @@ async function executeHunterOpportunities(
       positionSize,
       `${opp.pattern}: ${opp.reason}`,
       Strategy.HUNTER,
+      positions,
       opp.marketId,
     );
 
@@ -822,6 +817,7 @@ async function runShadowStrategy(
       size,
       `Shadow: Following ${t.trader.slice(0, 8)}...`,
       Strategy.SHADOW,
+      positions,
       t.marketId,
     );
   }
@@ -853,6 +849,7 @@ async function runCloserStrategy(
       positionSize,
       `Closer: Endgame @ ${(p.curPrice * 100).toFixed(0)}¢`,
       Strategy.CLOSER,
+      positions,
       p.marketId,
     );
   }
@@ -886,6 +883,7 @@ async function runAmplifierStrategy(
       positionSize,
       `Amplifier: Stack +${p.gainCents.toFixed(1)}¢`,
       Strategy.AMPLIFIER,
+      positions,
       p.marketId,
     );
 
@@ -1165,7 +1163,11 @@ async function runAPEXCycle(): Promise<void> {
 
     if (reserves.availableForTrading > 5) {
       // Execute Hunter opportunities first (highest priority)
-      await executeHunterOpportunities(opportunities, state.currentBalance);
+      await executeHunterOpportunities(
+        opportunities,
+        state.currentBalance,
+        positions,
+      );
 
       // Then run strategy-based entries based on Oracle allocations
       const allocations = state.strategyAllocations;
