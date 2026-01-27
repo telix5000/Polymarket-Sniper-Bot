@@ -87,6 +87,14 @@ import {
 
 import { calculateIntelligentReserves } from "./core/reserves";
 
+import {
+  getEmergencySellConfig,
+  calculateEmergencyMinPrice,
+  shouldActivateEmergencySells,
+  logEmergencyConfig,
+  type EmergencySellConfig,
+} from "./core/emergency";
+
 // APEX v3.0 Strategy Modules
 import {
   detectMomentum,
@@ -244,6 +252,10 @@ interface State {
   // APEX v3.0 Protection Module State
   hedgeStates: Map<string, HedgeState>; // Track active hedges by tokenId
   priceHistory: Map<string, number[]>;  // Track price history for velocity detection
+  // Emergency Sell Configuration (APEX v3.0 PR #4)
+  emergencySellConfig: EmergencySellConfig;
+  lastEmergencyConfigLog: number; // Timestamp of last emergency config log
+  lastRecoveryTipLog: number; // Timestamp of last recovery tip log
 }
 
 const state: State = {
@@ -289,6 +301,9 @@ const state: State = {
   errorReporter: undefined,
   hedgeStates: new Map(),
   priceHistory: new Map(),
+  emergencySellConfig: getEmergencySellConfig(),
+  lastEmergencyConfigLog: 0,
+  lastRecoveryTipLog: 0,
 };
 
 // ============================================
@@ -346,8 +361,10 @@ const MINIMUM_OPERATING_BALANCE = 1; // Minimum balance to continue operations
 const PROFITABLE_POSITION_THRESHOLD = 0.5; // Minimum profit % to exit in recovery (0.5%)
 const NEAR_RESOLUTION_PRICE_THRESHOLD = 0.95; // Price threshold for near-resolution (95¢)
 const ACCEPTABLE_LOSS_THRESHOLD = -2; // Max loss % for near-resolution exits (-2%)
-const EMERGENCY_BALANCE_THRESHOLD = 10; // Balance below this triggers emergency exits
 const MAX_ACCEPTABLE_LOSS = -5; // Max loss % for emergency exits (-5%)
+
+// Note: Emergency sell thresholds are now configured via state.emergencySellConfig
+// See EMERGENCY_SELL_MODE and EMERGENCY_BALANCE_THRESHOLD environment variables
 
 /**
  * Calculate total portfolio value (balance + position value)
@@ -399,6 +416,7 @@ function displayStartupDashboard(
 
 /**
  * Run recovery exits - aggressively liquidate positions to free capital
+ * Now with emergency sell mode support
  */
 async function runRecoveryExits(
   positions: Position[],
@@ -409,7 +427,22 @@ async function runRecoveryExits(
   // Enrich positions with entry time and price history
   const enrichedPositions = enrichPositions(positions);
   
-  logger.info(`🚨 RECOVERY MODE: Attempting to liquidate positions...`);
+  const emergencyActive = shouldActivateEmergencySells(balance, state.emergencySellConfig);
+  
+  // Log emergency config at most once per minute (60 seconds)
+  const now = Date.now();
+  if (emergencyActive && (now - state.lastEmergencyConfigLog) > 60000) {
+    logEmergencyConfig(state.emergencySellConfig, logger);
+    state.lastEmergencyConfigLog = now;
+  }
+  
+  logger.warn(`♻️ RECOVERY MODE (Cycle ${state.cycleCount})`);
+  logger.warn(`   Balance: $${balance.toFixed(2)} | Positions: ${positions.length}`);
+  logger.warn(`   Emergency mode: ${emergencyActive ? '🚨 ACTIVE' : '⏸️  Standby'}`);
+  
+  if (!emergencyActive) {
+    logger.info(`   Balance above $${state.emergencySellConfig.balanceThreshold} - using normal sells`);
+  }
   
   // Track positions that have been successfully exited to avoid duplicate attempts
   const exitedTokenIds = new Set<string>();
@@ -420,11 +453,13 @@ async function runRecoveryExits(
     .sort((a, b) => b.pnlPct - a.pnlPct); // Most profitable first
   
   for (const position of profitablePositions) {
-    logger.info(
-      `💰 Exiting profitable position: ${position.tokenId.substring(0, 20)}... (+${position.pnlPct.toFixed(1)}%)`,
-    );
+    logger.info(`🔄 Recovery: ${position.outcome} +${position.pnlPct.toFixed(1)}%`);
     
-    const success = await sellPosition(position, `Recovery: take ${position.pnlPct.toFixed(1)}% profit`);
+    const success = await sellPositionEmergency(
+      position, 
+      `Recovery: take ${position.pnlPct.toFixed(1)}% profit`,
+      emergencyActive
+    );
     if (success) {
       exitsExecuted++;
       exitedTokenIds.add(position.tokenId);
@@ -442,11 +477,13 @@ async function runRecoveryExits(
     );
   
   for (const position of nearResolution) {
-    logger.info(
-      `🎯 Exiting near-resolution: ${position.tokenId.substring(0, 20)}... (${(position.curPrice * 100).toFixed(1)}¢)`,
-    );
+    logger.info(`🔄 Recovery: ${position.outcome} @ ${(position.curPrice * 100).toFixed(0)}¢`);
     
-    const success = await sellPosition(position, "Recovery: near resolution");
+    const success = await sellPositionEmergency(
+      position,
+      "Recovery: near resolution",
+      emergencyActive
+    );
     if (success) {
       exitsExecuted++;
       exitedTokenIds.add(position.tokenId);
@@ -454,10 +491,9 @@ async function runRecoveryExits(
     }
   }
   
-  // Priority 3: If balance < EMERGENCY_BALANCE_THRESHOLD, exit small losers
-  // Filter out already exited positions
-  if (balance < EMERGENCY_BALANCE_THRESHOLD) {
-    const smallLosers = enrichedPositions
+  // Priority 3: If emergency AND desperate (balance < threshold), exit small losses
+  if (emergencyActive) {
+    const smallLosses = enrichedPositions
       .filter((p) => 
         !exitedTokenIds.has(p.tokenId) &&
         p.pnlPct > MAX_ACCEPTABLE_LOSS && 
@@ -465,17 +501,54 @@ async function runRecoveryExits(
       )
       .sort((a, b) => b.pnlPct - a.pnlPct); // Least losing first
     
-    for (const position of smallLosers) {
-      logger.warn(
-        `⚠️  Cutting small loser: ${position.tokenId.substring(0, 20)}... (${position.pnlPct.toFixed(1)}%)`,
-      );
+    for (const position of smallLosses) {
+      logger.warn(`🔄 Emergency: ${position.outcome} ${position.pnlPct.toFixed(1)}%`);
       
-      const success = await sellPosition(position, `Emergency: free capital (${position.pnlPct.toFixed(1)}% loss)`);
+      const success = await sellPositionEmergency(
+        position,
+        `Emergency: free capital (${position.pnlPct.toFixed(1)}% loss)`,
+        true  // Force emergency mode
+      );
       if (success) {
         exitsExecuted++;
         exitedTokenIds.add(position.tokenId);
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
+    }
+  }
+  
+  if (exitsExecuted > 0) {
+    logger.info(`✅ Recovery: Exited ${exitsExecuted} positions`);
+    
+    // Check if recovered
+    const newBalance = await getUsdcBalance(state.wallet!, state.address);
+    if (newBalance >= RECOVERY_MODE_BALANCE_THRESHOLD) {
+      logger.info(`🎉 RECOVERY COMPLETE! Balance: $${newBalance.toFixed(2)}`);
+      state.recoveryMode = false;
+      
+      await sendTelegram("✅ RECOVERY COMPLETE",
+        `Balance restored: $${newBalance.toFixed(2)}\n` +
+        `Exited ${exitsExecuted} positions\n\n` +
+        `Resuming normal trading`
+      );
+    } else {
+      logger.info(`📊 Recovery progress: $${newBalance.toFixed(2)} (need $${RECOVERY_MODE_BALANCE_THRESHOLD})`);
+    }
+  } else {
+    logger.warn(`⚠️ Recovery: No positions could be exited this cycle`);
+    
+    // Show tips at most once per 5 minutes (300 seconds)
+    const now = Date.now();
+    if ((now - state.lastRecoveryTipLog) > 300000) {
+      if (!emergencyActive) {
+        logger.info(`💡 Tip: Balance is $${balance.toFixed(2)}`);
+        logger.info(`   Emergency mode activates at < $${state.emergencySellConfig.balanceThreshold}`);
+      } else if (state.emergencySellConfig.mode === 'CONSERVATIVE') {
+        logger.warn(`💡 Tip: CONSERVATIVE mode may block very low bids`);
+        logger.warn(`   Consider MODERATE or NUCLEAR mode if desperate`);
+        logger.warn(`   Set: EMERGENCY_SELL_MODE=MODERATE or NUCLEAR`);
+      }
+      state.lastRecoveryTipLog = now;
     }
   }
   
@@ -767,6 +840,99 @@ async function sellPosition(
       await state.errorReporter.reportError(error as Error, {
         operation: "sell_position",
         tokenId: position.tokenId,
+      });
+    }
+    
+    return false;
+  }
+}
+
+/**
+ * Execute sell with emergency mode support
+ * Uses postOrder with configurable price protection
+ */
+async function sellPositionEmergency(
+  position: Position,
+  reason: string,
+  emergencyMode: boolean
+): Promise<boolean> {
+  
+  if (!state.client) return false;
+  
+  logger.info(`🔄 Selling ${position.outcome}`);
+  logger.info(`   Shares: ${position.size.toFixed(2)}`);
+  logger.info(`   Value: $${position.value.toFixed(2)}`);
+  logger.info(`   Entry: ${(position.avgPrice * 100).toFixed(1)}¢`);
+  logger.info(`   Current: ${(position.curPrice * 100).toFixed(1)}¢`);
+  logger.info(`   P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%`);
+  logger.info(`   Reason: ${reason}`);
+  
+  // Calculate minimum acceptable price based on emergency mode
+  let maxAcceptablePrice: number | undefined;
+  
+  if (emergencyMode) {
+    maxAcceptablePrice = calculateEmergencyMinPrice(
+      position.avgPrice,
+      state.emergencySellConfig
+    );
+    
+    if (maxAcceptablePrice !== undefined) {
+      logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (${state.emergencySellConfig.mode} mode)`);
+    } else {
+      logger.warn(`   ⚠️  NUCLEAR MODE - No price protection!`);
+    }
+  } else {
+    // Normal mode: 1% slippage tolerance
+    maxAcceptablePrice = position.avgPrice * 0.99;
+    logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (1% slippage)`);
+  }
+  
+  try {
+    // Use postOrder with emergency price protection
+    const result = await postOrder({
+      client: state.client,
+      tokenId: position.tokenId,
+      outcome: position.outcome as OrderOutcome,
+      side: 'SELL',
+      sizeUsd: position.value,
+      maxAcceptablePrice, // undefined = NO PROTECTION in NUCLEAR mode
+      shares: position.size, // Specify exact shares to sell
+      logger,
+    });
+    
+    if (result.success) {
+      logger.info(`✅ Sold: $${result.filledUsd?.toFixed(2) || position.value.toFixed(2)}`);
+      
+      await sendTelegram("💰 POSITION SOLD",
+        `${position.outcome}\n` +
+        `Entry: ${(position.avgPrice * 100).toFixed(0)}¢\n` +
+        `Sold: ${(position.curPrice * 100).toFixed(0)}¢\n` +
+        `P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%\n` +
+        `Received: $${result.filledUsd?.toFixed(2) || position.value.toFixed(2)}\n` +
+        `Reason: ${reason}`
+      );
+      
+      return true;
+    } else {
+      logger.warn(`❌ Sell failed: ${result.reason}`);
+      
+      if (result.reason === 'PRICE_TOO_LOW') {
+        logger.warn(`   Bid price below ${state.emergencySellConfig.mode} threshold`);
+        logger.warn(`   To force sell, use NUCLEAR mode (⚠️  accepts massive losses)`);
+      }
+      
+      return false;
+    }
+  } catch (error) {
+    logger.error(`❌ Sell error:`, error);
+    
+    if (state.errorReporter) {
+      await state.errorReporter.reportError(error as Error, {
+        operation: "emergency_sell",
+        tokenId: position.tokenId,
+        value: position.value,
+        emergencyMode: emergencyMode,
+        mode: state.emergencySellConfig.mode,
       });
     }
     
