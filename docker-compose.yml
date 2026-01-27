@@ -10,10 +10,6 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     environment:
-      # ⚡ Polymarket Sniper Bot - ONE-LINE CONFIG
-      # Defaults to BALANCED (7% positions, 70% exposure, +18% weekly)
-      - APEX_MODE=${APEX_MODE:-BALANCED}
-
       # Required
       - PRIVATE_KEY=${PRIVATE_KEY}
       - RPC_URL=${RPC_URL}
@@ -22,7 +18,6 @@ services:
       - LIVE_TRADING=${LIVE_TRADING:-false}
 
       # VPN (optional) - Set WIREGUARD_ENABLED=true or OPENVPN_ENABLED=true
-      # See .env.example for full WireGuard/OpenVPN configuration options
       - WIREGUARD_ENABLED=${WIREGUARD_ENABLED:-false}
       - WG_CONFIG=${WG_CONFIG}
       - OPENVPN_ENABLED=${OPENVPN_ENABLED:-false}
@@ -32,9 +27,6 @@ services:
       # Telegram (optional but recommended)
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-
-      # Error Reporting (optional)
-      - GITHUB_ERROR_REPORTER_TOKEN=${GITHUB_ERROR_REPORTER_TOKEN}
 
       # Copy Trading (optional)
       - TARGET_ADDRESSES=${TARGET_ADDRESSES}
