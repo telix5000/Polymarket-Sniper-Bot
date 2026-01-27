@@ -23,7 +23,10 @@
 
 import "dotenv/config";
 import type { ClobClient } from "@polymarket/clob-client";
+import { Side, OrderType } from "@polymarket/clob-client";
 import type { Wallet } from "ethers";
+import { Contract } from "ethers";
+import axios from "axios";
 
 import {
   // Types
@@ -93,6 +96,45 @@ import {
   type MarketSnapshot,
 } from "./strategies/hunter";
 
+import {
+  detectBlitz,
+  isProfitAtRisk,
+  prioritizeBlitzExits,
+  type BlitzSignal,
+} from "./strategies/blitz";
+
+import {
+  detectAutoSell,
+  detectOversized,
+  type CommandSignal,
+} from "./strategies/command";
+
+import {
+  updateRatchet,
+  isRatchetTriggered,
+  calculateOptimalTrailing,
+  type RatchetState,
+  type RatchetSignal,
+} from "./strategies/ratchet";
+
+import {
+  detectLadder,
+  updateLadderState,
+  calculatePartialSize,
+  type LadderState,
+  type LadderSignal,
+  DEFAULT_LADDER,
+} from "./strategies/ladder";
+
+import {
+  detectReaper,
+  shouldEnterScavengerMode,
+  prioritizeReaperExits,
+  type ReaperSignal,
+} from "./strategies/reaper";
+
+import { POLYMARKET_API } from "./lib/constants";
+
 // APEX v3.0 Monitoring
 import { ErrorReporter } from "./monitoring/error-reporter";
 
@@ -131,6 +173,14 @@ interface State {
   };
 
   actedPositions: Set<string>; // Track which markets we've already acted on
+  
+  // Exit strategy state tracking
+  ratchetStates: Map<string, RatchetState>;
+  ladderStates: Map<string, LadderState>;
+  
+  // Market data for reaper mode
+  volume24h: number;
+  orderBookDepth: number;
 
   // Timing
   lastRedeem: number;
@@ -173,6 +223,10 @@ const state: State = {
     trades: 0,
   },
   actedPositions: new Set(),
+  ratchetStates: new Map(),
+  ladderStates: new Map(),
+  volume24h: 0,
+  orderBookDepth: 0,
   lastRedeem: 0,
   lastSummary: 0,
   lastOracleReview: 0,
@@ -304,13 +358,16 @@ async function runRecoveryExits(
 ): Promise<number> {
   let exitsExecuted = 0;
   
+  // Enrich positions with entry time and price history
+  const enrichedPositions = enrichPositions(positions);
+  
   logger.info(`🚨 RECOVERY MODE: Attempting to liquidate positions...`);
   
   // Track positions that have been successfully exited to avoid duplicate attempts
   const exitedTokenIds = new Set<string>();
   
   // Priority 1: Exit ANY profitable position (pnlPct > PROFITABLE_POSITION_THRESHOLD)
-  const profitablePositions = positions
+  const profitablePositions = enrichedPositions
     .filter((p) => p.pnlPct > PROFITABLE_POSITION_THRESHOLD)
     .sort((a, b) => b.pnlPct - a.pnlPct); // Most profitable first
   
@@ -319,8 +376,8 @@ async function runRecoveryExits(
       `💰 Exiting profitable position: ${position.tokenId.substring(0, 20)}... (+${position.pnlPct.toFixed(1)}%)`,
     );
     
-    const result = await attemptExit(position, "RECOVERY_PROFIT");
-    if (result.success) {
+    const success = await sellPosition(position, `Recovery: take ${position.pnlPct.toFixed(1)}% profit`);
+    if (success) {
       exitsExecuted++;
       exitedTokenIds.add(position.tokenId);
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -329,7 +386,7 @@ async function runRecoveryExits(
   
   // Priority 2: Exit near-resolution (curPrice > NEAR_RESOLUTION_PRICE_THRESHOLD)
   // Filter out already exited positions
-  const nearResolution = positions
+  const nearResolution = enrichedPositions
     .filter((p) => 
       !exitedTokenIds.has(p.tokenId) &&
       p.curPrice > NEAR_RESOLUTION_PRICE_THRESHOLD && 
@@ -341,8 +398,8 @@ async function runRecoveryExits(
       `🎯 Exiting near-resolution: ${position.tokenId.substring(0, 20)}... (${(position.curPrice * 100).toFixed(1)}¢)`,
     );
     
-    const result = await attemptExit(position, "RECOVERY_RESOLUTION");
-    if (result.success) {
+    const success = await sellPosition(position, "Recovery: near resolution");
+    if (success) {
       exitsExecuted++;
       exitedTokenIds.add(position.tokenId);
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -352,7 +409,7 @@ async function runRecoveryExits(
   // Priority 3: If balance < EMERGENCY_BALANCE_THRESHOLD, exit small losers
   // Filter out already exited positions
   if (balance < EMERGENCY_BALANCE_THRESHOLD) {
-    const smallLosers = positions
+    const smallLosers = enrichedPositions
       .filter((p) => 
         !exitedTokenIds.has(p.tokenId) &&
         p.pnlPct > MAX_ACCEPTABLE_LOSS && 
@@ -365,8 +422,8 @@ async function runRecoveryExits(
         `⚠️  Cutting small loser: ${position.tokenId.substring(0, 20)}... (${position.pnlPct.toFixed(1)}%)`,
       );
       
-      const result = await attemptExit(position, "RECOVERY_EMERGENCY");
-      if (result.success) {
+      const success = await sellPosition(position, `Emergency: free capital (${position.pnlPct.toFixed(1)}% loss)`);
+      if (success) {
         exitsExecuted++;
         exitedTokenIds.add(position.tokenId);
         await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -375,43 +432,6 @@ async function runRecoveryExits(
   }
   
   return exitsExecuted;
-}
-
-/**
- * Attempt to exit a position with proper error handling
- */
-async function attemptExit(
-  position: Position,
-  reason: string,
-): Promise<{ success: boolean; error?: string }> {
-  if (!state.client || !state.liveTrading) {
-    if (logger.debug) {
-      logger.debug(`[DRY-RUN] Would exit: ${position.tokenId.substring(0, 20)}...`);
-    }
-    return { success: true };
-  }
-  
-  try {
-    const result = await postOrder({
-      client: state.client,
-      tokenId: position.tokenId,
-      outcome: position.outcome as "YES" | "NO",
-      side: "SELL",
-      sizeUsd: position.value,
-      logger,
-    });
-    
-    if (result.success) {
-      logger.info(`✅ Exit successful`);
-      return { success: true };
-    } else {
-      logger.warn(`⚠️  Exit failed: ${result.reason || "Unknown error"}`);
-      return { success: false, error: result.reason };
-    }
-  } catch (error) {
-    logger.error(`❌ Exit error: ${error}`);
-    return { success: false, error: String(error) };
-  }
 }
 
 /**
@@ -481,6 +501,206 @@ async function checkStartupBalance(
 }
 
 // ============================================
+// APEX v3.0 - CORE TRADING FUNCTIONS
+// ============================================
+
+/**
+ * Position cache for tracking entry time and price history
+ */
+const positionCache = new Map<string, { 
+  entryTime: number; 
+  priceHistory: number[];
+}>();
+
+/**
+ * Enrich positions with entry time and price history
+ * These fields are needed by strategies but not provided by API
+ */
+function enrichPositions(positions: Position[]): Position[] {
+  const now = Date.now();
+  
+  return positions.map(p => {
+    // Get or create cache entry
+    let cache = positionCache.get(p.tokenId);
+    if (!cache) {
+      cache = { entryTime: now, priceHistory: [] };
+      positionCache.set(p.tokenId, cache);
+    }
+    
+    // Update price history
+    cache.priceHistory.push(p.curPrice);
+    if (cache.priceHistory.length > 100) {
+      cache.priceHistory = cache.priceHistory.slice(-100);
+    }
+    
+    return {
+      ...p,
+      entryTime: cache.entryTime,
+      priceHistory: [...cache.priceHistory],
+    };
+  });
+}
+
+// USDC and CTF Exchange addresses
+const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"; // Polygon USDC
+const CTF_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"; // Polymarket CTF Exchange
+const MAX_UINT256 = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+/**
+ * Ensure USDC is approved for trading
+ * Auto-approves if allowance is low
+ */
+async function ensureUSDCApproval(): Promise<void> {
+  if (!state.wallet) return;
+  
+  const allowance = await getUsdcAllowance(state.wallet, state.address);
+  
+  if (allowance >= 1000) {
+    logger.info(`✅ USDC allowance: $${allowance.toFixed(0)}`);
+    return;
+  }
+  
+  logger.warn(`⚠️ USDC allowance low: $${allowance.toFixed(2)}`);
+  logger.info(`🔧 Auto-approving USDC allowance...`);
+  
+  try {
+    const usdc = new Contract(
+      USDC_ADDRESS,
+      ["function approve(address spender, uint256 amount) returns (bool)"],
+      state.wallet
+    );
+    
+    const tx = await usdc.approve(CTF_EXCHANGE, MAX_UINT256);
+    logger.info(`⏳ Waiting for approval tx: ${tx.hash.slice(0, 16)}...`);
+    
+    await tx.wait();
+    
+    logger.info(`✅ USDC approval complete - infinite allowance granted`);
+    
+    await sendTelegram("✅ USDC Approved",
+      `Infinite USDC allowance granted\n` +
+      `TX: ${tx.hash.slice(0, 16)}...`
+    );
+  } catch (error) {
+    logger.error(`❌ Auto-approval failed:`, error);
+    logger.error(`   Please manually run: npm run set-token-allowance`);
+  }
+}
+
+/**
+ * Check POL balance for gas
+ * Warn if low, halt if critical
+ */
+async function checkPolBalance(): Promise<void> {
+  if (!state.wallet) return;
+  
+  const polBalance = await getPolBalance(state.wallet, state.address);
+  
+  if (polBalance < 0.5) {
+    logger.warn(`⚠️ Low POL balance: ${polBalance.toFixed(3)} POL`);
+    logger.warn(`   You may run out of gas soon`);
+    logger.warn(`   Minimum recommended: 1 POL`);
+    
+    await sendTelegram("⚠️ LOW GAS WARNING",
+      `POL Balance: ${polBalance.toFixed(3)}\n` +
+      `Recommended: 1 POL minimum\n\n` +
+      `Please deposit POL to avoid stuck transactions`
+    );
+  }
+  
+  if (polBalance < 0.1) {
+    logger.error(`🚨 CRITICAL: POL balance too low to trade`);
+    state.tradingHalted = true;
+    state.haltReason = "INSUFFICIENT_GAS";
+    
+    await sendTelegram("🚨 TRADING HALTED: NO GAS",
+      `POL Balance: ${polBalance.toFixed(3)}\n\n` +
+      `Cannot execute trades without gas.\n` +
+      `Deposit POL immediately!`
+    );
+  }
+}
+
+/**
+ * Sell a position using scavenger's proven sell logic
+ * Based on src/lib/scavenger.ts executeSell() (lines 519-541)
+ */
+async function sellPosition(
+  position: Position,
+  reason: string
+): Promise<boolean> {
+  
+  if (!state.client) return false;
+  
+  logger.info(`🔄 Selling ${position.outcome}`);
+  logger.info(`   Shares: ${position.size.toFixed(2)}`);
+  logger.info(`   Value: $${position.value.toFixed(2)}`);
+  logger.info(`   P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%`);
+  logger.info(`   Reason: ${reason}`);
+  
+  try {
+    // Get orderbook
+    const book = await state.client.getOrderBook(position.tokenId);
+    if (!book?.bids?.length) {
+      logger.warn(`❌ No bids available for ${position.tokenId}`);
+      return false;
+    }
+
+    const bestBid = parseFloat(book.bids[0].price);
+    
+    // Minimum price check (allow 1% slippage)
+    const minPrice = position.avgPrice * 0.99;
+    if (bestBid < minPrice) {
+      logger.warn(`❌ Price too low: ${(bestBid * 100).toFixed(0)}¢ < ${(minPrice * 100).toFixed(0)}¢`);
+      return false;
+    }
+
+    // Create and sign SELL order (THIS IS THE CRITICAL PART!)
+    const signed = await state.client.createMarketOrder({
+      side: Side.SELL,  // ← This is what makes it a SELL
+      tokenID: position.tokenId,
+      amount: position.size,
+      price: bestBid,
+    });
+    
+    const resp = await state.client.postOrder(signed, OrderType.FOK);
+
+    if (resp.success) {
+      const filled = position.size * bestBid;
+      logger.info(`✅ Sold: $${filled.toFixed(2)}`);
+      
+      // Clean up position cache
+      positionCache.delete(position.tokenId);
+      
+      await sendTelegram("💰 POSITION SOLD",
+        `${position.outcome} @ ${(bestBid * 100).toFixed(0)}¢\n` +
+        `P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%\n` +
+        `Received: $${filled.toFixed(2)}\n` +
+        `Reason: ${reason}`
+      );
+      
+      return true;
+    } else {
+      logger.warn(`❌ Sell failed: ${resp.errorMsg || 'Unknown error'}`);
+      return false;
+    }
+  } catch (error) {
+    logger.error(`❌ Sell error:`, error);
+    
+    if (state.errorReporter) {
+      await state.errorReporter.reportError(error as Error, {
+        operation: "sell_position",
+        tokenId: position.tokenId,
+        value: position.value,
+        reason,
+      });
+    }
+    
+    return false;
+  }
+}
+
+// ============================================
 // APEX v3.0 - INITIALIZATION
 // ============================================
 
@@ -494,6 +714,9 @@ async function initializeAPEX(): Promise<void> {
 
   logger.info(`⚡ APEX v3.0 INITIALIZING...`);
   logger.info(``);
+  
+  // STEP 1: Check POL gas
+  await checkPolBalance();
 
   // Auto-detect wallet balance
   if (!state.wallet || !state.client) {
@@ -504,14 +727,26 @@ async function initializeAPEX(): Promise<void> {
   state.currentBalance = state.startBalance;
   state.lastKnownBalance = state.startBalance;
   state.lastBalanceCheck = Date.now();
+  
+  // Get positions for portfolio calculation
+  const positions = await getPositions(state.client, state.address);
+  const enrichedPositions = enrichPositions(positions);
+  const positionValue = enrichedPositions.reduce((sum, p) => sum + p.value, 0);
+  const totalValue = state.startBalance + positionValue;
 
   // Detect account tier
   state.tier = getAccountTier(state.startBalance);
   logger.info(`💰 Balance Detected: ${$(state.startBalance)}`);
+  logger.info(`📊 Open Positions: ${enrichedPositions.length}`);
+  logger.info(`💼 Position Value: ${$(positionValue)}`);
+  logger.info(`💎 Total Portfolio: ${$(totalValue)}`);
   logger.info(
     `📊 Account Tier: ${state.tier.description} (${state.tier.multiplier}× multiplier)`,
   );
   logger.info(``);
+  
+  // STEP 2: Auto-approve USDC
+  await ensureUSDCApproval();
 
   // Load mode settings
   logger.info(`⚙️  MODE: ${state.mode}`);
@@ -924,6 +1159,41 @@ async function sell(
 // APEX v3.0 - HUNTER SCANNER
 // ============================================
 
+interface MarketData {
+  conditionId: string;
+  question: string;
+  tokens: { tokenId: string; outcome: string; price: number }[];
+  volume: number;
+  liquidity: number;
+}
+
+/**
+ * Fetch active markets from Gamma API
+ */
+async function fetchActiveMarkets(limit: number = 100): Promise<MarketData[]> {
+  try {
+    const url = `${POLYMARKET_API.GAMMA}/markets?limit=${limit}&active=true`;
+    const { data } = await axios.get(url, { timeout: 10000 });
+    
+    if (!Array.isArray(data)) return [];
+    
+    return data.map(m => ({
+      conditionId: m.conditionId,
+      question: m.question,
+      tokens: (m.tokens || []).map((t: any) => ({
+        tokenId: t.tokenId || t.token_id,
+        outcome: t.outcome,
+        price: Number(t.price) || 0,
+      })),
+      volume: Number(m.volume) || 0,
+      liquidity: Number(m.liquidity) || 0,
+    }));
+  } catch (error) {
+    logger.debug(`Market fetch error:`, error);
+    return [];
+  }
+}
+
 async function runHunterScan(
   positions: Position[],
 ): Promise<HunterOpportunity[]> {
@@ -1051,6 +1321,119 @@ async function executeHunterOpportunities(
 // ============================================
 // APEX v3.0 - EXIT STRATEGIES
 // ============================================
+
+/**
+ * Run all exit strategies
+ * Priority order: Blitz → Command → Ratchet → Ladder → Reaper
+ */
+async function runExitStrategies(positions: Position[]): Promise<number> {
+  let exitCount = 0;
+  
+  // Enrich positions with entry time and price history
+  const enrichedPositions = enrichPositions(positions);
+  
+  // BLITZ - Quick scalps (10%+ profit, high urgency)
+  for (const p of enrichedPositions) {
+    const signal = detectBlitz(p, 10, 5);
+    if (signal && signal.urgency === "HIGH") {
+      const success = await sellPosition(p, signal.reason);
+      if (success) exitCount++;
+    }
+  }
+  
+  // COMMAND - AutoSell near $1 (99.5¢+)
+  for (const p of enrichedPositions) {
+    const signal = detectAutoSell(p, 0.995);
+    if (signal) {
+      const success = await sellPosition(p, signal.reason);
+      if (success) exitCount++;
+    }
+  }
+  
+  // RATCHET - Trailing stops (adaptive based on volatility)
+  for (const p of enrichedPositions) {
+    const ratchetState = state.ratchetStates.get(p.tokenId);
+    const trailingPct = calculateOptimalTrailing(p);
+    const updated = updateRatchet(p, ratchetState || null, trailingPct);
+    state.ratchetStates.set(p.tokenId, updated);
+    
+    const signal = isRatchetTriggered(p, updated);
+    if (signal) {
+      const success = await sellPosition(p, signal.reason);
+      if (success) {
+        exitCount++;
+        state.ratchetStates.delete(p.tokenId);
+      }
+    }
+  }
+  
+  // LADDER - Partial exits at profit milestones
+  for (const p of enrichedPositions) {
+    const ladderState = state.ladderStates.get(p.tokenId);
+    const signal = detectLadder(p, ladderState || null, DEFAULT_LADDER);
+    if (signal) {
+      // Create partial position for partial sell
+      const partialSize = calculatePartialSize(p, signal.exitPct);
+      const partialPosition: Position = { 
+        ...p, 
+        size: partialSize, 
+        value: partialSize * p.curPrice 
+      };
+      
+      const success = await sellPosition(partialPosition, signal.reason);
+      if (success) {
+        exitCount++;
+        const updated = updateLadderState(
+          ladderState || {
+            tokenId: p.tokenId,
+            exitedPct: 0,
+            lastMilestone: 0,
+            exitHistory: [],
+          }, 
+          signal.exitPct, 
+          signal.milestone
+        );
+        state.ladderStates.set(p.tokenId, updated);
+        
+        // If fully exited, clean up
+        if (updated.exitedPct >= 100) {
+          state.ladderStates.delete(p.tokenId);
+        }
+      }
+    }
+  }
+  
+  // REAPER - Scavenger mode opportunistic exits
+  const isLowLiquidity = shouldEnterScavengerMode(
+    state.volume24h || 0,
+    state.orderBookDepth || 0,
+    state.targets.length
+  );
+  
+  if (isLowLiquidity) {
+    const reaperSignals: ReaperSignal[] = [];
+    
+    for (const p of enrichedPositions) {
+      const signal = detectReaper(p, {
+        isLowLiquidity: true,
+        volumeDry: true,
+        spreadWide: false,
+        targetInactive: state.targets.length === 0,
+      });
+      
+      if (signal) reaperSignals.push(signal);
+    }
+    
+    const prioritized = prioritizeReaperExits(reaperSignals);
+    
+    for (const signal of prioritized.filter(s => s.priority === "HIGH")) {
+      const success = await sellPosition(signal.position, signal.reason);
+      if (success) exitCount++;
+    }
+  }
+  
+  return exitCount;
+}
 
 async function runBlitzExits(positions: Position[]): Promise<void> {
   // APEX Blitz - Quick Scalps (0.6-3%)
@@ -1230,6 +1613,52 @@ async function runVelocityStrategy(
   if (process.env.DEBUG) {
     logger.info(`⚡ APEX Velocity: Monitoring momentum (placeholder)`);
   }
+}
+
+// ============================================
+// APEX v3.0 - HELPER FUNCTIONS
+// ============================================
+
+/**
+ * Track positions we've already acted on (to avoid double-trading)
+ */
+function hasActedOnPosition(tokenId: string): boolean {
+  if (!state.actedPositions) return false;
+  return state.actedPositions.has(tokenId);
+}
+
+function markPositionActed(tokenId: string): void {
+  if (!state.actedPositions) state.actedPositions = new Set();
+  state.actedPositions.add(tokenId);
+}
+
+/**
+ * Send hourly summary
+ */
+async function sendHourlySummary(balance: number): Promise<void> {
+  const hourAgo = Date.now() - 60 * 60 * 1000;
+  const recentTrades = state.oracleState.trades.filter(t => t.timestamp > hourAgo);
+  
+  const pnl = recentTrades.reduce((sum, t) => sum + t.pnl, 0);
+  const wins = recentTrades.filter(t => t.success && t.pnl > 0).length;
+  
+  // Get current positions
+  if (!state.client) return;
+  const positions = await getPositions(state.client, state.address);
+  const enrichedPositions = enrichPositions(positions);
+  const positionValue = enrichedPositions.reduce((sum, p) => sum + p.value, 0);
+  const totalValue = balance + positionValue;
+  
+  await sendTelegram("📊 HOURLY SUMMARY",
+    `Last Hour:\n` +
+    `Trades: ${recentTrades.length}\n` +
+    `Wins: ${wins}/${recentTrades.length}\n` +
+    `P&L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}\n\n` +
+    `Current:\n` +
+    `Balance: $${balance.toFixed(2)}\n` +
+    `Positions: ${enrichedPositions.length} ($${positionValue.toFixed(2)})\n` +
+    `Total: $${totalValue.toFixed(2)}`
+  );
 }
 
 // ============================================
@@ -1507,8 +1936,11 @@ async function runAPEXCycle(): Promise<void> {
   // ============================================
   // PRIORITY 1: EXITS (Free capital first!)
   // ============================================
-  await runBlitzExits(positions); // Quick scalps (0.6-3%)
-  await runCommandExits(positions); // AutoSell (99.5¢)
+  const exitCount = await runExitStrategies(positions);
+  if (exitCount > 0) {
+    logger.info(`📤 Exited ${exitCount} positions this cycle`);
+    invalidatePositions(); // Force refresh after exits
+  }
 
   // ============================================
   // PRIORITY 2: REDEMPTION (Convert wins to USDC)
