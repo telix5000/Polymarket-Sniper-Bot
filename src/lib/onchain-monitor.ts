@@ -704,8 +704,10 @@ export function httpToWsUrl(httpUrl: string): string | null {
   try {
     const url = new URL(httpUrl);
 
-    // Only support Infura for WebSocket
-    if (!url.hostname.includes("infura.io")) {
+    // Only support Infura for WebSocket - strict hostname check
+    // Must end with .infura.io to prevent subdomain attacks
+    const hostname = url.hostname.toLowerCase();
+    if (!hostname.endsWith(".infura.io") && hostname !== "infura.io") {
       return null;
     }
 
