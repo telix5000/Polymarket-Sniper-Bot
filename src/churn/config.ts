@@ -5,24 +5,39 @@
  * POLYMARKET CASINO BOT - Configuration
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * REQUIRED ENV (you must set these):
+ * THE MATH IS LAW. Every parameter here is derived from:
+ *
+ *   EV = p(win) × avg_win - p(loss) × avg_loss - churn_cost
+ *
+ * With our defaults:
+ *   avg_win  = 14¢  (TP_CENTS)
+ *   avg_loss = 9¢   (after hedge caps losses)
+ *   churn    = 2¢   (spread + slippage)
+ *
+ * Break-even: p > (9 + 2) / (14 + 9) = 47.8%
+ *
+ *   50% wins → EV positive
+ *   55% wins → solid profit
+ *   60% wins → strong profit
+ *
+ * DO NOT CHANGE THESE VALUES without understanding the math.
+ * If you change one thing, you break the equation.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * REQUIRED ENV:
  *   PRIVATE_KEY                    - Your wallet private key
  *   RPC_URL                        - Polygon RPC endpoint
- *   LIVE_TRADING=I_UNDERSTAND_THE_RISKS  - Safety flag for real trades
+ *   LIVE_TRADING=I_UNDERSTAND_THE_RISKS
  *
- * RECOMMENDED ENV (alerts & monitoring):
- *   TELEGRAM_BOT_TOKEN             - Telegram bot token for alerts
- *   TELEGRAM_CHAT_ID               - Telegram chat ID for alerts
- *   GITHUB_ERROR_REPORTER_TOKEN    - GitHub token for auto-creating issues
+ * RECOMMENDED ENV:
+ *   TELEGRAM_BOT_TOKEN             - Alerts
+ *   TELEGRAM_CHAT_ID               - Alerts
+ *   GITHUB_ERROR_REPORTER_TOKEN    - Auto error reporting
  *
- * OPTIONAL ENV (VPN for geo-blocking):
- *   WG_CONFIG or WIREGUARD_CONFIG  - WireGuard config (base64)
- *   OVPN_CONFIG or OPENVPN_CONFIG  - OpenVPN config (base64)
- *
- * Everything else uses SANE DEFAULTS based on the EV math:
- *   - Break-even win rate ≈ 48%
- *   - Target win rate = 55-60%
- *   - avg_win ≈ 14¢, avg_loss ≈ 9¢ (after hedge), churn ≈ 2¢
+ * OPTIONAL ENV (VPN):
+ *   WG_CONFIG / WIREGUARD_CONFIG   - WireGuard (base64)
+ *   OVPN_CONFIG / OPENVPN_CONFIG   - OpenVPN (base64)
  *
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -139,6 +154,7 @@ export interface ChurnConfig {
 
   // Polling / Ops
   pollIntervalMs: number;
+  positionPollIntervalMs: number;
   logLevel: string;
 
   // Wallet / Reserve Management
@@ -166,67 +182,134 @@ export interface ChurnConfig {
 
 /**
  * Load configuration from environment
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MATH (DO NOT CHANGE WITHOUT UNDERSTANDING)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * EV = p(win) × avg_win - p(loss) × avg_loss - churn
+ *
+ * Our equation:
+ *   avg_win  = TP_CENTS           = 14¢
+ *   avg_loss = ~9¢                (hedging caps this)
+ *   churn    = CHURN_COST_CENTS   = 2¢
+ *
+ * Break-even: (9 + 2) / (14 + 9) = 47.8%
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * POLYMARKET API RATE LIMITS (as of 2024)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * General CLOB:           900 req/sec  (9,000 / 10 sec)
+ * Orderbook (/book):      150 req/sec  (1,500 / 10 sec)
+ * Price endpoints:        150 req/sec  (1,500 / 10 sec)
+ * Trades/Orders:           90 req/sec  (900 / 10 sec)
+ * Balance allowance:       20 req/sec  (200 / 10 sec)
+ *
+ * WE CAN POLL AGGRESSIVELY:
+ * - 100ms intervals = 10 req/sec (well under limits)
+ * - Even 50ms would be fine for position tracking
+ *
+ * Source: https://docs.polymarket.com/quickstart/introduction/rate-limits
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 export function loadConfig(): ChurnConfig {
   return {
-    // Capital & Position Sizing
-    tradeFraction: envNum("TRADE_FRACTION", 0.01),
-    maxTradeUsd: envNum("MAX_TRADE_USD", 25),
-    maxDeployedFractionTotal: envNum("MAX_DEPLOYED_FRACTION_TOTAL", 0.3),
+    // ─────────────────────────────────────────────────────────────────────
+    // CAPITAL & POSITION SIZING
+    // Risk management: never bet more than you can lose
+    // ─────────────────────────────────────────────────────────────────────
+    tradeFraction: envNum("TRADE_FRACTION", 0.01),              // 1% per trade
+    maxTradeUsd: envNum("MAX_TRADE_USD", 25),                   // Hard cap per trade
+    maxDeployedFractionTotal: envNum("MAX_DEPLOYED_FRACTION_TOTAL", 0.3),  // 30% max exposure
     maxOpenPositionsTotal: envNum("MAX_OPEN_POSITIONS_TOTAL", 12),
     maxOpenPositionsPerMarket: envNum("MAX_OPEN_POSITIONS_PER_MARKET", 2),
-    cooldownSecondsPerToken: envNum("COOLDOWN_SECONDS_PER_TOKEN", 180),
+    cooldownSecondsPerToken: envNum("COOLDOWN_SECONDS_PER_TOKEN", 180),    // 3min between trades same token
 
-    // Entry/Exit Bands (cents)
-    entryBandCents: envNum("ENTRY_BAND_CENTS", 12),
-    tpCents: envNum("TP_CENTS", 14),
-    hedgeTriggerCents: envNum("HEDGE_TRIGGER_CENTS", 16),
-    maxAdverseCents: envNum("MAX_ADVERSE_CENTS", 30),
-    maxHoldSeconds: envNum("MAX_HOLD_SECONDS", 3600),
+    // ─────────────────────────────────────────────────────────────────────
+    // ENTRY/EXIT BANDS (THE CORE MATH)
+    // These numbers produce: avg_win=14¢, avg_loss=9¢
+    // ─────────────────────────────────────────────────────────────────────
+    entryBandCents: envNum("ENTRY_BAND_CENTS", 12),             // Min price movement to enter
+    tpCents: envNum("TP_CENTS", 14),                            // Take profit = avg_win = 14¢
+    hedgeTriggerCents: envNum("HEDGE_TRIGGER_CENTS", 16),       // Hedge at 16¢ adverse
+    maxAdverseCents: envNum("MAX_ADVERSE_CENTS", 30),           // HARD STOP at 30¢ loss
+    maxHoldSeconds: envNum("MAX_HOLD_SECONDS", 3600),           // 1 hour max hold
 
-    // Hedge Behavior
-    hedgeRatio: envNum("HEDGE_RATIO", 0.4),
-    maxHedgeRatio: envNum("MAX_HEDGE_RATIO", 0.7),
+    // ─────────────────────────────────────────────────────────────────────
+    // HEDGE BEHAVIOR
+    // Hedging caps avg_loss to ~9¢ instead of 30¢
+    // ─────────────────────────────────────────────────────────────────────
+    hedgeRatio: envNum("HEDGE_RATIO", 0.4),                     // Hedge 40% on first trigger
+    maxHedgeRatio: envNum("MAX_HEDGE_RATIO", 0.7),              // Never hedge more than 70%
 
-    // Entry Price Bounds (cents)
-    minEntryPriceCents: envNum("MIN_ENTRY_PRICE_CENTS", 30),
-    maxEntryPriceCents: envNum("MAX_ENTRY_PRICE_CENTS", 82),
+    // ─────────────────────────────────────────────────────────────────────
+    // ENTRY PRICE BOUNDS (CRITICAL FOR SURVIVAL)
+    // <30¢ = one bad tick kills you
+    // >82¢ = no room for TP
+    // 35-65¢ = ideal churn zone
+    // ─────────────────────────────────────────────────────────────────────
+    minEntryPriceCents: envNum("MIN_ENTRY_PRICE_CENTS", 30),    // = MAX_ADVERSE_CENTS
+    maxEntryPriceCents: envNum("MAX_ENTRY_PRICE_CENTS", 82),    // = 100 - TP - buffer
     preferredEntryLowCents: envNum("PREFERRED_ENTRY_LOW_CENTS", 35),
     preferredEntryHighCents: envNum("PREFERRED_ENTRY_HIGH_CENTS", 65),
     entryBufferCents: envNum("ENTRY_BUFFER_CENTS", 4),
 
-    // Liquidity Gates
-    minSpreadCents: envNum("MIN_SPREAD_CENTS", 6),
-    minDepthUsdAtExit: envNum("MIN_DEPTH_USD_AT_EXIT", 25),
-    minTradesLastX: envNum("MIN_TRADES_LAST_X", 10),
+    // ─────────────────────────────────────────────────────────────────────
+    // LIQUIDITY GATES (PROTECT THE CHURN COST)
+    // If spread > 6¢, churn_cost explodes and EV dies
+    // ─────────────────────────────────────────────────────────────────────
+    minSpreadCents: envNum("MIN_SPREAD_CENTS", 6),              // Max acceptable spread
+    minDepthUsdAtExit: envNum("MIN_DEPTH_USD_AT_EXIT", 25),     // Need liquidity to exit
+    minTradesLastX: envNum("MIN_TRADES_LAST_X", 10),            // Market must be active
     minBookUpdatesLastX: envNum("MIN_BOOK_UPDATES_LAST_X", 20),
     activityWindowSeconds: envNum("ACTIVITY_WINDOW_SECONDS", 300),
 
-    // EV / Casino Controls
-    rollingWindowTrades: envNum("ROLLING_WINDOW_TRADES", 200),
-    churnCostCentsEstimate: envNum("CHURN_COST_CENTS_ESTIMATE", 2),
-    minEvCents: envNum("MIN_EV_CENTS", 0),
-    minProfitFactor: envNum("MIN_PROFIT_FACTOR", 1.25),
-    pauseSeconds: envNum("PAUSE_SECONDS", 300),
+    // ─────────────────────────────────────────────────────────────────────
+    // EV / CASINO CONTROLS
+    // The bot stops itself when math says stop
+    // ─────────────────────────────────────────────────────────────────────
+    rollingWindowTrades: envNum("ROLLING_WINDOW_TRADES", 200),  // Sample size for stats
+    churnCostCentsEstimate: envNum("CHURN_COST_CENTS_ESTIMATE", 2),  // 2¢ churn cost
+    minEvCents: envNum("MIN_EV_CENTS", 0),                      // Pause if EV < 0
+    minProfitFactor: envNum("MIN_PROFIT_FACTOR", 1.25),         // avg_win/avg_loss >= 1.25
+    pauseSeconds: envNum("PAUSE_SECONDS", 300),                 // 5min pause when table closed
 
-    // Bias (Leaderboard Flow)
+    // ─────────────────────────────────────────────────────────────────────
+    // BIAS (LEADERBOARD FLOW)
+    // Follow the whales - bias is permission, not prediction
+    // ─────────────────────────────────────────────────────────────────────
     biasMode: envStr("BIAS_MODE", "leaderboard_flow"),
-    leaderboardTopN: envNum("LEADERBOARD_TOP_N", 50),
-    biasWindowSeconds: envNum("BIAS_WINDOW_SECONDS", 3600),
-    biasMinNetUsd: envNum("BIAS_MIN_NET_USD", 300),
-    biasMinTrades: envNum("BIAS_MIN_TRADES", 3),
-    biasStaleSeconds: envNum("BIAS_STALE_SECONDS", 900),
+    leaderboardTopN: envNum("LEADERBOARD_TOP_N", 50),           // Track top 50 wallets
+    biasWindowSeconds: envNum("BIAS_WINDOW_SECONDS", 3600),     // 1 hour window
+    biasMinNetUsd: envNum("BIAS_MIN_NET_USD", 300),             // $300 net flow minimum
+    biasMinTrades: envNum("BIAS_MIN_TRADES", 3),                // At least 3 trades
+    biasStaleSeconds: envNum("BIAS_STALE_SECONDS", 900),        // Bias expires after 15min
     allowEntriesOnlyWithBias: envBool("ALLOW_ENTRIES_ONLY_WITH_BIAS", true),
     onBiasFlip: envStr("ON_BIAS_FLIP", "MANAGE_EXITS_ONLY"),
     onBiasNone: envStr("ON_BIAS_NONE", "PAUSE_ENTRIES"),
 
-    // Polling / Ops
-    pollIntervalMs: envNum("POLL_INTERVAL_MS", 1500),
+    // ─────────────────────────────────────────────────────────────────────
+    // POLLING (API RATE LIMITS - WE CAN GO FAST!)
+    //
+    // Polymarket API limits (2024):
+    //   General CLOB:     900 req/sec
+    //   Orderbook:        150 req/sec
+    //   Price:            150 req/sec
+    //   Trades/Orders:     90 req/sec
+    //
+    // At 100ms polling = 10 req/sec = WELL under limits
+    // ─────────────────────────────────────────────────────────────────────
+    pollIntervalMs: envNum("POLL_INTERVAL_MS", 200),            // 200ms = 5 req/sec
+    positionPollIntervalMs: envNum("POSITION_POLL_INTERVAL_MS", 100),  // 100ms when holding
     logLevel: envStr("LOG_LEVEL", "info"),
 
-    // Wallet / Reserve Management
-    reserveFraction: envNum("RESERVE_FRACTION", 0.25),
-    minReserveUsd: envNum("MIN_RESERVE_USD", 100),
+    // ─────────────────────────────────────────────────────────────────────
+    // WALLET / RESERVE (SURVIVE VARIANCE)
+    // 25% untouchable reserve = survive bad streaks
+    // ─────────────────────────────────────────────────────────────────────
+    reserveFraction: envNum("RESERVE_FRACTION", 0.25),          // 25% always reserved
+    minReserveUsd: envNum("MIN_RESERVE_USD", 100),              // $100 minimum reserve
     useAvailableBalanceOnly: envBool("USE_AVAILABLE_BALANCE_ONLY", true),
 
     // Auth

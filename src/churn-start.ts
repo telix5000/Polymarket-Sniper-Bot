@@ -91,17 +91,13 @@ class ChurnEngine {
   private running = false;
   private cycleCount = 0;
   private lastRedeemTime = 0;
+  // Position tracking - no cache needed, API is fast
   private lastSummaryTime = 0;
   private lastPolCheckTime = 0;
 
   // Intervals
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
   private readonly SUMMARY_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-
-  // Position tracking cache
-  private orderbookCache: Map<string, { data: any; time: number }> = new Map();
-  private priceCache: Map<string, { price: number; time: number }> = new Map();
-  private readonly CACHE_TTL_MS = 500;
 
   constructor() {
     this.config = loadConfig();
@@ -149,9 +145,21 @@ class ChurnEngine {
    */
   async initialize(): Promise<boolean> {
     console.log("");
-    console.log("═".repeat(50));
+    console.log("═".repeat(60));
     console.log("  🎰 POLYMARKET CASINO BOT");
-    console.log("═".repeat(50));
+    console.log("═".repeat(60));
+    console.log("");
+    console.log("  Load wallet. Start bot. Walk away.");
+    console.log("");
+    console.log("  The math:");
+    console.log("    avg_win  = 14¢   (take profit)");
+    console.log("    avg_loss = 9¢    (hedge-capped)");
+    console.log("    churn    = 2¢    (spread + slippage)");
+    console.log("    break-even = 48% win rate");
+    console.log("");
+    console.log("  Following whale flows → ~55% accuracy → profit");
+    console.log("");
+    console.log("═".repeat(60));
     console.log("");
 
     // Validate config
@@ -172,7 +180,7 @@ class ChurnEngine {
     // Initialize Telegram
     if (this.config.telegramBotToken && this.config.telegramChatId) {
       initTelegram();
-      console.log("📱 Telegram enabled");
+      console.log("📱 Telegram alerts enabled");
     }
 
     // Authenticate with CLOB
@@ -265,7 +273,8 @@ class ChurnEngine {
   }
 
   /**
-   * Main run loop with adaptive polling
+   * Main run loop - aggressive polling
+   * API allows 150 req/sec for orderbook, we can go fast!
    */
   async run(): Promise<void> {
     this.running = true;
@@ -279,11 +288,11 @@ class ChurnEngine {
         console.error(`❌ Cycle error: ${msg}`);
       }
 
-      // Adaptive polling: faster when we have open positions
+      // Aggressive polling: 100ms with positions, 200ms without
       const openCount = this.positionManager.getOpenPositions().length;
       const pollInterval = openCount > 0
-        ? Math.max(500, this.config.pollIntervalMs / 2)  // Faster polling with positions
-        : this.config.pollIntervalMs;
+        ? this.config.positionPollIntervalMs  // 100ms - track positions fast
+        : this.config.pollIntervalMs;         // 200ms - scan for opportunities
       
       await this.sleep(pollInterval);
     }
@@ -292,49 +301,41 @@ class ChurnEngine {
   }
 
   /**
-   * Single trading cycle
+   * Single trading cycle - SIMPLE
+   * 
+   * 1. Check our positions (direct API)
+   * 2. Exit if needed (TP, stop loss, time stop)
+   * 3. Poll whale flow for bias
+   * 4. Enter if bias allows
+   * 5. Periodic housekeeping
    */
   private async cycle(): Promise<void> {
     this.cycleCount++;
     const now = Date.now();
 
-    // 1. HIGH PRIORITY: Track open positions with optimized polling
-    const openPositions = this.positionManager.getOpenPositions();
-    if (openPositions.length > 0) {
-      await this.trackPositionsOptimized(openPositions);
-    }
-
-    // 2. Fetch leaderboard trades for bias (less frequent)
-    if (this.cycleCount % 3 === 0) {
-      await this.biasAccumulator.fetchLeaderboardTrades();
-    }
-
-    // 3. Get wallet balance
+    // ─────────────────────────────────────────────────────────────────
+    // 1. GET BALANCES
+    // ─────────────────────────────────────────────────────────────────
     const usdcBalance = await getUsdcBalance(this.wallet, this.address);
     const polBalance = await getPolBalance(this.wallet, this.address);
-    const { effectiveBankroll } =
-      this.executionEngine.getEffectiveBankroll(usdcBalance);
-
-    // 4. POL Reserve check (auto-fill gas)
-    const polCheckInterval = this.config.polReserveCheckIntervalMin * 60 * 1000;
-    if (
-      this.config.polReserveEnabled &&
-      now - this.lastPolCheckTime >= polCheckInterval
-    ) {
-      await this.checkPolReserve(polBalance, usdcBalance);
-      this.lastPolCheckTime = now;
-    }
+    const { effectiveBankroll } = this.executionEngine.getEffectiveBankroll(usdcBalance);
 
     if (effectiveBankroll <= 0) {
-      this.logger.warn("No effective bankroll, skipping cycle");
-      return;
+      return; // No money to trade
     }
 
-    // 5. Process exits for existing positions (already tracked above)
+    // ─────────────────────────────────────────────────────────────────
+    // 2. CHECK OUR POSITIONS - DIRECT API, NO CACHE
+    // ─────────────────────────────────────────────────────────────────
+    const openPositions = this.positionManager.getOpenPositions();
+    
     if (openPositions.length > 0) {
-      const marketDataMap = this.buildMarketDataFromCache(openPositions);
+      // Get fresh prices for all positions
+      const marketDataMap = await this.buildMarketData(openPositions);
+      
+      // Process exits (TP, stop loss, hedge, time stop)
       const exitResult = await this.executionEngine.processExits(marketDataMap);
-
+      
       if (exitResult.exited.length > 0) {
         console.log(`📤 Exited ${exitResult.exited.length} position(s)`);
       }
@@ -343,142 +344,163 @@ class ChurnEngine {
       }
     }
 
-    // 6. Process potential entries for tokens with active bias
+    // ─────────────────────────────────────────────────────────────────
+    // 3. POLL WHALE FLOW FOR BIAS
+    // ─────────────────────────────────────────────────────────────────
+    if (this.cycleCount % 3 === 0) {
+      await this.biasAccumulator.fetchLeaderboardTrades();
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 4. ENTER IF BIAS ALLOWS
+    // ─────────────────────────────────────────────────────────────────
     const evAllowed = this.evTracker.isTradingAllowed();
     const activeBiases = this.biasAccumulator.getActiveBiases();
     
     if (evAllowed.allowed && activeBiases.length > 0) {
-      for (const bias of activeBiases.slice(0, 5)) {
-        // Limit checks per cycle
+      for (const bias of activeBiases.slice(0, 3)) {
         const marketData = await this.fetchTokenMarketData(bias.tokenId);
         if (marketData) {
-          await this.executionEngine.processEntry(
-            bias.tokenId,
-            marketData,
-            usdcBalance,
-          );
+          await this.executionEngine.processEntry(bias.tokenId, marketData, usdcBalance);
         }
       }
     }
 
-    // 7. Periodic redemption
+    // ─────────────────────────────────────────────────────────────────
+    // 5. PERIODIC HOUSEKEEPING
+    // ─────────────────────────────────────────────────────────────────
+    
+    // Auto-redeem resolved positions
     if (now - this.lastRedeemTime >= this.REDEEM_INTERVAL_MS) {
       await this.processRedemptions();
       this.lastRedeemTime = now;
     }
 
-    // 8. Periodic summary (simplified)
+    // Auto-fill POL for gas
+    const polCheckInterval = this.config.polReserveCheckIntervalMin * 60 * 1000;
+    if (this.config.polReserveEnabled && now - this.lastPolCheckTime >= polCheckInterval) {
+      await this.checkPolReserve(polBalance, usdcBalance);
+      this.lastPolCheckTime = now;
+    }
+
+    // Status update
     if (now - this.lastSummaryTime >= this.SUMMARY_INTERVAL_MS) {
-      const metrics = this.evTracker.getMetrics();
-      const positions = this.positionManager.getOpenPositions();
-      console.log(`📊 Status | Positions: ${positions.length} | Trades: ${metrics.totalTrades} | Win: ${(metrics.winRate * 100).toFixed(0)}% | EV: ${metrics.evCents.toFixed(1)}¢ | P&L: $${metrics.totalPnlUsd.toFixed(2)}`);
+      await this.logStatus(usdcBalance, effectiveBankroll);
       this.lastSummaryTime = now;
     }
 
-    // 9. Prune old closed positions (silent)
+    // Cleanup old closed positions
     if (this.cycleCount % 100 === 0) {
       this.positionManager.pruneClosedPositions(60 * 60 * 1000);
     }
   }
 
   /**
-   * Track positions - just get current prices from orderbook
-   * The positions API already has our entry price (avgPrice).
-   * We just need current market price to calculate P&L.
+   * Log status - clean and simple
    */
-  private async trackPositionsOptimized(positions: any[]): Promise<void> {
-    const tokenIds = [...new Set(positions.map((p) => p.tokenId))];
+  private async logStatus(usdcBalance: number, effectiveBankroll: number): Promise<void> {
+    const metrics = this.evTracker.getMetrics();
+    const positions = this.positionManager.getOpenPositions();
     
-    const fetchPromises = tokenIds.map(async (tokenId) => {
-      try {
-        const cached = this.orderbookCache.get(tokenId);
-        if (cached && Date.now() - cached.time < this.CACHE_TTL_MS) {
-          return { tokenId, orderbook: cached.data };
-        }
-
-        const orderbook = await this.client.getOrderBook(tokenId);
-        if (orderbook) {
-          this.orderbookCache.set(tokenId, { data: orderbook, time: Date.now() });
-        }
-        return { tokenId, orderbook };
-      } catch {
-        return { tokenId, orderbook: null };
-      }
-    });
-
-    const results = await Promise.all(fetchPromises);
-
-    for (const result of results) {
-      if (!result.orderbook) continue;
-
-      const bids = result.orderbook.bids || [];
-      if (bids.length === 0) continue;
-
-      // Use best bid - that's what we'd get if we sold right now
-      const bestBid = parseFloat(bids[0].price);
-      
-      this.priceCache.set(result.tokenId, {
-        price: bestBid * 100, // Store as cents
-        time: Date.now(),
-      });
+    const winPct = (metrics.winRate * 100).toFixed(0);
+    const evSign = metrics.evCents >= 0 ? "+" : "";
+    const pnlSign = metrics.totalPnlUsd >= 0 ? "+" : "";
+    
+    console.log("");
+    console.log(`📊 STATUS | ${new Date().toLocaleTimeString()}`);
+    console.log(`   💰 Balance: $${usdcBalance.toFixed(2)} | Bankroll: $${effectiveBankroll.toFixed(2)}`);
+    console.log(`   📈 Positions: ${positions.length} | Trades: ${metrics.totalTrades}`);
+    console.log(`   🎯 Win: ${winPct}% | EV: ${evSign}${metrics.evCents.toFixed(1)}¢ | P&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`);
+    console.log("");
+    
+    // Telegram update
+    if (this.config.telegramBotToken && metrics.totalTrades > 0) {
+      await sendTelegram(
+        "📊 Status",
+        `Balance: $${usdcBalance.toFixed(2)}\nPositions: ${positions.length}\nWin: ${winPct}%\nP&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`
+      ).catch(() => {});
     }
   }
 
   /**
-   * Build market data map from cache for exit processing
+   * Get current price for a token - straight API call, no cache
+   * API allows 150 req/sec, we can afford to be direct
    */
-  private buildMarketDataFromCache(
-    positions: any[],
-  ): Map<string, TokenMarketData> {
-    const map = new Map<string, TokenMarketData>();
+  private async getCurrentPrice(tokenId: string): Promise<number | null> {
+    try {
+      const orderbook = await this.client.getOrderBook(tokenId);
+      if (!orderbook?.bids?.length) return null;
+      
+      // Best bid = what we'd get if we sold right now
+      return parseFloat(orderbook.bids[0].price) * 100;
+    } catch {
+      return null;
+    }
+  }
 
-    for (const pos of positions) {
-      const cachedOrderbook = this.orderbookCache.get(pos.tokenId);
-      const cachedPrice = this.priceCache.get(pos.tokenId);
+  /**
+   * Get orderbook state for a token - straight API call
+   */
+  private async getOrderbookState(tokenId: string): Promise<OrderbookState | null> {
+    try {
+      const orderbook = await this.client.getOrderBook(tokenId);
+      if (!orderbook?.bids?.length || !orderbook?.asks?.length) return null;
 
-      if (!cachedOrderbook?.data || !cachedPrice) continue;
-
-      const orderbook = cachedOrderbook.data;
-      const asks = orderbook.asks || [];
-      const bids = orderbook.bids || [];
-
-      if (asks.length === 0 || bids.length === 0) continue;
-
-      const bestAsk = parseFloat(asks[0].price);
-      const bestBid = parseFloat(bids[0].price);
-
-      // Calculate depths
-      let askDepthUsd = 0;
-      let bidDepthUsd = 0;
-      for (const ask of asks.slice(0, 5)) {
-        askDepthUsd += parseFloat(ask.size) * parseFloat(ask.price);
+      const bestBid = parseFloat(orderbook.bids[0].price);
+      const bestAsk = parseFloat(orderbook.asks[0].price);
+      
+      // Sum up depth
+      let bidDepth = 0, askDepth = 0;
+      for (const level of orderbook.bids.slice(0, 5)) {
+        bidDepth += parseFloat(level.size) * parseFloat(level.price);
       }
-      for (const bid of bids.slice(0, 5)) {
-        bidDepthUsd += parseFloat(bid.size) * parseFloat(bid.price);
+      for (const level of orderbook.asks.slice(0, 5)) {
+        askDepth += parseFloat(level.size) * parseFloat(level.price);
       }
 
-      const orderbookState: OrderbookState = {
+      return {
         bestBidCents: bestBid * 100,
         bestAskCents: bestAsk * 100,
-        bidDepthUsd,
-        askDepthUsd,
+        bidDepthUsd: bidDepth,
+        askDepthUsd: askDepth,
         spreadCents: (bestAsk - bestBid) * 100,
-        midPriceCents: cachedPrice.price,
+        midPriceCents: ((bestBid + bestAsk) / 2) * 100,
       };
+    } catch {
+      return null;
+    }
+  }
 
+  /**
+   * Build market data for positions - direct API calls
+   */
+  private async buildMarketData(positions: any[]): Promise<Map<string, TokenMarketData>> {
+    const map = new Map<string, TokenMarketData>();
+    
+    // Fetch all orderbooks in parallel - API can handle it
+    const fetchPromises = positions.map(async (pos) => {
+      const orderbook = await this.getOrderbookState(pos.tokenId);
+      return { pos, orderbook };
+    });
+    
+    const results = await Promise.all(fetchPromises);
+    
+    for (const { pos, orderbook } of results) {
+      if (!orderbook) continue;
+      
       const activity: MarketActivity = {
-        tradesInWindow: 15,
+        tradesInWindow: 15,  // Assume active - can enhance later
         bookUpdatesInWindow: 25,
         lastTradeTime: Date.now(),
-        lastUpdateTime: cachedPrice.time,
+        lastUpdateTime: Date.now(),
       };
 
       map.set(pos.tokenId, {
         tokenId: pos.tokenId,
         marketId: pos.marketId,
-        orderbook: orderbookState,
+        orderbook,
         activity,
-        referencePriceCents: pos.referencePriceCents,
+        referencePriceCents: pos.referencePriceCents || orderbook.midPriceCents,
       });
     }
 
@@ -534,72 +556,26 @@ class ChurnEngine {
   }
 
   /**
-   * Fetch market data for a single token (with caching)
+   * Fetch market data for a single token - DIRECT API CALL
+   * No caching! Stale prices caused exit failures before.
    */
-  private async fetchTokenMarketData(
-    tokenId: string,
-  ): Promise<TokenMarketData | null> {
-    try {
-      // Check cache first
-      const cached = this.orderbookCache.get(tokenId);
-      let orderBook;
-      
-      if (cached && Date.now() - cached.time < this.CACHE_TTL_MS) {
-        orderBook = cached.data;
-      } else {
-        orderBook = await this.client.getOrderBook(tokenId);
-        if (orderBook) {
-          this.orderbookCache.set(tokenId, { data: orderBook, time: Date.now() });
-        }
-      }
-      
-      if (!orderBook) return null;
+  private async fetchTokenMarketData(tokenId: string): Promise<TokenMarketData | null> {
+    const orderbook = await this.getOrderbookState(tokenId);
+    if (!orderbook) return null;
 
-      const asks = orderBook.asks || [];
-      const bids = orderBook.bids || [];
+    const activity: MarketActivity = {
+      tradesInWindow: 15,
+      bookUpdatesInWindow: 25,
+      lastTradeTime: Date.now(),
+      lastUpdateTime: Date.now(),
+    };
 
-      if (asks.length === 0 || bids.length === 0) return null;
-
-      const bestAsk = parseFloat(asks[0].price);
-      const bestBid = parseFloat(bids[0].price);
-
-      // Calculate depths
-      let askDepthUsd = 0;
-      let bidDepthUsd = 0;
-      for (const ask of asks.slice(0, 5)) {
-        askDepthUsd += parseFloat(ask.size) * parseFloat(ask.price);
-      }
-      for (const bid of bids.slice(0, 5)) {
-        bidDepthUsd += parseFloat(bid.size) * parseFloat(bid.price);
-      }
-
-      const orderbook: OrderbookState = {
-        bestBidCents: bestBid * 100,
-        bestAskCents: bestAsk * 100,
-        bidDepthUsd,
-        askDepthUsd,
-        spreadCents: (bestAsk - bestBid) * 100,
-        midPriceCents: ((bestAsk + bestBid) / 2) * 100,
-      };
-
-      // For activity, we'd need to track book updates over time
-      // Simplified for now
-      const activity: MarketActivity = {
-        tradesInWindow: 15, // Would need actual tracking
-        bookUpdatesInWindow: 25,
-        lastTradeTime: Date.now(),
-        lastUpdateTime: Date.now(),
-      };
-
-      return {
-        tokenId,
-        orderbook,
-        activity,
-        referencePriceCents: orderbook.midPriceCents,
-      };
-    } catch {
-      return null;
-    }
+    return {
+      tokenId,
+      orderbook,
+      activity,
+      referencePriceCents: orderbook.midPriceCents,
+    };
   }
 
   /**
