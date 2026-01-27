@@ -32,6 +32,7 @@ import {
   // Types
   type Position,
   type Logger,
+  type OrderOutcome,
   // Auth
   createClobClient,
   isLiveTradingEnabled,
@@ -862,14 +863,12 @@ async function sellPositionEmergency(
       return false;
     }
   } catch (error) {
-    logger.error(`❌ Sell error:`, error);
+    logger.error(`❌ Sell error: ${error}`);
     
     if (state.errorReporter) {
       await state.errorReporter.reportError(error as Error, {
         operation: "emergency_sell",
         tokenId: position.tokenId,
-        value: position.value,
-        emergencyMode: emergencyMode,
         mode: state.emergencySellConfig.mode,
       });
     }
