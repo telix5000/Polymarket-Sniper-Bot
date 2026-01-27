@@ -119,7 +119,8 @@ export async function fetchRedeemablePositions(
 
     return redeemable;
   } catch (error) {
-    logger?.error?.(`Failed to fetch redeemable positions:`, error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    logger?.error?.(`Failed to fetch redeemable positions: ${errorMsg}`);
     return [];
   }
 }
@@ -220,7 +221,7 @@ export async function redeemPosition(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    logger?.error?.(`❌ Redemption failed:`, errorMsg);
+    logger?.error?.(`❌ Redemption failed: ${errorMsg}`);
 
     return {
       success: false,

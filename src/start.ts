@@ -362,7 +362,7 @@ async function runAutoRedeem(): Promise<number> {
   // Check every 10 cycles (avoid spamming API)
   if (state.cycleCount % 10 !== 0) return 0;
 
-  logger.debug(`Checking for redeemable positions...`);
+  logger.debug?.(`Checking for redeemable positions...`);
 
   const result = await redeemAllPositions(state.wallet, state.address, logger);
 
