@@ -875,24 +875,6 @@ async function sellPosition(
       logger.info(`   ⚠️ Stop-loss mode: allowing ${SELL.LOSS_SLIPPAGE_PCT}% slippage`);
     }
     
-    // Use curPrice (current market value) for validation, allow 5% slippage
-    // This is critical: we must use curPrice, NOT avgPrice, to allow selling losing positions
-    const minPrice = position.curPrice * NORMAL_SELL_SLIPPAGE;
-    
-    // Log price comparison for debugging
-    logger.info(`   Orderbook bid: ${(bestBid * 100).toFixed(1)}¢`);
-    logger.info(`   Min acceptable: ${(minPrice * 100).toFixed(1)}¢ (${((1 - NORMAL_SELL_SLIPPAGE) * 100).toFixed(0)}% slippage from curPrice)`);
-    
-    // Warn if there's a large discrepancy between curPrice and orderbook bid
-    const priceDiscrepancy = Math.abs(bestBid - position.curPrice) / position.curPrice;
-    if (priceDiscrepancy > PRICE_DISCREPANCY_WARNING_THRESHOLD) {
-      logger.warn(`⚠️  Large price discrepancy: orderbook ${(bestBid * 100).toFixed(1)}¢ vs curPrice ${(position.curPrice * 100).toFixed(1)}¢ (${(priceDiscrepancy * 100).toFixed(1)}% diff)`);
-    }
-    
-    if (bestBid < minPrice) {
-      logger.warn(`❌ Price too low: ${(bestBid * 100).toFixed(0)}¢ < ${(minPrice * 100).toFixed(0)}¢`);
-      logger.warn(`   Consider using sellPositionEmergency for forced sells at any price`);
-      return false;
     // If position is near resolution ($0.95+), use tighter slippage
     if (position.curPrice >= SELL.HIGH_PRICE_THRESHOLD) {
       config.maxSlippagePct = SELL.HIGH_PRICE_SLIPPAGE_PCT;
@@ -1039,7 +1021,6 @@ async function sellPositionEmergency(
   } catch (error) {
     const errMessage = error instanceof Error ? error.message : String(error);
     logger.error(`❌ Sell error: ${errMessage}`);
-    logger.error(`❌ Sell error: ${error}`);
     
     if (state.errorReporter) {
       await state.errorReporter.reportError(error as Error, {
