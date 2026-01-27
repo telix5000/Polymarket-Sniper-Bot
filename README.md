@@ -1,8 +1,87 @@
-# Polymarket Trading Bot V2
+# ⚡ APEX v3.0 - Aggressive Polymarket Execution
 
-Simple, efficient trading bot with preset-based configuration.
+Next-generation trading bot with intelligent capital allocation and adaptive strategies.
+
+## 🚀 What's New in APEX v3.0
+
+### Core Features
+- **🎯 APEX Hunter**: Active market scanner detecting 6 opportunity patterns
+- **🧠 APEX Oracle**: Daily performance review with automatic capital reallocation
+- **📊 Dynamic Scaling**: Percentage-based position sizing with account tier detection
+- **⚡ APEX Strategies**: Velocity, Shadow, Blitz, Closer, Amplifier, Grinder
+- **🎚️ Three Modes**: CONSERVATIVE (5%), BALANCED (7%), AGGRESSIVE (10%)
+- **📈 Telegram Reports**: Hourly summaries, daily reviews, weekly progress
+
+### One-Line Configuration
+```bash
+# That's it! Balance auto-detected, positions auto-scaled
+APEX_MODE=AGGRESSIVE PRIVATE_KEY=0x... RPC_URL=https://polygon-rpc.com npm start
+```
 
 ## Quick Start
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Configure (copy .env.example to .env)
+cp .env.example .env
+
+# 3. Set your keys in .env
+PRIVATE_KEY=0x...
+RPC_URL=https://polygon-rpc.com
+APEX_MODE=AGGRESSIVE  # or BALANCED or CONSERVATIVE
+
+# 4. Start trading
+npm start
+```
+
+## APEX Modes
+
+| Mode | Position Size | Max Exposure | Weekly Target | Best For |
+|------|--------------|--------------|---------------|----------|
+| **CONSERVATIVE** | 5% of balance | 60% | +12% | Safe & steady growth |
+| **BALANCED** | 7% of balance | 70% | +18% | Moderate risk/reward |
+| **AGGRESSIVE** | 10% of balance | 80% | +25% | Maximum performance |
+
+## Account Tiers (Auto-Detected)
+
+Position sizes automatically scale with your balance:
+
+| Tier | Balance Range | Multiplier | Description |
+|------|---------------|------------|-------------|
+| **Entry** | $100 - $500 | 1.0× | Starting out |
+| **Growing** | $500 - $1,500 | 1.2× | Building capital |
+| **Advanced** | $1,500 - $3,000 | 1.4× | Experienced |
+| **Elite** | $3,000+ | 1.5× | Pro trader |
+
+## APEX Strategies
+
+### Entry Strategies
+- **⚡ APEX Hunter**: Scans for momentum, mispricing, volume spikes, new markets
+- **⚡ APEX Velocity**: Momentum trading (12%+ velocity detection)
+- **⚡ APEX Shadow**: Copy trading (follows your target addresses)
+- **⚡ APEX Closer**: Endgame positions (92-97¢)
+- **⚡ APEX Amplifier**: Stacks winning positions
+- **⚡ APEX Grinder**: High volume opportunities
+
+### Exit Strategies
+- **⚡ APEX Blitz**: Quick scalps (0.6-3% profit)
+- **⚡ APEX Command**: Auto-sell at 99.5¢
+
+### Performance Tracking
+- **🧠 APEX Oracle**: Analyzes last 24 hours of trades
+- Ranks strategies: Champion (75+), Performing (55-75), Testing (40-55), Struggling (30-40), Disabled (<30)
+- Automatically reallocates capital to best performers
+- Daily review sent via Telegram
+
+---
+
+# Legacy V2 Documentation
+
+> **Note**: The following documentation is for the legacy V2 system. For APEX v3.0, use the simplified configuration above.
+
+## Quick Start (V2)
 
 ```bash
 # Minimum config - auto-fetches top 20 traders from leaderboard
