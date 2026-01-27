@@ -29,9 +29,30 @@ export interface PostOrderInput {
   marketId?: string;
   /**
    * Optional maximum acceptable price for price protection.
-   * - For BUY orders: rejects if ask price > maxAcceptablePrice
-   * - For SELL orders: rejects if bid price < maxAcceptablePrice
-   * - If undefined: NO price protection (emergency NUCLEAR mode)
+   * 
+   * **For BUY orders:**
+   * - Rejects if ask price > maxAcceptablePrice
+   * - Prevents buying at prices higher than expected
+   * 
+   * **For SELL orders:**
+   * - Rejects if bid price < maxAcceptablePrice
+   * - Prevents selling at prices lower than expected
+   * 
+   * **Special case - NUCLEAR mode:**
+   * - If undefined: NO price protection (sells at ANY price)
+   * - Used in emergency NUCLEAR mode to force sells
+   * 
+   * @example
+   * // Standard sell with 1% slippage
+   * maxAcceptablePrice: position.avgPrice * 0.99
+   * 
+   * @example
+   * // Emergency CONSERVATIVE (won't sell below 50% of entry)
+   * maxAcceptablePrice: position.avgPrice * 0.50
+   * 
+   * @example
+   * // Emergency NUCLEAR (no protection)
+   * maxAcceptablePrice: undefined
    */
   maxAcceptablePrice?: number;
   skipDuplicateCheck?: boolean;
@@ -46,16 +67,64 @@ export interface PostOrderInput {
 }
 
 /**
- * Post order to CLOB
- *
- * Based on Novus-Tech-LLC working implementation:
- * - For BUY: uses orderbook.asks
- * - For SELL: uses orderbook.bids (CORRECT!)
- * - If maxAcceptablePrice undefined → sells at ANY price (NUCLEAR mode)
- * - Uses FOK (Fill-or-Kill) for immediate execution
- *
- * Calculates the number of shares based on sizeUsd and current orderbook price,
- * then executes the order using Fill-Or-Kill (FOK) execution.
+ * Post order to CLOB with retry logic and price protection
+ * 
+ * **Universal order posting function** supporting both BUY and SELL orders with:
+ * - Optional price protection via maxAcceptablePrice parameter
+ * - Retry logic for partial fills across multiple orderbook levels
+ * - Fill-or-Kill (FOK) execution (order fills completely or not at all)
+ * - Duplicate prevention for BUY orders (cooldowns)
+ * 
+ * **Key Implementation Details:**
+ * 
+ * 1. **Side Selection:**
+ *    - BUY orders use orderbook **asks** (sellers)
+ *    - SELL orders use orderbook **bids** (buyers) ✅ CORRECT!
+ * 
+ * 2. **Price Protection:**
+ *    - If maxAcceptablePrice is undefined → NO PROTECTION (NUCLEAR mode for sells)
+ *    - If maxAcceptablePrice is defined → enforces minimum/maximum price
+ *    - For SELL: blocks if bestBid < maxAcceptablePrice
+ *    - For BUY: blocks if bestAsk > maxAcceptablePrice
+ * 
+ * 3. **Execution Flow:**
+ *    - Validates market exists (if marketId provided)
+ *    - Fetches orderbook
+ *    - Checks price protection
+ *    - Executes order with retry loop (up to MAX_RETRIES)
+ *    - Refreshes orderbook on each retry for current prices
+ *    - Stops on success, exhausted size, or max retries
+ * 
+ * 4. **Retry Logic:**
+ *    - Processes orderbook level by level
+ *    - Fresh orderbook fetch on each iteration
+ *    - Re-enforces price protection on each retry
+ *    - Accumulates fills until sizeUsd or shares exhausted
+ * 
+ * **Based on:** Novus-Tech-LLC working implementation
+ * 
+ * **Common Return Reasons:**
+ * - `ORDER_TOO_SMALL`: Order size < $0.10 minimum
+ * - `NO_BIDS`: No buyers in orderbook (SELL orders)
+ * - `NO_ASKS`: No sellers in orderbook (BUY orders)
+ * - `PRICE_TOO_LOW`: Best bid below minimum (SELL orders)
+ * - `PRICE_TOO_HIGH`: Best ask above maximum (BUY orders)
+ * - `MARKET_CLOSED`: Market resolved or removed
+ * - `INSUFFICIENT_BALANCE`: Not enough USDC (BUY orders)
+ * - `INSUFFICIENT_ALLOWANCE`: Contract allowance too low
+ * - `CLOUDFLARE_BLOCKED`: IP geo-blocked (use VPN)
+ * - `NO_FILLS`: Couldn't fill after max retries
+ * 
+ * **Known Edge Cases:**
+ * - Orderbook data can become stale between fetch and post
+ * - FOK may be too strict in low liquidity (partial fills rejected)
+ * - maxAcceptablePrice calculated from stale data may block unnecessarily
+ * - Fresh orderbook fetch on each retry helps mitigate these issues
+ * 
+ * @param input - Order parameters (see PostOrderInput)
+ * @returns Promise<OrderResult> - success boolean, filledUsd, avgPrice, or failure reason
+ * 
+ * @see docs/SELLING_LOGIC.md for complete selling logic documentation
  */
 export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
   const { client, tokenId, side, sizeUsd, logger, maxAcceptablePrice } = input;
@@ -158,7 +227,10 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
         return { success: false, reason: "PRICE_TOO_HIGH" };
       }
       if (!isBuy && bestPrice < maxAcceptablePrice) {
-        logger?.debug?.(`Order rejected: PRICE_TOO_LOW (${bestPrice} < min ${maxAcceptablePrice})`);
+        logger?.debug?.(`Order rejected: PRICE_TOO_LOW`);
+        logger?.debug?.(`   Best ${isBuy ? 'ask' : 'bid'}: ${(bestPrice * 100).toFixed(1)}¢`);
+        logger?.debug?.(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢`);
+        logger?.debug?.(`   Tip: This sell is blocked by price protection`);
         return { success: false, reason: "PRICE_TOO_LOW" };
       }
     }
