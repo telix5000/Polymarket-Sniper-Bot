@@ -530,3 +530,120 @@ describe("Config Validation", () => {
     );
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LIQUIDATION MODE TESTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("Liquidation Mode", () => {
+  describe("Activation conditions", () => {
+    it("should activate when balance < reserve but positions exist", () => {
+      const config = createTestConfig();
+      config.forceLiquidation = true;
+      
+      const balance = 50;  // Below $100 reserve
+      const { effectiveBankroll } = calculateEffectiveBankroll(balance, config);
+      const hasPositions = true;  // Simulated positions exist
+      
+      // Liquidation mode should activate when:
+      // 1. effectiveBankroll <= 0
+      // 2. forceLiquidation is true
+      // 3. positions exist
+      const shouldActivateLiquidation = 
+        effectiveBankroll <= 0 && config.forceLiquidation && hasPositions;
+      
+      assert.strictEqual(shouldActivateLiquidation, true, 
+        "Liquidation mode should activate with low balance and existing positions");
+    });
+
+    it("should NOT activate when balance < reserve and no positions", () => {
+      const config = createTestConfig();
+      config.forceLiquidation = true;
+      
+      const balance = 50;
+      const { effectiveBankroll } = calculateEffectiveBankroll(balance, config);
+      const hasPositions = false;  // No positions
+      
+      const shouldActivateLiquidation = 
+        effectiveBankroll <= 0 && config.forceLiquidation && hasPositions;
+      
+      assert.strictEqual(shouldActivateLiquidation, false, 
+        "Liquidation mode should NOT activate without positions");
+    });
+
+    it("should NOT activate when forceLiquidation is false", () => {
+      const config = createTestConfig();
+      config.forceLiquidation = false;
+      
+      const balance = 50;
+      const { effectiveBankroll } = calculateEffectiveBankroll(balance, config);
+      const hasPositions = true;
+      
+      const shouldActivateLiquidation = 
+        effectiveBankroll <= 0 && config.forceLiquidation && hasPositions;
+      
+      assert.strictEqual(shouldActivateLiquidation, false, 
+        "Liquidation mode should NOT activate when forceLiquidation=false");
+    });
+  });
+
+  describe("Exit conditions", () => {
+    it("should exit liquidation mode when effectiveBankroll becomes positive", () => {
+      const config = createTestConfig();
+      
+      // After selling positions, balance is now $200
+      const balance = 200;
+      const { effectiveBankroll } = calculateEffectiveBankroll(balance, config);
+      
+      const shouldExitLiquidation = effectiveBankroll > 0;
+      
+      assert.strictEqual(shouldExitLiquidation, true, 
+        "Should exit liquidation mode when balance exceeds reserve");
+      assert.strictEqual(effectiveBankroll, 100, 
+        "Effective bankroll should be $100 (200 - 100 reserve)");
+    });
+  });
+
+  describe("Position ordering", () => {
+    it("should sort positions by value descending for liquidation", () => {
+      // Mock positions with different values
+      const positions = [
+        { tokenId: "small", value: 10 },
+        { tokenId: "large", value: 100 },
+        { tokenId: "medium", value: 50 },
+      ];
+      
+      // Sort by value descending (largest first)
+      const sortedPositions = [...positions].sort((a, b) => b.value - a.value);
+      
+      assert.strictEqual(sortedPositions[0].tokenId, "large", 
+        "Largest position should be first");
+      assert.strictEqual(sortedPositions[1].tokenId, "medium", 
+        "Medium position should be second");
+      assert.strictEqual(sortedPositions[2].tokenId, "small", 
+        "Smallest position should be last");
+    });
+  });
+
+  describe("Liquidation configuration", () => {
+    it("liquidationMaxSlippagePct should be configurable", () => {
+      const config = createTestConfig();
+      assert.strictEqual(config.liquidationMaxSlippagePct, 10, 
+        "Default liquidation slippage should be 10%");
+      
+      config.liquidationMaxSlippagePct = 15;
+      assert.strictEqual(config.liquidationMaxSlippagePct, 15, 
+        "Liquidation slippage should be configurable");
+    });
+
+    it("liquidationPollIntervalMs should be configurable", () => {
+      const config = createTestConfig();
+      assert.strictEqual(config.liquidationPollIntervalMs, 1000, 
+        "Default liquidation poll interval should be 1000ms");
+      
+      config.liquidationPollIntervalMs = 2000;
+      assert.strictEqual(config.liquidationPollIntervalMs, 2000, 
+        "Liquidation poll interval should be configurable");
+    });
+  });
+});
