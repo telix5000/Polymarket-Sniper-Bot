@@ -2053,6 +2053,17 @@ class ExecutionEngine {
     const exited: string[] = [];
     const hedged: string[] = [];
 
+    // First pass: determine which positions need action (sync - fast)
+    type PendingAction = {
+      position: ManagedPosition;
+      action: "EXIT" | "HEDGE";
+      reason?: ExitReason;
+      priceCents: number;
+      biasDirection: BiasDirection;
+    };
+    
+    const pendingActions: PendingAction[] = [];
+    
     for (const position of this.positionManager.getOpenPositions()) {
       const marketData = marketDataMap.get(position.tokenId);
       if (!marketData) continue;
@@ -2065,11 +2076,9 @@ class ExecutionEngine {
       const update = this.positionManager.updatePrice(position.id, priceCents, evMetrics, bias.direction);
 
       if (update.action === "EXIT") {
-        const result = await this.executeExit(position, update.reason!, priceCents, bias.direction);
-        if (result.success) exited.push(position.id);
+        pendingActions.push({ position, action: "EXIT", reason: update.reason, priceCents, biasDirection: bias.direction });
       } else if (update.action === "HEDGE") {
-        const result = await this.executeHedge(position, bias.direction);
-        if (result.success) hedged.push(position.id);
+        pendingActions.push({ position, action: "HEDGE", priceCents, biasDirection: bias.direction });
       } else {
         // Check decision engine for other exit conditions
         const exitCheck = this.decisionEngine.evaluateExit({
@@ -2079,8 +2088,35 @@ class ExecutionEngine {
           evAllowed: this.evTracker.isTradingAllowed(),
         });
         if (exitCheck.shouldExit) {
-          const result = await this.executeExit(position, exitCheck.reason!, priceCents, bias.direction);
-          if (result.success) exited.push(position.id);
+          pendingActions.push({ position, action: "EXIT", reason: exitCheck.reason, priceCents, biasDirection: bias.direction });
+        }
+      }
+    }
+
+    // Second pass: execute all actions in parallel
+    if (pendingActions.length > 0) {
+      const results = await Promise.all(
+        pendingActions.map(async (action) => {
+          try {
+            if (action.action === "EXIT") {
+              const result = await this.executeExit(action.position, action.reason!, action.priceCents, action.biasDirection);
+              return { id: action.position.id, action: "EXIT" as const, success: result.success };
+            } else {
+              const result = await this.executeHedge(action.position, action.biasDirection);
+              return { id: action.position.id, action: "HEDGE" as const, success: result.success };
+            }
+          } catch (err) {
+            console.warn(`⚠️ ${action.action} failed for ${action.position.id}: ${err instanceof Error ? err.message : err}`);
+            return { id: action.position.id, action: action.action, success: false };
+          }
+        })
+      );
+
+      // Collect results
+      for (const result of results) {
+        if (result.success) {
+          if (result.action === "EXIT") exited.push(result.id);
+          else hedged.push(result.id);
         }
       }
     }
@@ -2665,10 +2701,12 @@ class ChurnEngine {
     const now = Date.now();
 
     // ─────────────────────────────────────────────────────────────────
-    // 1. GET BALANCES
+    // 1. GET BALANCES (parallel fetch)
     // ─────────────────────────────────────────────────────────────────
-    const usdcBalance = await getUsdcBalance(this.wallet, this.address);
-    const polBalance = await getPolBalance(this.wallet, this.address);
+    const [usdcBalance, polBalance] = await Promise.all([
+      getUsdcBalance(this.wallet, this.address),
+      getPolBalance(this.wallet, this.address),
+    ]);
     const { effectiveBankroll } = this.executionEngine.getEffectiveBankroll(usdcBalance);
 
     if (effectiveBankroll <= 0) {
@@ -2703,18 +2741,27 @@ class ChurnEngine {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // 4. ENTER IF BIAS ALLOWS
+    // 4. ENTER IF BIAS ALLOWS - PARALLEL EXECUTION
     // ─────────────────────────────────────────────────────────────────
     const evAllowed = this.evTracker.isTradingAllowed();
     const activeBiases = this.biasAccumulator.getActiveBiases();
     
     if (evAllowed.allowed && activeBiases.length > 0) {
-      for (const bias of activeBiases.slice(0, 3)) {
-        const marketData = await this.fetchTokenMarketData(bias.tokenId);
-        if (marketData) {
-          await this.executionEngine.processEntry(bias.tokenId, marketData, usdcBalance);
+      // Execute entries in parallel to avoid missing opportunities
+      // when multiple whale signals arrive simultaneously
+      const entryPromises = activeBiases.slice(0, 3).map(async (bias) => {
+        try {
+          const marketData = await this.fetchTokenMarketData(bias.tokenId);
+          if (marketData) {
+            return this.executionEngine.processEntry(bias.tokenId, marketData, usdcBalance);
+          }
+        } catch (err) {
+          console.warn(`⚠️ Entry failed for ${bias.tokenId.slice(0, 8)}...: ${err instanceof Error ? err.message : err}`);
         }
-      }
+        return null;
+      });
+      
+      await Promise.all(entryPromises);
     }
 
     // ─────────────────────────────────────────────────────────────────
