@@ -271,12 +271,15 @@ function loadConfig(): ChurnConfig {
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
     telegramChatId: process.env.TELEGRAM_CHAT_ID,
 
-    // POL Reserve - auto-fill gas (fixed settings)
+    // POL Reserve - auto-fill gas
+    // IMPORTANT: Only tops off when POL falls below polReserveMin (0.5)
+    // Does NOT proactively top off to polReserveTarget (50) - saves USDC
+    // When triggered: swaps up to polReserveMaxSwapUsd USDC to reach target
     polReserveEnabled: true,
-    polReserveTarget: envNum("POL_RESERVE_TARGET", 50),  // 50 POL target (user requested)
-    polReserveMin: 0.5,
-    polReserveMaxSwapUsd: 10,
-    polReserveCheckIntervalMin: 30,
+    polReserveTarget: envNum("POL_RESERVE_TARGET", 50),  // Target POL when refilling
+    polReserveMin: envNum("POL_RESERVE_MIN", 0.5),       // Trigger threshold (refill when below this)
+    polReserveMaxSwapUsd: envNum("POL_RESERVE_MAX_SWAP_USD", 25),  // Max USDC per swap
+    polReserveCheckIntervalMin: envNum("POL_RESERVE_CHECK_INTERVAL_MIN", 5),  // Check every 5 min
     polReserveSlippagePct: 3,
   };
 }
@@ -921,6 +924,13 @@ class BiasAccumulator {
    */
   addLeaderboardWallet(wallet: string): void {
     this.leaderboardWallets.add(wallet.toLowerCase());
+  }
+
+  /**
+   * Get the count of tracked leaderboard wallets
+   */
+  getTrackedWalletCount(): number {
+    return this.leaderboardWallets.size;
   }
 
   /**
@@ -2726,7 +2736,7 @@ class ChurnEngine {
 
     // Status update
     if (now - this.lastSummaryTime >= this.SUMMARY_INTERVAL_MS) {
-      await this.logStatus(usdcBalance, effectiveBankroll);
+      await this.logStatus(usdcBalance, effectiveBankroll, polBalance);
       this.lastSummaryTime = now;
     }
 
@@ -2739,18 +2749,23 @@ class ChurnEngine {
   /**
    * Log status - clean and simple
    */
-  private async logStatus(usdcBalance: number, effectiveBankroll: number): Promise<void> {
+  private async logStatus(usdcBalance: number, effectiveBankroll: number, polBalance: number): Promise<void> {
     const metrics = this.evTracker.getMetrics();
     const positions = this.positionManager.getOpenPositions();
+    const trackedWallets = this.biasAccumulator.getTrackedWalletCount();
     
     const winPct = (metrics.winRate * 100).toFixed(0);
     const evSign = metrics.evCents >= 0 ? "+" : "";
     const pnlSign = metrics.totalPnlUsd >= 0 ? "+" : "";
     
+    // POL status - show warning if below target
+    const polTarget = this.config.polReserveTarget;
+    const polWarning = polBalance < polTarget ? " ⚠️" : "";
+    
     console.log("");
     console.log(`📊 STATUS | ${new Date().toLocaleTimeString()}`);
-    console.log(`   💰 Balance: $${usdcBalance.toFixed(2)} | Bankroll: $${effectiveBankroll.toFixed(2)}`);
-    console.log(`   📈 Positions: ${positions.length} | Trades: ${metrics.totalTrades}`);
+    console.log(`   💰 Balance: $${usdcBalance.toFixed(2)} | Bankroll: $${effectiveBankroll.toFixed(2)} | ⛽ POL: ${polBalance.toFixed(1)}${polWarning}`);
+    console.log(`   📈 Positions: ${positions.length} | Trades: ${metrics.totalTrades} | 🐋 Following: ${trackedWallets}`);
     console.log(`   🎯 Win: ${winPct}% | EV: ${evSign}${metrics.evCents.toFixed(1)}¢ | P&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`);
     console.log("");
     
@@ -2758,7 +2773,7 @@ class ChurnEngine {
     if (this.config.telegramBotToken && metrics.totalTrades > 0) {
       await sendTelegram(
         "📊 Status",
-        `Balance: $${usdcBalance.toFixed(2)}\nPositions: ${positions.length}\nWin: ${winPct}%\nP&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`
+        `Balance: $${usdcBalance.toFixed(2)}\nPOL: ${polBalance.toFixed(1)}${polWarning}\nPositions: ${positions.length}\nFollowing: ${trackedWallets} wallets\nWin: ${winPct}%\nP&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`
       ).catch(() => {});
     }
   }
