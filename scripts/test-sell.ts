@@ -24,6 +24,11 @@ const logger = {
   error: (...args: any[]) => console.error("❌", ...args),
 };
 
+// Configuration constants
+const SLIPPAGE_TOLERANCE = 0.01; // Allow 1% slippage from entry price
+const EXECUTE_WARNING_DELAY_MS = 3000; // 3 second countdown before executing
+const ORDER_TYPE = OrderType.FOK; // Fill-or-Kill: ensures order fills completely or not at all
+
 /**
  * Test sell execution (mirrors scavenger.ts executeSell logic)
  */
@@ -73,10 +78,10 @@ async function testSellOrder(
     logger.info(`   P&L: ${profitLoss >= 0 ? '+' : ''}$${profitLoss.toFixed(2)}`);
     
     // STEP 3: Check price acceptable
-    const minPrice = position.avgPrice * 0.99; // Allow 1% slippage
+    const minPrice = position.avgPrice * (1 - SLIPPAGE_TOLERANCE);
     if (bestBid < minPrice) {
       logger.warn(`Best bid ${(bestBid * 100).toFixed(0)}¢ is below minimum ${(minPrice * 100).toFixed(0)}¢`);
-      logger.warn(`This would result in >1% loss from entry price`);
+      logger.warn(`This would result in >${SLIPPAGE_TOLERANCE * 100}% loss from entry price`);
       return { success: false, reason: "PRICE_TOO_LOW" };
     }
     
@@ -86,7 +91,7 @@ async function testSellOrder(
       logger.info(`   tokenID: ${position.tokenId.slice(0, 16)}...`);
       logger.info(`   amount: ${position.size}`);
       logger.info(`   price: ${bestBid}`);
-      logger.info(`   orderType: OrderType.FOK (Fill-or-Kill)`);
+      logger.info(`   orderType: ${ORDER_TYPE} (Fill-or-Kill)`);
       logger.info(`\n✅ Order structure is valid`);
       logger.info(`📝 Run with --execute flag to actually attempt sell`);
       
@@ -110,7 +115,7 @@ async function testSellOrder(
     logger.info(`✅ Order created and signed`);
     logger.info(`⏳ Posting order to exchange...`);
     
-    const resp = await client.postOrder(signed, OrderType.FOK);
+    const resp = await client.postOrder(signed, ORDER_TYPE);
     
     if (resp.success) {
       logger.info(`\n🎉 SELL ORDER SUCCESS!`);
@@ -213,8 +218,8 @@ async function main() {
   if (executeMode) {
     logger.info(`\n⚠️  WARNING: EXECUTE MODE ENABLED`);
     logger.info(`⚠️  This will ACTUALLY SELL the position!`);
-    logger.info(`\nWaiting 3 seconds... (Ctrl+C to cancel)`);
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    logger.info(`\nWaiting ${EXECUTE_WARNING_DELAY_MS / 1000} seconds... (Ctrl+C to cancel)`);
+    await new Promise(resolve => setTimeout(resolve, EXECUTE_WARNING_DELAY_MS));
   }
   
   // Test the sell
