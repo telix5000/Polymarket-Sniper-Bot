@@ -246,6 +246,21 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
         const response = await client.postOrder(signedOrder, clobOrderType);
 
         if (response.success) {
+          // For GTC orders: order is POSTED but not necessarily FILLED
+          // Don't update accounting - the order sits on the orderbook waiting
+          // Return immediately with orderId for tracking
+          if (orderType === "GTC") {
+            const orderId = (response as any).orderId || (response as any).orderHashes?.[0];
+            logger?.info?.(`GTC ${side} order posted: ${orderId?.slice(0, 12) || 'unknown'}... @ ${(levelPrice * 100).toFixed(1)}¢`);
+            return {
+              success: true,
+              orderId,
+              avgPrice: levelPrice,
+              reason: "GTC_POSTED", // Indicates order is posted, not filled
+            };
+          }
+          
+          // For FOK orders: order filled immediately, update accounting
           const filledValue = amount * levelPrice;
           remaining -= filledValue;
           totalFilled += filledValue;
@@ -255,13 +270,6 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
             remainingShares -= amount;
           }
           retryCount = 0; // Reset retry count on success
-          
-          // For GTC orders, the order might be posted but not filled yet
-          // Return success with orderId for tracking
-          if (orderType === "GTC") {
-            const orderIdForLog = (response as any).orderId || (response as any).orderHashes?.[0] || 'unknown';
-            logger?.info?.(`GTC ${side} order posted: ${orderIdForLog} @ ${(levelPrice * 100).toFixed(1)}¢`);
-          }
         } else {
           retryCount++;
           // Extract clean error message from response
@@ -484,21 +492,26 @@ export class GtcOrderTracker {
         continue;
       }
 
-      // Check 2: Price drift
+      // Check 2: Price drift - cancel if market moved AWAY from our order
+      // BUY order at 65¢: cancel if price went DOWN (now 60¢) - order won't fill, market moved away
+      // SELL order at 70¢: cancel if price went UP (now 75¢) - order won't fill, market moved away
+      // 
+      // Note: If price moves TOWARD our order, that's GOOD - it will fill at our target price
       const currentPrice = currentPrices.get(order.tokenId);
       if (currentPrice !== undefined) {
         const driftPct = Math.abs((currentPrice - order.price) / order.price) * 100;
         
         if (driftPct > this.maxPriceDriftPct) {
-          // For BUY orders: cancel if price went UP significantly (we'd overpay)
-          // For SELL orders: cancel if price went DOWN significantly (we'd undersell)
+          // For BUY orders: cancel if price went DOWN (market moved away, order won't fill)
+          // For SELL orders: cancel if price went UP (market moved away, order won't fill)
+          const priceWentDown = currentPrice < order.price;
           const priceWentUp = currentPrice > order.price;
-          const shouldCancel = (order.side === "BUY" && priceWentUp) || 
-                               (order.side === "SELL" && !priceWentUp);
+          const shouldCancel = (order.side === "BUY" && priceWentDown) || 
+                               (order.side === "SELL" && priceWentUp);
           
           if (shouldCancel) {
             console.log(
-              `📉 GTC order price drifted: ${order.orderId.slice(0, 12)}... ` +
+              `📉 GTC order stale (market moved away): ${order.orderId.slice(0, 12)}... ` +
               `${order.side} @ ${(order.price * 100).toFixed(1)}¢ → now ${(currentPrice * 100).toFixed(1)}¢ ` +
               `(${driftPct.toFixed(1)}% drift)`
             );

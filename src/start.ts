@@ -172,6 +172,9 @@ interface ChurnConfig {
   liquidationMaxSlippagePct: number;  // Max slippage for liquidation sells (default: 10%)
   liquidationPollIntervalMs: number;  // Poll interval in liquidation mode (default: 1000ms)
 
+  // Aggressive Whale Copy Mode
+  copyAnyWhaleBuy: boolean;  // If true, copy ANY whale buy without waiting for bias confirmation
+
   // Auth
   privateKey: string;
   rpcUrl: string;
@@ -273,6 +276,11 @@ function loadConfig(): ChurnConfig {
     liquidationMaxSlippagePct: envNum("LIQUIDATION_MAX_SLIPPAGE_PCT", 10),  // 10% default
     liquidationPollIntervalMs: envNum("LIQUIDATION_POLL_INTERVAL_MS", 1000),  // 1s default
 
+    // Aggressive Whale Copy Mode - copy ANY whale buy without waiting for bias
+    // When true: sees whale buy → immediately copies (no $300 flow / 3 trade requirement)
+    // When false (default): requires bias confirmation (multiple whale trades in same direction)
+    copyAnyWhaleBuy: envBool("COPY_ANY_WHALE_BUY", false),
+
     // ═══════════════════════════════════════════════════════════════════════
     // AUTH & INTEGRATIONS (user provides these)
     // ═══════════════════════════════════════════════════════════════════════
@@ -351,6 +359,9 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   if (config.forceLiquidation) {
     log(`   Force liquidation: ⚠️ ENABLED`);
   }
+  if (config.copyAnyWhaleBuy) {
+    log(`   Copy any whale buy: ⚠️ AGGRESSIVE MODE (no bias confirmation)`);
+  }
   log("");
   log("📊 THE MATH (fixed, don't change):");
   log(`   Take profit: +${config.tpCents}¢ (avg win)`);
@@ -361,7 +372,11 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log("");
   log("🐋 WHALE TRACKING:");
   log(`   Following top ${config.leaderboardTopN} wallets`);
-  log(`   Min flow: $${config.biasMinNetUsd}`);
+  if (config.copyAnyWhaleBuy) {
+    log(`   Mode: AGGRESSIVE - copy ANY whale buy (no $${config.biasMinNetUsd} flow requirement)`);
+  } else {
+    log(`   Mode: CONSERVATIVE - need $${config.biasMinNetUsd} flow + ${config.biasMinTrades} trades`);
+  }
   log("");
   log("🛡️ RISK LIMITS:");
   log(`   Reserve: ${config.reserveFraction * 100}% untouchable`);
@@ -968,6 +983,17 @@ class BiasAccumulator {
    * Check if bias allows entry for a token
    */
   canEnter(tokenId: string): { allowed: boolean; reason?: string } {
+    // COPY_ANY_WHALE_BUY mode: allow entry if we've seen ANY whale buy on this token
+    // No need for $300 flow or 3 trades - just one whale buy is enough
+    if (this.config.copyAnyWhaleBuy) {
+      const bias = this.getBias(tokenId);
+      // Allow if we've seen at least 1 trade (which must be a BUY since we only track buys)
+      if (bias.tradeCount >= 1) {
+        return { allowed: true };
+      }
+      return { allowed: false, reason: "NO_WHALE_BUY_SEEN" };
+    }
+
     if (!this.config.allowEntriesOnlyWithBias) {
       return { allowed: true };
     }
