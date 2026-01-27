@@ -21,7 +21,7 @@ npm start
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PRIVATE_KEY` | Yes | Your wallet private key (with 0x prefix) |
-| `RPC_URL` | No | Polygon RPC endpoint (default: `https://polygon-rpc.com`) |
+| `RPC_URL` | No | Polygon RPC endpoint (default: `https://polygon-mainnet.infura.io/v3/YOUR_API_KEY`) |
 | `MAX_TRADE_USD` | No | Bet size in USD (default: `25`) |
 | `LIVE_TRADING` | No | Set to `I_UNDERSTAND_THE_RISKS` to enable real trades (default: simulation) |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram bot token for notifications |
