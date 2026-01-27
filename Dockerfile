@@ -58,4 +58,4 @@ COPY --from=builder /app/dist ./dist
 # Copy package.json for runtime metadata
 COPY package.json ./
 
-CMD ["node", "dist/start.js"]
+CMD ["node", "dist/churn-start.js"]
