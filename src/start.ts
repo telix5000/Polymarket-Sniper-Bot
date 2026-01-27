@@ -1241,7 +1241,7 @@ class MarketScanner {
           const prices = JSON.parse(market.outcomePrices || "[]");
           const yesPrice = parseFloat(prices[0] || "0.5");
 
-          // Only consider markets in tradeable price range (30-70¢ ideal)
+          // Only consider markets in tradeable price range (20-80¢)
           if (yesPrice < 0.20 || yesPrice > 0.80) continue;
 
           markets.push({
@@ -1687,6 +1687,11 @@ class PositionManager {
       hardExitPriceCents = entryPriceCents + this.config.maxAdverseCents;
     }
 
+    // Calculate P&L correctly based on side
+    const pnlCents = pos.gainCents || (side === "LONG" 
+      ? (currentPriceCents - entryPriceCents) 
+      : (entryPriceCents - currentPriceCents));
+
     const position: ManagedPosition = {
       id,
       tokenId: pos.tokenId,
@@ -1697,7 +1702,7 @@ class PositionManager {
       entrySizeUsd: pos.value,
       entryTime: pos.entryTime || now - 60000, // Default to 1 min ago if unknown
       currentPriceCents,
-      unrealizedPnlCents: pos.gainCents || (currentPriceCents - entryPriceCents),
+      unrealizedPnlCents: pnlCents,
       unrealizedPnlUsd: pos.pnlUsd,
       takeProfitPriceCents,
       hedgeTriggerPriceCents,
@@ -3238,7 +3243,7 @@ class ChurnEngine {
       if (existingPositions.length > 0) {
         console.error("❌ No effective bankroll available");
         console.error(`   You have ${existingPositions.length} positions worth $${positionValue.toFixed(2)}`);
-        console.error(`   Set LIQUIDATION_MODE=all to sell all, or LIQUIDATION_MODE=losers to sell only losing positions`);
+        console.error(`   Set LIQUIDATION_MODE=all to sell all, or LIQUIDATION_MODE=losing to sell only losing positions`);
         return false;
       } else {
         console.error("❌ No effective bankroll available");
@@ -3710,20 +3715,24 @@ class ChurnEngine {
     // The bot will apply TP, stop loss, hedging, and time stops to everything.
     
     // First, sync any on-chain positions not yet tracked by the position manager
+    // Only sync every 10 cycles to reduce API load
     let allPositions: Position[] = [];
-    try {
-      allPositions = await getPositions(this.address, true);
-      
-      // Register any untracked positions with the position manager
-      // so they get the same exit logic applied
-      for (const pos of allPositions) {
-        if (!this.positionManager.getPosition(pos.tokenId)) {
-          // This is an external position - register it for monitoring
-          this.positionManager.registerExternalPosition(pos);
+    if (this.cycleCount % 10 === 0) {
+      try {
+        allPositions = await getPositions(this.address, true);
+        
+        // Register any untracked positions with the position manager
+        // so they get the same exit logic applied
+        for (const pos of allPositions) {
+          const existingPositions = this.positionManager.getPositionsByToken(pos.tokenId);
+          if (existingPositions.length === 0) {
+            // This is an external position - register it for monitoring
+            this.positionManager.registerExternalPosition(pos);
+          }
         }
+      } catch {
+        // Continue with managed positions only if fetch fails
       }
-    } catch {
-      // Continue with managed positions only if fetch fails
     }
     
     const openPositions = this.positionManager.getOpenPositions();
@@ -3808,8 +3817,8 @@ class ChurnEngine {
         const scannedEntryPromises = scannedOpportunities.slice(0, 2).map(async (tokenId) => {
           try {
             // Check if we already have a position in this market
-            const existingPosition = this.positionManager.getPosition(tokenId);
-            if (existingPosition) return null;
+            const existingPositions = this.positionManager.getPositionsByToken(tokenId);
+            if (existingPositions.length > 0) return null;
 
             const marketData = await this.fetchTokenMarketData(tokenId);
             if (marketData) {

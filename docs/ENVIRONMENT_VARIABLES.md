@@ -508,7 +508,7 @@ SCAN_ACTIVE_MARKETS=true
 | **Whale Tracking** | `WHALE_TRADE_USD`, `COPY_ANY_WHALE_BUY` |
 | **Market Scanner** | `SCAN_ACTIVE_MARKETS`, `SCAN_MIN_VOLUME_USD` |
 | **Reserves** | `DYNAMIC_RESERVES_ENABLED`, `MAX_RESERVE_FRACTION` |
-| **Liquidation** | `FORCE_LIQUIDATION`, `LIQUIDATION_MAX_SLIPPAGE_PCT` |
+| **Liquidation** | `LIQUIDATION_MODE`, `LIQUIDATION_MAX_SLIPPAGE_PCT` |
 | **Notifications** | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
 
 For questions or issues, check the README or open a GitHub issue.
