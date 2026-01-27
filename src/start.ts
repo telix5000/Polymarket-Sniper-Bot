@@ -32,6 +32,7 @@ import {
   // Types
   type Position,
   type Logger,
+  type OrderOutcome,
   // Auth
   createClobClient,
   isLiveTradingEnabled,
@@ -710,6 +711,9 @@ async function checkPolBalance(): Promise<void> {
 /**
  * Sell a position using scavenger's proven sell logic
  * Based on src/lib/scavenger.ts executeSell() (lines 519-541)
+ * 
+ * IMPORTANT: Uses curPrice (current market price) for validation, NOT avgPrice (entry price).
+ * This allows selling losing positions at current market value.
  */
 async function sellPosition(
   position: Position,
@@ -721,6 +725,8 @@ async function sellPosition(
   logger.info(`🔄 Selling ${position.outcome}`);
   logger.info(`   Shares: ${position.size.toFixed(2)}`);
   logger.info(`   Value: $${position.value.toFixed(2)}`);
+  logger.info(`   Entry: ${(position.avgPrice * 100).toFixed(1)}¢`);
+  logger.info(`   Current: ${(position.curPrice * 100).toFixed(1)}¢`);
   logger.info(`   P&L: ${position.pnlPct >= 0 ? '+' : ''}${position.pnlPct.toFixed(1)}%`);
   logger.info(`   Reason: ${reason}`);
   
@@ -734,10 +740,23 @@ async function sellPosition(
 
     const bestBid = parseFloat(book.bids[0].price);
     
-    // Minimum price check (allow 1% slippage)
-    const minPrice = position.avgPrice * 0.99;
+    // Use curPrice (current market value) for validation, allow 5% slippage
+    // This is critical: we must use curPrice, NOT avgPrice, to allow selling losing positions
+    const minPrice = position.curPrice * 0.95;
+    
+    // Log price comparison for debugging
+    logger.info(`   Orderbook bid: ${(bestBid * 100).toFixed(1)}¢`);
+    logger.info(`   Min acceptable: ${(minPrice * 100).toFixed(1)}¢ (5% slippage from curPrice)`);
+    
+    // Warn if there's a large discrepancy between curPrice and orderbook bid
+    const priceDiscrepancy = Math.abs(bestBid - position.curPrice) / position.curPrice;
+    if (priceDiscrepancy > 0.10) {
+      logger.warn(`⚠️  Large price discrepancy: orderbook ${(bestBid * 100).toFixed(1)}¢ vs curPrice ${(position.curPrice * 100).toFixed(1)}¢ (${(priceDiscrepancy * 100).toFixed(1)}% diff)`);
+    }
+    
     if (bestBid < minPrice) {
       logger.warn(`❌ Price too low: ${(bestBid * 100).toFixed(0)}¢ < ${(minPrice * 100).toFixed(0)}¢`);
+      logger.warn(`   Consider using sellPositionEmergency for forced sells at any price`);
       return false;
     }
 
@@ -788,6 +807,9 @@ async function sellPosition(
 /**
  * Execute sell with emergency mode support
  * Uses postOrder with configurable price protection
+ * 
+ * IMPORTANT: Uses curPrice (current market price) for validation, NOT avgPrice (entry price).
+ * This allows selling losing positions at current market value.
  */
 async function sellPositionEmergency(
   position: Position,
@@ -806,23 +828,28 @@ async function sellPositionEmergency(
   logger.info(`   Reason: ${reason}`);
   
   // Calculate minimum acceptable price based on emergency mode
+  // CRITICAL: Use curPrice (current market price), NOT avgPrice (entry price)
+  // This allows selling positions that have lost value
   let maxAcceptablePrice: number | undefined;
   
   if (emergencyMode) {
-    maxAcceptablePrice = calculateEmergencyMinPrice(
-      position.avgPrice,
-      state.emergencySellConfig
-    );
-    
-    if (maxAcceptablePrice !== undefined) {
-      logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (${state.emergencySellConfig.mode} mode)`);
-    } else {
+    // For emergency mode, apply the configured protection level to CURRENT price
+    // This allows emergency sells to happen even for losing positions
+    if (state.emergencySellConfig.mode === 'NUCLEAR') {
+      maxAcceptablePrice = undefined; // No protection
       logger.warn(`   ⚠️  NUCLEAR MODE - No price protection!`);
+    } else {
+      // Apply slippage to current price, not entry price
+      // CONSERVATIVE: 5% slippage from current price
+      // MODERATE: 10% slippage from current price
+      const slippagePct = state.emergencySellConfig.mode === 'CONSERVATIVE' ? 0.95 : 0.90;
+      maxAcceptablePrice = position.curPrice * slippagePct;
+      logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (${state.emergencySellConfig.mode} mode, ${((1-slippagePct)*100).toFixed(0)}% slippage from curPrice)`);
     }
   } else {
-    // Normal mode: 1% slippage tolerance
-    maxAcceptablePrice = position.avgPrice * 0.99;
-    logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (1% slippage)`);
+    // Normal mode: 5% slippage tolerance from current price
+    maxAcceptablePrice = position.curPrice * 0.95;
+    logger.info(`   Min acceptable: ${(maxAcceptablePrice * 100).toFixed(1)}¢ (5% slippage from curPrice)`);
   }
   
   try {
@@ -862,14 +889,13 @@ async function sellPositionEmergency(
       return false;
     }
   } catch (error) {
-    logger.error(`❌ Sell error:`, error);
+    const errMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`❌ Sell error: ${errMessage}`);
     
     if (state.errorReporter) {
       await state.errorReporter.reportError(error as Error, {
         operation: "emergency_sell",
         tokenId: position.tokenId,
-        value: position.value,
-        emergencyMode: emergencyMode,
         mode: state.emergencySellConfig.mode,
       });
     }

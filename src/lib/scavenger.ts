@@ -515,7 +515,12 @@ export function analyzeMarketConditions(
 // EXECUTION
 // ============================================================================
 
-/** Execute a sell order */
+/** Execute a sell order 
+ * 
+ * IMPORTANT: The minPrice validation is applied to the orderbook's best bid.
+ * Callers should pass a minPrice based on curPrice (current market price), 
+ * NOT avgPrice (entry price), to allow selling positions that have lost value.
+ */
 async function executeSell(client: ClobClient, position: Position, minPrice: number): Promise<OrderResult> {
   try {
     const book = await client.getOrderBook(position.tokenId);
@@ -555,8 +560,9 @@ export async function processGreenExit(
     return { result: { action: "NONE", reason: "Price still moving" }, newState: state };
   }
 
-  const costBasis = position.avgPrice * position.size;
-  const minPrice = (costBasis + config.exit.minAcceptableProfitUsd) / position.size;
+  // Use curPrice with slippage for validation, not avgPrice
+  // This allows green exits even if the orderbook bid is slightly below the API-reported curPrice
+  const minPrice = position.curPrice * (1 - config.exit.conservativeSlippagePct / 100);
 
   logger?.info?.(`🦅 [SCAV] Green exit: ${position.outcome} | P&L: ${position.pnlPct.toFixed(1)}%`);
 
@@ -592,7 +598,9 @@ export async function processRedRecovery(
     return { result: { action: "NONE", reason: "Not yet recovered" }, newState: state };
   }
 
-  const minPrice = position.avgPrice * (1 - config.exit.conservativeSlippagePct / 100);
+  // Use curPrice with slippage for validation, not avgPrice
+  // This allows recovery exits to happen based on current market conditions
+  const minPrice = position.curPrice * (1 - config.exit.conservativeSlippagePct / 100);
   logger?.info?.(`🦅 [SCAV] Red recovered: ${position.outcome} | P&L: ${position.pnlPct.toFixed(1)}%`);
 
   const orderResult = await executeSell(client, position, minPrice);
