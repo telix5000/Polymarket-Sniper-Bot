@@ -1,53 +1,194 @@
 /**
- * V2 Copy Trading - Monitor and copy trades
+ * V2 Copy Trading - Monitor and copy whale trades
+ * 
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHALE DETECTION - CORRECT ARCHITECTURE
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 
+ * SOURCE OF TRUTH: Polymarket DATA API
+ * 
+ * Flow:
+ * 1) Fetch leaderboard → extract proxyWallets (NOT EOAs)
+ * 2) Track top ~99 wallets
+ * 3) For each proxyWallet, poll /trades endpoint
+ * 4) Use timestamp-based cursor to avoid reprocessing
+ * 5) Deduplicate using: (transactionHash + conditionId + outcomeIndex + side + size)
+ * 
+ * CRITICAL: Whale trades are SIGNALS, not execution instructions.
+ * They inform the bias, which grants PERMISSION to trade.
+ * 
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import axios from "axios";
 import { POLYMARKET_API } from "./constants";
 import type { TradeSignal } from "./types";
 
-const seenTrades = new Set<string>();
+// ═══════════════════════════════════════════════════════════════════════════
+// DEDUPLICATION - Using correct composite key
+// ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Fetch recent trades from addresses
+ * Generate a unique deduplication key for a trade
+ * Uses the composite: transactionHash + conditionId + outcomeIndex + side + size
+ * 
+ * This is more robust than just id or timestamp because:
+ * - transactionHash uniquely identifies the on-chain settlement
+ * - conditionId + outcomeIndex identifies the specific market outcome
+ * - side + size ensures we don't miss partial fills
  */
-export async function fetchRecentTrades(addresses: string[]): Promise<TradeSignal[]> {
+function generateTradeKey(trade: {
+  transactionHash?: string;
+  id?: string;
+  conditionId?: string;
+  outcomeIndex?: number;
+  outcome?: string;
+  side?: string;
+  size?: number;
+  price?: number;
+  timestamp?: string | number;
+  trader?: string;
+}): string {
+  // Use transactionHash as primary dedup if available
+  const txHash = trade.transactionHash || trade.id || "";
+  const conditionId = trade.conditionId || "";
+  const outcomeIndex = trade.outcomeIndex ?? (trade.outcome === "NO" ? 1 : 0);
+  const side = (trade.side || "BUY").toUpperCase();
+  const size = Number(trade.size) || 0;
+  
+  // Composite key for robust deduplication
+  return `${txHash}:${conditionId}:${outcomeIndex}:${side}:${size.toFixed(2)}`;
+}
+
+// Deduplication set with composite keys
+const seenTrades = new Set<string>();
+
+// Per-wallet timestamp cursors to avoid reprocessing old trades
+const walletCursors = new Map<string, number>();
+
+/**
+ * Fetch recent trades from whale addresses using Data API
+ * 
+ * OPTIMIZED FOR 99 WALLETS:
+ * - Uses per-wallet timestamp cursors
+ * - Processes in parallel batches with rate-limit awareness
+ * - Robust deduplication with composite keys
+ * 
+ * @param addresses - Array of proxyWallet addresses to monitor
+ * @param options - Configuration options
+ */
+export async function fetchRecentTrades(
+  addresses: string[],
+  options: {
+    /** Max trades per wallet to fetch (default: 10) */
+    limitPerWallet?: number;
+    /** Max age of trades to process in ms (default: 60000 = 60s) */
+    maxAgeMs?: number;
+    /** Parallel batch size (default: 10 for rate limiting) */
+    batchSize?: number;
+    /** Delay between batches in ms (default: 100ms) */
+    batchDelayMs?: number;
+  } = {},
+): Promise<TradeSignal[]> {
+  const {
+    limitPerWallet = 10,
+    maxAgeMs = 60000,
+    batchSize = 10,
+    batchDelayMs = 100,
+  } = options;
+
   const trades: TradeSignal[] = [];
   const now = Date.now();
 
-  for (const addr of addresses.slice(0, 10)) {
-    try {
-      const url = `${POLYMARKET_API.DATA}/trades?user=${addr}&limit=5`;
-      const { data } = await axios.get(url, { timeout: 5000 });
+  // Process addresses in parallel batches for efficiency
+  for (let i = 0; i < addresses.length; i += batchSize) {
+    const batch = addresses.slice(i, i + batchSize);
+    
+    const batchPromises = batch.map(async (addr) => {
+      const walletTrades: TradeSignal[] = [];
+      
+      try {
+        // Get cursor for this wallet (timestamp of last seen trade)
+        const cursor = walletCursors.get(addr.toLowerCase()) || 0;
+        
+        const url = `${POLYMARKET_API.DATA}/trades?user=${addr}&limit=${limitPerWallet}`;
+        const { data } = await axios.get(url, { timeout: 5000 });
 
-      if (!Array.isArray(data)) continue;
+        if (!Array.isArray(data)) return walletTrades;
 
-      for (const t of data) {
-        const key = `${t.id || t.timestamp}-${addr}`;
-        if (seenTrades.has(key)) continue;
+        let maxTimestamp = cursor;
 
-        const ts = new Date(t.timestamp || t.createdAt).getTime();
-        if (now - ts > 60000) continue; // Only last 60s
+        for (const t of data) {
+          const ts = new Date(t.timestamp || t.createdAt).getTime();
+          
+          // Skip if older than max age
+          if (now - ts > maxAgeMs) continue;
+          
+          // Skip if before cursor (already processed)
+          if (ts <= cursor) continue;
+          
+          // Generate composite dedup key
+          const key = generateTradeKey({
+            transactionHash: t.transactionHash,
+            id: t.id,
+            conditionId: t.conditionId,
+            outcomeIndex: t.outcomeIndex,
+            outcome: t.outcome,
+            side: t.side,
+            size: t.size,
+            price: t.price,
+            timestamp: ts,
+            trader: addr,
+          });
+          
+          // Skip if already seen (idempotent)
+          if (seenTrades.has(key)) continue;
+          seenTrades.add(key);
+          
+          // Track max timestamp for cursor update
+          maxTimestamp = Math.max(maxTimestamp, ts);
 
-        seenTrades.add(key);
-        trades.push({
-          tokenId: t.asset || t.tokenId,
-          conditionId: t.conditionId,
-          marketId: t.marketId,
-          outcome: t.outcome || "YES",
-          side: t.side?.toUpperCase() === "SELL" ? "SELL" : "BUY",
-          sizeUsd: Number(t.size) * Number(t.price) || 0,
-          price: Number(t.price) || 0,
-          trader: addr,
-          timestamp: ts,
-        });
+          // Build normalized trade signal
+          walletTrades.push({
+            // tokenId from API (may need resolution if missing)
+            tokenId: t.asset || t.tokenId || "",
+            conditionId: t.conditionId || "",
+            marketId: t.marketId || "",
+            // Normalize outcome to "YES" or "NO"
+            outcome: t.outcome === "NO" || t.outcomeIndex === 1 ? "NO" : "YES",
+            side: t.side?.toUpperCase() === "SELL" ? "SELL" : "BUY",
+            // Calculate USD value
+            sizeUsd: Number(t.size) * Number(t.price) || 0,
+            price: Number(t.price) || 0,
+            trader: addr,
+            timestamp: ts,
+          });
+        }
+        
+        // Update cursor for this wallet
+        if (maxTimestamp > cursor) {
+          walletCursors.set(addr.toLowerCase(), maxTimestamp);
+        }
+      } catch {
+        // Continue on error - individual wallet failure shouldn't stop others
       }
-    } catch {
-      // Continue on error
+      
+      return walletTrades;
+    });
+
+    // Await batch results
+    const batchResults = await Promise.all(batchPromises);
+    for (const walletTrades of batchResults) {
+      trades.push(...walletTrades);
+    }
+
+    // Rate limit between batches (avoid hammering API)
+    if (i + batchSize < addresses.length && batchDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
     }
   }
 
-  // Prune old seen trades
+  // Prune old seen trades to prevent unbounded memory growth
   if (seenTrades.size > 10000) {
     const arr = Array.from(seenTrades);
     arr.slice(0, 5000).forEach((k) => seenTrades.delete(k));
@@ -61,4 +202,22 @@ export async function fetchRecentTrades(addresses: string[]): Promise<TradeSigna
  */
 export function clearSeenTrades(): void {
   seenTrades.clear();
+  walletCursors.clear();
+}
+
+/**
+ * Get current cursor for a wallet (for debugging)
+ */
+export function getWalletCursor(address: string): number {
+  return walletCursors.get(address.toLowerCase()) || 0;
+}
+
+/**
+ * Get deduplication stats (for debugging)
+ */
+export function getDeduplicationStats(): { seenCount: number; walletCursorCount: number } {
+  return {
+    seenCount: seenTrades.size,
+    walletCursorCount: walletCursors.size,
+  };
 }

@@ -1,26 +1,29 @@
 /**
- * Mempool Monitor - Watch for PENDING whale transactions
+ * Mempool Monitor - DEPRECATED
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * WHY MEMPOOL MONITORING IS CRITICAL FOR COPY TRADING
+ * ⚠️ DEPRECATION NOTICE - DO NOT USE FOR WHALE DETECTION
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * On-chain events (OrderFilled) = AFTER trade confirmed = price already moved
- * Mempool monitoring = BEFORE trade confirmed = same price as whale!
+ * This module was based on incorrect assumptions about Polymarket architecture.
  *
- * The 2-12 second head start from mempool monitoring means:
- * - You see whale trades BEFORE they affect price
- * - You can get in at the same price (or better with higher gas)
- * - In fast markets, this is the difference between profit and loss
+ * POLYMARKET DOES NOT WORK VIA BLOCKCHAIN MEMPOOL:
+ * - Polymarket trades happen on the CLOB (Central Limit Order Book)
+ * - The CLOB is an off-chain order matching system
+ * - Blockchain (Polygon) is only used for SETTLEMENT, not trade execution
+ * - By the time a trade hits the mempool, it's already been matched on the CLOB
  *
- * ═══════════════════════════════════════════════════════════════════════════
+ * CORRECT WHALE DETECTION:
+ * - Use Polymarket DATA API (/trades endpoint) for whale activity
+ * - Track proxyWallets (not EOAs) from the leaderboard
+ * - Mempool monitoring provides NO speed advantage for Polymarket
  *
- * How it works:
- * 1. Subscribe to pending transactions on Polygon
- * 2. Filter for transactions TO Polymarket exchange contracts
- * 3. Decode the transaction data to see what trade is being made
- * 4. If it's from a tracked whale wallet, emit a signal
- * 5. Execute our copy trade with same or higher gas price
+ * This module is kept for backward compatibility but:
+ * - start() returns false immediately (no-op)
+ * - No WebSocket connections are made
+ * - No events are emitted
+ *
+ * For whale detection, use BiasAccumulator with Data API polling instead.
  */
 
 import { ethers } from "ethers";
@@ -114,52 +117,20 @@ export class MempoolMonitor {
 
   /**
    * Start monitoring the mempool
+   * 
+   * ⚠️ DEPRECATED: This method now returns false immediately.
+   * Mempool monitoring does not provide value for Polymarket because:
+   * - Trades happen on CLOB (off-chain), not blockchain
+   * - Blockchain is only for settlement (already matched)
+   * 
+   * Use Data API polling for whale detection instead.
    */
   async start(): Promise<boolean> {
-    if (!this.config.enabled || !this.config.wsRpcUrl) {
-      console.log("📡 Mempool monitoring disabled or no WebSocket URL");
-      return false;
-    }
-
-    if (this.running) {
-      return true;
-    }
-
-    try {
-      console.log("📡 Starting mempool monitor...");
-      
-      this.wsProvider = new ethers.WebSocketProvider(this.config.wsRpcUrl);
-      
-      // Subscribe to pending transactions
-      // Note: Not all RPC providers support this - Infura, Alchemy, QuickNode do
-      this.wsProvider.on("pending", async (txHash: string) => {
-        await this.handlePendingTx(txHash);
-      });
-
-      // Handle provider errors
-      this.wsProvider.on("error", (err: Error) => {
-        console.error(`📡 Mempool WebSocket error: ${err.message}`);
-      });
-
-      // Handle disconnection via provider events
-      this.wsProvider.on("network", (newNetwork, oldNetwork) => {
-        if (oldNetwork) {
-          console.warn("📡 Mempool network changed, reconnecting...");
-          this.scheduleReconnect();
-        }
-      });
-
-      await this.wsProvider.ready;
-      this.running = true;
-      
-      console.log(`📡 Mempool monitor started | Tracking ${this.config.whaleWallets.size} whales | Min: $${this.config.minTradeSizeUsd}`);
-      console.log(`📡 Watching for pending txs to CTF Exchange and NEG_RISK Exchange`);
-      
-      return true;
-    } catch (err) {
-      console.error(`📡 Failed to start mempool monitor: ${err instanceof Error ? err.message : err}`);
-      return false;
-    }
+    // DEPRECATED: Mempool monitoring is not useful for Polymarket
+    // The CLOB is off-chain, so blockchain mempool has no signal value
+    console.log("⚠️ Mempool monitoring DISABLED - not useful for Polymarket CLOB architecture");
+    console.log("   ℹ️ Use Data API polling for whale detection (BiasAccumulator)");
+    return false;
   }
 
   /**

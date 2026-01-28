@@ -303,3 +303,117 @@ export function getMarketCacheStats(): { size: number; validEntries: number } {
     validEntries,
   };
 }
+
+// ============================================================================
+// CRITICAL RESOLVER: conditionId + outcomeIndex → tokenId
+// ============================================================================
+
+/**
+ * Resolve tokenId from conditionId and outcomeIndex
+ * 
+ * This is the CRITICAL mapping required for trade execution.
+ * Whale trades from Data API contain:
+ *   - conditionId (market identifier)
+ *   - outcomeIndex (0 = YES, 1 = NO)
+ * 
+ * But CLOB execution REQUIRES:
+ *   - tokenId (specific outcome token)
+ * 
+ * This function performs the deterministic resolution.
+ * 
+ * @param conditionId - The market's condition ID
+ * @param outcomeIndex - 0 for YES, 1 for NO
+ * @returns tokenId if found, null if resolution fails (DO NOT EXECUTE if null)
+ */
+export async function resolveTokenId(
+  conditionId: string,
+  outcomeIndex: number,
+): Promise<string | null> {
+  // Validate outcome index
+  if (outcomeIndex !== 0 && outcomeIndex !== 1) {
+    console.warn(`[Market] Invalid outcomeIndex: ${outcomeIndex} (must be 0 or 1)`);
+    return null;
+  }
+
+  // Fetch market data by condition ID
+  const market = await fetchMarketByConditionId(conditionId);
+  if (!market) {
+    console.warn(`[Market] Could not resolve tokenId for condition ${conditionId.slice(0, 16)}...`);
+    return null;
+  }
+
+  // Map outcomeIndex to tokenId
+  // outcomeIndex 0 = YES token, outcomeIndex 1 = NO token
+  const tokenId = outcomeIndex === 0 ? market.yesTokenId : market.noTokenId;
+  
+  if (!tokenId || tokenId.trim() === "") {
+    console.warn(`[Market] Invalid tokenId for condition ${conditionId.slice(0, 16)}... outcome ${outcomeIndex}`);
+    return null;
+  }
+
+  return tokenId;
+}
+
+/**
+ * Batch resolve multiple tokenIds from conditionId + outcomeIndex pairs
+ * Useful when processing multiple whale trades
+ * 
+ * @param pairs - Array of { conditionId, outcomeIndex } pairs
+ * @returns Map from "conditionId:outcomeIndex" to tokenId (null entries for failed resolutions)
+ */
+export async function batchResolveTokenIds(
+  pairs: Array<{ conditionId: string; outcomeIndex: number }>,
+): Promise<Map<string, string | null>> {
+  const results = new Map<string, string | null>();
+  
+  // Group by conditionId to minimize API calls (since one conditionId gives both tokens)
+  const conditionIds = new Set(pairs.map(p => p.conditionId));
+  
+  // Prefetch all unique condition IDs
+  const prefetchPromises = Array.from(conditionIds).map(async (conditionId) => {
+    return { conditionId, market: await fetchMarketByConditionId(conditionId) };
+  });
+  
+  const prefetchResults = await Promise.all(prefetchPromises);
+  const marketByCondition = new Map<string, MarketTokenPair | null>();
+  for (const { conditionId, market } of prefetchResults) {
+    marketByCondition.set(conditionId, market);
+  }
+  
+  // Resolve each pair
+  for (const { conditionId, outcomeIndex } of pairs) {
+    const key = `${conditionId}:${outcomeIndex}`;
+    
+    if (outcomeIndex !== 0 && outcomeIndex !== 1) {
+      results.set(key, null);
+      continue;
+    }
+    
+    const market = marketByCondition.get(conditionId);
+    if (!market) {
+      results.set(key, null);
+      continue;
+    }
+    
+    const tokenId = outcomeIndex === 0 ? market.yesTokenId : market.noTokenId;
+    results.set(key, tokenId && tokenId.trim() !== "" ? tokenId : null);
+  }
+  
+  return results;
+}
+
+/**
+ * Get outcomeIndex from tokenId
+ * Reverse of resolveTokenId - useful for converting tokenId back to outcomeIndex
+ * 
+ * @param tokenId - The token ID
+ * @returns 0 for YES, 1 for NO, null if not found
+ */
+export async function getOutcomeIndex(tokenId: string): Promise<number | null> {
+  const market = await fetchMarketByTokenId(tokenId);
+  if (!market) return null;
+
+  if (market.yesTokenId === tokenId) return 0;
+  if (market.noTokenId === tokenId) return 1;
+  return null;
+}

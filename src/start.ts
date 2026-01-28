@@ -3727,13 +3727,19 @@ class ChurnEngine {
   }
 
   /**
-   * Initialize on-chain monitor for real-time whale detection AND position monitoring
+   * Initialize on-chain monitor for position monitoring and settlement verification
    * Connects to CTF Exchange contract via Infura WebSocket
    * 
-   * RUNS IN PARALLEL - WebSocket events fire independently of main loop
-   * This gives us blockchain-speed detection while API polling continues
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ⚠️ NOTE: On-chain monitor is now LIMITED to:
+   * - Position change monitoring (when our orders fill)
+   * - Settlement verification and reconciliation
    * 
-   * DATA PRIORITY: On-chain signals are FASTER than API and take precedence!
+   * On-chain is NOT used for primary whale detection because:
+   * - Data API is actually faster (CLOB updates API before settlement)
+   * - On-chain sees trades AFTER they've been matched on CLOB
+   * - Use BiasAccumulator with Data API polling for whale detection
+   * ═══════════════════════════════════════════════════════════════════════════
    */
   private async initializeOnChainMonitor(): Promise<void> {
     try {
@@ -3758,12 +3764,16 @@ class ChurnEngine {
       this.onchainMonitor = new OnChainMonitor(monitorConfig);
 
       // ═══════════════════════════════════════════════════════════════════════
-      // WHALE TRADE CALLBACK - On-chain signals take PRIORITY over API!
-      // Deduplication is handled by BiasAccumulator.addTrades()
+      // WHALE TRADE CALLBACK - SECONDARY to Data API (for reconciliation only)
+      // NOTE: On-chain signals are NOT faster than Data API for Polymarket
+      // because CLOB updates the API before settling trades on-chain.
+      // This callback is kept for verification/debugging purposes only.
+      // PRIMARY whale detection should use BiasAccumulator with Data API polling.
       // ═══════════════════════════════════════════════════════════════════════
       this.onchainMonitor.onWhaleTrade((trade) => {
-        // Log ALL whale trades for visibility
-        console.log(`🐋 Whale ${trade.side} detected | $${trade.sizeUsd.toFixed(0)} @ ${(trade.price * 100).toFixed(1)}¢ | Block #${trade.blockNumber}`);
+        // Log whale trades for debugging/reconciliation only
+        // This is SECONDARY - Data API polling is the primary source
+        console.log(`📡 [Reconciliation] On-chain whale ${trade.side} | $${trade.sizeUsd.toFixed(0)} @ ${(trade.price * 100).toFixed(1)}¢ | Block #${trade.blockNumber}`);
         
         // Only record BUY trades for bias (we copy buys, not sells)
         if (trade.side === "BUY") {
@@ -3785,9 +3795,8 @@ class ChurnEngine {
             return;
           }
 
-          // Feed to bias accumulator - this is the speed advantage!
-          // On-chain signals arrive BEFORE Polymarket API reports them
-          // Deduplication prevents double-counting with API data
+          // Feed to bias accumulator as SECONDARY signal
+          // Deduplication prevents double-counting with Data API signals
           this.biasAccumulator.recordTrade({
             tokenId: trade.tokenId,
             wallet: whaleWallet,
@@ -3796,12 +3805,7 @@ class ChurnEngine {
             timestamp: trade.timestamp,
           });
           
-          console.log(`⚡ On-chain → Bias | Block #${trade.blockNumber} | $${trade.sizeUsd.toFixed(0)} BUY | PRIORITY SIGNAL`);
-          
-          // In COPY_ANY_WHALE_BUY mode, log that we should copy this
-          if (this.config.copyAnyWhaleBuy) {
-            console.log(`   🎯 COPY_ANY_WHALE_BUY: Signal ready to copy!`);
-          }
+          console.log(`   ℹ️ On-chain signal recorded (secondary to Data API)`);
         } else {
           console.log(`   ℹ️ SELL trade - not copying (we only copy buys)`);
         }
@@ -3831,94 +3835,40 @@ class ChurnEngine {
       const started = await this.onchainMonitor.start();
       if (started) {
         const stats = this.onchainMonitor.getStats();
-        console.log(`📡 On-chain monitor: Infura ${stats.infuraTier} tier | ${stats.trackedWallets} whales | Position monitoring: ${stats.monitoringOwnPositions ? 'ON' : 'OFF'}`);
-        console.log(`📡 Data priority: ON-CHAIN > API (blockchain-speed edge)`);
+        console.log(`📡 On-chain monitor: Infura ${stats.infuraTier} tier | Position monitoring: ${stats.monitoringOwnPositions ? 'ON' : 'OFF'}`);
+        console.log(`📡 On-chain role: Position verification & reconciliation (NOT primary whale detection)`);
       }
     } catch (err) {
       console.warn(`⚠️ On-chain monitor init failed: ${err instanceof Error ? err.message : err}`);
-      console.warn(`   Falling back to API polling only (still works, just slower)`);
+      console.warn(`   Position monitoring disabled, but whale detection via Data API still works`);
     }
   }
 
   /**
    * Initialize mempool monitor for PENDING trade detection
-   * This is FASTER than on-chain events - sees trades BEFORE they confirm!
    * 
-   * NOTE: Runs independently of on-chain monitor - you can use either or both
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ⚠️ DEPRECATED - Mempool monitoring does NOT work for Polymarket
+   * ═══════════════════════════════════════════════════════════════════════════
+   * 
+   * Polymarket trades happen on the CLOB (off-chain), NOT on blockchain.
+   * By the time a trade hits the mempool, it has ALREADY been matched on the CLOB.
+   * 
+   * This function is kept for backward compatibility but does nothing.
+   * For whale detection, use BiasAccumulator with Data API polling.
    */
   private async initializeMempoolMonitor(): Promise<void> {
     if (!this.config.mempoolMonitorEnabled) {
       return;
     }
 
-    try {
-      // Detect WebSocket URL from RPC URL
-      let wsUrl = this.config.rpcUrl;
-      if (wsUrl.startsWith("https://")) {
-        wsUrl = wsUrl.replace("https://", "wss://").replace("/v3/", "/ws/v3/");
-      }
-
-      const mempoolConfig = createMempoolMonitorConfig(
-        wsUrl,
-        this.biasAccumulator.getWhaleWallets(),
-        {
-          enabled: true,
-          minTradeSizeUsd: this.config.onchainMinWhaleTradeUsd,
-          gasPriceMultiplier: this.config.mempoolGasPriceMultiplier,
-        }
-      );
-
-      this.mempoolMonitor = new MempoolMonitor(mempoolConfig);
-
-      // ═══════════════════════════════════════════════════════════════════
-      // PENDING BUY → COPY IMMEDIATELY (faster than on-chain!)
-      // ═══════════════════════════════════════════════════════════════════
-      this.mempoolMonitor.onPendingTrade((signal) => {
-        if (signal.side === "BUY") {
-          console.log(`🔮 MEMPOOL: Whale BUY pending | $${signal.estimatedSizeUsd.toFixed(0)} | Token: ${signal.tokenId.slice(0, 12)}...`);
-          console.log(`   ⚡ COPY SIGNAL - Execute with gas > ${(signal.gasPriceGwei * this.config.mempoolGasPriceMultiplier).toFixed(1)} gwei`);
-          
-          // Store the pending signal for the next cycle to act on
-          this.pendingWhaleSignals.set(signal.tokenId, signal);
-          
-          // Feed to bias accumulator immediately
-          this.biasAccumulator.recordTrade({
-            tokenId: signal.tokenId,
-            wallet: signal.whaleWallet,
-            side: "BUY",
-            sizeUsd: signal.estimatedSizeUsd,
-            timestamp: signal.detectedAt,
-          });
-        }
-
-        // ═══════════════════════════════════════════════════════════════════
-        // PENDING SELL → EARLY EXIT WARNING (get out before price drops!)
-        // ═══════════════════════════════════════════════════════════════════
-        if (signal.side === "SELL") {
-          // Check if we hold this token
-          const ourPositions = this.positionManager.getPositionsByToken(signal.tokenId);
-          if (ourPositions.length > 0) {
-            console.log(`🚨 MEMPOOL: Whale SELLING our token! | $${signal.estimatedSizeUsd.toFixed(0)}`);
-            console.log(`   ⚠️ EARLY EXIT SIGNAL - Consider selling before price drops!`);
-            
-            // Mark positions for urgent exit
-            for (const pos of ourPositions) {
-              console.log(`   📍 Position ${pos.id.slice(0, 8)}... | Entry: ${pos.entryPriceCents.toFixed(1)}¢ | Size: $${pos.entrySizeUsd.toFixed(2)}`);
-              // The next cycle will see this and can prioritize exit
-            }
-          }
-        }
-      });
-
-      const started = await this.mempoolMonitor.start();
-      if (started) {
-        console.log(`🔮 Mempool monitor: ACTIVE | Watching for PENDING whale trades`);
-        console.log(`🔮 Speed advantage: See trades BEFORE confirmation → copy at same price!`);
-      }
-    } catch (err) {
-      console.warn(`⚠️ Mempool monitor init failed: ${err instanceof Error ? err.message : err}`);
-      console.warn(`   Note: Not all RPC providers support pending tx subscription`);
-    }
+    // DEPRECATED: Log warning and skip initialization
+    console.log(`⚠️ Mempool monitoring SKIPPED - not useful for Polymarket CLOB architecture`);
+    console.log(`   ℹ️ Polymarket trades happen on CLOB (off-chain), mempool has no signal value`);
+    console.log(`   ℹ️ Using Data API polling for whale detection instead (BiasAccumulator)`);
+    
+    // Do not actually start the mempool monitor - it provides no value
+    return;
   }
 
   /**
