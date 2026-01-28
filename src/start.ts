@@ -3775,9 +3775,14 @@ class ChurnEngine {
     wsMarketClient.connect();
     
     // Initialize User WebSocket for order/fill events (authenticated)
+    // Note: User WebSocket is optional - system continues without it but
+    // will rely on polling for order status updates
     const wsUserClient = getWebSocketUserClient();
     wsUserClient.connect(this.client).catch((err) => {
-      console.warn(`📡 User WebSocket connection failed: ${err.message}`);
+      // Log at error level since this affects order tracking functionality
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`📡 User WebSocket connection failed (order tracking degraded): ${msg}`);
+      console.log(`   ↳ Order/fill events will fall back to polling-based detection`);
     });
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -4863,8 +4868,13 @@ class ChurnEngine {
         if (wsClient.isConnected()) {
           wsClient.subscribe(tokenIds);
         }
-      } catch {
+      } catch (err) {
         // WebSocket not available, will use REST fallback
+        // Log at debug level since this is expected during initialization
+        const msg = err instanceof Error ? err.message : String(err);
+        if (this.cycleCount % 100 === 0) {
+          console.log(`📡 [WS] Subscription failed, using REST fallback: ${msg}`);
+        }
       }
     }
     

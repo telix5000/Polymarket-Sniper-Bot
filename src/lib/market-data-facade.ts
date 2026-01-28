@@ -65,6 +65,8 @@ class RateLimiter {
   private readonly minIntervalMs: number;
   private readonly globalMinIntervalMs: number;
   private hits = 0;
+  // Track in-flight requests to prevent thundering herd
+  private inFlight = new Set<string>();
 
   constructor(minIntervalMs: number, globalMinIntervalMs: number = 100) {
     this.minIntervalMs = minIntervalMs;
@@ -72,10 +74,18 @@ class RateLimiter {
   }
 
   /**
-   * Check if a call is allowed for a specific token
+   * Try to acquire permission for a REST call (atomic check-and-record)
+   * Returns true if allowed, false if rate-limited
+   * Automatically records the call if allowed
    */
-  canCall(tokenId: string): boolean {
+  tryAcquire(tokenId: string): boolean {
     const now = Date.now();
+    
+    // Check if already in-flight for this token (prevents thundering herd)
+    if (this.inFlight.has(tokenId)) {
+      this.hits++;
+      return false;
+    }
     
     // Global rate limit
     if (now - this.globalLastCall < this.globalMinIntervalMs) {
@@ -90,16 +100,19 @@ class RateLimiter {
       return false;
     }
 
+    // Atomically acquire: record timestamps and mark in-flight
+    this.lastCallTime.set(tokenId, now);
+    this.globalLastCall = now;
+    this.inFlight.add(tokenId);
+    
     return true;
   }
 
   /**
-   * Record a call for a token
+   * Release the in-flight lock for a token (call after REST request completes)
    */
-  recordCall(tokenId: string): void {
-    const now = Date.now();
-    this.lastCallTime.set(tokenId, now);
-    this.globalLastCall = now;
+  release(tokenId: string): void {
+    this.inFlight.delete(tokenId);
   }
 
   /**
@@ -116,6 +129,7 @@ class RateLimiter {
     this.lastCallTime.clear();
     this.globalLastCall = 0;
     this.hits = 0;
+    this.inFlight.clear();
   }
 }
 
@@ -171,9 +185,9 @@ export class MarketDataFacade {
         return this.toOrderbookState(cached);
       }
 
-      // Data is stale or missing - try REST fallback
-      if (!this.rateLimiter.canCall(tokenId)) {
-        // Rate limited - return stale data if available
+      // Data is stale or missing - try REST fallback with atomic rate limiter
+      if (!this.rateLimiter.tryAcquire(tokenId)) {
+        // Rate limited or in-flight - return stale data if available
         if (cached) {
           this.wsHits++;
           this.recordResponseTime(startTime);
@@ -182,21 +196,26 @@ export class MarketDataFacade {
         return null;
       }
 
-      // Fetch from REST
-      const restData = await this.fetchFromRest(tokenId);
-      this.recordResponseTime(startTime);
-      
-      if (restData) {
-        this.restFallbacks++;
-        return restData;
-      }
+      // Fetch from REST (rate limiter acquired, will release after)
+      try {
+        const restData = await this.fetchFromRest(tokenId);
+        this.recordResponseTime(startTime);
+        
+        if (restData) {
+          this.restFallbacks++;
+          return restData;
+        }
 
-      // REST failed - return stale data if available
-      if (cached) {
-        return this.toOrderbookState(cached);
-      }
+        // REST failed - return stale data if available
+        if (cached) {
+          return this.toOrderbookState(cached);
+        }
 
-      return null;
+        return null;
+      } finally {
+        // Always release the rate limiter lock
+        this.rateLimiter.release(tokenId);
+      }
     } catch (err) {
       this.recordResponseTime(startTime);
       console.warn(`[MarketData] Error getting orderbook for ${tokenId.slice(0, 12)}...: ${err}`);
@@ -370,10 +389,9 @@ export class MarketDataFacade {
 
   /**
    * Fetch orderbook from REST API and update store
+   * Note: Rate limiting is handled by the caller via tryAcquire/release
    */
   private async fetchFromRest(tokenId: string): Promise<OrderbookState | null> {
-    this.rateLimiter.recordCall(tokenId);
-    
     try {
       const orderbook = await this.client.getOrderBook(tokenId);
       

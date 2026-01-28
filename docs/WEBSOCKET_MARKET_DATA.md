@@ -56,7 +56,7 @@ A new streaming architecture with three layers:
 
 ### 1. MarketDataStore (`src/lib/market-data-store.ts`)
 
-Single source of truth for live market data. Thread-safe, non-blocking.
+Single source of truth for live market data. Safe for async/await usage in Node.js's single-threaded event loop.
 
 **Stored per tokenId:**
 - `bestBid`, `bestAsk`, `mid` - Core prices (0-1 decimal)
