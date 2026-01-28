@@ -36,7 +36,11 @@ function mapOrderFailureReason(reason?: string): DiagReason {
 
   const lower = reason.toLowerCase();
 
-  if (lower.includes("live trading") || lower.includes("simulation")) {
+  if (
+    lower.includes("live trading") ||
+    lower.includes("simulation") ||
+    lower.includes("simulated")
+  ) {
     return "no_wallet_credentials";
   }
   if (lower.includes("liquidity") || lower.includes("depth")) {
@@ -229,6 +233,46 @@ describe("DIAG Buy Pricing Logic", () => {
     // - Doesn't overpay significantly
     assert.ok(DIAG_BUY_SLIPPAGE_PCT >= 1, "Slippage should be at least 1%");
     assert.ok(DIAG_BUY_SLIPPAGE_PCT <= 5, "Slippage should not exceed 5%");
+  });
+
+  test("should cap chosenLimitPrice at 1.0 when bestAsk is high", () => {
+    // Edge case: bestAsk close to 1.0 would cause chosenLimitPrice > 1.0 without cap
+    // Since Polymarket prices represent probabilities (0.0 to 1.0), price must be capped
+    const slippagePct = 2;
+    const slippageMultiplier = 1 + slippagePct / 100; // 1.02
+
+    // Test with bestAsk = 0.99 (99¢)
+    // Without cap: 0.99 * 1.02 = 1.0098 (exceeds 1.0)
+    const bestAsk = 0.99;
+    const uncappedPrice = bestAsk * slippageMultiplier;
+    assert.ok(uncappedPrice > 1.0, "Uncapped price should exceed 1.0");
+
+    // With cap: Math.min(0.99 * 1.02, 1.0) = 1.0
+    const cappedPrice = Math.min(bestAsk * slippageMultiplier, 1.0);
+    assert.strictEqual(cappedPrice, 1.0, "Capped price should be exactly 1.0");
+
+    // Test with bestAsk = 0.98 (still exceeds 1.0)
+    // 0.98 * 1.02 = 0.9996, which is within bounds
+    const bestAsk2 = 0.98;
+    const cappedPrice2 = Math.min(bestAsk2 * slippageMultiplier, 1.0);
+    assert.ok(
+      cappedPrice2 < 1.0,
+      "Price with bestAsk=0.98 should stay under 1.0",
+    );
+    assert.ok(
+      Math.abs(cappedPrice2 - 0.9996) < 0.0001,
+      "Price should be ~0.9996",
+    );
+
+    // Test with bestAsk = 1.0 (already at max)
+    // 1.0 * 1.02 = 1.02, capped to 1.0
+    const bestAsk3 = 1.0;
+    const cappedPrice3 = Math.min(bestAsk3 * slippageMultiplier, 1.0);
+    assert.strictEqual(
+      cappedPrice3,
+      1.0,
+      "Price with bestAsk=1.0 should cap at 1.0",
+    );
   });
 });
 

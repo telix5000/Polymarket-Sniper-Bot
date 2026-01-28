@@ -1110,7 +1110,11 @@ function mapOrderFailureReason(reason?: string): DiagReason {
 
   const lower = reason.toLowerCase();
 
-  if (lower.includes("live trading") || lower.includes("simulation")) {
+  if (
+    lower.includes("live trading") ||
+    lower.includes("simulation") ||
+    lower.includes("simulated")
+  ) {
     return "no_wallet_credentials";
   }
   if (lower.includes("liquidity") || lower.includes("depth")) {
