@@ -1105,16 +1105,12 @@ async function attemptDiagSell(
 /**
  * Map order failure reason string to DiagReason
  */
-function mapOrderFailureReason(reason?: string): DiagReason {
+export function mapOrderFailureReason(reason?: string): DiagReason {
   if (!reason) return "unknown_error";
 
   const lower = reason.toLowerCase();
 
-  if (
-    lower.includes("live trading") ||
-    lower.includes("simulation") ||
-    lower.includes("simulated")
-  ) {
+  if (lower.includes("live trading") || lower.includes("simulat")) {
     return "no_wallet_credentials";
   }
   if (lower.includes("liquidity") || lower.includes("depth")) {

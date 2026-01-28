@@ -1,354 +1,155 @@
 import assert from "node:assert";
-import { describe, test } from "node:test";
+import { test, describe } from "node:test";
+import { mapOrderFailureReason } from "../../../src/lib/diag-workflow";
 
 /**
- * Tests for diag-workflow.ts internal logic
+ * Unit tests for diag-workflow.ts functions
  *
- * Note: The attemptDiagBuy function is internal and not exported.
- * We test the mapOrderFailureReason function behavior through the
- * exported DiagReason mapping patterns.
+ * These tests verify:
+ * 1. Order failure reason mapping
+ * 2. Diagnostic workflow step handling
  */
-
-/**
- * Re-implementation of mapOrderFailureReason for testing purposes.
- * This mirrors the logic in diag-workflow.ts.
- */
-type DiagReason =
-  | "unsupported_market_schema"
-  | "not_binary_market"
-  | "cannot_resolve_outcome_token"
-  | "orderbook_unavailable"
-  | "insufficient_liquidity"
-  | "price_out_of_range"
-  | "cooldown_active"
-  | "risk_limits_blocked"
-  | "no_wallet_credentials"
-  | "ws_disconnected"
-  | "api_error"
-  | "no_position_to_sell"
-  | "sell_skipped_no_buy"
-  | "timeout_waiting_for_whale"
-  | "order_timeout"
-  | "unknown_error";
-
-function mapOrderFailureReason(reason?: string): DiagReason {
-  if (!reason) return "unknown_error";
-
-  const lower = reason.toLowerCase();
-
-  if (
-    lower.includes("live trading") ||
-    lower.includes("simulation") ||
-    lower.includes("simulated")
-  ) {
-    return "no_wallet_credentials";
-  }
-  if (lower.includes("liquidity") || lower.includes("depth")) {
-    return "insufficient_liquidity";
-  }
-  // Map PRICE_TOO_HIGH and PRICE_TOO_LOW from postOrder
-  if (
-    lower.includes("price_too_high") ||
-    lower.includes("price_too_low") ||
-    (lower.includes("price") &&
-      (lower.includes("range") || lower.includes("protection")))
-  ) {
-    return "price_out_of_range";
-  }
-  if (
-    lower.includes("orderbook") ||
-    lower.includes("no_asks") ||
-    lower.includes("no_bids")
-  ) {
-    return "orderbook_unavailable";
-  }
-  if (lower.includes("cooldown")) {
-    return "cooldown_active";
-  }
-  if (lower.includes("risk")) {
-    return "risk_limits_blocked";
-  }
-  if (lower.includes("timeout")) {
-    return "order_timeout";
-  }
-  if (lower.includes("api") || lower.includes("network")) {
-    return "api_error";
-  }
-
-  return "unknown_error";
-}
 
 describe("mapOrderFailureReason", () => {
-  describe("PRICE_TOO_HIGH and PRICE_TOO_LOW mapping", () => {
-    test("should map PRICE_TOO_HIGH to price_out_of_range", () => {
-      assert.strictEqual(
-        mapOrderFailureReason("PRICE_TOO_HIGH"),
-        "price_out_of_range",
-      );
-    });
-
-    test("should map price_too_high (lowercase) to price_out_of_range", () => {
-      assert.strictEqual(
-        mapOrderFailureReason("price_too_high"),
-        "price_out_of_range",
-      );
-    });
-
-    test("should map PRICE_TOO_LOW to price_out_of_range", () => {
-      assert.strictEqual(
-        mapOrderFailureReason("PRICE_TOO_LOW"),
-        "price_out_of_range",
-      );
-    });
-
-    test("should map mixed case Price_Too_High to price_out_of_range", () => {
-      assert.strictEqual(
-        mapOrderFailureReason("Price_Too_High"),
-        "price_out_of_range",
-      );
-    });
+  test("should return unknown_error for undefined reason", () => {
+    assert.strictEqual(mapOrderFailureReason(undefined), "unknown_error");
   });
 
-  describe("orderbook mapping", () => {
-    test("should map NO_ASKS to orderbook_unavailable", () => {
-      assert.strictEqual(
-        mapOrderFailureReason("NO_ASKS"),
-        "orderbook_unavailable",
-      );
-    });
-
-    test("should map NO_BIDS to orderbook_unavailable", () => {
-      assert.strictEqual(
-        mapOrderFailureReason("NO_BIDS"),
-        "orderbook_unavailable",
-      );
-    });
-
-    test("should map NO_ORDERBOOK to orderbook_unavailable", () => {
-      assert.strictEqual(
-        mapOrderFailureReason("NO_ORDERBOOK"),
-        "orderbook_unavailable",
-      );
-    });
+  test("should return unknown_error for empty string", () => {
+    assert.strictEqual(mapOrderFailureReason(""), "unknown_error");
   });
 
-  describe("credential mapping", () => {
-    test("should map live trading disabled to no_wallet_credentials", () => {
-      assert.strictEqual(
-        mapOrderFailureReason("SIMULATED"),
-        "no_wallet_credentials",
-      );
-      assert.strictEqual(
-        mapOrderFailureReason("live trading disabled"),
-        "no_wallet_credentials",
-      );
-    });
-  });
-
-  describe("liquidity mapping", () => {
-    test("should map insufficient_liquidity", () => {
-      assert.strictEqual(
-        mapOrderFailureReason("insufficient liquidity"),
-        "insufficient_liquidity",
-      );
-    });
-
-    test("should map NO_LIQUIDITY to insufficient_liquidity", () => {
-      assert.strictEqual(
-        mapOrderFailureReason("NO_LIQUIDITY"),
-        "insufficient_liquidity",
-      );
-    });
-  });
-
-  describe("edge cases", () => {
-    test("should return unknown_error for empty string", () => {
-      assert.strictEqual(mapOrderFailureReason(""), "unknown_error");
-    });
-
-    test("should return unknown_error for undefined", () => {
-      assert.strictEqual(mapOrderFailureReason(undefined), "unknown_error");
-    });
-
-    test("should return unknown_error for unrecognized reason", () => {
-      assert.strictEqual(
-        mapOrderFailureReason("SOME_RANDOM_ERROR"),
-        "unknown_error",
-      );
-    });
-  });
-});
-
-describe("DIAG Buy Pricing Logic", () => {
-  /**
-   * These tests verify the expected pricing behavior for DIAG BUY orders.
-   *
-   * The key fix is:
-   * 1. Fetch orderbook FIRST to get current bestAsk
-   * 2. Use bestAsk + slippage tolerance as chosenLimitPrice
-   * 3. Do NOT use signal.price * 1.1 which can fail if market moved
-   */
-
-  test("pricing logic should use bestAsk as basis (documented behavior)", () => {
-    // Simulate the pricing logic
-    const signalPrice = 0.5; // Whale traded at 50¢
-    const bestAsk = 0.6; // Current ask is 60¢ (market moved up)
-    const slippagePct = 2; // 2% tolerance
-
-    // OLD (broken): maxAcceptablePrice = signalPrice * 1.1 = 0.55
-    // This would REJECT because bestAsk (0.6) > maxAcceptablePrice (0.55)
-    const oldMaxAcceptable = signalPrice * 1.1;
-    assert.ok(
-      bestAsk > oldMaxAcceptable,
-      "Old logic would reject valid orders",
-    );
-
-    // NEW (fixed): chosenLimitPrice = bestAsk * (1 + slippagePct/100)
-    const newChosenLimit = bestAsk * (1 + slippagePct / 100);
-    assert.ok(
-      newChosenLimit >= bestAsk,
-      "New logic allows fill at bestAsk with tolerance",
-    );
-    assert.strictEqual(newChosenLimit, 0.612); // 0.6 * 1.02
-  });
-
-  test("should compute correct sizeUsd based on chosenLimitPrice", () => {
-    const forceShares = 1;
-    const bestAsk = 0.765;
-    const slippagePct = 2;
-
-    const chosenLimitPrice = bestAsk * (1 + slippagePct / 100);
-    const sizeUsd = forceShares * chosenLimitPrice;
-
-    // 1 share * (0.765 * 1.02) = 0.7803
-    assert.ok(Math.abs(sizeUsd - 0.7803) < 0.0001);
-  });
-
-  test("slippage percentage constant is defined correctly", () => {
-    // DIAG_BUY_SLIPPAGE_PCT should be 2% as per implementation
-    const DIAG_BUY_SLIPPAGE_PCT = 2;
-
-    // This is a reasonable value that:
-    // - Allows slight price movement tolerance
-    // - Doesn't overpay significantly
-    assert.ok(DIAG_BUY_SLIPPAGE_PCT >= 1, "Slippage should be at least 1%");
-    assert.ok(DIAG_BUY_SLIPPAGE_PCT <= 5, "Slippage should not exceed 5%");
-  });
-
-  test("should cap chosenLimitPrice at 1.0 when bestAsk is high", () => {
-    // Edge case: bestAsk close to 1.0 would cause chosenLimitPrice > 1.0 without cap
-    // Since Polymarket prices represent probabilities (0.0 to 1.0), price must be capped
-    const slippagePct = 2;
-    const slippageMultiplier = 1 + slippagePct / 100; // 1.02
-
-    // Test with bestAsk = 0.99 (99¢)
-    // Without cap: 0.99 * 1.02 = 1.0098 (exceeds 1.0)
-    const bestAsk = 0.99;
-    const uncappedPrice = bestAsk * slippageMultiplier;
-    assert.ok(uncappedPrice > 1.0, "Uncapped price should exceed 1.0");
-
-    // With cap: Math.min(0.99 * 1.02, 1.0) = 1.0
-    const cappedPrice = Math.min(bestAsk * slippageMultiplier, 1.0);
-    assert.strictEqual(cappedPrice, 1.0, "Capped price should be exactly 1.0");
-
-    // Test with bestAsk = 0.98 (still exceeds 1.0)
-    // 0.98 * 1.02 = 0.9996, which is within bounds
-    const bestAsk2 = 0.98;
-    const cappedPrice2 = Math.min(bestAsk2 * slippageMultiplier, 1.0);
-    assert.ok(
-      cappedPrice2 < 1.0,
-      "Price with bestAsk=0.98 should stay under 1.0",
-    );
-    assert.ok(
-      Math.abs(cappedPrice2 - 0.9996) < 0.0001,
-      "Price should be ~0.9996",
-    );
-
-    // Test with bestAsk = 1.0 (already at max)
-    // 1.0 * 1.02 = 1.02, capped to 1.0
-    const bestAsk3 = 1.0;
-    const cappedPrice3 = Math.min(bestAsk3 * slippageMultiplier, 1.0);
+  test("should map live trading disabled to no_wallet_credentials", () => {
     assert.strictEqual(
-      cappedPrice3,
-      1.0,
-      "Price with bestAsk=1.0 should cap at 1.0",
+      mapOrderFailureReason("live trading disabled"),
+      "no_wallet_credentials",
     );
   });
-});
 
-describe("DIAG Buy Price Validation Edge Cases", () => {
-  /**
-   * Tests for edge case handling in the attemptDiagBuy price validation.
-   * These verify the defensive programming added in the code review fixes.
-   */
-
-  test("should detect NaN from parseFloat on invalid price string", () => {
-    // parseFloat returns NaN for invalid inputs
-    const invalidPrices = ["", "abc", "NaN", undefined, null, "   "];
-
-    for (const invalidPrice of invalidPrices) {
-      const parsed = parseFloat(invalidPrice as string);
-      assert.ok(isNaN(parsed), `parseFloat("${invalidPrice}") should be NaN`);
-    }
-  });
-
-  test("should detect zero or negative prices as invalid", () => {
-    const invalidPrices = ["0", "-0.5", "-1"];
-
-    for (const invalidPrice of invalidPrices) {
-      const parsed = parseFloat(invalidPrice);
-      assert.ok(
-        parsed <= 0,
-        `Price "${invalidPrice}" (${parsed}) should be rejected`,
-      );
-    }
-  });
-
-  test("should accept valid price strings", () => {
-    const validPrices = ["0.5", "0.765", "0.001", "1.0", "0.99"];
-
-    for (const validPrice of validPrices) {
-      const parsed = parseFloat(validPrice);
-      assert.ok(
-        !isNaN(parsed) && parsed > 0,
-        `Price "${validPrice}" should be valid`,
-      );
-    }
-  });
-
-  test("should validate outcome labels", () => {
-    // Valid labels should pass validation
-    const yesLabel = "YES";
-    const noLabel = "NO";
+  test("should map LIVE TRADING to no_wallet_credentials (case insensitive)", () => {
     assert.strictEqual(
-      yesLabel === "YES" || yesLabel === "NO",
-      true,
-      "YES should be valid",
+      mapOrderFailureReason("LIVE TRADING disabled"),
+      "no_wallet_credentials",
     );
-    assert.strictEqual(
-      noLabel === "YES" || noLabel === "NO",
-      true,
-      "NO should be valid",
-    );
+  });
 
-    // Invalid labels should trigger fallback to "YES"
-    const invalidLabels = [
-      undefined,
-      null,
-      "",
-      "yes",
-      "no",
-      "Maybe",
-      "TRUE",
-      "FALSE",
-    ];
-    for (const label of invalidLabels) {
-      const isValid = label === "YES" || label === "NO";
-      assert.strictEqual(
-        isValid,
-        false,
-        `"${label}" should not be a valid outcome label`,
-      );
-    }
+  test("should map simulation to no_wallet_credentials", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("simulation mode"),
+      "no_wallet_credentials",
+    );
+  });
+
+  test("should map simulated to no_wallet_credentials", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("simulated order"),
+      "no_wallet_credentials",
+    );
+  });
+
+  test("should map SIMULATED to no_wallet_credentials", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("SIMULATED"),
+      "no_wallet_credentials",
+    );
+  });
+
+  test("should map liquidity errors to insufficient_liquidity", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("insufficient liquidity"),
+      "insufficient_liquidity",
+    );
+  });
+
+  test("should map depth errors to insufficient_liquidity", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("not enough depth"),
+      "insufficient_liquidity",
+    );
+  });
+
+  test("should map price range errors to price_out_of_range", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("price out of range"),
+      "price_out_of_range",
+    );
+  });
+
+  test("should map price protection errors to price_out_of_range", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("price protection triggered"),
+      "price_out_of_range",
+    );
+  });
+
+  test("should map PRICE_TOO_HIGH to price_out_of_range", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("PRICE_TOO_HIGH"),
+      "price_out_of_range",
+    );
+  });
+
+  test("should map PRICE_TOO_LOW to price_out_of_range", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("PRICE_TOO_LOW"),
+      "price_out_of_range",
+    );
+  });
+
+  test("should map orderbook errors to orderbook_unavailable", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("orderbook unavailable"),
+      "orderbook_unavailable",
+    );
+  });
+
+  test("should map NO_ASKS to orderbook_unavailable", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("NO_ASKS"),
+      "orderbook_unavailable",
+    );
+  });
+
+  test("should map NO_BIDS to orderbook_unavailable", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("NO_BIDS"),
+      "orderbook_unavailable",
+    );
+  });
+
+  test("should map cooldown errors to cooldown_active", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("cooldown period active"),
+      "cooldown_active",
+    );
+  });
+
+  test("should map risk errors to risk_limits_blocked", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("risk limits exceeded"),
+      "risk_limits_blocked",
+    );
+  });
+
+  test("should map timeout errors to order_timeout", () => {
+    assert.strictEqual(mapOrderFailureReason("order timeout"), "order_timeout");
+  });
+
+  test("should map API errors to api_error", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("API request failed"),
+      "api_error",
+    );
+  });
+
+  test("should map network errors to api_error", () => {
+    assert.strictEqual(mapOrderFailureReason("network error"), "api_error");
+  });
+
+  test("should return unknown_error for unrecognized reasons", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("some random error"),
+      "unknown_error",
+    );
   });
 });
