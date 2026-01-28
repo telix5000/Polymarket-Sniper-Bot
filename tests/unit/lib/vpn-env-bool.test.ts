@@ -38,7 +38,7 @@ function mockEnv(vars: Record<string, string | undefined>) {
 }
 
 /**
- * Restore original environment
+ * Restore original environment and clear tracking object
  */
 function restoreEnv() {
   for (const [key, value] of Object.entries(originalEnv)) {
@@ -47,6 +47,10 @@ function restoreEnv() {
     } else {
       process.env[key] = value;
     }
+  }
+  // Clear the tracking object to prevent test pollution
+  for (const key of Object.keys(originalEnv)) {
+    delete originalEnv[key];
   }
 }
 

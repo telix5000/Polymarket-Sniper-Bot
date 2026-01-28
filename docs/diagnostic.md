@@ -75,13 +75,13 @@ npm start
 At startup, the bot outputs VPN bypass settings showing whether each value is from ENV or DEFAULT:
 
 ```
-═══════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════
   📡 VPN BYPASS SETTINGS (EFFECTIVE)
-═══════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════
   VPN_BYPASS_RPC: true [DEFAULT]
   VPN_BYPASS_POLYMARKET_READS: false [DEFAULT]
   VPN_BYPASS_POLYMARKET_WS: true [DEFAULT]
-═══════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════
 ```
 
 The bot automatically ensures WRITE hosts (like `clob.polymarket.com`) route through the VPN interface immediately after VPN connects. This prevents `WRITE_ROUTE_MISMATCH` warnings.
