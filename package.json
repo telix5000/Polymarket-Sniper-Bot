@@ -2,7 +2,7 @@
   "name": "polymarket-bot",
   "version": "1.0.0",
   "private": false,
-  "description": "A trading bot for Polymarket prediction markets with real-time monitoring dashboard.",
+  "description": "A trading bot for Polymarket prediction markets.",
   "license": "Apache-2.0",
   "author": {
     "name": "telix5000",

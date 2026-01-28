@@ -12,9 +12,8 @@ This document provides a comprehensive reference for understanding how the order
 6. [Price Protection & Deviance Checks](#price-protection--deviance-checks)
 7. [Smart Sell System](#smart-sell-system)
 8. [Hedging Logic](#hedging-logic)
-9. [Scavenger Mode](#scavenger-mode)
-10. [Auto-Redemption](#auto-redemption)
-11. [Configuration Parameters](#configuration-parameters)
+9. [Auto-Redemption](#auto-redemption)
+10. [Configuration Parameters](#configuration-parameters)
 
 ---
 
@@ -350,39 +349,6 @@ When a position moves against you, hedging reduces exposure by selling a portion
 - Caps average loss to ~9¢ instead of 30¢
 - Maintains some upside if price recovers
 - Reduces variance while staying in the game
-
----
-
-## Scavenger Mode
-
-### What Is Scavenger Mode?
-
-During **low liquidity periods**, the bot enters "Scavenger Mode" - a capital preservation strategy.
-
-### Detection Triggers
-
-Scavenger mode activates when multiple conditions are met:
-
-| Condition | Threshold | Description |
-|-----------|-----------|-------------|
-| Low volume | < $1,000 in 5 min | Market volume dropped |
-| Thin orderbook | < $500 depth | Not enough liquidity |
-| Stagnant book | No changes in 2 min | No price movement |
-| Few active whales | < 1 active | Whales aren't trading |
-
-### Scavenger Actions
-
-1. **Exit green positions** - Take profits on winning positions
-2. **Monitor red positions** - Wait for recovery to exit
-3. **No new entries** - Preserve capital
-
-### Recovery Detection
-
-Exit scavenger mode when:
-- Volume recovers to > $5,000
-- Depth recovers to > $2,000
-- Active whales ≥ 2
-- Sustained for 2+ minutes
 
 ---
 

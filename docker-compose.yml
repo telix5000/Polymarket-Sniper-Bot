@@ -9,10 +9,6 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
-    ports:
-      # Web dashboard port - access at http://localhost:DASHBOARD_PORT
-      # Host port is configurable, container always listens on 3000
-      - "${DASHBOARD_PORT:-3000}:3000"
     environment:
       # Required
       - PRIVATE_KEY=${PRIVATE_KEY}
@@ -20,10 +16,6 @@ services:
 
       # Trading
       - LIVE_TRADING=${LIVE_TRADING:-false}
-
-      # Web Dashboard - Access via http://localhost:DASHBOARD_PORT
-      # Container always uses port 3000 internally
-      - DASHBOARD_PORT=3000
 
       # VPN (optional) - Set WIREGUARD_ENABLED=true or OPENVPN_ENABLED=true
       - WIREGUARD_ENABLED=${WIREGUARD_ENABLED:-false}
