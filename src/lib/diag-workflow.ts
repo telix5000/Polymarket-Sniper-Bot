@@ -799,7 +799,7 @@ async function attemptDiagBuy(
     // ═══════════════════════════════════════════════════════════════════════
     const slippagePct = DIAG_BUY_SLIPPAGE_PCT;
     const slippageMultiplier = 1 + slippagePct / 100;
-    const chosenLimitPrice = bestAsk * slippageMultiplier;
+    const chosenLimitPrice = Math.min(bestAsk * slippageMultiplier, 1.0);
 
     // Note: priceUnits is for logging/documentation only - the Polymarket CLOB API
     // expects price in decimal format (0.0 to 1.0) representing probability/price per share
