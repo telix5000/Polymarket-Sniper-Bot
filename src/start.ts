@@ -80,6 +80,7 @@ import {
   // GitHub error reporting
   initGitHubReporter,
   reportError,
+  getGitHubReporter,
   // Latency monitoring for dynamic slippage
   LatencyMonitor,
   initLatencyMonitor,
@@ -971,36 +972,64 @@ class BiasAccumulator {
       return [];
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DIAGNOSTIC: Track API fetch results
+    // ═══════════════════════════════════════════════════════════════════════════
+    let totalFetches = 0;
+    let successfulFetches = 0;
+    let emptyResponses = 0;
+    let totalTradesFound = 0;
+    let tradesInWindow = 0;
+
     // Fetch all wallets in parallel for speed
     // API can handle concurrent requests, and we want to catch whale movement FAST
-    const fetchPromises = wallets.map(async (wallet) => {
+    const fetchPromises = wallets.slice(0, 20).map(async (wallet) => { // Limit to 20 to avoid rate limiting
+      totalFetches++;
       try {
-        const url = `${this.DATA_API}/trades?user=${wallet}&limit=20`;
+        // Try ACTIVITY endpoint first (like Novus-Tech-LLC does)
+        const url = `${this.DATA_API}/activity?user=${wallet}&limit=20`;
         const { data } = await axios.get(url, { timeout: 5000 });
 
-        if (!Array.isArray(data)) return [];
+        if (!Array.isArray(data)) {
+          emptyResponses++;
+          return [];
+        }
+        
+        if (data.length === 0) {
+          emptyResponses++;
+          return [];
+        }
+        
+        successfulFetches++;
 
         const trades: LeaderboardTrade[] = [];
-        for (const trade of data) {
+        for (const activity of data) {
+          // Only look at TRADE type activities
+          if (activity.type !== "TRADE") continue;
+          
+          totalTradesFound++;
+          
           // Only track BUY trades - we don't copy sells, we have our own exit math
-          if (trade.side?.toUpperCase() !== "BUY") continue;
+          if (activity.side?.toUpperCase() !== "BUY") continue;
 
-          const timestamp = new Date(
-            trade.timestamp || trade.createdAt,
-          ).getTime();
+          const timestamp = typeof activity.timestamp === 'number' 
+            ? activity.timestamp * 1000 // Unix timestamp in seconds -> ms
+            : new Date(activity.timestamp).getTime();
 
           // Only trades within window
           if (timestamp < windowStart) continue;
+          
+          tradesInWindow++;
 
-          const tokenId = trade.asset || trade.tokenId;
+          const tokenId = activity.asset || activity.tokenId;
           if (!tokenId) continue;
 
-          const sizeUsd = Number(trade.size) * Number(trade.price) || 0;
+          const sizeUsd = activity.usdcSize || (Number(activity.size) * Number(activity.price)) || 0;
           if (sizeUsd <= 0) continue;
 
           trades.push({
             tokenId,
-            marketId: trade.marketId,
+            marketId: activity.conditionId || activity.marketId,
             wallet: wallet,
             side: "BUY", // Only BUY trades
             sizeUsd,
@@ -1008,8 +1037,12 @@ class BiasAccumulator {
           });
         }
         return trades;
-      } catch {
-        // Continue on error - don't block other wallets
+      } catch (err) {
+        // Log first few errors for diagnostics
+        if (totalFetches <= 3) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          console.debug(`[API] Fetch failed for ${wallet.slice(0, 10)}...: ${errMsg}`);
+        }
         return [];
       }
     });
@@ -1018,11 +1051,25 @@ class BiasAccumulator {
     const results = await Promise.all(fetchPromises);
     const newTrades = results.flat();
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DIAGNOSTIC: Log API fetch results periodically
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (this.fetchCount % 10 === 0 || newTrades.length > 0) {
+      console.log(
+        `📊 [API Poll] Fetched ${totalFetches} wallets | ` +
+        `Success: ${successfulFetches} | Empty: ${emptyResponses} | ` +
+        `Trades found: ${totalTradesFound} | In window: ${tradesInWindow} | New BUYs: ${newTrades.length}`
+      );
+    }
+    this.fetchCount++;
+
     // Add to accumulator and prune old trades
     this.addTrades(newTrades);
 
     return newTrades;
   }
+  
+  private fetchCount = 0;
 
   /**
    * Add trades and maintain window
@@ -3310,6 +3357,23 @@ class ChurnEngine {
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
   private readonly SUMMARY_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DIAGNOSTICS - Track what's happening for debugging trade detection issues
+  // ═══════════════════════════════════════════════════════════════════════════
+  private diagnostics = {
+    startTime: Date.now(),
+    whaleTradesDetected: 0,
+    entryAttempts: 0,
+    entrySuccesses: 0,
+    entryFailureReasons: [] as string[],
+    orderbookFetchFailures: 0,
+    marketDataFetchAttempts: 0,
+    marketDataFetchSuccesses: 0,
+    startupLogs: [] as string[],
+    startupReportSent: false,
+  };
+  private readonly STARTUP_DIAGNOSTIC_DELAY_MS = 60 * 1000; // Send diagnostic after 60 seconds
+
   constructor() {
     this.config = loadConfig();
     this.logger = new SimpleLogger();
@@ -4116,10 +4180,14 @@ class ChurnEngine {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // 3. POLL WHALE FLOW FOR BIAS
+    // 3. POLL WHALE TRADES VIA API (EVERY CYCLE - like Novus-Tech-LLC)
+    // This is the PRIMARY trade detection method - on-chain is backup
     // ─────────────────────────────────────────────────────────────────
-    if (this.cycleCount % 3 === 0) {
-      await this.biasAccumulator.fetchLeaderboardTrades();
+    // Poll EVERY cycle for faster detection (not every 3rd cycle)
+    const newTrades = await this.biasAccumulator.fetchLeaderboardTrades();
+    if (newTrades.length > 0) {
+      console.log(`🐋 [API] Detected ${newTrades.length} new whale trade(s)!`);
+      this.diagnostics.whaleTradesDetected += newTrades.length;
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -4143,6 +4211,11 @@ class ChurnEngine {
     
     if (evAllowed.allowed) {
       if (activeBiases.length > 0) {
+        // Log when we have active biases - helps diagnose trade detection
+        if (this.cycleCount % 10 === 0 || activeBiases.length > 0) {
+          console.log(`🐋 [Bias] ${activeBiases.length} active whale signals detected`);
+        }
+        
         // Execute whale-signal entries in parallel to avoid missing opportunities
         // when multiple whale signals arrive simultaneously.
         // 
@@ -4152,18 +4225,33 @@ class ChurnEngine {
         // - maxOpenPositionsPerMarket (2) - per-token limit
         // These checks happen atomically in processEntry, preventing over-allocation.
         const entryPromises = activeBiases.slice(0, 3).map(async (bias) => {
+          this.diagnostics.entryAttempts++;
           try {
+            this.diagnostics.marketDataFetchAttempts++;
             const marketData = await this.fetchTokenMarketData(bias.tokenId);
             if (marketData) {
+              this.diagnostics.marketDataFetchSuccesses++;
               const result = await this.executionEngine.processEntry(bias.tokenId, marketData, usdcBalance);
+              if (result.success) {
+                this.diagnostics.entrySuccesses++;
+                console.log(`✅ [Entry] SUCCESS: Copied whale trade on ${bias.tokenId.slice(0, 12)}...`);
+              } else {
+                this.diagnostics.entryFailureReasons.push(result.reason || "unknown");
+                console.log(`❌ [Entry] FAILED: ${bias.tokenId.slice(0, 12)}... - ${result.reason}`);
+              }
               // Track missed opportunities - check for actual reason strings from processEntry
               if (!result.success && (result.reason === "NO_BANKROLL" || result.reason?.startsWith("Max deployed") || result.reason === "No effective bankroll")) {
                 this.dynamicReserveManager.recordMissedOpportunity(bias.tokenId, this.config.maxTradeUsd, "RESERVE_BLOCKED");
               }
               return result;
+            } else {
+              console.log(`⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}...`);
+              this.diagnostics.entryFailureReasons.push("NO_MARKET_DATA");
             }
           } catch (err) {
-            console.warn(`⚠️ Entry failed for ${bias.tokenId.slice(0, 8)}...: ${err instanceof Error ? err.message : err}`);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            this.diagnostics.entryFailureReasons.push(`ERROR: ${errMsg}`);
+            console.warn(`⚠️ Entry failed for ${bias.tokenId.slice(0, 8)}...: ${errMsg}`);
           }
           return null;
         });
@@ -4178,24 +4266,44 @@ class ChurnEngine {
         
         // Try top scanned markets (limit to avoid rate limiting)
         const scannedEntryPromises = scannedOpportunities.slice(0, 2).map(async (tokenId) => {
+          this.diagnostics.entryAttempts++;
           try {
             // Check if we already have a position in this market
             const existingPositions = this.positionManager.getPositionsByToken(tokenId);
             if (existingPositions.length > 0) return null;
 
+            this.diagnostics.marketDataFetchAttempts++;
             const marketData = await this.fetchTokenMarketData(tokenId);
             if (marketData) {
+              this.diagnostics.marketDataFetchSuccesses++;
               // For scanned markets, bypass bias check since these are high-volume
               // markets selected by the scanner based on activity metrics
               const result = await this.executionEngine.processEntry(tokenId, marketData, usdcBalance, true);
+              if (result.success) {
+                this.diagnostics.entrySuccesses++;
+                console.log(`✅ [Scanner] SUCCESS: Entered scanned market ${tokenId.slice(0, 12)}...`);
+              } else {
+                this.diagnostics.entryFailureReasons.push(`SCAN: ${result.reason || "unknown"}`);
+                // Only log scan failures periodically to avoid spam
+                if (this.cycleCount % 20 === 0) {
+                  console.log(`❌ [Scanner] FAILED: ${tokenId.slice(0, 12)}... - ${result.reason}`);
+                }
+              }
               // Track missed opportunities - check for actual reason strings from processEntry
               if (!result.success && (result.reason === "NO_BANKROLL" || result.reason?.startsWith("Max deployed") || result.reason === "No effective bankroll")) {
                 this.dynamicReserveManager.recordMissedOpportunity(tokenId, this.config.maxTradeUsd, "RESERVE_BLOCKED");
               }
               return result;
+            } else {
+              this.diagnostics.entryFailureReasons.push("SCAN: NO_MARKET_DATA");
             }
-          } catch {
-            // Silently skip failed scanned entries
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            this.diagnostics.entryFailureReasons.push(`SCAN_ERROR: ${errMsg}`);
+            // Only log scan errors periodically
+            if (this.cycleCount % 50 === 0) {
+              console.warn(`⚠️ [Scanner] Error for ${tokenId.slice(0, 8)}...: ${errMsg}`);
+            }
           }
           return null;
         });
@@ -4210,6 +4318,13 @@ class ChurnEngine {
     // ─────────────────────────────────────────────────────────────────
     // 6. PERIODIC HOUSEKEEPING
     // ─────────────────────────────────────────────────────────────────
+    
+    // Send startup diagnostic report after 60 seconds
+    if (!this.diagnostics.startupReportSent && 
+        now - this.diagnostics.startTime >= this.STARTUP_DIAGNOSTIC_DELAY_MS) {
+      await this.sendStartupDiagnostic(usdcBalance, effectiveBankroll);
+      this.diagnostics.startupReportSent = true;
+    }
     
     // Auto-redeem resolved positions
     if (now - this.lastRedeemTime >= this.REDEEM_INTERVAL_MS) {
@@ -4308,6 +4423,21 @@ class ChurnEngine {
     const networkEmoji = networkHealth.status === "healthy" ? "🟢" : networkHealth.status === "degraded" ? "🟡" : "🔴";
     console.log(`   ${networkEmoji} Network: ${networkHealth.status.toUpperCase()} | RPC: ${networkHealth.rpcLatencyMs.toFixed(0)}ms | API: ${networkHealth.apiLatencyMs.toFixed(0)}ms | Slippage: ${networkHealth.recommendedSlippagePct.toFixed(1)}%`);
     
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DIAGNOSTIC: Show on-chain vs API detection stats
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (this.onchainMonitor) {
+      const onchainStats = this.onchainMonitor.getStats();
+      const onchainEmoji = onchainStats.connected ? "🟢" : "🔴";
+      console.log(`   ${onchainEmoji} On-chain: ${onchainStats.connected ? 'CONNECTED' : 'DISCONNECTED'} | Events: ${onchainStats.eventsReceived} | Whales loaded: ${onchainStats.trackedWallets}`);
+    }
+    
+    // Show entry pipeline diagnostics
+    const entrySuccessRate = this.diagnostics.entryAttempts > 0 
+      ? ((this.diagnostics.entrySuccesses / this.diagnostics.entryAttempts) * 100).toFixed(0)
+      : '0';
+    console.log(`   📊 Diagnostics: API trades detected: ${this.diagnostics.whaleTradesDetected} | Entry attempts: ${this.diagnostics.entryAttempts} (${entrySuccessRate}% success) | OB failures: ${this.diagnostics.orderbookFetchFailures}`);
+    
     // Warn if network is not healthy
     if (networkHealth.warnings.length > 0 && networkHealth.status !== "healthy") {
       for (const warning of networkHealth.warnings) {
@@ -4347,7 +4477,14 @@ class ChurnEngine {
   private async getOrderbookState(tokenId: string): Promise<OrderbookState | null> {
     try {
       const orderbook = await this.client.getOrderBook(tokenId);
-      if (!orderbook?.bids?.length || !orderbook?.asks?.length) return null;
+      if (!orderbook?.bids?.length || !orderbook?.asks?.length) {
+        // Log when orderbook is empty - helps diagnose issues
+        if (this.cycleCount % 100 === 0) {
+          console.debug(`📊 [Orderbook] Token ${tokenId.slice(0, 12)}... has no bids/asks`);
+        }
+        this.diagnostics.orderbookFetchFailures++;
+        return null;
+      }
 
       const bestBid = parseFloat(orderbook.bids[0].price);
       const bestAsk = parseFloat(orderbook.asks[0].price);
@@ -4369,7 +4506,13 @@ class ChurnEngine {
         spreadCents: (bestAsk - bestBid) * 100,
         midPriceCents: ((bestBid + bestAsk) / 2) * 100,
       };
-    } catch {
+    } catch (err) {
+      // Log orderbook fetch errors - critical for diagnosing trade failures
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      if (this.cycleCount % 50 === 0) {
+        console.warn(`📊 [Orderbook] Failed to fetch for ${tokenId.slice(0, 12)}...: ${errorMsg}`);
+      }
+      this.diagnostics.orderbookFetchFailures++;
       return null;
     }
   }
@@ -4550,6 +4693,76 @@ class ChurnEngine {
   /**
    * Process position redemptions
    */
+  /**
+   * Send startup diagnostic report to GitHub Issues
+   * This helps debug trade detection issues by showing the first 60 seconds of operation
+   */
+  private async sendStartupDiagnostic(usdcBalance: number, effectiveBankroll: number): Promise<void> {
+    const reporter = getGitHubReporter();
+    if (!reporter.isEnabled()) {
+      console.log(`📋 [Diagnostic] GitHub reporter not enabled - skipping startup diagnostic`);
+      return;
+    }
+
+    const networkHealth = this.latencyMonitor.getNetworkHealth();
+    const trackedWallets = this.biasAccumulator.getTrackedWalletCount();
+    const scannedMarkets = this.config.scanActiveMarkets ? this.marketScanner.getActiveMarketCount() : 0;
+
+    // Determine on-chain monitor status
+    let onchainStatus = "DISABLED";
+    if (this.config.onchainMonitorEnabled) {
+      if (this.onchainMonitor) {
+        const stats = this.onchainMonitor.getStats();
+        onchainStatus = stats.connected 
+          ? `CONNECTED (${stats.eventsReceived} events)` 
+          : "DISCONNECTED";
+      } else {
+        onchainStatus = "FAILED_TO_START";
+      }
+    }
+
+    // Determine mempool monitor status  
+    let mempoolStatus = "DISABLED";
+    if (this.config.mempoolMonitorEnabled) {
+      mempoolStatus = this.mempoolMonitor ? "ACTIVE" : "FAILED_TO_START";
+    }
+
+    console.log(`📋 [Diagnostic] Sending startup diagnostic to GitHub Issues...`);
+    console.log(`   Whale trades detected: ${this.diagnostics.whaleTradesDetected}`);
+    console.log(`   Entry attempts: ${this.diagnostics.entryAttempts}`);
+    console.log(`   Entry successes: ${this.diagnostics.entrySuccesses}`);
+    console.log(`   Orderbook failures: ${this.diagnostics.orderbookFetchFailures}`);
+    console.log(`   On-chain: ${onchainStatus}`);
+
+    try {
+      await reporter.reportStartupDiagnostic({
+        whaleWalletsLoaded: trackedWallets,
+        marketsScanned: scannedMarkets,
+        whaleTradesDetected: this.diagnostics.whaleTradesDetected,
+        entryAttemptsCount: this.diagnostics.entryAttempts,
+        entrySuccessCount: this.diagnostics.entrySuccesses,
+        entryFailureReasons: this.diagnostics.entryFailureReasons.slice(-20), // Last 20 reasons
+        orderbookFetchFailures: this.diagnostics.orderbookFetchFailures,
+        onchainMonitorStatus: onchainStatus,
+        mempoolMonitorStatus: mempoolStatus,
+        rpcLatencyMs: networkHealth.rpcLatencyMs,
+        apiLatencyMs: networkHealth.apiLatencyMs,
+        balance: usdcBalance,
+        effectiveBankroll,
+        config: {
+          liveTradingEnabled: this.config.liveTradingEnabled,
+          copyAnyWhaleBuy: this.config.copyAnyWhaleBuy,
+          whaleTradeUsd: this.config.onchainMinWhaleTradeUsd,
+          scanActiveMarkets: this.config.scanActiveMarkets,
+        },
+        startupLogs: this.diagnostics.startupLogs,
+      });
+      console.log(`📋 [Diagnostic] Startup diagnostic sent successfully`);
+    } catch (err) {
+      console.warn(`📋 [Diagnostic] Failed to send: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   private async processRedemptions(): Promise<void> {
     try {
       const redeemable = await fetchRedeemablePositions(this.address);

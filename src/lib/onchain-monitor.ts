@@ -240,6 +240,11 @@ export class OnChainMonitor {
   private reconnectTimer: NodeJS.Timeout | null = null;
   
   // ═══════════════════════════════════════════════════════════════════════════
+  // DIAGNOSTICS - Track event reception for debugging
+  // ═══════════════════════════════════════════════════════════════════════════
+  private eventCount = 0;
+  
+  // ═══════════════════════════════════════════════════════════════════════════
   // PRICE DEVIANCE TRACKING - Track on-chain prices to compare with API
   // ═══════════════════════════════════════════════════════════════════════════
   /** Last known on-chain prices by tokenId */
@@ -460,6 +465,8 @@ export class OnChainMonitor {
    */
   getStats(): {
     running: boolean;
+    connected: boolean;
+    eventsReceived: number;
     reconnectAttempts: number;
     trackedWallets: number;
     monitoringOwnPositions: boolean;
@@ -468,6 +475,8 @@ export class OnChainMonitor {
   } {
     return {
       running: this.running,
+      connected: this.wsProvider !== null,
+      eventsReceived: this.eventCount,
       reconnectAttempts: this.reconnectAttempts,
       trackedWallets: this.config.whaleWallets.size,
       monitoringOwnPositions: !!this.config.ourWallet,
@@ -488,20 +497,24 @@ export class OnChainMonitor {
       throw new Error("WebSocket RPC URL not configured");
     }
 
+    console.log(`📡 [WS] Connecting to WebSocket: ${wsUrl.replace(/\/[a-f0-9]{32}/i, '/[API_KEY]')}`);
+
     // Create WebSocket provider
     this.wsProvider = new ethers.WebSocketProvider(wsUrl);
 
     // In ethers v6, we use provider events for connection state
     // The provider emits "error" events on connection issues
     this.wsProvider.on("error", (err: Error) => {
-      console.error(`📡 WebSocket error: ${err.message}`);
+      console.error(`📡 [WS] WebSocket error: ${err.message}`);
       if (this.running) {
         this.scheduleReconnect();
       }
     });
 
     // Wait for the provider to be ready
+    console.log(`📡 [WS] Waiting for provider ready...`);
     await this.wsProvider.ready;
+    console.log(`📡 [WS] Provider ready! WebSocket connected.`);
 
     // ═══════════════════════════════════════════════════════════════════════
     // SUBSCRIBE TO CTF EXCHANGE - Whale trade detection
@@ -513,7 +526,7 @@ export class OnChainMonitor {
       this.wsProvider
     );
     this.exchangeContract.on("OrderFilled", this.handleOrderFilled.bind(this));
-    console.log(`📡 Connected to CTF Exchange at ${POLYGON.CTF_EXCHANGE}`);
+    console.log(`📡 [WS] Subscribed to OrderFilled on CTF Exchange at ${POLYGON.CTF_EXCHANGE}`);
 
     // Also subscribe to NEG_RISK_CTF_EXCHANGE for negative risk markets
     this.negRiskExchangeContract = new ethers.Contract(
@@ -522,10 +535,11 @@ export class OnChainMonitor {
       this.wsProvider
     );
     this.negRiskExchangeContract.on("OrderFilled", this.handleOrderFilled.bind(this));
-    console.log(`📡 Connected to NEG_RISK Exchange at ${POLYGON.NEG_RISK_CTF_EXCHANGE}`);
+    console.log(`📡 [WS] Subscribed to OrderFilled on NEG_RISK Exchange at ${POLYGON.NEG_RISK_CTF_EXCHANGE}`);
     
     // Log whale tracking status
-    console.log(`📡 Tracking ${this.config.whaleWallets.size} whale wallets | Min trade: $${this.config.minWhaleTradeUsd}`);
+    console.log(`📡 [WS] Tracking ${this.config.whaleWallets.size} whale wallets | Min trade: $${this.config.minWhaleTradeUsd}`);
+    console.log(`📡 [WS] ⚡ On-chain monitoring ACTIVE - will log first 5 events then every 100th`);
 
     // ═══════════════════════════════════════════════════════════════════════
     // SUBSCRIBE TO CTF TOKEN - Our position monitoring (if wallet configured)
@@ -649,6 +663,14 @@ export class OnChainMonitor {
     fee: bigint,
     event: ethers.EventLog
   ): Promise<void> {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DIAGNOSTIC: Count ALL events received to verify WebSocket is working
+    // ═══════════════════════════════════════════════════════════════════════════
+    this.eventCount++;
+    if (this.eventCount <= 5 || this.eventCount % 100 === 0) {
+      console.log(`📡 [EVENT #${this.eventCount}] OrderFilled received | Block: ${event.blockNumber} | TxHash: ${event.transactionHash.slice(0, 16)}...`);
+    }
+
     try {
       // CTF Exchange: one asset is the outcome token, the other is USDC collateral.
       // Protocol invariant: USDC collateral has asset ID 0n, outcome tokens are non-zero.
