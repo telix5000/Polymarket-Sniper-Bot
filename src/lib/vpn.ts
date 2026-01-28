@@ -569,7 +569,9 @@ export function ensureWriteHostVpnRoutes(
       `ensureWriteHostVpnRoutes: All ${results.length} WRITE hosts route through ${vpnIface}`,
     );
   } else {
-    const failedHosts = results.filter((r) => !r.success).map((r) => r.hostname);
+    const failedHosts = results
+      .filter((r) => !r.success)
+      .map((r) => r.hostname);
     logger?.error?.(
       `ensureWriteHostVpnRoutes: Failed to route hosts through VPN: ${failedHosts.join(", ")}`,
     );
@@ -612,9 +614,7 @@ function addVpnRoutesForHost(
   // Resolve all IPs for the hostname
   const ips = resolveAllIpv4ForWriteHost(hostname, logger);
   if (ips.length === 0) {
-    logger?.warn?.(
-      `addVpnRoutesForHost: No IPs resolved for ${hostname}`,
-    );
+    logger?.warn?.(`addVpnRoutesForHost: No IPs resolved for ${hostname}`);
     return {
       hostname,
       ips: [],
@@ -790,8 +790,7 @@ export function emitRoutingPolicyEffectiveEvent(
           VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC,
           logger,
         ),
-        source:
-          process.env.VPN_BYPASS_RPC !== undefined ? "ENV" : "DEFAULT",
+        source: process.env.VPN_BYPASS_RPC !== undefined ? "ENV" : "DEFAULT",
       },
       VPN_BYPASS_POLYMARKET_READS: {
         value: getEnvBool(

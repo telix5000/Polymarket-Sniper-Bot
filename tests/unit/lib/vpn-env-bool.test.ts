@@ -273,7 +273,8 @@ describe("Route check parsing", () => {
   });
 
   it("should parse route output with WireGuard interface", () => {
-    const output = "104.26.10.100 via 10.2.0.1 dev wg0 table 51820 src 10.2.0.2";
+    const output =
+      "104.26.10.100 via 10.2.0.1 dev wg0 table 51820 src 10.2.0.2";
     const result = parseRouteOutput(output);
     assert.strictEqual(result.gateway, "10.2.0.1");
     assert.strictEqual(result.interface, "wg0");
