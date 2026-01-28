@@ -319,6 +319,62 @@ export class GitHubReporter {
     });
   }
 
+  /**
+   * Report diagnostic workflow results to GitHub Issues
+   * Called when DIAG_MODE completes to report the results
+   */
+  async reportDiagnosticWorkflow(details: {
+    traceId: string;
+    durationMs: number;
+    steps: Array<{
+      step: string;
+      result: string;
+      reason?: string;
+      marketId?: string;
+      tokenId?: string;
+    }>;
+  }): Promise<boolean> {
+    const successCount = details.steps.filter((s) => s.result === "OK").length;
+    const totalSteps = details.steps.length;
+
+    // Format step results
+    const stepLines = details.steps
+      .map((s) => {
+        const icon =
+          s.result === "OK"
+            ? "✅"
+            : s.result === "SKIPPED"
+              ? "⏭️"
+              : s.result === "REJECTED"
+                ? "🚫"
+                : "❌";
+        const reasonStr = s.reason ? ` (${s.reason})` : "";
+        const tokenStr = s.tokenId
+          ? ` [token: ${s.tokenId.slice(0, 16)}...]`
+          : "";
+        return `- ${icon} **${s.step}**: ${s.result}${reasonStr}${tokenStr}`;
+      })
+      .join("\n");
+
+    return this.report({
+      title: `Diagnostic Workflow: ${successCount}/${totalSteps} steps succeeded`,
+      message:
+        `Diagnostic workflow completed.\n\n` +
+        `**Trace ID**: ${details.traceId}\n` +
+        `**Duration**: ${(details.durationMs / 1000).toFixed(1)}s\n\n` +
+        `## Step Results\n${stepLines}`,
+      severity: successCount === 0 ? "warning" : "info",
+      context: {
+        traceId: details.traceId,
+        durationMs: details.durationMs,
+        successCount,
+        totalSteps,
+        steps: details.steps.map((s) => `${s.step}:${s.result}`).join(", "),
+      },
+      timestamp: Date.now(),
+    });
+  }
+
   private getDedupeKey(report: ErrorReport): string {
     // Create a key based on title and core message
     const coreMessage = report.message.slice(0, 100).toLowerCase();

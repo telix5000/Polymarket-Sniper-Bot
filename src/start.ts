@@ -7183,11 +7183,51 @@ async function main(): Promise<void> {
       // Stop engine
       engine.stop();
 
-      // Exit with workflow exit code
+      // Report diagnostic results to GitHub Issues if configured
+      const reporter = getGitHubReporter();
+      if (reporter.isEnabled()) {
+        console.log("\n📋 Reporting diagnostic results to GitHub Issues...");
+        try {
+          const durationMs =
+            result.endTime.getTime() - result.startTime.getTime();
+          await reporter.reportDiagnosticWorkflow({
+            traceId: result.traceId,
+            durationMs,
+            steps: result.steps.map((s) => ({
+              step: s.step,
+              result: s.result,
+              reason: s.reason,
+              marketId: s.marketId,
+              tokenId: s.tokenId,
+            })),
+          });
+          console.log("📋 Diagnostic results reported to GitHub Issues");
+        } catch (reportErr) {
+          console.warn(
+            `📋 Failed to report to GitHub: ${reportErr instanceof Error ? reportErr.message : reportErr}`,
+          );
+        }
+      } else {
+        console.log(
+          "\n📋 GitHub reporter not enabled - skipping issue creation",
+        );
+      }
+
+      // Log workflow completion
       console.log(
         `\n🔬 Diagnostic workflow completed. Exit code: ${result.exitCode}`,
       );
-      process.exit(result.exitCode);
+
+      // Instead of exiting (which causes container restarts), enter idle state
+      // This keeps the container running without restarting
+      console.log("\n💤 Entering idle state (container will not restart)...");
+      console.log("   Press Ctrl+C to stop the container manually.");
+
+      // Infinite idle loop - sleep forever to prevent container restart
+
+      while (true) {
+        await new Promise((resolve) => setTimeout(resolve, 60000)); // Sleep for 1 minute
+      }
     } catch (err) {
       console.error("Fatal error in diagnostic workflow:", err);
       engine.stop();
