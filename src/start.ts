@@ -2226,9 +2226,12 @@ class DecisionEngine {
     const currentPriceCents = params.orderbook.midPriceCents;
     const deviation = Math.abs(currentPriceCents - params.referencePriceCents);
     
+    // Threshold for considering prices equal (accounts for floating point imprecision)
+    const PRICE_EQUALITY_THRESHOLD_CENTS = 0.01;
+    
     // If reference equals current (new entry), skip this check - the bias signal is our edge
     // If reference differs (re-entry), require minimum deviation
-    if (Math.abs(currentPriceCents - params.referencePriceCents) < 0.01) {
+    if (deviation < PRICE_EQUALITY_THRESHOLD_CENTS) {
       // New entry: reference price equals current price, skip deviation check
       checks.priceDeviation.passed = true;
       checks.priceDeviation.reason = "New entry (whale/scanner signal)";
