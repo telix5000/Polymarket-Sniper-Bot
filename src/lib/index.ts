@@ -108,3 +108,7 @@ export * from "./market-scanner";
 // Dynamic EV and hedging
 export * from "./dynamic-ev-engine";
 export * from "./dynamic-hedge-policy";
+
+// Diagnostic mode
+export * from "./diag-mode";
+export * from "./diag-workflow";
