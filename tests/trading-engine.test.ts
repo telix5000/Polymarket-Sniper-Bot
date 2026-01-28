@@ -23,8 +23,6 @@ import {
   createTradeResult,
   PositionManager,
   DecisionEngine,
-  type OrderbookState,
-  type MarketActivity,
 } from "../src/start";
 
 // ═══════════════════════════════════════════════════════════════════════════

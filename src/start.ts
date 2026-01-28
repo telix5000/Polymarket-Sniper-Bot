@@ -2431,22 +2431,14 @@ class DecisionEngine {
     // CRITICAL: Spread must not exceed churn budget to preserve positive EV assumptions.
     // The churn cost (spread + slippage) is budgeted at ~2¢ per trade. If the spread alone
     // exceeds this, the trade will likely be EV-negative regardless of edge.
-    // We use minSpreadCents (default 6¢) as the maximum acceptable spread, which provides
-    // some buffer for slippage while still maintaining reasonable EV.
-    if (orderbook.spreadCents > this.config.minSpreadCents) {
-      return {
-        passed: false,
-        reason: `Spread ${orderbook.spreadCents.toFixed(1)}¢ > max ${this.config.minSpreadCents}¢ (exceeds churn budget)`,
-      };
-    }
-
-    // Additional churn budget validation: spread should not exceed 2x the estimated churn cost
-    // This provides a hard cap aligned with the EV math assumptions
+    // Compute a single effective max spread: min(minSpreadCents, 2x churn budget)
     const maxSpreadForChurn = this.config.churnCostCentsEstimate * 2;
-    if (orderbook.spreadCents > maxSpreadForChurn) {
+    const effectiveMaxSpread = Math.min(this.config.minSpreadCents, maxSpreadForChurn);
+    
+    if (orderbook.spreadCents > effectiveMaxSpread) {
       return {
         passed: false,
-        reason: `Spread ${orderbook.spreadCents.toFixed(1)}¢ exceeds 2x churn budget (${maxSpreadForChurn}¢)`,
+        reason: `Spread ${orderbook.spreadCents.toFixed(1)}¢ > max ${effectiveMaxSpread}¢`,
       };
     }
 
@@ -3346,8 +3338,8 @@ class ExecutionEngine {
           const hasStatusInfo = typeof rawStatus === "string" && rawStatus.length > 0;
           const hasAmountInfo = respAny?.takingAmount !== undefined || respAny?.makingAmount !== undefined;
           
-          // Check for confirmed fill
-          if ((hasStatusInfo && isMatched) || (hasAmountInfo && hasFilledAmount) || (!hasStatusInfo && !hasAmountInfo && response.success)) {
+          // Check for confirmed fill (align with smartSell: missing evidence ⇒ treat as NOT filled)
+          if ((hasStatusInfo && isMatched) || (hasAmountInfo && hasFilledAmount)) {
             console.log(`✅ [HEDGE UNWIND] Sold hedge: ${hedge.tokenId.slice(0, 16)}... @ ${(bestBid * 100).toFixed(1)}¢`);
           } else {
             console.warn(`⚠️ [HEDGE UNWIND] FOK not filled for hedge ${hedge.tokenId.slice(0, 16)}...`);
