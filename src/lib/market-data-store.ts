@@ -360,6 +360,52 @@ export class MarketDataStore {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // Health Check Interface (for StoreRegistry compatibility)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get the name of this store
+   */
+  getName(): string {
+    return "MarketDataStore";
+  }
+
+  /**
+   * Perform a health check
+   */
+  healthCheck(): {
+    healthy: boolean;
+    message: string;
+    details?: Record<string, unknown>;
+    checkedAt: number;
+  } {
+    const metrics = this.getMetrics();
+    const staleRatio =
+      metrics.totalTokens > 0 ? metrics.staleTokens / metrics.totalTokens : 0;
+
+    // Consider unhealthy if > 50% of tokens are stale or WS is disconnected with no data
+    const healthy = this.wsConnected || metrics.totalTokens > 0;
+    const isStale = staleRatio > 0.5;
+
+    return {
+      healthy: healthy && !isStale,
+      message:
+        healthy && !isStale
+          ? `MarketDataStore: ${metrics.mode} - ${metrics.totalTokens} tokens, ${metrics.staleTokens} stale`
+          : `MarketDataStore: WARN - ${this.wsConnected ? "" : "WS disconnected, "}${isStale ? `${(staleRatio * 100).toFixed(0)}% stale` : ""}`,
+      details: {
+        mode: metrics.mode,
+        totalTokens: metrics.totalTokens,
+        staleTokens: metrics.staleTokens,
+        wsUpdates: metrics.wsUpdates,
+        restFallbacks: metrics.restFallbacks,
+        wsConnected: this.wsConnected,
+      },
+      checkedAt: Date.now(),
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // Private Helpers
   // ═══════════════════════════════════════════════════════════════════════════
 

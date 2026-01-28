@@ -6314,7 +6314,10 @@ class ChurnEngine {
     tokenId: string,
     bestBidCents: number,
     bestAskCents: number,
-    orderbook: { bids: { price: string; size: string }[]; asks: { price: string; size: string }[] },
+    orderbook: {
+      bids: { price: string; size: string }[];
+      asks: { price: string; size: string }[];
+    },
   ): FetchMarketDataResult {
     const bestBid = bestBidCents / 100;
     const bestAsk = bestAskCents / 100;
