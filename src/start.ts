@@ -1399,7 +1399,6 @@ class DynamicReserveManager {
     
     // Count recent missed opportunities
     const recentMissed = this.missedOpportunities.filter(m => m.timestamp >= windowStart);
-    const missedUsd = recentMissed.reduce((sum, m) => sum + m.sizeUsd, 0);
     const missedCount = recentMissed.length;
 
     // Calculate adjustment factors
@@ -1651,8 +1650,10 @@ class PositionManager {
    * Register an external position for monitoring
    * This allows the bot to apply exit math (TP, stop loss, hedging) to positions
    * that were not opened by the bot (e.g., manual trades, pre-existing positions)
+   * 
+   * Note: This is async because it needs to fetch the opposite token ID for hedging
    */
-  registerExternalPosition(pos: Position): ManagedPosition | null {
+  async registerExternalPosition(pos: Position): Promise<ManagedPosition | null> {
     // Check if already tracked
     for (const [, managed] of this.positions) {
       if (managed.tokenId === pos.tokenId && managed.state !== "CLOSED") {
@@ -1717,7 +1718,18 @@ class PositionManager {
 
     this.positions.set(id, position);
     
-    console.log(`📋 Registered external position: ${pos.outcome} @ ${(entryPriceCents).toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? '+' : ''}${pos.pnlPct.toFixed(1)}%)`);
+    // Fetch opposite token ID for hedging capability
+    try {
+      const oppositeTokenId = await getOppositeTokenId(pos.tokenId);
+      if (oppositeTokenId) {
+        position.oppositeTokenId = oppositeTokenId;
+        console.log(`📋 Registered external position: ${pos.outcome} @ ${(entryPriceCents).toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? '+' : ''}${pos.pnlPct.toFixed(1)}%) [hedge-ready]`);
+      } else {
+        console.log(`📋 Registered external position: ${pos.outcome} @ ${(entryPriceCents).toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? '+' : ''}${pos.pnlPct.toFixed(1)}%) [no hedge]`);
+      }
+    } catch {
+      console.log(`📋 Registered external position: ${pos.outcome} @ ${(entryPriceCents).toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? '+' : ''}${pos.pnlPct.toFixed(1)}%) [no hedge]`);
+    }
 
     return position;
   }
@@ -2534,7 +2546,7 @@ class ExecutionEngine {
   // ENTRY
   // ─────────────────────────────────────────────────────────────────────────
 
-  async processEntry(tokenId: string, marketData: TokenMarketData, balance: number): Promise<ExecutionResult> {
+  async processEntry(tokenId: string, marketData: TokenMarketData, balance: number, skipBiasCheck = false): Promise<ExecutionResult> {
     // Cooldown check
     const cooldownUntil = this.cooldowns.get(tokenId) || 0;
     if (Date.now() < cooldownUntil) {
@@ -2549,10 +2561,14 @@ class ExecutionEngine {
       return { success: false, reason: "NO_BANKROLL" };
     }
 
+    // For scanner-originated entries, use LONG as default bias since we only scan for
+    // active markets with prices in the 20-80¢ range (good entry territory)
+    const effectiveBias: BiasDirection = skipBiasCheck ? "LONG" : bias.direction;
+
     // Evaluate entry
     const decision = this.decisionEngine.evaluateEntry({
       tokenId,
-      bias: bias.direction,
+      bias: effectiveBias,
       orderbook: marketData.orderbook,
       activity: marketData.activity,
       referencePriceCents: marketData.referencePriceCents,
@@ -2575,7 +2591,7 @@ class ExecutionEngine {
       decision.priceCents!,
       decision.sizeUsd!,
       marketData.referencePriceCents,
-      bias.direction,
+      effectiveBias,
     );
 
     if (result.success) {
@@ -3703,8 +3719,7 @@ class ChurnEngine {
     const { effectiveBankroll } = this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
 
     if (effectiveBankroll <= 0) {
-      // Record missed opportunity if we have no bankroll
-      this.dynamicReserveManager.recordMissedOpportunity("general", this.config.maxTradeUsd, "INSUFFICIENT_BALANCE");
+      // No effective bankroll available this cycle; skip trading logic
       return; // No money to trade
     }
 
@@ -3726,8 +3741,8 @@ class ChurnEngine {
         for (const pos of allPositions) {
           const existingPositions = this.positionManager.getPositionsByToken(pos.tokenId);
           if (existingPositions.length === 0) {
-            // This is an external position - register it for monitoring
-            this.positionManager.registerExternalPosition(pos);
+            // This is an external position - register it for monitoring (async)
+            await this.positionManager.registerExternalPosition(pos);
           }
         }
       } catch {
@@ -3793,8 +3808,8 @@ class ChurnEngine {
             const marketData = await this.fetchTokenMarketData(bias.tokenId);
             if (marketData) {
               const result = await this.executionEngine.processEntry(bias.tokenId, marketData, usdcBalance);
-              // Track missed opportunities for dynamic reserves
-              if (!result.success && (result.reason === "INSUFFICIENT_BALANCE" || result.reason === "MAX_EXPOSURE")) {
+              // Track missed opportunities - check for actual reason strings from processEntry
+              if (!result.success && (result.reason === "NO_BANKROLL" || result.reason?.startsWith("Max deployed") || result.reason === "No effective bankroll")) {
                 this.dynamicReserveManager.recordMissedOpportunity(bias.tokenId, this.config.maxTradeUsd, "RESERVE_BLOCKED");
               }
               return result;
@@ -3822,10 +3837,11 @@ class ChurnEngine {
 
             const marketData = await this.fetchTokenMarketData(tokenId);
             if (marketData) {
-              // For scanned markets, we use a relaxed bias check
-              // since these are high-volume markets with good liquidity
-              const result = await this.executionEngine.processEntry(tokenId, marketData, usdcBalance);
-              if (!result.success && (result.reason === "INSUFFICIENT_BALANCE" || result.reason === "MAX_EXPOSURE")) {
+              // For scanned markets, bypass bias check since these are high-volume
+              // markets selected by the scanner based on activity metrics
+              const result = await this.executionEngine.processEntry(tokenId, marketData, usdcBalance, true);
+              // Track missed opportunities - check for actual reason strings from processEntry
+              if (!result.success && (result.reason === "NO_BANKROLL" || result.reason?.startsWith("Max deployed") || result.reason === "No effective bankroll")) {
                 this.dynamicReserveManager.recordMissedOpportunity(tokenId, this.config.maxTradeUsd, "RESERVE_BLOCKED");
               }
               return result;
