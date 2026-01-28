@@ -139,20 +139,33 @@ function debug(message: string, ...args: any[]): void {
 function shouldCooldownOnFailure(reason: string | undefined): boolean {
   if (!reason) return false;
   const lowerReason = reason.toLowerCase();
-  
+
   // Transient errors - SHOULD cooldown (will retry after delay)
-  if (lowerReason.includes("rate_limit") || lowerReason.includes("rate limit")) return true;
-  if (lowerReason.includes("network_error") || lowerReason.includes("network error")) return true;
-  if (lowerReason.includes("order placement") || lowerReason.includes("order failed")) return true;
+  if (lowerReason.includes("rate_limit") || lowerReason.includes("rate limit"))
+    return true;
+  if (
+    lowerReason.includes("network_error") ||
+    lowerReason.includes("network error")
+  )
+    return true;
+  if (
+    lowerReason.includes("order placement") ||
+    lowerReason.includes("order failed")
+  )
+    return true;
   if (lowerReason.includes("timeout")) return true;
-  
+
   // Permanent market conditions - do NOT cooldown (market is just not suitable)
   if (lowerReason.includes("invalid liquidity")) return false;
   if (lowerReason.includes("dust book")) return false;
   if (lowerReason.includes("spread") && lowerReason.includes(">")) return false;
   if (lowerReason.includes("depth")) return false;
-  if (lowerReason.includes("price") && (lowerReason.includes("outside") || lowerReason.includes("bounds"))) return false;
-  
+  if (
+    lowerReason.includes("price") &&
+    (lowerReason.includes("outside") || lowerReason.includes("bounds"))
+  )
+    return false;
+
   // Default: do NOT cooldown (fail fast and check next candidate)
   return false;
 }
@@ -1289,7 +1302,7 @@ class BiasAccumulator {
           const tokenId = activity.asset || activity.tokenId;
           const conditionId = activity.conditionId ?? activity.marketId;
           const outcome = activity.outcome; // YES/NO
-          
+
           // Reject if tokenId is empty or invalid
           if (!tokenId || tokenId.trim() === "") {
             debug(
@@ -1302,7 +1315,7 @@ class BiasAccumulator {
           const sizeUsd =
             activity.usdcSize ?? (Number(activity.size) * tradePrice || 0);
           if (sizeUsd <= 0) continue;
-          
+
           // Log candidate construction for diagnostics
           if (DEBUG) {
             debug(
@@ -1476,7 +1489,7 @@ class BiasAccumulator {
     // In copyAnyWhaleBuy mode: allow 1 trade minimum
     // Otherwise: require ALL criteria (flow >= min, trades >= min, not stale)
     let direction: BiasDirection = "NONE";
-    
+
     if (this.config.copyAnyWhaleBuy) {
       // Copy-any-buy mode: just need 1 trade and not stale
       if (tradeCount >= 1 && !isStale) {
@@ -1484,7 +1497,11 @@ class BiasAccumulator {
       }
     } else {
       // Conservative mode: ALL criteria must be met
-      if (!isStale && tradeCount >= this.config.biasMinTrades && netUsd >= this.config.biasMinNetUsd) {
+      if (
+        !isStale &&
+        tradeCount >= this.config.biasMinTrades &&
+        netUsd >= this.config.biasMinNetUsd
+      ) {
         direction = "LONG";
       }
     }
@@ -1546,7 +1563,10 @@ class BiasAccumulator {
         return { allowed: true };
       }
       if (bias.isStale) {
-        return { allowed: false, reason: `BIAS_STALE (last: ${Math.round((Date.now() - bias.lastActivityTime) / 1000)}s ago)` };
+        return {
+          allowed: false,
+          reason: `BIAS_STALE (last: ${Math.round((Date.now() - bias.lastActivityTime) / 1000)}s ago)`,
+        };
       }
       return { allowed: false, reason: "NO_WHALE_BUY_SEEN" };
     }
@@ -1560,7 +1580,10 @@ class BiasAccumulator {
     // Strict eligibility: check ALL criteria
     if (bias.direction === "NONE") {
       if (bias.isStale) {
-        return { allowed: false, reason: `BIAS_STALE (last: ${Math.round((Date.now() - bias.lastActivityTime) / 1000)}s ago)` };
+        return {
+          allowed: false,
+          reason: `BIAS_STALE (last: ${Math.round((Date.now() - bias.lastActivityTime) / 1000)}s ago)`,
+        };
       }
       if (bias.tradeCount < this.config.biasMinTrades) {
         return {
@@ -2775,8 +2798,10 @@ class DecisionEngine {
     // Do NOT compute min() with churn cost - that creates the "4¢ max when config is 6¢" problem
     // Dynamic slippage/latency affects ORDER PRICING, not gate thresholds
     const effectiveMaxSpread = this.config.minSpreadCents;
-    
-    debug(`[Liquidity Gate] Spread check: ${orderbook.spreadCents.toFixed(1)}¢ vs max ${effectiveMaxSpread}¢`);
+
+    debug(
+      `[Liquidity Gate] Spread check: ${orderbook.spreadCents.toFixed(1)}¢ vs max ${effectiveMaxSpread}¢`,
+    );
 
     if (orderbook.spreadCents > effectiveMaxSpread) {
       return {
@@ -5377,7 +5402,7 @@ class ChurnEngine {
         const entryPromises = eligibleBiases.slice(0, 3).map(async (bias) => {
           // TASK 6: Track candidate in funnel
           this.diagnostics.candidatesSeen++;
-          
+
           this.diagnostics.entryAttempts++;
           debug(
             `Attempting entry for ${bias.tokenId.slice(0, 12)}... (bias: ${bias.direction}, flow: $${bias.netUsd.toFixed(0)})`,
@@ -5446,12 +5471,16 @@ class ChurnEngine {
             } else {
               // Handle structured failure with appropriate cooldown
               const { reason, detail } = fetchResult;
-              
+
               // TASK 6: Track rejection reasons in funnel
-              if (reason === "INVALID_LIQUIDITY" || reason === "DUST_BOOK" || reason === "INVALID_PRICES") {
+              if (
+                reason === "INVALID_LIQUIDITY" ||
+                reason === "DUST_BOOK" ||
+                reason === "INVALID_PRICES"
+              ) {
                 this.diagnostics.candidatesRejectedLiquidity++;
               }
-              
+
               const cooldownMs = this.marketDataCooldownManager.recordFailure(
                 bias.tokenId,
                 reason,
@@ -5812,11 +5841,11 @@ class ChurnEngine {
     console.log(
       `   📊 Diagnostics: API trades detected: ${this.diagnostics.whaleTradesDetected} | Entry attempts: ${this.diagnostics.entryAttempts} (${entrySuccessRate}% success) | OB failures: ${this.diagnostics.orderbookFetchFailures}`,
     );
-    
+
     // TASK 6: Display funnel counters
     console.log(
       `   🔬 Funnel: Candidates seen: ${this.diagnostics.candidatesSeen} | ` +
-      `Rejected liquidity: ${this.diagnostics.candidatesRejectedLiquidity}`,
+        `Rejected liquidity: ${this.diagnostics.candidatesRejectedLiquidity}`,
     );
 
     // Warn if network is not healthy
@@ -6173,7 +6202,12 @@ class ChurnEngine {
         }
 
         // Check for invalid prices
-        if (state.bestBidCents <= 0 || state.bestAskCents <= 0 || isNaN(state.bestBidCents) || isNaN(state.bestAskCents)) {
+        if (
+          state.bestBidCents <= 0 ||
+          state.bestAskCents <= 0 ||
+          isNaN(state.bestBidCents) ||
+          isNaN(state.bestAskCents)
+        ) {
           this.diagnostics.orderbookFetchFailures++;
           return {
             ok: false,
@@ -6277,7 +6311,7 @@ class ChurnEngine {
       // TASK 3: Add orderbook sanity gates - reject dust books immediately
       // These are permanent market conditions, not transient errors
       // DO NOT put token on cooldown for these - just reject and keep scanning
-      
+
       // Check for invalid prices (missing/zero/NaN already handled above)
       if (bestBid <= 0 || bestAsk <= 0) {
         this.diagnostics.orderbookFetchFailures++;
