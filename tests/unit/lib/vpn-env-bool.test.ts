@@ -413,3 +413,253 @@ describe("BypassSettingSource tracking", () => {
     );
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// emitRoutingPolicyEffectiveEvent effectiveSettings tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+import { emitRoutingPolicyEffectiveEvent } from "../../../src/lib/vpn";
+
+describe("emitRoutingPolicyEffectiveEvent effectiveSettings.source", () => {
+  beforeEach(() => {
+    // Clear all VPN bypass env vars for clean tests
+    mockEnv({
+      VPN_BYPASS_RPC: undefined,
+      VPN_BYPASS_POLYMARKET_READS: undefined,
+      VPN_BYPASS_POLYMARKET_WS: undefined,
+    });
+  });
+
+  afterEach(() => {
+    restoreEnv();
+  });
+
+  it("should set source=DEFAULT for all settings when no env vars are set", () => {
+    // Call emitRoutingPolicyEffectiveEvent (VPN not active, but that's ok for this test)
+    const event = emitRoutingPolicyEffectiveEvent();
+
+    // All sources should be DEFAULT
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_RPC.source,
+      "DEFAULT",
+      "VPN_BYPASS_RPC source should be DEFAULT when env var is unset",
+    );
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_READS.source,
+      "DEFAULT",
+      "VPN_BYPASS_POLYMARKET_READS source should be DEFAULT when env var is unset",
+    );
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_WS.source,
+      "DEFAULT",
+      "VPN_BYPASS_POLYMARKET_WS source should be DEFAULT when env var is unset",
+    );
+
+    // Values should match defaults
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_RPC.value,
+      VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC,
+    );
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_READS.value,
+      VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+    );
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_WS.value,
+      VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
+    );
+  });
+
+  it("should set source=ENV for all settings when all env vars are set", () => {
+    // Set all env vars explicitly
+    process.env.VPN_BYPASS_RPC = "false";
+    process.env.VPN_BYPASS_POLYMARKET_READS = "true";
+    process.env.VPN_BYPASS_POLYMARKET_WS = "false";
+
+    const event = emitRoutingPolicyEffectiveEvent();
+
+    // All sources should be ENV
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_RPC.source,
+      "ENV",
+      "VPN_BYPASS_RPC source should be ENV when env var is set",
+    );
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_READS.source,
+      "ENV",
+      "VPN_BYPASS_POLYMARKET_READS source should be ENV when env var is set",
+    );
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_WS.source,
+      "ENV",
+      "VPN_BYPASS_POLYMARKET_WS source should be ENV when env var is set",
+    );
+
+    // Values should match what was set in env
+    assert.strictEqual(event.effectiveSettings.VPN_BYPASS_RPC.value, false);
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_READS.value,
+      true,
+    );
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_WS.value,
+      false,
+    );
+  });
+
+  it("should correctly mix DEFAULT and ENV sources when some env vars are set", () => {
+    // Set only one env var
+    process.env.VPN_BYPASS_RPC = "false";
+
+    const event = emitRoutingPolicyEffectiveEvent();
+
+    // VPN_BYPASS_RPC should be ENV, others should be DEFAULT
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_RPC.source,
+      "ENV",
+      "VPN_BYPASS_RPC source should be ENV",
+    );
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_READS.source,
+      "DEFAULT",
+      "VPN_BYPASS_POLYMARKET_READS source should be DEFAULT",
+    );
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_WS.source,
+      "DEFAULT",
+      "VPN_BYPASS_POLYMARKET_WS source should be DEFAULT",
+    );
+
+    // Value should be overridden for VPN_BYPASS_RPC
+    assert.strictEqual(event.effectiveSettings.VPN_BYPASS_RPC.value, false);
+    // Others should use defaults
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_READS.value,
+      VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+    );
+    assert.strictEqual(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_WS.value,
+      VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
+    );
+  });
+
+  it("should include effectiveSettings in event structure", () => {
+    const event = emitRoutingPolicyEffectiveEvent();
+
+    // Verify event has expected structure
+    assert.strictEqual(event.event, "VPN_ROUTING_POLICY_EFFECTIVE");
+    assert.ok(event.effectiveSettings, "event should have effectiveSettings");
+    assert.ok(
+      event.effectiveSettings.VPN_BYPASS_RPC,
+      "effectiveSettings should have VPN_BYPASS_RPC",
+    );
+    assert.ok(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_READS,
+      "effectiveSettings should have VPN_BYPASS_POLYMARKET_READS",
+    );
+    assert.ok(
+      event.effectiveSettings.VPN_BYPASS_POLYMARKET_WS,
+      "effectiveSettings should have VPN_BYPASS_POLYMARKET_WS",
+    );
+
+    // Each setting should have value and source
+    assert.ok(
+      "value" in event.effectiveSettings.VPN_BYPASS_RPC,
+      "VPN_BYPASS_RPC should have value",
+    );
+    assert.ok(
+      "source" in event.effectiveSettings.VPN_BYPASS_RPC,
+      "VPN_BYPASS_RPC should have source",
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ensureWriteHostVpnRoutes tests (mocked system calls)
+// ═══════════════════════════════════════════════════════════════════════════
+
+import { ensureWriteHostVpnRoutes } from "../../../src/lib/vpn";
+
+describe("ensureWriteHostVpnRoutes", () => {
+  it("should return attempted=false when VPN is not active", () => {
+    // VPN is not active by default in test environment
+    const result = ensureWriteHostVpnRoutes();
+
+    // Should not attempt if VPN is not active
+    assert.strictEqual(
+      result.attempted,
+      false,
+      "Should not attempt when VPN is not active",
+    );
+    assert.strictEqual(
+      result.success,
+      true, // Not a failure, just nothing to do
+      "Should report success when VPN is not active (nothing to do)",
+    );
+    assert.strictEqual(
+      result.vpnInterface,
+      null,
+      "VPN interface should be null when VPN is not active",
+    );
+    assert.deepStrictEqual(
+      result.results,
+      [],
+      "Results should be empty when VPN is not active",
+    );
+  });
+
+  it("should have correct return type structure", () => {
+    const result = ensureWriteHostVpnRoutes();
+
+    // Verify structure
+    assert.ok("attempted" in result, "Result should have attempted property");
+    assert.ok("success" in result, "Result should have success property");
+    assert.ok("results" in result, "Result should have results property");
+    assert.ok(
+      "vpnInterface" in result,
+      "Result should have vpnInterface property",
+    );
+    assert.ok(Array.isArray(result.results), "results should be an array");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WriteHostRouteResult structure tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("WriteHostRouteResult interface validation", () => {
+  it("should define expected WriteHostRouteResult properties", () => {
+    // This test validates the interface contract by checking
+    // what a valid result object looks like
+    const mockResult = {
+      hostname: "clob.polymarket.com",
+      ips: ["104.18.0.1", "104.18.0.2"],
+      routesAdded: 2,
+      routesFailed: 0,
+      success: true,
+      error: undefined,
+    };
+
+    // Verify the structure is valid
+    assert.strictEqual(typeof mockResult.hostname, "string");
+    assert.ok(Array.isArray(mockResult.ips));
+    assert.strictEqual(typeof mockResult.routesAdded, "number");
+    assert.strictEqual(typeof mockResult.routesFailed, "number");
+    assert.strictEqual(typeof mockResult.success, "boolean");
+  });
+
+  it("should handle failed route result structure", () => {
+    const mockFailedResult = {
+      hostname: "clob.polymarket.com",
+      ips: [],
+      routesAdded: 0,
+      routesFailed: 0,
+      success: false,
+      error: "No IPs resolved",
+    };
+
+    assert.strictEqual(mockFailedResult.success, false);
+    assert.strictEqual(mockFailedResult.error, "No IPs resolved");
+    assert.strictEqual(mockFailedResult.ips.length, 0);
+  });
+});

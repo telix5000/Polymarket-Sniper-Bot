@@ -688,7 +688,9 @@ function addVpnRoutesForHost(
 
       // First, delete any existing route to this IP that might conflict
       try {
-        execSync(`ip route del ${ip}/32 2>/dev/null || true`, { stdio: "pipe" });
+        execSync(`ip route del ${ip}/32 2>/dev/null || true`, {
+          stdio: "pipe",
+        });
       } catch {
         // Ignore - route might not exist
       }
