@@ -7156,17 +7156,21 @@ async function main(): Promise<void> {
     const diagConfig = parseDiagModeConfig();
     const engine = new ChurnEngine();
 
-    // Handle shutdown
+    // Track whether diagnostic workflow completed successfully
+    let diagWorkflowCompleted = false;
+    let diagExitCode = 0;
+
+    // Handle shutdown - use exit code 0 if workflow completed, 1 if interrupted
     process.on("SIGINT", () => {
       console.log("\nReceived SIGINT, shutting down...");
       engine.stop();
-      process.exit(1);
+      process.exit(diagWorkflowCompleted ? diagExitCode : 1);
     });
 
     process.on("SIGTERM", () => {
       console.log("\nReceived SIGTERM, shutting down...");
       engine.stop();
-      process.exit(1);
+      process.exit(diagWorkflowCompleted ? diagExitCode : 1);
     });
 
     // Initialize engine (but don't run normal loop)
@@ -7212,6 +7216,10 @@ async function main(): Promise<void> {
           "\n📋 GitHub reporter not enabled - skipping issue creation",
         );
       }
+
+      // Mark workflow as completed with its exit code
+      diagWorkflowCompleted = true;
+      diagExitCode = result.exitCode;
 
       // Log workflow completion
       console.log(

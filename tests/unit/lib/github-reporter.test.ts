@@ -99,7 +99,11 @@ describe("GitHubReporter", () => {
         durationMs: 5000,
         steps: [
           { step: "WHALE_BUY", result: "OK" },
-          { step: "WHALE_SELL", result: "SKIPPED", reason: "sell_skipped_no_buy" },
+          {
+            step: "WHALE_SELL",
+            result: "SKIPPED",
+            reason: "sell_skipped_no_buy",
+          },
         ],
       });
 
@@ -110,7 +114,7 @@ describe("GitHubReporter", () => {
       // We can't actually test the GitHub API call, but we can test the internal logic
       // by creating a reporter and checking its behavior
       delete process.env.GITHUB_ERROR_REPORTER_TOKEN;
-      
+
       const reporter = new GitHubReporter();
 
       // Since reporter is disabled, this will return false
@@ -120,8 +124,16 @@ describe("GitHubReporter", () => {
         durationMs: 10000,
         steps: [
           { step: "WHALE_BUY", result: "OK", tokenId: "token123456789012345" },
-          { step: "WHALE_SELL", result: "SKIPPED", reason: "sell_skipped_no_buy" },
-          { step: "SCAN_BUY", result: "REJECTED", reason: "insufficient_liquidity" },
+          {
+            step: "WHALE_SELL",
+            result: "SKIPPED",
+            reason: "sell_skipped_no_buy",
+          },
+          {
+            step: "SCAN_BUY",
+            result: "REJECTED",
+            reason: "insufficient_liquidity",
+          },
           { step: "SCAN_SELL", result: "ERROR", reason: "api_error" },
         ],
       };
