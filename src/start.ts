@@ -67,6 +67,8 @@ import {
   getVpnType,
   getBypassedHosts,
   WRITE_HOSTS,
+  // Proactive WRITE host VPN routing (critical fix for WRITE_ROUTE_MISMATCH)
+  ensureWriteHostVpnRoutes,
   // POL Reserve (auto gas fill)
   runPolReserve,
   shouldRebalance,
@@ -5008,7 +5010,24 @@ class ChurnEngine {
         console.log("🔒 OpenVPN connected");
       }
 
-      // Step 4: Setup bypass routes
+      // Step 4: CRITICAL - Ensure WRITE hosts route through VPN IMMEDIATELY
+      // This proactively adds routes for clob.polymarket.com (and other WRITE_HOSTS)
+      // through the VPN interface, preventing WRITE_ROUTE_MISMATCH warnings.
+      console.log("🔒 Ensuring WRITE hosts route through VPN...");
+      const writeRouteResult = ensureWriteHostVpnRoutes(this.logger);
+      if (writeRouteResult.attempted) {
+        if (writeRouteResult.success) {
+          console.log(
+            `✅ WRITE hosts routed through VPN (${writeRouteResult.results.length} hosts, interface: ${writeRouteResult.vpnInterface})`,
+          );
+        } else {
+          console.warn(
+            `⚠️ Some WRITE host routes failed - orders may be geo-blocked`,
+          );
+        }
+      }
+
+      // Step 5: Setup bypass routes for READ/RPC traffic
       if (process.env.VPN_BYPASS_RPC !== "false") {
         await setupRpcBypass(this.config.rpcUrl, this.logger);
       }
@@ -5021,7 +5040,7 @@ class ChurnEngine {
         await setupReadApiBypass(this.logger);
       }
 
-      // Step 5: Emit VPN_ROUTING_POLICY_EFFECTIVE event AFTER VPN is up and bypass routes are applied
+      // Step 6: Emit VPN_ROUTING_POLICY_EFFECTIVE event AFTER VPN is up and bypass routes are applied
       emitRoutingPolicyEffectiveEvent(this.logger);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
