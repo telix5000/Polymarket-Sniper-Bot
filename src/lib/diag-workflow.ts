@@ -672,7 +672,7 @@ const DIAG_BUY_SLIPPAGE_PCT = 2; // 2% above bestAsk
 /**
  * Attempt a diagnostic BUY order
  *
- * PRICING FIX (2024):
+ * PRICING FIX:
  * Previously, limit price was based on signal.price * 1.1, which could fail
  * if the market moved and bestAsk > signal.price * 1.1 (PRICE_TOO_HIGH error).
  *
