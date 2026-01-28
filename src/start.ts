@@ -151,26 +151,29 @@ function shouldCooldownOnFailure(reason: string | undefined): boolean {
  * Returns default if not set, undefined if explicitly set to empty string (to disable)
  * Warns if value is outside expected [0,1] range
  */
-function parseOptionalFloatWithDefault(value: string | undefined, defaultValue: number): number | undefined {
+function parseOptionalFloatWithDefault(
+  value: string | undefined,
+  defaultValue: number,
+): number | undefined {
   // If env var is not set at all, use default
   if (value === undefined) return defaultValue;
-  
+
   // If env var is explicitly set to empty string, disable (return undefined)
   if (value === "") return undefined;
-  
+
   const parsed = parseFloat(value);
   if (isNaN(parsed)) return defaultValue;
-  
+
   // Warn if value seems like a percentage (outside [0,1] range)
   if (parsed < 0 || parsed > 1) {
     console.warn(
       `⚠️ Price value ${parsed} is outside expected [0,1] range. ` +
-      `Use decimal format (e.g., 0.25 for 25¢, not 25).`
+        `Use decimal format (e.g., 0.25 for 25¢, not 25).`,
     );
     // Fall back to the provided default to avoid using an invalid configuration value
     return defaultValue;
   }
-  
+
   return parsed;
 }
 
@@ -441,8 +444,14 @@ function loadConfig(): ChurnConfig {
     // See preferredEntryLowCents (35) and preferredEntryHighCents (65) above
     // Set to empty string to disable filtering (e.g., WHALE_PRICE_MIN= )
     // If min > max, logs a warning and skips filtering
-    whalePriceMin: parseOptionalFloatWithDefault(process.env.WHALE_PRICE_MIN, 0.35),
-    whalePriceMax: parseOptionalFloatWithDefault(process.env.WHALE_PRICE_MAX, 0.65),
+    whalePriceMin: parseOptionalFloatWithDefault(
+      process.env.WHALE_PRICE_MIN,
+      0.35,
+    ),
+    whalePriceMax: parseOptionalFloatWithDefault(
+      process.env.WHALE_PRICE_MAX,
+      0.65,
+    ),
   };
 }
 
@@ -938,19 +947,33 @@ class BiasAccumulator {
    */
   private initPriceRangeFilter(): void {
     const { whalePriceMin, whalePriceMax } = this.config;
-    
+
     // Check if any price range filtering is configured
     if (whalePriceMin !== undefined || whalePriceMax !== undefined) {
       // Validate min <= max if both are set
-      if (whalePriceMin !== undefined && whalePriceMax !== undefined && whalePriceMin > whalePriceMax) {
-        console.warn(`⚠️ [Price Filter] WHALE_PRICE_MIN (${whalePriceMin}) > WHALE_PRICE_MAX (${whalePriceMax}) - filter DISABLED`);
+      if (
+        whalePriceMin !== undefined &&
+        whalePriceMax !== undefined &&
+        whalePriceMin > whalePriceMax
+      ) {
+        console.warn(
+          `⚠️ [Price Filter] WHALE_PRICE_MIN (${whalePriceMin}) > WHALE_PRICE_MAX (${whalePriceMax}) - filter DISABLED`,
+        );
         this.priceFilterInvalid = true;
         this.priceFilterEnabled = false;
       } else {
         this.priceFilterEnabled = true;
-        const minStr = whalePriceMin !== undefined ? `${(whalePriceMin * 100).toFixed(0)}¢` : "none";
-        const maxStr = whalePriceMax !== undefined ? `${(whalePriceMax * 100).toFixed(0)}¢` : "none";
-        console.log(`🎯 [Price Filter] Whale trades filtered to price range: min=${minStr}, max=${maxStr}`);
+        const minStr =
+          whalePriceMin !== undefined
+            ? `${(whalePriceMin * 100).toFixed(0)}¢`
+            : "none";
+        const maxStr =
+          whalePriceMax !== undefined
+            ? `${(whalePriceMax * 100).toFixed(0)}¢`
+            : "none";
+        console.log(
+          `🎯 [Price Filter] Whale trades filtered to price range: min=${minStr}, max=${maxStr}`,
+        );
       }
     }
   }
@@ -976,7 +999,9 @@ class BiasAccumulator {
     // Check minimum bound
     if (whalePriceMin !== undefined && price < whalePriceMin) {
       if (!this.priceFilterLoggedOnce) {
-        debug(`[Price Filter] Trade filtered: price ${(price * 100).toFixed(1)}¢ < min ${(whalePriceMin * 100).toFixed(1)}¢`);
+        debug(
+          `[Price Filter] Trade filtered: price ${(price * 100).toFixed(1)}¢ < min ${(whalePriceMin * 100).toFixed(1)}¢`,
+        );
       }
       return false;
     }
@@ -984,7 +1009,9 @@ class BiasAccumulator {
     // Check maximum bound
     if (whalePriceMax !== undefined && price > whalePriceMax) {
       if (!this.priceFilterLoggedOnce) {
-        debug(`[Price Filter] Trade filtered: price ${(price * 100).toFixed(1)}¢ > max ${(whalePriceMax * 100).toFixed(1)}¢`);
+        debug(
+          `[Price Filter] Trade filtered: price ${(price * 100).toFixed(1)}¢ > max ${(whalePriceMax * 100).toFixed(1)}¢`,
+        );
       }
       return false;
     }
@@ -1242,7 +1269,8 @@ class BiasAccumulator {
           if (!tokenId) continue;
 
           const tradePrice = Number(activity.price) || 0;
-          const sizeUsd = activity.usdcSize ?? (Number(activity.size) * tradePrice || 0);
+          const sizeUsd =
+            activity.usdcSize ?? (Number(activity.size) * tradePrice || 0);
           if (sizeUsd <= 0) continue;
 
           trades.push({
@@ -1316,7 +1344,7 @@ class BiasAccumulator {
    * Add trades and maintain window
    * Deduplicates by txHash+tokenId+wallet to prevent counting the same trade twice
    * (e.g., from both on-chain events and API polling)
-   * 
+   *
    * Also applies price-range filtering if WHALE_PRICE_MIN/MAX are configured
    */
   private addTrades(trades: LeaderboardTrade[]): void {
@@ -1325,7 +1353,7 @@ class BiasAccumulator {
 
     // Apply price range filtering
     let filteredCount = 0;
-    const filteredTrades = trades.filter(trade => {
+    const filteredTrades = trades.filter((trade) => {
       if (this.passesWhalePriceFilter(trade)) {
         return true;
       }
@@ -1336,9 +1364,17 @@ class BiasAccumulator {
     // Log filtering summary (once per batch if any filtered)
     if (filteredCount > 0 && this.priceFilterEnabled) {
       const { whalePriceMin, whalePriceMax } = this.config;
-      const minStr = whalePriceMin !== undefined ? `${(whalePriceMin * 100).toFixed(0)}¢` : "none";
-      const maxStr = whalePriceMax !== undefined ? `${(whalePriceMax * 100).toFixed(0)}¢` : "none";
-      console.log(`🎯 [Price Filter] Filtered ${filteredCount}/${trades.length} whale trades (range: ${minStr}-${maxStr})`);
+      const minStr =
+        whalePriceMin !== undefined
+          ? `${(whalePriceMin * 100).toFixed(0)}¢`
+          : "none";
+      const maxStr =
+        whalePriceMax !== undefined
+          ? `${(whalePriceMax * 100).toFixed(0)}¢`
+          : "none";
+      console.log(
+        `🎯 [Price Filter] Filtered ${filteredCount}/${trades.length} whale trades (range: ${minStr}-${maxStr})`,
+      );
       this.priceFilterLoggedOnce = true;
     }
 
@@ -2993,6 +3029,187 @@ interface TokenMarketData {
   oppositeOrderbook?: OrderbookState;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// MARKET DATA FETCH RESULT TYPES
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Reason codes for market data fetch failures */
+type MarketDataFailureReason =
+  | "NO_ORDERBOOK" // Market closed/settled, no orderbook exists
+  | "NOT_FOUND" // Token ID not found in system
+  | "RATE_LIMIT" // API rate limit hit
+  | "NETWORK_ERROR" // Network/connection failure
+  | "PARSE_ERROR"; // Response parsing failed
+
+/** Structured result from fetchTokenMarketData */
+type FetchMarketDataResult =
+  | { ok: true; data: TokenMarketData }
+  | { ok: false; reason: MarketDataFailureReason; detail?: string };
+
+/** Check if failure reason warrants long cooldown (market legitimately inactive) */
+function shouldApplyLongCooldown(reason: MarketDataFailureReason): boolean {
+  return reason === "NO_ORDERBOOK" || reason === "NOT_FOUND";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MARKET DATA COOLDOWN MANAGER - Exponential backoff for inactive markets
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface CooldownEntry {
+  strikes: number; // Consecutive failures
+  nextEligibleTime: number; // Timestamp when retry is allowed
+  lastReason: MarketDataFailureReason;
+}
+
+interface CooldownStats {
+  cooldownHits: number; // Total times a token was blocked by cooldown
+  uniqueTokensCooledDown: number; // Unique tokens currently in cooldown
+  resolvedLaterCount: number; // Tokens that succeeded after being in cooldown
+}
+
+class MarketDataCooldownManager {
+  // Backoff schedule: 10m, 30m, 2h, 24h cap
+  private static readonly BACKOFF_SCHEDULE_MS = [
+    10 * 60 * 1000, // 10 minutes
+    30 * 60 * 1000, // 30 minutes
+    2 * 60 * 60 * 1000, // 2 hours
+    24 * 60 * 60 * 1000, // 24 hours (cap)
+  ];
+
+  private cooldowns = new Map<string, CooldownEntry>();
+  private stats: CooldownStats = {
+    cooldownHits: 0,
+    uniqueTokensCooledDown: 0,
+    resolvedLaterCount: 0,
+  };
+
+  /**
+   * Check if a token is currently on cooldown
+   * @returns true if blocked, false if eligible for retry
+   */
+  isOnCooldown(tokenId: string): boolean {
+    const entry = this.cooldowns.get(tokenId);
+    if (!entry) return false;
+
+    const now = Date.now();
+    if (now >= entry.nextEligibleTime) {
+      return false; // Cooldown expired, eligible for retry
+    }
+
+    this.stats.cooldownHits++;
+    return true;
+  }
+
+  /**
+   * Record a failure and apply exponential backoff
+   * Only applies long cooldown for NO_ORDERBOOK/NOT_FOUND
+   */
+  recordFailure(tokenId: string, reason: MarketDataFailureReason): number {
+    const now = Date.now();
+    const existing = this.cooldowns.get(tokenId);
+
+    // For transient errors (RATE_LIMIT, NETWORK_ERROR, PARSE_ERROR), use short 30s cooldown
+    if (!shouldApplyLongCooldown(reason)) {
+      const shortCooldownMs = 30 * 1000; // 30 seconds
+      this.cooldowns.set(tokenId, {
+        strikes: 1,
+        nextEligibleTime: now + shortCooldownMs,
+        lastReason: reason,
+      });
+      return shortCooldownMs;
+    }
+
+    // For NO_ORDERBOOK/NOT_FOUND, apply exponential backoff
+    const strikes = existing ? existing.strikes + 1 : 1;
+    const backoffIndex = Math.min(
+      strikes - 1,
+      MarketDataCooldownManager.BACKOFF_SCHEDULE_MS.length - 1,
+    );
+    const cooldownMs =
+      MarketDataCooldownManager.BACKOFF_SCHEDULE_MS[backoffIndex];
+
+    const wasNew = !this.cooldowns.has(tokenId);
+    this.cooldowns.set(tokenId, {
+      strikes,
+      nextEligibleTime: now + cooldownMs,
+      lastReason: reason,
+    });
+
+    if (wasNew) {
+      this.stats.uniqueTokensCooledDown++;
+    }
+
+    return cooldownMs;
+  }
+
+  /**
+   * Record a successful fetch - reset backoff for the token
+   */
+  recordSuccess(tokenId: string): void {
+    if (this.cooldowns.has(tokenId)) {
+      this.stats.resolvedLaterCount++;
+      this.cooldowns.delete(tokenId);
+    }
+  }
+
+  /**
+   * Get cooldown info for a token (for logging)
+   */
+  getCooldownInfo(
+    tokenId: string,
+  ): {
+    strikes: number;
+    nextEligibleTime: number;
+    lastReason: MarketDataFailureReason;
+  } | null {
+    return this.cooldowns.get(tokenId) || null;
+  }
+
+  /**
+   * Get current stats
+   */
+  getStats(): CooldownStats {
+    return { ...this.stats };
+  }
+
+  /**
+   * Get count of tokens currently on cooldown
+   */
+  getActiveCooldownCount(): number {
+    const now = Date.now();
+    let count = 0;
+    for (const entry of this.cooldowns.values()) {
+      if (now < entry.nextEligibleTime) count++;
+    }
+    return count;
+  }
+
+  /**
+   * Clean up expired cooldowns (call periodically)
+   */
+  cleanup(): number {
+    const now = Date.now();
+    let removed = 0;
+    for (const [tokenId, entry] of this.cooldowns.entries()) {
+      // Remove entries that have been expired for more than 1 hour
+      if (now > entry.nextEligibleTime + 60 * 60 * 1000) {
+        this.cooldowns.delete(tokenId);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  /**
+   * Format cooldown duration for logging
+   */
+  static formatDuration(ms: number): string {
+    if (ms < 60 * 1000) return `${Math.round(ms / 1000)}s`;
+    if (ms < 60 * 60 * 1000) return `${Math.round(ms / 60 / 1000)}m`;
+    return `${(ms / 60 / 60 / 1000).toFixed(1)}h`;
+  }
+}
+
 interface ChurnLogger {
   info(msg: string): void;
   warn(msg: string): void;
@@ -4048,9 +4265,10 @@ class ChurnEngine {
   // Prevents spamming the same failing token repeatedly
   private failedEntryCooldowns = new Map<string, number>();
   private readonly FAILED_ENTRY_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown for failing tokens
-  // Longer cooldown for closed/settled markets (no orderbook available)
-  // These markets won't reopen, so use a much longer cooldown (10 minutes)
-  private readonly NO_MARKET_DATA_COOLDOWN_MS = 10 * 60 * 1000;
+  // Market data cooldown manager with exponential backoff for closed/settled markets
+  private marketDataCooldownManager = new MarketDataCooldownManager();
+  // Summary logging interval for market data cooldowns
+  private readonly COOLDOWN_SUMMARY_INTERVAL = 100; // Log every 100 cycles
 
   // Intervals
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
@@ -5055,10 +5273,15 @@ class ChurnEngine {
       }
     }
 
-    // Filter out tokens that are on cooldown (failed recently due to price/liquidity)
+    // Filter out tokens that are on cooldown (failed recently due to price/liquidity or market data issues)
     const eligibleBiases = activeBiases.filter((bias) => {
+      // Check price/liquidity cooldown
       const cooldownExpiry = this.failedEntryCooldowns.get(bias.tokenId);
-      return !cooldownExpiry || now >= cooldownExpiry;
+      if (cooldownExpiry && now < cooldownExpiry) return false;
+      // Check market data cooldown
+      if (this.marketDataCooldownManager.isOnCooldown(bias.tokenId))
+        return false;
+      return true;
     });
 
     const skippedCount = activeBiases.length - eligibleBiases.length;
@@ -5087,9 +5310,28 @@ class ChurnEngine {
           );
           try {
             this.diagnostics.marketDataFetchAttempts++;
-            const marketData = await this.fetchTokenMarketData(bias.tokenId);
-            if (marketData) {
+
+            // Check market data cooldown first
+            if (this.marketDataCooldownManager.isOnCooldown(bias.tokenId)) {
+              const info = this.marketDataCooldownManager.getCooldownInfo(
+                bias.tokenId,
+              );
+              debug(
+                `Token ${bias.tokenId.slice(0, 12)}... on market data cooldown (strike ${info?.strikes}, reason: ${info?.lastReason})`,
+              );
+              return null;
+            }
+
+            const fetchResult = await this.fetchTokenMarketDataWithReason(
+              bias.tokenId,
+            );
+
+            if (fetchResult.ok) {
+              const marketData = fetchResult.data;
               this.diagnostics.marketDataFetchSuccesses++;
+              // Reset cooldown on success
+              this.marketDataCooldownManager.recordSuccess(bias.tokenId);
+
               debug(
                 `Market data: mid=${marketData.orderbook.midPriceCents}¢, spread=${marketData.orderbook.spreadCents}¢, bid=${marketData.orderbook.bestBidCents}¢, ask=${marketData.orderbook.bestAskCents}¢`,
               );
@@ -5138,18 +5380,28 @@ class ChurnEngine {
               }
               return result;
             } else {
-              debug(
-                `No market data returned for ${bias.tokenId.slice(0, 12)}...`,
-              );
-              console.log(
-                `⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}... (market may be closed/settled)`,
-              );
-              this.trackFailureReason("NO_MARKET_DATA");
-              // Add to cooldown with longer duration - closed markets don't reopen
-              this.failedEntryCooldowns.set(
+              // Handle structured failure with appropriate cooldown
+              const { reason, detail } = fetchResult;
+              const cooldownMs = this.marketDataCooldownManager.recordFailure(
                 bias.tokenId,
-                Date.now() + this.NO_MARKET_DATA_COOLDOWN_MS,
+                reason,
               );
+              const info = this.marketDataCooldownManager.getCooldownInfo(
+                bias.tokenId,
+              );
+
+              this.trackFailureReason(`NO_MARKET_DATA:${reason}`);
+
+              // Only log for long cooldowns (NO_ORDERBOOK/NOT_FOUND) or periodically for transient errors
+              if (shouldApplyLongCooldown(reason)) {
+                console.log(
+                  `⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}... | reason: ${reason} | strike ${info?.strikes || 1} | cooldown: ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
+                );
+              } else if (this.cycleCount % 20 === 0) {
+                console.warn(
+                  `⚠️ [Entry] Transient error for ${bias.tokenId.slice(0, 12)}... | ${reason}: ${detail?.slice(0, 50) || "unknown"} | retry in ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
+                );
+              }
             }
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -5174,10 +5426,13 @@ class ChurnEngine {
         this.config.scanActiveMarkets
       ) {
         // No whale signals - scan for trades from active markets
-        // Filter out tokens on cooldown
+        // Filter out tokens on cooldown (both price/liquidity and market data cooldowns)
         const eligibleScanned = scannedOpportunities.filter((tokenId) => {
           const cooldownExpiry = this.failedEntryCooldowns.get(tokenId);
-          return !cooldownExpiry || now >= cooldownExpiry;
+          if (cooldownExpiry && now < cooldownExpiry) return false;
+          if (this.marketDataCooldownManager.isOnCooldown(tokenId))
+            return false;
+          return true;
         });
 
         // Only log occasionally to avoid spam
@@ -5198,10 +5453,21 @@ class ChurnEngine {
                 this.positionManager.getPositionsByToken(tokenId);
               if (existingPositions.length > 0) return null;
 
+              // Check market data cooldown
+              if (this.marketDataCooldownManager.isOnCooldown(tokenId)) {
+                return null;
+              }
+
               this.diagnostics.marketDataFetchAttempts++;
-              const marketData = await this.fetchTokenMarketData(tokenId);
-              if (marketData) {
+              const fetchResult =
+                await this.fetchTokenMarketDataWithReason(tokenId);
+
+              if (fetchResult.ok) {
+                const marketData = fetchResult.data;
                 this.diagnostics.marketDataFetchSuccesses++;
+                // Reset cooldown on success
+                this.marketDataCooldownManager.recordSuccess(tokenId);
+
                 // For scanned markets, bypass bias check since these are high-volume
                 // markets selected by the scanner based on activity metrics
                 const result = await this.executionEngine.processEntry(
@@ -5252,17 +5518,24 @@ class ChurnEngine {
                 }
                 return result;
               } else {
-                this.trackFailureReason("SCAN: NO_MARKET_DATA");
-                // Add to cooldown - scanner targets shouldn't have missing data
-                // If they do, the market may have closed since scanning
-                this.failedEntryCooldowns.set(
+                // Handle structured failure with appropriate cooldown
+                const { reason, detail } = fetchResult;
+                const cooldownMs = this.marketDataCooldownManager.recordFailure(
                   tokenId,
-                  Date.now() + this.NO_MARKET_DATA_COOLDOWN_MS,
+                  reason,
                 );
-                // Periodic logging for closed market failures (similar to scan errors)
-                if (this.cycleCount % 50 === 0) {
+                const info =
+                  this.marketDataCooldownManager.getCooldownInfo(tokenId);
+
+                this.trackFailureReason(`SCAN: NO_MARKET_DATA:${reason}`);
+
+                // Periodic logging for market data failures
+                if (
+                  this.cycleCount % 50 === 0 &&
+                  shouldApplyLongCooldown(reason)
+                ) {
                   console.log(
-                    `⚠️ [Scanner] No market data for ${tokenId.slice(0, 12)}... (market may be closed/settled)`,
+                    `⚠️ [Scanner] No market data for ${tokenId.slice(0, 12)}... | reason: ${reason} | strike ${info?.strikes || 1} | cooldown: ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
                   );
                 }
               }
@@ -5291,6 +5564,20 @@ class ChurnEngine {
     // ─────────────────────────────────────────────────────────────────
     // 6. PERIODIC HOUSEKEEPING
     // ─────────────────────────────────────────────────────────────────
+
+    // Log market data cooldown summary periodically
+    if (this.cycleCount % this.COOLDOWN_SUMMARY_INTERVAL === 0) {
+      const stats = this.marketDataCooldownManager.getStats();
+      const activeCount =
+        this.marketDataCooldownManager.getActiveCooldownCount();
+      if (stats.cooldownHits > 0 || activeCount > 0) {
+        console.log(
+          `📊 [Cooldown Summary] hits: ${stats.cooldownHits} | active: ${activeCount} tokens | resolved: ${stats.resolvedLaterCount}`,
+        );
+      }
+      // Cleanup expired cooldown entries
+      this.marketDataCooldownManager.cleanup();
+    }
 
     // Send startup diagnostic report after 60 seconds
     if (
@@ -5781,26 +6068,159 @@ class ChurnEngine {
   /**
    * Fetch market data for a single token - DIRECT API CALL
    * No caching! Stale prices caused exit failures before.
+   * Returns structured result with typed failure reasons.
+   */
+  private async fetchTokenMarketDataWithReason(
+    tokenId: string,
+  ): Promise<FetchMarketDataResult> {
+    try {
+      // Use facade if available (WS data with REST fallback)
+      if (this.marketDataFacade) {
+        const state = await this.marketDataFacade.getOrderbookState(tokenId);
+        if (!state) {
+          this.diagnostics.orderbookFetchFailures++;
+          return {
+            ok: false,
+            reason: "NO_ORDERBOOK",
+            detail: "No bids/asks available",
+          };
+        }
+
+        const activity: MarketActivity = {
+          tradesInWindow: 15,
+          bookUpdatesInWindow: 25,
+          lastTradeTime: Date.now(),
+          lastUpdateTime: Date.now(),
+        };
+
+        return {
+          ok: true,
+          data: {
+            tokenId,
+            orderbook: state,
+            activity,
+            referencePriceCents: state.midPriceCents,
+          },
+        };
+      }
+
+      // Fallback to direct API call (during initialization)
+      let orderbook;
+      try {
+        orderbook = await this.client.getOrderBook(tokenId);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        this.diagnostics.orderbookFetchFailures++;
+
+        // Classify the error
+        if (
+          errorMsg.includes("404") ||
+          errorMsg.includes("No orderbook") ||
+          errorMsg.includes("not found")
+        ) {
+          return { ok: false, reason: "NOT_FOUND", detail: errorMsg };
+        }
+        if (
+          errorMsg.includes("rate") ||
+          errorMsg.includes("429") ||
+          errorMsg.includes("Too many")
+        ) {
+          return { ok: false, reason: "RATE_LIMIT", detail: errorMsg };
+        }
+        if (
+          errorMsg.includes("timeout") ||
+          errorMsg.includes("ECONNRESET") ||
+          errorMsg.includes("network") ||
+          errorMsg.includes("ENOTFOUND")
+        ) {
+          return { ok: false, reason: "NETWORK_ERROR", detail: errorMsg };
+        }
+        return { ok: false, reason: "NETWORK_ERROR", detail: errorMsg };
+      }
+
+      if (!orderbook?.bids?.length || !orderbook?.asks?.length) {
+        this.diagnostics.orderbookFetchFailures++;
+        return {
+          ok: false,
+          reason: "NO_ORDERBOOK",
+          detail: "Empty orderbook (no bids or asks)",
+        };
+      }
+
+      const bestBid = parseFloat(orderbook.bids[0].price);
+      const bestAsk = parseFloat(orderbook.asks[0].price);
+
+      if (isNaN(bestBid) || isNaN(bestAsk)) {
+        this.diagnostics.orderbookFetchFailures++;
+        return {
+          ok: false,
+          reason: "PARSE_ERROR",
+          detail: "Failed to parse bid/ask prices",
+        };
+      }
+
+      // Sum up depth
+      let bidDepth = 0,
+        askDepth = 0;
+      for (const level of orderbook.bids.slice(0, 5)) {
+        bidDepth += parseFloat(level.size) * parseFloat(level.price);
+      }
+      for (const level of orderbook.asks.slice(0, 5)) {
+        askDepth += parseFloat(level.size) * parseFloat(level.price);
+      }
+
+      const activity: MarketActivity = {
+        tradesInWindow: 15,
+        bookUpdatesInWindow: 25,
+        lastTradeTime: Date.now(),
+        lastUpdateTime: Date.now(),
+      };
+
+      return {
+        ok: true,
+        data: {
+          tokenId,
+          orderbook: {
+            bestBidCents: bestBid * 100,
+            bestAskCents: bestAsk * 100,
+            bidDepthUsd: bidDepth,
+            askDepthUsd: askDepth,
+            spreadCents: (bestAsk - bestBid) * 100,
+            midPriceCents: ((bestBid + bestAsk) / 2) * 100,
+          },
+          activity,
+          referencePriceCents: ((bestBid + bestAsk) / 2) * 100,
+        },
+      };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.diagnostics.orderbookFetchFailures++;
+
+      // Classify unexpected errors
+      if (
+        errorMsg.includes("parse") ||
+        errorMsg.includes("JSON") ||
+        errorMsg.includes("undefined")
+      ) {
+        return { ok: false, reason: "PARSE_ERROR", detail: errorMsg };
+      }
+      return { ok: false, reason: "NETWORK_ERROR", detail: errorMsg };
+    }
+  }
+
+  /**
+   * Fetch market data for a single token - DIRECT API CALL
+   * No caching! Stale prices caused exit failures before.
+   * @deprecated Use fetchTokenMarketDataWithReason for structured error handling
    */
   private async fetchTokenMarketData(
     tokenId: string,
   ): Promise<TokenMarketData | null> {
-    const orderbook = await this.getOrderbookState(tokenId);
-    if (!orderbook) return null;
-
-    const activity: MarketActivity = {
-      tradesInWindow: 15,
-      bookUpdatesInWindow: 25,
-      lastTradeTime: Date.now(),
-      lastUpdateTime: Date.now(),
-    };
-
-    return {
-      tokenId,
-      orderbook,
-      activity,
-      referencePriceCents: orderbook.midPriceCents,
-    };
+    const result = await this.fetchTokenMarketDataWithReason(tokenId);
+    if (result.ok) {
+      return result.data;
+    }
+    return null;
   }
 
   /**

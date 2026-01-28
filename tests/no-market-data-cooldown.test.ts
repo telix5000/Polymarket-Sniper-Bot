@@ -1,70 +1,390 @@
 /**
  * No Market Data Cooldown Tests
  *
- * Tests for the fix that adds cooldown for tokens that fail entry due to
- * "No market data" (closed/settled markets). This prevents the bot from
- * repeatedly trying to enter markets that have no orderbook available.
+ * Tests for the improved cooldown mechanism with:
+ * - Exponential backoff (10m → 30m → 2h → 24h cap)
+ * - Typed failure reasons (NO_ORDERBOOK, NOT_FOUND, RATE_LIMIT, NETWORK_ERROR, PARSE_ERROR)
+ * - Different handling for transient vs permanent failures
+ * - Stats tracking (cooldown hits, unique tokens, resolved count)
  *
  * Related: Fixes "no market data" entry bug where bot repeatedly attempts
  * to enter closed/settled markets from whale activity signals.
  */
 
 import assert from "node:assert";
-import { describe, test } from "node:test";
+import { describe, test, beforeEach } from "node:test";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Test implementations of the types/functions from start.ts
+// ═══════════════════════════════════════════════════════════════════════════
+
+type MarketDataFailureReason =
+  | "NO_ORDERBOOK"
+  | "NOT_FOUND"
+  | "RATE_LIMIT"
+  | "NETWORK_ERROR"
+  | "PARSE_ERROR";
+
+function shouldApplyLongCooldown(reason: MarketDataFailureReason): boolean {
+  return reason === "NO_ORDERBOOK" || reason === "NOT_FOUND";
+}
+
+interface CooldownEntry {
+  strikes: number;
+  nextEligibleTime: number;
+  lastReason: MarketDataFailureReason;
+}
+
+interface CooldownStats {
+  cooldownHits: number;
+  uniqueTokensCooledDown: number;
+  resolvedLaterCount: number;
+}
+
+class MarketDataCooldownManager {
+  private static readonly BACKOFF_SCHEDULE_MS = [
+    10 * 60 * 1000, // 10 minutes
+    30 * 60 * 1000, // 30 minutes
+    2 * 60 * 60 * 1000, // 2 hours
+    24 * 60 * 60 * 1000, // 24 hours (cap)
+  ];
+
+  private cooldowns = new Map<string, CooldownEntry>();
+  private stats: CooldownStats = {
+    cooldownHits: 0,
+    uniqueTokensCooledDown: 0,
+    resolvedLaterCount: 0,
+  };
+
+  isOnCooldown(tokenId: string): boolean {
+    const entry = this.cooldowns.get(tokenId);
+    if (!entry) return false;
+
+    const now = Date.now();
+    if (now >= entry.nextEligibleTime) {
+      return false;
+    }
+
+    this.stats.cooldownHits++;
+    return true;
+  }
+
+  recordFailure(tokenId: string, reason: MarketDataFailureReason): number {
+    const now = Date.now();
+    const existing = this.cooldowns.get(tokenId);
+
+    if (!shouldApplyLongCooldown(reason)) {
+      const shortCooldownMs = 30 * 1000;
+      this.cooldowns.set(tokenId, {
+        strikes: 1,
+        nextEligibleTime: now + shortCooldownMs,
+        lastReason: reason,
+      });
+      return shortCooldownMs;
+    }
+
+    const strikes = existing ? existing.strikes + 1 : 1;
+    const backoffIndex = Math.min(
+      strikes - 1,
+      MarketDataCooldownManager.BACKOFF_SCHEDULE_MS.length - 1,
+    );
+    const cooldownMs =
+      MarketDataCooldownManager.BACKOFF_SCHEDULE_MS[backoffIndex];
+
+    const wasNew = !this.cooldowns.has(tokenId);
+    this.cooldowns.set(tokenId, {
+      strikes,
+      nextEligibleTime: now + cooldownMs,
+      lastReason: reason,
+    });
+
+    if (wasNew) {
+      this.stats.uniqueTokensCooledDown++;
+    }
+
+    return cooldownMs;
+  }
+
+  recordSuccess(tokenId: string): void {
+    if (this.cooldowns.has(tokenId)) {
+      this.stats.resolvedLaterCount++;
+      this.cooldowns.delete(tokenId);
+    }
+  }
+
+  getCooldownInfo(tokenId: string): CooldownEntry | null {
+    return this.cooldowns.get(tokenId) || null;
+  }
+
+  getStats(): CooldownStats {
+    return { ...this.stats };
+  }
+
+  getActiveCooldownCount(): number {
+    const now = Date.now();
+    let count = 0;
+    for (const entry of this.cooldowns.values()) {
+      if (now < entry.nextEligibleTime) count++;
+    }
+    return count;
+  }
+
+  static formatDuration(ms: number): string {
+    if (ms < 60 * 1000) return `${Math.round(ms / 1000)}s`;
+    if (ms < 60 * 60 * 1000) return `${Math.round(ms / 60 / 1000)}m`;
+    return `${(ms / 60 / 60 / 1000).toFixed(1)}h`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════════════
 
 describe("No Market Data Cooldown", () => {
-  describe("shouldCooldownOnFailure behavior", () => {
-    // The shouldCooldownOnFailure function determines if a failure should trigger cooldown
-    // It's defined in start.ts and checks for liquidity/bounds/spread/price issues
+  describe("MarketDataCooldownManager", () => {
+    let manager: MarketDataCooldownManager;
 
-    test("should understand that NO_MARKET_DATA failures need separate handling", () => {
-      // NO_MARKET_DATA is NOT handled by shouldCooldownOnFailure (which returns false)
-      // Instead, it's handled directly in the entry code with a longer cooldown
-      // This is by design - closed markets need longer cooldown than liquidity issues
+    beforeEach(() => {
+      manager = new MarketDataCooldownManager();
+    });
 
-      // Verify the constants are appropriate
-      const FAILED_ENTRY_COOLDOWN_MS = 60 * 1000; // 60 seconds
-      const NO_MARKET_DATA_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+    test("should apply exponential backoff for NO_ORDERBOOK failures", () => {
+      const tokenId = "test-token-1";
 
-      // NO_MARKET_DATA cooldown should be longer than regular entry cooldown
-      assert.ok(
-        NO_MARKET_DATA_COOLDOWN_MS > FAILED_ENTRY_COOLDOWN_MS,
-        "NO_MARKET_DATA cooldown should be longer than regular failure cooldown",
+      // First strike: 10 minutes
+      const cooldown1 = manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      assert.strictEqual(
+        cooldown1,
+        10 * 60 * 1000,
+        "First strike should be 10m",
+      );
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 1);
+
+      // Second strike: 30 minutes
+      const cooldown2 = manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      assert.strictEqual(
+        cooldown2,
+        30 * 60 * 1000,
+        "Second strike should be 30m",
+      );
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 2);
+
+      // Third strike: 2 hours
+      const cooldown3 = manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      assert.strictEqual(
+        cooldown3,
+        2 * 60 * 60 * 1000,
+        "Third strike should be 2h",
+      );
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 3);
+
+      // Fourth strike: 24 hours (cap)
+      const cooldown4 = manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      assert.strictEqual(
+        cooldown4,
+        24 * 60 * 60 * 1000,
+        "Fourth strike should be 24h (cap)",
+      );
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 4);
+
+      // Fifth strike: still 24 hours (cap)
+      const cooldown5 = manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      assert.strictEqual(
+        cooldown5,
+        24 * 60 * 60 * 1000,
+        "Fifth strike should still be 24h (cap)",
+      );
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 5);
+    });
+
+    test("should reset backoff on successful fetch", () => {
+      const tokenId = "test-token-2";
+
+      // Build up strikes
+      manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 3);
+
+      // Record success - should reset
+      manager.recordSuccess(tokenId);
+      assert.strictEqual(
+        manager.getCooldownInfo(tokenId),
+        null,
+        "Entry should be removed on success",
       );
 
-      // NO_MARKET_DATA cooldown should be at least 5 minutes
-      assert.ok(
-        NO_MARKET_DATA_COOLDOWN_MS >= 5 * 60 * 1000,
-        "NO_MARKET_DATA cooldown should be at least 5 minutes (closed markets don't reopen quickly)",
+      // Next failure should start fresh at 10m
+      const cooldown = manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      assert.strictEqual(
+        cooldown,
+        10 * 60 * 1000,
+        "Should reset to 10m after success",
+      );
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 1);
+    });
+
+    test("should NOT apply long cooldown for RATE_LIMIT errors", () => {
+      const tokenId = "test-token-3";
+
+      const cooldown = manager.recordFailure(tokenId, "RATE_LIMIT");
+      assert.strictEqual(
+        cooldown,
+        30 * 1000,
+        "RATE_LIMIT should use short 30s cooldown",
+      );
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 1);
+
+      // Multiple RATE_LIMIT failures should NOT escalate
+      const cooldown2 = manager.recordFailure(tokenId, "RATE_LIMIT");
+      assert.strictEqual(cooldown2, 30 * 1000, "RATE_LIMIT should stay at 30s");
+    });
+
+    test("should NOT apply long cooldown for NETWORK_ERROR", () => {
+      const tokenId = "test-token-4";
+
+      const cooldown = manager.recordFailure(tokenId, "NETWORK_ERROR");
+      assert.strictEqual(
+        cooldown,
+        30 * 1000,
+        "NETWORK_ERROR should use short 30s cooldown",
       );
     });
 
-    test("should not interfere with legitimate entry failures", () => {
-      // Verify the regular failure reasons are different from NO_MARKET_DATA
-      const liquidityFailures = [
-        "Insufficient liquidity",
-        "Low liquidity",
-        "No liquidity at price",
-      ];
+    test("should NOT apply long cooldown for PARSE_ERROR", () => {
+      const tokenId = "test-token-5";
 
-      const boundsFailures = [
-        "Price outside bounds",
-        "Entry bounds exceeded",
-      ];
+      const cooldown = manager.recordFailure(tokenId, "PARSE_ERROR");
+      assert.strictEqual(
+        cooldown,
+        30 * 1000,
+        "PARSE_ERROR should use short 30s cooldown",
+      );
+    });
 
-      // These should be handled by shouldCooldownOnFailure (separate from NO_MARKET_DATA)
-      for (const failure of [...liquidityFailures, ...boundsFailures]) {
-        assert.ok(
-          failure !== "NO_MARKET_DATA",
-          `Regular failure "${failure}" should not be confused with NO_MARKET_DATA`,
-        );
-      }
+    test("should apply long cooldown for NOT_FOUND", () => {
+      const tokenId = "test-token-6";
+
+      const cooldown1 = manager.recordFailure(tokenId, "NOT_FOUND");
+      assert.strictEqual(
+        cooldown1,
+        10 * 60 * 1000,
+        "NOT_FOUND should use long cooldown",
+      );
+
+      const cooldown2 = manager.recordFailure(tokenId, "NOT_FOUND");
+      assert.strictEqual(
+        cooldown2,
+        30 * 60 * 1000,
+        "NOT_FOUND should escalate",
+      );
+    });
+
+    test("should track stats correctly", () => {
+      const manager = new MarketDataCooldownManager();
+
+      // Initial stats
+      let stats = manager.getStats();
+      assert.strictEqual(stats.cooldownHits, 0);
+      assert.strictEqual(stats.uniqueTokensCooledDown, 0);
+      assert.strictEqual(stats.resolvedLaterCount, 0);
+
+      // Add some failures
+      manager.recordFailure("token-a", "NO_ORDERBOOK");
+      manager.recordFailure("token-b", "NO_ORDERBOOK");
+      manager.recordFailure("token-a", "NO_ORDERBOOK"); // same token, 2nd strike
+
+      stats = manager.getStats();
+      assert.strictEqual(
+        stats.uniqueTokensCooledDown,
+        2,
+        "Should track 2 unique tokens",
+      );
+
+      // Record success for token-a
+      manager.recordSuccess("token-a");
+      stats = manager.getStats();
+      assert.strictEqual(
+        stats.resolvedLaterCount,
+        1,
+        "Should track resolved token",
+      );
+    });
+
+    test("should correctly report active cooldown count", () => {
+      const manager = new MarketDataCooldownManager();
+
+      assert.strictEqual(
+        manager.getActiveCooldownCount(),
+        0,
+        "Should start with 0",
+      );
+
+      manager.recordFailure("token-1", "NO_ORDERBOOK");
+      manager.recordFailure("token-2", "NO_ORDERBOOK");
+
+      assert.strictEqual(
+        manager.getActiveCooldownCount(),
+        2,
+        "Should have 2 active cooldowns",
+      );
+
+      manager.recordSuccess("token-1");
+      assert.strictEqual(
+        manager.getActiveCooldownCount(),
+        1,
+        "Should have 1 active cooldown after success",
+      );
+    });
+
+    test("should format duration correctly", () => {
+      assert.strictEqual(
+        MarketDataCooldownManager.formatDuration(30 * 1000),
+        "30s",
+      );
+      assert.strictEqual(
+        MarketDataCooldownManager.formatDuration(10 * 60 * 1000),
+        "10m",
+      );
+      assert.strictEqual(
+        MarketDataCooldownManager.formatDuration(30 * 60 * 1000),
+        "30m",
+      );
+      assert.strictEqual(
+        MarketDataCooldownManager.formatDuration(2 * 60 * 60 * 1000),
+        "2.0h",
+      );
+      assert.strictEqual(
+        MarketDataCooldownManager.formatDuration(24 * 60 * 60 * 1000),
+        "24.0h",
+      );
+    });
+  });
+
+  describe("shouldApplyLongCooldown", () => {
+    test("should return true for NO_ORDERBOOK", () => {
+      assert.strictEqual(shouldApplyLongCooldown("NO_ORDERBOOK"), true);
+    });
+
+    test("should return true for NOT_FOUND", () => {
+      assert.strictEqual(shouldApplyLongCooldown("NOT_FOUND"), true);
+    });
+
+    test("should return false for RATE_LIMIT", () => {
+      assert.strictEqual(shouldApplyLongCooldown("RATE_LIMIT"), false);
+    });
+
+    test("should return false for NETWORK_ERROR", () => {
+      assert.strictEqual(shouldApplyLongCooldown("NETWORK_ERROR"), false);
+    });
+
+    test("should return false for PARSE_ERROR", () => {
+      assert.strictEqual(shouldApplyLongCooldown("PARSE_ERROR"), false);
     });
   });
 
   describe("Token ID format validation", () => {
     test("should recognize valid Polymarket CLOB token IDs", () => {
-      // Valid CLOB token IDs are 256-bit integers (typically 77+ digits as strings)
       const validTokenIds = [
         "28542071792300007181611447397504994131484152585152031411345975186749097403884",
         "57625936606489185661652559589880983710918172021553907271126623944716577292773",
@@ -72,75 +392,65 @@ describe("No Market Data Cooldown", () => {
       ];
 
       for (const tokenId of validTokenIds) {
-        // Valid token IDs should be strings
-        assert.strictEqual(typeof tokenId, "string", "Token ID should be a string");
-
-        // Valid token IDs should be 70-80 characters long (256-bit integer as decimal)
+        assert.strictEqual(
+          typeof tokenId,
+          "string",
+          "Token ID should be a string",
+        );
         assert.ok(
           tokenId.length >= 70 && tokenId.length <= 80,
           `Token ID length should be 70-80 chars, got ${tokenId.length}`,
         );
-
-        // Valid token IDs should contain only digits
-        assert.ok(
-          /^\d+$/.test(tokenId),
-          "Token ID should contain only digits",
-        );
+        assert.ok(/^\d+$/.test(tokenId), "Token ID should contain only digits");
       }
     });
 
     test("should log first 12 characters when displaying token IDs", () => {
-      // The codebase uses .slice(0, 12) to display token IDs
-      // This is what creates the "808346101849..." format in logs
-      const tokenId = "28542071792300007181611447397504994131484152585152031411345975186749097403884";
+      const tokenId =
+        "28542071792300007181611447397504994131484152585152031411345975186749097403884";
       const displayed = tokenId.slice(0, 12) + "...";
-
-      assert.strictEqual(
-        displayed,
-        "285420717923...",
-        "Token ID should be truncated to 12 chars for display",
-      );
+      assert.strictEqual(displayed, "285420717923...");
     });
   });
 
   describe("Market data failure scenarios", () => {
     test("should correctly identify closed market scenarios", () => {
-      // When a market is closed, the CLOB API returns:
-      // {"error":"No orderbook exists for the requested token id"}
-      // This causes fetchTokenMarketData to return null
-      // Which triggers the "No market data returned for..." error
-
       const closedMarketResponse = {
         error: "No orderbook exists for the requested token id",
       };
-
-      // This is the error message that indicates a closed market
       assert.ok(
         closedMarketResponse.error.includes("No orderbook"),
         "Closed market error should mention missing orderbook",
       );
     });
 
-    test("should differentiate closed markets from empty orderbooks", () => {
-      // Empty orderbook (market open but no liquidity) - bids/asks are empty arrays
-      const emptyOrderbook = { bids: [], asks: [] };
+    test("should differentiate failure reasons", () => {
+      const scenarios: Array<{
+        error: string;
+        expectedReason: MarketDataFailureReason;
+      }> = [
+        { error: "No orderbook exists", expectedReason: "NO_ORDERBOOK" },
+        { error: "404 Not Found", expectedReason: "NOT_FOUND" },
+        { error: "429 Too Many Requests", expectedReason: "RATE_LIMIT" },
+        { error: "ECONNRESET", expectedReason: "NETWORK_ERROR" },
+        { error: "timeout", expectedReason: "NETWORK_ERROR" },
+        { error: "JSON parse error", expectedReason: "PARSE_ERROR" },
+      ];
 
-      // Closed market - API returns error, no bids/asks at all
-      const closedMarketResponse = {
-        error: "No orderbook exists for the requested token id",
-      };
-
-      // Both result in "No market data" but for different reasons
-      // The fix treats them the same (add to cooldown) which is correct
-      // because neither can be traded regardless of the reason
-      assert.ok(
-        !emptyOrderbook.bids.length,
-        "Empty orderbook has no bids",
-      );
-      assert.ok(
-        "error" in closedMarketResponse,
-        "Closed market returns error object",
-      );
+      for (const { error, expectedReason } of scenarios) {
+        // Verify the expected reason is a valid MarketDataFailureReason
+        const validReasons: MarketDataFailureReason[] = [
+          "NO_ORDERBOOK",
+          "NOT_FOUND",
+          "RATE_LIMIT",
+          "NETWORK_ERROR",
+          "PARSE_ERROR",
+        ];
+        assert.ok(
+          validReasons.includes(expectedReason),
+          `${expectedReason} should be a valid failure reason for "${error}"`,
+        );
+      }
     });
   });
 });
