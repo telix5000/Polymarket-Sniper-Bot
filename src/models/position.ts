@@ -56,7 +56,7 @@ export interface Position {
 }
 
 /**
- * Position summary for dashboard display
+ * Position summary for tracking deployed capital
  */
 export interface PositionSummary {
   /** Total number of open positions */

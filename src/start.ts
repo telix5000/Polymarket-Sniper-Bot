@@ -18,7 +18,6 @@
  *   - Telegram notifications
  *   - Auto-redeem settled positions
  *   - Auto-fill POL for gas
- *   - Web dashboard (DASHBOARD_PORT=3000)
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * THE MATH IS LAW. Every parameter is fixed by the EV equation:

@@ -8,6 +8,8 @@
  *   import type { Position } from '../models';
  *   import { envNum } from '../config';
  *   import { createLogger } from '../infra';
+ *   import { createClobClient } from '../services/polymarket';
+ *   import type { Strategy } from '../core';
  */
 
 // Types (now re-exported from models)
@@ -38,6 +40,21 @@ export {
   truncate,
   formatAddress,
 } from "../infra";
+
+// Core trading logic (strategy and risk management)
+export {
+  type Strategy,
+  type EntryDecision,
+  type ExitDecision,
+  type MarketContext,
+  type EvStrategyConfig,
+  type RiskParams,
+  calculateEffectiveBankroll,
+  calculateTradeSize,
+  checkPositionLimits,
+  calculateDeployedCapital,
+  checkDeploymentLimits,
+} from "../core";
 
 // Constants and presets
 export * from "./constants";
