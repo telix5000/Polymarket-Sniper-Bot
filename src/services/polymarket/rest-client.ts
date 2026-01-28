@@ -115,7 +115,7 @@ export async function clobGet<T>(
 ): Promise<RetryResult<T>> {
   const {
     timeout = DEFAULT_TIMEOUT,
-    retryConfig,
+    retryConfig = {},
     useRateLimit = true,
   } = options;
 
@@ -129,11 +129,23 @@ export async function clobGet<T>(
     return response.data;
   };
 
+  const startTime = Date.now();
+  let result: RetryResult<T>;
+
   if (useRateLimit) {
-    return withRateLimitAndRetry(requestFn, rateLimiters.clob, retryConfig);
+    result = await withRateLimitAndRetry(
+      requestFn,
+      rateLimiters.clob,
+      retryConfig,
+    );
+  } else {
+    result = await withRetry(requestFn, retryConfig);
   }
 
-  return withRetry(requestFn, retryConfig);
+  const latencyMs = Date.now() - startTime;
+  recordRequest(result.success, latencyMs, result.attempts - 1, useRateLimit);
+
+  return result;
 }
 
 /**
@@ -148,7 +160,7 @@ export async function dataApiGet<T>(
 ): Promise<RetryResult<T>> {
   const {
     timeout = DEFAULT_TIMEOUT,
-    retryConfig,
+    retryConfig = {},
     useRateLimit = true,
   } = options;
 
@@ -162,11 +174,23 @@ export async function dataApiGet<T>(
     return response.data;
   };
 
+  const startTime = Date.now();
+  let result: RetryResult<T>;
+
   if (useRateLimit) {
-    return withRateLimitAndRetry(requestFn, rateLimiters.data, retryConfig);
+    result = await withRateLimitAndRetry(
+      requestFn,
+      rateLimiters.data,
+      retryConfig,
+    );
+  } else {
+    result = await withRetry(requestFn, retryConfig);
   }
 
-  return withRetry(requestFn, retryConfig);
+  const latencyMs = Date.now() - startTime;
+  recordRequest(result.success, latencyMs, result.attempts - 1, useRateLimit);
+
+  return result;
 }
 
 /**
@@ -181,7 +205,7 @@ export async function gammaApiGet<T>(
 ): Promise<RetryResult<T>> {
   const {
     timeout = DEFAULT_TIMEOUT,
-    retryConfig,
+    retryConfig = {},
     useRateLimit = true,
   } = options;
 
@@ -195,11 +219,23 @@ export async function gammaApiGet<T>(
     return response.data;
   };
 
+  const startTime = Date.now();
+  let result: RetryResult<T>;
+
   if (useRateLimit) {
-    return withRateLimitAndRetry(requestFn, rateLimiters.gamma, retryConfig);
+    result = await withRateLimitAndRetry(
+      requestFn,
+      rateLimiters.gamma,
+      retryConfig,
+    );
+  } else {
+    result = await withRetry(requestFn, retryConfig);
   }
 
-  return withRetry(requestFn, retryConfig);
+  const latencyMs = Date.now() - startTime;
+  recordRequest(result.success, latencyMs, result.attempts - 1, useRateLimit);
+
+  return result;
 }
 
 // ============================================================================

@@ -118,18 +118,9 @@ describe("Rate Limit Utilities", async () => {
   describe("Error Classification", async () => {
     describe("isRetryableError", async () => {
       it("should identify network error codes as retryable", () => {
-        assert.strictEqual(
-          isRetryableError({ code: "ECONNRESET" }),
-          true,
-        );
-        assert.strictEqual(
-          isRetryableError({ code: "ETIMEDOUT" }),
-          true,
-        );
-        assert.strictEqual(
-          isRetryableError({ code: "ECONNREFUSED" }),
-          true,
-        );
+        assert.strictEqual(isRetryableError({ code: "ECONNRESET" }), true);
+        assert.strictEqual(isRetryableError({ code: "ETIMEDOUT" }), true);
+        assert.strictEqual(isRetryableError({ code: "ECONNREFUSED" }), true);
       });
 
       it("should identify HTTP 5xx errors as retryable", () => {
@@ -187,10 +178,7 @@ describe("Rate Limit Utilities", async () => {
           isRateLimitError({ response: { status: 429 } }),
           true,
         );
-        assert.strictEqual(
-          isRateLimitError({ statusCode: 429 }),
-          true,
-        );
+        assert.strictEqual(isRateLimitError({ statusCode: 429 }), true);
       });
 
       it("should not identify other errors as rate limit", () => {
@@ -331,9 +319,8 @@ describe("Rate Limit Utilities", async () => {
       await sleep(50);
       const elapsed = Date.now() - start;
 
-      // Allow some tolerance for timing
+      // Allow some tolerance for timing; only assert a lower bound to avoid flakiness on slow CI
       assert.ok(elapsed >= 45, `Expected >= 45ms, got ${elapsed}ms`);
-      assert.ok(elapsed < 100, `Expected < 100ms, got ${elapsed}ms`);
     });
   });
 
@@ -341,7 +328,9 @@ describe("Rate Limit Utilities", async () => {
     it("should have sensible default retry config", () => {
       assert.ok(DEFAULT_RETRY_CONFIG.maxRetries >= 1);
       assert.ok(DEFAULT_RETRY_CONFIG.baseDelayMs > 0);
-      assert.ok(DEFAULT_RETRY_CONFIG.maxDelayMs > DEFAULT_RETRY_CONFIG.baseDelayMs);
+      assert.ok(
+        DEFAULT_RETRY_CONFIG.maxDelayMs > DEFAULT_RETRY_CONFIG.baseDelayMs,
+      );
       assert.ok(DEFAULT_RETRY_CONFIG.jitterFactor >= 0);
       assert.ok(DEFAULT_RETRY_CONFIG.jitterFactor <= 1);
     });

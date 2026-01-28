@@ -238,12 +238,14 @@ export async function withRetry<T>(
 // ============================================================================
 
 /**
- * Simple sliding window rate limiter
+ * Simple sliding window rate limiter with concurrency-safe waitAndRecord
  */
 export class RateLimiter {
   private readonly maxRequests: number;
   private readonly windowMs: number;
   private timestamps: number[] = [];
+  // Internal promise queue for serializing waitAndRecord calls
+  private waitQueue: Promise<void> = Promise.resolve();
 
   constructor(config: Partial<RateLimitConfig> = {}) {
     const fullConfig = { ...DEFAULT_RATE_LIMIT_CONFIG, ...config };
@@ -268,23 +270,36 @@ export class RateLimiter {
   }
 
   /**
-   * Wait until a request can be made, then record it
+   * Wait until a request can be made, then record it.
+   * Serialized to prevent concurrent callers from exceeding the limit.
    */
   async waitAndRecord(): Promise<void> {
-    this.pruneOldTimestamps();
+    const run = async () => {
+      this.pruneOldTimestamps();
 
-    if (this.timestamps.length >= this.maxRequests) {
-      // Calculate how long to wait
-      const oldestTimestamp = this.timestamps[0];
-      const waitTime = oldestTimestamp + this.windowMs - Date.now();
+      if (this.timestamps.length >= this.maxRequests) {
+        // Calculate how long to wait
+        const oldestTimestamp = this.timestamps[0];
+        const waitTime = oldestTimestamp + this.windowMs - Date.now();
 
-      if (waitTime > 0) {
-        await sleep(waitTime);
-        this.pruneOldTimestamps();
+        if (waitTime > 0) {
+          await sleep(waitTime);
+          this.pruneOldTimestamps();
+        }
       }
-    }
 
-    this.recordRequest();
+      this.recordRequest();
+    };
+
+    // Chain this invocation onto the existing queue so that only one
+    // waiter runs the critical section at a time per RateLimiter instance.
+    const previous = this.waitQueue;
+    const next = previous.then(run, run);
+
+    // Ensure the queue is not permanently rejected; future calls should proceed.
+    this.waitQueue = next.catch(() => {});
+
+    return next;
   }
 
   /**
@@ -357,7 +372,9 @@ export function getRateLimiter(
 // ============================================================================
 
 /**
- * Execute a function with both rate limiting and retry logic
+ * Execute a function with both rate limiting and retry logic.
+ * Rate limiting is applied per-attempt (including retries) to prevent burst
+ * of rapid failures from exceeding the intended request rate.
  *
  * @param fn - The async function to execute
  * @param rateLimiter - Rate limiter to use (or key for pre-configured limiter)
@@ -373,9 +390,12 @@ export async function withRateLimitAndRetry<T>(
   const limiter =
     typeof rateLimiter === "string" ? getRateLimiter(rateLimiter) : rateLimiter;
 
-  // Wait for rate limit before executing
-  await limiter.waitAndRecord();
+  // Wrap the function so every attempt (including retries) is rate-limited
+  const wrappedFn = async (): Promise<T> => {
+    await limiter.waitAndRecord();
+    return fn();
+  };
 
-  // Execute with retry logic
-  return withRetry(fn, retryConfig, onRetry);
+  // Execute with retry logic, applying rate limiting per attempt
+  return withRetry(wrappedFn, retryConfig, onRetry);
 }
