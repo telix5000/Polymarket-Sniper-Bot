@@ -17,8 +17,8 @@ import {
   WebSocketMarketClient,
   initWebSocketMarketClient,
   getWebSocketMarketClient,
-} from "../../src/lib/ws-market-client";
-import { POLYMARKET_WS } from "../../src/lib/constants";
+} from "../../../src/lib/ws-market-client";
+import { POLYMARKET_WS } from "../../../src/lib/constants";
 
 // ============================================================================
 // WebSocketMarketClient Tests
@@ -131,7 +131,7 @@ describe("WebSocketMarketClient", () => {
 // URL and Configuration Tests
 // ============================================================================
 
-import { getMarketWsUrl, getUserWsUrl } from "../../src/lib/constants";
+import { getMarketWsUrl, getUserWsUrl } from "../../../src/lib/constants";
 
 describe("WebSocket URL Configuration", () => {
   it("should have HOST constant for base host", () => {

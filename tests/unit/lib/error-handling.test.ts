@@ -10,7 +10,7 @@ import {
   parseError,
   formatErrorForLog,
   ErrorCode,
-} from "../../src/lib/error-handling";
+} from "../../../src/lib/error-handling";
 
 describe("Error Handling Utilities", () => {
   describe("isCloudflareBlock", () => {

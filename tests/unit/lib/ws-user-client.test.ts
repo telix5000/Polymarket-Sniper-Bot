@@ -17,8 +17,8 @@ import {
   OrderStateStore,
   type OrderEvent,
   type TradeEvent,
-} from "../../src/lib/ws-user-client";
-import { POLYMARKET_WS } from "../../src/lib/constants";
+} from "../../../src/lib/ws-user-client";
+import { POLYMARKET_WS } from "../../../src/lib/constants";
 
 // ============================================================================
 // OrderStateStore Tests
@@ -372,7 +372,7 @@ describe("WebSocketUserClient", () => {
 // User WebSocket URL Configuration Tests
 // ============================================================================
 
-import { getUserWsUrl, getMarketWsUrl } from "../../src/lib/constants";
+import { getUserWsUrl, getMarketWsUrl } from "../../../src/lib/constants";
 
 describe("WebSocketUserClient URL Configuration", () => {
   it("getUserWsUrl() returns correct user channel URL", () => {

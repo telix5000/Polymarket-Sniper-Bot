@@ -28,7 +28,10 @@
     "format": "prettier --write .",
     "postinstall": "patch-package",
     "redeem": "ts-node scripts/redeem.ts",
-    "test": "node --test -r ts-node/register/transpile-only tests/**/*.test.ts",
+    "test": "bash -c 'node --test -r ts-node/register/transpile-only tests/unit/**/*.test.ts tests/integration/**/*.test.ts 2>/dev/null || node --test -r ts-node/register/transpile-only tests/unit/**/*.test.ts'",
+    "test:unit": "bash -c 'node --test -r ts-node/register/transpile-only tests/unit/**/*.test.ts'",
+    "test:integration": "bash -c 'node --test -r ts-node/register/transpile-only tests/integration/**/*.test.ts'",
+    "typecheck": "tsc --noEmit",
     "print-targets": "ts-node scripts/printTargets.ts",
     "test-sell": "ts-node scripts/test-sell.ts"
   },

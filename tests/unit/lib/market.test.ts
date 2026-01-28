@@ -11,7 +11,7 @@ import {
   clearMarketCache,
   getMarketCacheStats,
   type MarketTokenPair,
-} from "../../src/lib/market";
+} from "../../../src/lib/market";
 
 describe("Market Token Lookup", () => {
   // Sample market data similar to what Gamma API returns

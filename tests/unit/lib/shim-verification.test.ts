@@ -4,7 +4,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
 import { Wallet } from "ethers";
-import { applyEthersV6Shim } from "../../src/lib/ethers-compat";
+import { applyEthersV6Shim } from "../../../src/lib/ethers-compat";
 
 describe("applyEthersV6Shim", () => {
   test("wallet does not have _signTypedData before shim", () => {

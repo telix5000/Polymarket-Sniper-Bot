@@ -5,7 +5,7 @@ import {
   type ScannerConfig,
   type MarketDataInput,
   DEFAULT_SCANNER_CONFIG,
-} from "../src/lib/market-scanner";
+} from "../../src/lib/market-scanner";
 
 /**
  * Unit tests for the simplified Market Scanner

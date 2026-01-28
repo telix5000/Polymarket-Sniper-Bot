@@ -5,9 +5,9 @@ import {
   calculateOptimalSlippage,
   determineOrderType,
   type OrderBookLevel,
-} from "../../src/lib/smart-sell";
-import { SELL } from "../../src/lib/constants";
-import type { Position } from "../../src/lib/types";
+} from "../../../src/lib/smart-sell";
+import { SELL } from "../../../src/lib/constants";
+import type { Position } from "../../../src/lib/types";
 
 // Helper to create a mock position
 function createMockPosition(overrides: Partial<Position> = {}): Position {

@@ -16,7 +16,7 @@ import {
   initMarketDataStore,
   getMarketDataStore,
   type OrderbookLevel,
-} from "../../src/lib/market-data-store";
+} from "../../../src/lib/market-data-store";
 
 // ============================================================================
 // Test Helpers
