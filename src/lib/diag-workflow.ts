@@ -38,6 +38,22 @@ import { smartSell } from "./smart-sell";
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * Orderbook level with price and size as strings (from CLOB API)
+ */
+interface OrderbookLevel {
+  price: string;
+  size: string;
+}
+
+/**
+ * Orderbook data structure from CLOB client
+ */
+interface OrderbookData {
+  asks?: OrderbookLevel[];
+  bids?: OrderbookLevel[];
+}
+
+/**
  * Dependencies required by the diagnostic workflow
  */
 export interface DiagWorkflowDeps {
@@ -698,7 +714,7 @@ async function attemptDiagBuy(
     // STEP 1: Fetch orderbook to get current market state
     // ═══════════════════════════════════════════════════════════════════════
     const orderbookTimestamp = new Date().toISOString();
-    let orderbook: { asks?: Array<{ price: string; size: string }>; bids?: Array<{ price: string; size: string }> } | null = null;
+    let orderbook: OrderbookData | null = null;
 
     try {
       orderbook = await deps.client.getOrderBook(signal.tokenId);
@@ -731,7 +747,10 @@ async function attemptDiagBuy(
         reason: "orderbook_unavailable",
         marketId: signal.marketId,
         tokenId: signal.tokenId,
-        detail: { hasOrderbook: !!orderbook, askCount: orderbook?.asks?.length ?? 0 },
+        detail: {
+          hasOrderbook: !!orderbook,
+          askCount: orderbook?.asks?.length ?? 0,
+        },
       });
 
       console.log(`🚫 BUY rejected: orderbook_unavailable (no asks)`);
@@ -746,9 +765,32 @@ async function attemptDiagBuy(
     // STEP 2: Extract best bid/ask from orderbook
     // ═══════════════════════════════════════════════════════════════════════
     const bestAsk = parseFloat(orderbook.asks[0].price);
-    const bestBid = orderbook.bids && orderbook.bids.length > 0
-      ? parseFloat(orderbook.bids[0].price)
-      : null;
+    const bestBid =
+      orderbook.bids && orderbook.bids.length > 0
+        ? parseFloat(orderbook.bids[0].price)
+        : null;
+
+    // Validate parsed prices - parseFloat returns NaN for invalid strings
+    if (isNaN(bestAsk) || bestAsk <= 0) {
+      tracer.trace({
+        step,
+        action: "invalid_ask_price",
+        result: "REJECTED",
+        reason: "orderbook_unavailable",
+        marketId: signal.marketId,
+        tokenId: signal.tokenId,
+        detail: { rawAskPrice: orderbook.asks[0].price, parsedAsk: bestAsk },
+      });
+
+      console.log(
+        `🚫 BUY rejected: orderbook_unavailable (invalid ask price: ${orderbook.asks[0].price})`,
+      );
+      return {
+        success: false,
+        reason: "orderbook_unavailable",
+        detail: { rawAskPrice: orderbook.asks[0].price, parsedAsk: bestAsk },
+      };
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // STEP 3: Compute limit price for BUY
@@ -759,8 +801,8 @@ async function attemptDiagBuy(
     const slippageMultiplier = 1 + slippagePct / 100;
     const chosenLimitPrice = bestAsk * slippageMultiplier;
 
-    // Polymarket CLOB API expects price in decimal format (0.0 to 1.0)
-    // representing probability/price per share
+    // Note: priceUnits is for logging/documentation only - the Polymarket CLOB API
+    // expects price in decimal format (0.0 to 1.0) representing probability/price per share
     const priceUnits = "decimal_0_to_1";
 
     // Calculate order size: shares * price = USD value
@@ -768,10 +810,16 @@ async function attemptDiagBuy(
     const sizeUsd = cfg.forceShares * chosenLimitPrice;
 
     // Validate outcome label - must be "YES" or "NO"
-    const outcome: "YES" | "NO" =
-      signal.outcomeLabel === "YES" || signal.outcomeLabel === "NO"
-        ? signal.outcomeLabel
-        : "YES";
+    // Log warning if falling back to default "YES" to aid debugging
+    let outcome: "YES" | "NO";
+    if (signal.outcomeLabel === "YES" || signal.outcomeLabel === "NO") {
+      outcome = signal.outcomeLabel;
+    } else {
+      console.warn(
+        `⚠️ [DIAG] Invalid outcome label "${signal.outcomeLabel}", defaulting to "YES"`,
+      );
+      outcome = "YES";
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // STEP 4: DIAG Structured Log - Price formation details BEFORE submission
@@ -810,8 +858,8 @@ async function attemptDiagBuy(
 
     console.log(
       `📊 [DIAG] Price formation: signal=${signal.price?.toFixed(4) ?? "N/A"}, ` +
-      `bestBid=${bestBid?.toFixed(4) ?? "N/A"}, bestAsk=${bestAsk.toFixed(4)}, ` +
-      `chosenLimit=${chosenLimitPrice.toFixed(4)} (bestAsk + ${slippagePct}%)`
+        `bestBid=${bestBid?.toFixed(4) ?? "N/A"}, bestAsk=${bestAsk.toFixed(4)}, ` +
+        `chosenLimit=${chosenLimitPrice.toFixed(4)} (bestAsk + ${slippagePct}%)`,
     );
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1077,7 +1125,11 @@ function mapOrderFailureReason(reason?: string): DiagReason {
   ) {
     return "price_out_of_range";
   }
-  if (lower.includes("orderbook") || lower.includes("no_asks") || lower.includes("no_bids")) {
+  if (
+    lower.includes("orderbook") ||
+    lower.includes("no_asks") ||
+    lower.includes("no_bids")
+  ) {
     return "orderbook_unavailable";
   }
   if (lower.includes("cooldown")) {

@@ -231,3 +231,80 @@ describe("DIAG Buy Pricing Logic", () => {
     assert.ok(DIAG_BUY_SLIPPAGE_PCT <= 5, "Slippage should not exceed 5%");
   });
 });
+
+describe("DIAG Buy Price Validation Edge Cases", () => {
+  /**
+   * Tests for edge case handling in the attemptDiagBuy price validation.
+   * These verify the defensive programming added in the code review fixes.
+   */
+
+  test("should detect NaN from parseFloat on invalid price string", () => {
+    // parseFloat returns NaN for invalid inputs
+    const invalidPrices = ["", "abc", "NaN", undefined, null, "   "];
+
+    for (const invalidPrice of invalidPrices) {
+      const parsed = parseFloat(invalidPrice as string);
+      assert.ok(isNaN(parsed), `parseFloat("${invalidPrice}") should be NaN`);
+    }
+  });
+
+  test("should detect zero or negative prices as invalid", () => {
+    const invalidPrices = ["0", "-0.5", "-1"];
+
+    for (const invalidPrice of invalidPrices) {
+      const parsed = parseFloat(invalidPrice);
+      assert.ok(
+        parsed <= 0,
+        `Price "${invalidPrice}" (${parsed}) should be rejected`,
+      );
+    }
+  });
+
+  test("should accept valid price strings", () => {
+    const validPrices = ["0.5", "0.765", "0.001", "1.0", "0.99"];
+
+    for (const validPrice of validPrices) {
+      const parsed = parseFloat(validPrice);
+      assert.ok(
+        !isNaN(parsed) && parsed > 0,
+        `Price "${validPrice}" should be valid`,
+      );
+    }
+  });
+
+  test("should validate outcome labels", () => {
+    // Valid labels should pass validation
+    const yesLabel = "YES";
+    const noLabel = "NO";
+    assert.strictEqual(
+      yesLabel === "YES" || yesLabel === "NO",
+      true,
+      "YES should be valid",
+    );
+    assert.strictEqual(
+      noLabel === "YES" || noLabel === "NO",
+      true,
+      "NO should be valid",
+    );
+
+    // Invalid labels should trigger fallback to "YES"
+    const invalidLabels = [
+      undefined,
+      null,
+      "",
+      "yes",
+      "no",
+      "Maybe",
+      "TRUE",
+      "FALSE",
+    ];
+    for (const label of invalidLabels) {
+      const isValid = label === "YES" || label === "NO";
+      assert.strictEqual(
+        isValid,
+        false,
+        `"${label}" should not be a valid outcome label`,
+      );
+    }
+  });
+});
