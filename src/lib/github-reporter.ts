@@ -225,6 +225,75 @@ export class GitHubReporter {
     });
   }
 
+  /**
+   * Report a startup diagnostic summary
+   * This captures the first 60 seconds of operation for debugging
+   */
+  async reportStartupDiagnostic(details: {
+    whaleWalletsLoaded: number;
+    marketsScanned: number;
+    whaleTradesDetected: number;
+    entryAttemptsCount: number;
+    entrySuccessCount: number;
+    entryFailureReasons: string[];
+    orderbookFetchFailures: number;
+    onchainMonitorStatus: string;
+    mempoolMonitorStatus: string;
+    rpcLatencyMs: number;
+    apiLatencyMs: number;
+    balance: number;
+    effectiveBankroll: number;
+    config: {
+      liveTradingEnabled: boolean;
+      copyAnyWhaleBuy: boolean;
+      whaleTradeUsd: number;
+      scanActiveMarkets: boolean;
+    };
+  }): Promise<boolean> {
+    return this.report({
+      title: `Startup Diagnostic: ${details.whaleTradesDetected} whale trades, ${details.entrySuccessCount}/${details.entryAttemptsCount} entries`,
+      message: `Startup diagnostic after 60 seconds of operation.\n\n` +
+        `Whale Detection:\n` +
+        `- Wallets loaded: ${details.whaleWalletsLoaded}\n` +
+        `- Whale trades detected: ${details.whaleTradesDetected}\n` +
+        `- On-chain monitor: ${details.onchainMonitorStatus}\n` +
+        `- Mempool monitor: ${details.mempoolMonitorStatus}\n\n` +
+        `Entry Pipeline:\n` +
+        `- Markets scanned: ${details.marketsScanned}\n` +
+        `- Entry attempts: ${details.entryAttemptsCount}\n` +
+        `- Entry successes: ${details.entrySuccessCount}\n` +
+        `- Orderbook fetch failures: ${details.orderbookFetchFailures}\n` +
+        (details.entryFailureReasons.length > 0 
+          ? `- Failure reasons: ${[...new Set(details.entryFailureReasons)].join(", ")}\n` 
+          : "") +
+        `\nNetwork:\n` +
+        `- RPC latency: ${details.rpcLatencyMs}ms\n` +
+        `- API latency: ${details.apiLatencyMs}ms\n\n` +
+        `Balance:\n` +
+        `- Total: $${details.balance.toFixed(2)}\n` +
+        `- Effective: $${details.effectiveBankroll.toFixed(2)}\n\n` +
+        `Config:\n` +
+        `- Live trading: ${details.config.liveTradingEnabled}\n` +
+        `- Copy any whale buy: ${details.config.copyAnyWhaleBuy}\n` +
+        `- Min whale trade: $${details.config.whaleTradeUsd}\n` +
+        `- Scan active markets: ${details.config.scanActiveMarkets}`,
+      severity: details.whaleTradesDetected === 0 && details.entrySuccessCount === 0 ? "warning" : "info",
+      context: {
+        whaleWalletsLoaded: details.whaleWalletsLoaded,
+        marketsScanned: details.marketsScanned,
+        whaleTradesDetected: details.whaleTradesDetected,
+        entryAttempts: details.entryAttemptsCount,
+        entrySuccesses: details.entrySuccessCount,
+        orderbookFetchFailures: details.orderbookFetchFailures,
+        onchainMonitor: details.onchainMonitorStatus,
+        mempoolMonitor: details.mempoolMonitorStatus,
+        rpcLatencyMs: details.rpcLatencyMs,
+        apiLatencyMs: details.apiLatencyMs,
+      },
+      timestamp: Date.now(),
+    });
+  }
+
   private getDedupeKey(report: ErrorReport): string {
     // Create a key based on title and core message
     const coreMessage = report.message.slice(0, 100).toLowerCase();
