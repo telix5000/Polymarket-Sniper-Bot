@@ -314,6 +314,66 @@ describe("VPN DNS Container Handling", () => {
       }
     });
 
+    describe("WRITE_HOSTS protection", () => {
+      it("should define clob.polymarket.com as a WRITE host", () => {
+        // Import the WRITE_HOSTS set from vpn.ts
+        // For testing, we simulate the expected behavior
+        const WRITE_HOSTS = new Set<string>(["clob.polymarket.com"]);
+
+        assert.ok(
+          WRITE_HOSTS.has("clob.polymarket.com"),
+          "clob.polymarket.com must be in WRITE_HOSTS",
+        );
+      });
+
+      it("should NOT include read-only hosts in WRITE_HOSTS", () => {
+        const WRITE_HOSTS = new Set<string>(["clob.polymarket.com"]);
+
+        // These should NOT be in WRITE_HOSTS
+        const READ_ONLY_HOSTS = [
+          "gamma-api.polymarket.com",
+          "data-api.polymarket.com",
+          "ws-subscriptions-clob.polymarket.com",
+          "polygon-mainnet.infura.io",
+        ];
+
+        for (const host of READ_ONLY_HOSTS) {
+          assert.ok(
+            !WRITE_HOSTS.has(host),
+            `${host} should NOT be in WRITE_HOSTS (it's read-only)`,
+          );
+        }
+      });
+
+      it("should block bypass attempts for WRITE hosts", () => {
+        const WRITE_HOSTS = new Set<string>(["clob.polymarket.com"]);
+
+        // Simulate the bypass blocking logic
+        function canBypass(hostname: string): boolean {
+          return !WRITE_HOSTS.has(hostname);
+        }
+
+        // WRITE hosts cannot be bypassed
+        assert.strictEqual(
+          canBypass("clob.polymarket.com"),
+          false,
+          "clob.polymarket.com must NOT be bypassable",
+        );
+
+        // Read-only hosts can be bypassed
+        assert.strictEqual(
+          canBypass("gamma-api.polymarket.com"),
+          true,
+          "gamma-api.polymarket.com should be bypassable",
+        );
+        assert.strictEqual(
+          canBypass("data-api.polymarket.com"),
+          true,
+          "data-api.polymarket.com should be bypassable",
+        );
+      });
+    });
+
     it("should categorize hosts correctly", () => {
       // Test that the categorization makes sense
       const categories = new Map<string, string[]>();

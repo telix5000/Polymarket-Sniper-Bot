@@ -550,6 +550,8 @@ export async function startOpenvpn(logger?: Logger): Promise<boolean> {
 /**
  * Add a bypass route for a hostname (routes traffic outside VPN)
  * Uses the pre-VPN gateway captured before VPN started
+ *
+ * CRITICAL: WRITE hosts are NEVER bypassed - this function will reject them.
  */
 function addBypassRoute(
   hostname: string,
@@ -558,6 +560,21 @@ function addBypassRoute(
   // Validate hostname to prevent command injection
   if (!isValidHostname(hostname)) {
     logger?.warn?.(`Invalid hostname format: ${hostname}`);
+    return null;
+  }
+
+  // CRITICAL: Never bypass WRITE hosts - they must always route through VPN
+  if (WRITE_HOSTS.has(hostname)) {
+    const blockEvent = {
+      event: "BLOCKED_BYPASS_WRITE_HOST",
+      timestamp: new Date().toISOString(),
+      hostname,
+      reason: "WRITE hosts must route through VPN for Cloudflare protection",
+    };
+    console.warn(JSON.stringify(blockEvent));
+    logger?.warn?.(
+      `BLOCKED: Cannot bypass WRITE host ${hostname} - must route through VPN`,
+    );
     return null;
   }
 
@@ -593,6 +610,20 @@ function addBypassRoute(
         stdio: "pipe",
       },
     );
+
+    // Track bypassed hosts for verification
+    bypassedHosts.add(hostname);
+
+    // Emit READ_BYPASS_OK event
+    const bypassEvent = {
+      event: "READ_BYPASS_OK",
+      timestamp: new Date().toISOString(),
+      hostname,
+      ip,
+      gateway: effectiveGateway,
+      interface: effectiveIface,
+    };
+    logger?.debug?.(JSON.stringify(bypassEvent));
 
     return { ip, gateway: effectiveGateway };
   } catch {
@@ -790,6 +821,174 @@ export function checkVpnForTrading(logger?: Logger): string[] {
   }
 
   return warnings;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPLICIT WRITE/READ HOST DEFINITIONS (CRITICAL for VPN routing correctness)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * WRITE HOSTS - These hosts handle state-mutating operations and MUST ALWAYS
+ * route through VPN to avoid Cloudflare geo-blocking.
+ *
+ * Includes:
+ * - Auth/credential exchange endpoints
+ * - Order submission endpoints
+ * - Order cancellation endpoints
+ * - Any endpoint that mutates state
+ */
+export const WRITE_HOSTS = new Set<string>([
+  "clob.polymarket.com", // CLOB API: auth, orders, cancels - CRITICAL
+]);
+
+/**
+ * READ-ONLY HOSTS - These hosts are safe to bypass VPN for speed.
+ * Only bypassed if explicitly enabled via env vars.
+ *
+ * Includes:
+ * - Market data (gamma-api)
+ * - Analytics/leaderboard (data-api)
+ */
+export const READ_ONLY_HOSTS = new Set<string>([
+  "gamma-api.polymarket.com", // Gamma API - market data, volumes
+  "data-api.polymarket.com", // Data API - leaderboard, whale activity
+]);
+
+/**
+ * Check if a hostname is a WRITE host (must always go through VPN)
+ */
+export function isWriteHost(hostname: string): boolean {
+  return WRITE_HOSTS.has(hostname);
+}
+
+/**
+ * Check if a hostname is a READ-ONLY host (safe to bypass VPN)
+ */
+export function isReadOnlyHost(hostname: string): boolean {
+  return READ_ONLY_HOSTS.has(hostname);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BYPASS ROUTE TRACKING (to verify no write hosts are bypassed)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Track which hosts have been added to bypass routes.
+ * Used to verify WRITE hosts are never bypassed.
+ */
+const bypassedHosts = new Set<string>();
+
+/**
+ * Get list of currently bypassed hosts
+ */
+export function getBypassedHosts(): string[] {
+  return [...bypassedHosts];
+}
+
+/**
+ * Check if a host is currently bypassed
+ */
+export function isHostBypassed(hostname: string): boolean {
+  return bypassedHosts.has(hostname);
+}
+
+/**
+ * Emit VPN routing policy log at startup.
+ * This is a diagnostic self-check that shows the routing configuration.
+ */
+export function emitRoutingPolicyLog(rpcUrl?: string, logger?: Logger): void {
+  const policyEvent = {
+    event: "VPN_ROUTING_POLICY",
+    timestamp: new Date().toISOString(),
+    vpnActive,
+    vpnType,
+    preVpnRouting: {
+      gateway: preVpnRouting?.gateway ?? null,
+      iface: preVpnRouting?.iface ?? null,
+    },
+    writeHosts: [...WRITE_HOSTS],
+    readOnlyHosts: [...READ_ONLY_HOSTS],
+    bypassedHosts: [...bypassedHosts],
+    envConfig: {
+      VPN_BYPASS_RPC: process.env.VPN_BYPASS_RPC ?? "true",
+      VPN_BYPASS_POLYMARKET_READS:
+        process.env.VPN_BYPASS_POLYMARKET_READS ?? "false",
+      VPN_BYPASS_POLYMARKET_WS: process.env.VPN_BYPASS_POLYMARKET_WS ?? "true",
+    },
+  };
+
+  console.log(JSON.stringify(policyEvent));
+
+  // Check for any misrouted write hosts
+  const misroutedWriteHosts = [...WRITE_HOSTS].filter((h) =>
+    bypassedHosts.has(h),
+  );
+  if (misroutedWriteHosts.length > 0) {
+    const errorEvent = {
+      event: "VPN_MISROUTED_WRITE_HOST",
+      timestamp: new Date().toISOString(),
+      misroutedHosts: misroutedWriteHosts,
+      remediation:
+        "WRITE hosts must route through VPN. Remove bypass routes for these hosts.",
+    };
+    console.error(JSON.stringify(errorEvent));
+
+    if (process.env.GITHUB_ACTIONS === "true") {
+      console.log(
+        `::error::VPN_MISROUTED_WRITE_HOST: ${misroutedWriteHosts.join(", ")} are bypassed but must route through VPN`,
+      );
+    }
+
+    logger?.error?.(
+      `VPN_MISROUTED_WRITE_HOST: ${misroutedWriteHosts.join(", ")} are bypassed but must route through VPN`,
+    );
+  }
+}
+
+/**
+ * Verify that all write hosts route through VPN BEFORE placing an order.
+ * This is a pre-order safety check.
+ *
+ * @param traceId - Trace ID for correlation in diagnostic events
+ * @param logger - Optional logger
+ * @returns true if all write hosts route correctly, false if any are bypassed
+ */
+export function verifyWritePathBeforeOrder(
+  traceId: string,
+  logger?: Logger,
+): { ok: boolean; misroutedHosts: string[] } {
+  const misroutedWriteHosts = [...WRITE_HOSTS].filter((h) =>
+    bypassedHosts.has(h),
+  );
+
+  if (misroutedWriteHosts.length > 0) {
+    const errorEvent = {
+      event: "VPN_MISROUTED_WRITE_HOST",
+      traceId,
+      timestamp: new Date().toISOString(),
+      action: "pre_order_check",
+      misroutedHosts: misroutedWriteHosts,
+      vpnActive,
+      bypassedHosts: [...bypassedHosts],
+      remediation:
+        "Order blocked: WRITE hosts must route through VPN. Check VPN configuration.",
+    };
+    console.error(JSON.stringify(errorEvent));
+
+    if (process.env.GITHUB_ACTIONS === "true") {
+      console.log(
+        `::error::VPN_MISROUTED_WRITE_HOST: Order blocked. ${misroutedWriteHosts.join(", ")} are bypassed.`,
+      );
+    }
+
+    logger?.error?.(
+      `Order blocked: WRITE hosts ${misroutedWriteHosts.join(", ")} are bypassed but must route through VPN`,
+    );
+
+    return { ok: false, misroutedHosts: misroutedWriteHosts };
+  }
+
+  return { ok: true, misroutedHosts: [] };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1192,6 +1391,8 @@ export function validateWriteRouting(
  * Add bypass routes for ALL resolved IPs of a hostname.
  * This handles hosts behind load balancers (like Cloudflare) that may have multiple IPs.
  *
+ * CRITICAL: WRITE hosts are NEVER bypassed - this function will reject them.
+ *
  * @param hostname - The hostname to bypass
  * @param logger - Optional logger
  * @returns Array of IPs that were routed, or empty array if failed
@@ -1202,6 +1403,21 @@ export function addMultiIpBypassRoute(
 ): string[] {
   if (!isValidHostname(hostname)) {
     logger?.warn?.(`Invalid hostname format: ${hostname}`);
+    return [];
+  }
+
+  // CRITICAL: Never bypass WRITE hosts - they must always route through VPN
+  if (WRITE_HOSTS.has(hostname)) {
+    const blockEvent = {
+      event: "BLOCKED_BYPASS_WRITE_HOST",
+      timestamp: new Date().toISOString(),
+      hostname,
+      reason: "WRITE hosts must route through VPN for Cloudflare protection",
+    };
+    console.warn(JSON.stringify(blockEvent));
+    logger?.warn?.(
+      `BLOCKED: Cannot bypass WRITE host ${hostname} - must route through VPN`,
+    );
     return [];
   }
 
@@ -1246,6 +1462,8 @@ export function addMultiIpBypassRoute(
   }
 
   if (addedIps.length > 0) {
+    // Track bypassed hosts for verification
+    bypassedHosts.add(hostname);
     logger?.info?.(
       `Bypass route for ${hostname}: ${addedIps.length} IPs via ${effectiveGateway}`,
     );

@@ -7253,24 +7253,46 @@ async function main(): Promise<void> {
       });
       console.log(`📋 Diagnostic trace written to: ${getDiagTracePath()}`);
 
-      // Determine exit behavior:
-      // - DIAG_EXIT=1: Exit immediately (for testing or when restart is acceptable)
-      // - GitHub Actions: Exit immediately (CI should be one-shot)
-      // - Default: Hold mode (keeps container running to prevent restart loops)
-      const diagExitEnabled =
-        process.env.DIAG_EXIT === "1" || process.env.DIAG_EXIT === "true";
-      const holdSeconds = parseInt(process.env.DIAG_HOLD_SECONDS ?? "0", 10);
+      // Determine exit behavior using DIAGNOSTIC_POST_ACTION env var:
+      // - "exit": Exit immediately with exit code (for CI/testing)
+      // - "halt" (default): Keep process alive indefinitely to prevent restart loops
+      //
+      // Legacy env vars (DIAG_EXIT, DIAG_HOLD_SECONDS) are still supported for backward compatibility.
+      const postAction = (
+        process.env.DIAGNOSTIC_POST_ACTION ?? "halt"
+      ).toLowerCase();
 
-      if (isGitHubActions() || diagExitEnabled) {
-        const reason = isGitHubActions()
-          ? "GitHub Actions detected"
-          : "DIAG_EXIT=1";
-        console.log(`\n🏁 ${reason} - exiting after diagnostic workflow.`);
+      // Legacy support: DIAG_EXIT=1 overrides to "exit"
+      const legacyDiagExit =
+        process.env.DIAG_EXIT === "1" || process.env.DIAG_EXIT === "true";
+      const effectivePostAction = legacyDiagExit ? "exit" : postAction;
+
+      // Log the decision
+      console.log("");
+      console.log("═".repeat(60));
+      console.log("  📋 DIAGNOSTIC POST-ACTION");
+      console.log("═".repeat(60));
+      console.log(
+        `  DIAGNOSTIC_POST_ACTION: ${process.env.DIAGNOSTIC_POST_ACTION ?? "(not set)"}`,
+      );
+      console.log(
+        `  DIAG_EXIT (legacy): ${process.env.DIAG_EXIT ?? "(not set)"}`,
+      );
+      console.log(
+        `  DIAG_HOLD_SECONDS (legacy): ${process.env.DIAG_HOLD_SECONDS ?? "(not set)"}`,
+      );
+      console.log(`  Effective action: ${effectivePostAction}`);
+      console.log("═".repeat(60));
+
+      if (effectivePostAction === "exit") {
+        console.log(
+          `\n🏁 Post-action=exit - exiting after diagnostic workflow.`,
+        );
         process.exit(diagExitCode);
       }
 
-      // Hold mode: Keep the container running to prevent restart loops
-      // This is the default behavior for non-CI environments
+      // Legacy: DIAG_HOLD_SECONDS for timed hold before exit
+      const holdSeconds = parseInt(process.env.DIAG_HOLD_SECONDS ?? "0", 10);
       if (holdSeconds > 0) {
         console.log(
           `\n💤 Holding for ${holdSeconds} seconds (DIAG_HOLD_SECONDS)...`,
@@ -7281,17 +7303,19 @@ async function main(): Promise<void> {
         process.exit(diagExitCode);
       }
 
-      // Default: Enter idle state indefinitely (safest for containers)
+      // Default (halt): Enter idle state indefinitely (safest for containers)
+      // This prevents restart loops in container orchestrators
       console.log(
-        "\n💤 DIAG complete, holding indefinitely (container will not restart)...",
+        "\n💤 Post-action=halt - holding indefinitely (container will not restart)...",
       );
       console.log(
-        "   Set DIAG_EXIT=1 to exit, or DIAG_HOLD_SECONDS=N to hold for N seconds.",
+        "   Set DIAGNOSTIC_POST_ACTION=exit to exit immediately after diagnostic.",
       );
       console.log("   Press Ctrl+C to stop the container manually.");
 
       // Keep the process alive indefinitely without a constant-condition loop.
       // Signal handlers (SIGINT/SIGTERM) above will still terminate the process.
+      // IMPORTANT: We do NOT re-enter trading loops in halt mode.
       await new Promise<never>(() => {
         // Intentionally never resolve: idle until the process receives a termination signal.
       });
