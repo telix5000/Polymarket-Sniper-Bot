@@ -4048,6 +4048,9 @@ class ChurnEngine {
   // Prevents spamming the same failing token repeatedly
   private failedEntryCooldowns = new Map<string, number>();
   private readonly FAILED_ENTRY_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown for failing tokens
+  // Longer cooldown for closed/settled markets (no orderbook available)
+  // These markets won't reopen, so use a much longer cooldown (10 minutes)
+  private readonly NO_MARKET_DATA_COOLDOWN_MS = 10 * 60 * 1000;
 
   // Intervals
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
@@ -5139,9 +5142,14 @@ class ChurnEngine {
                 `No market data returned for ${bias.tokenId.slice(0, 12)}...`,
               );
               console.log(
-                `⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}...`,
+                `⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}... (market may be closed/settled)`,
               );
               this.trackFailureReason("NO_MARKET_DATA");
+              // Add to cooldown with longer duration - closed markets don't reopen
+              this.failedEntryCooldowns.set(
+                bias.tokenId,
+                Date.now() + this.NO_MARKET_DATA_COOLDOWN_MS,
+              );
             }
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -5245,6 +5253,12 @@ class ChurnEngine {
                 return result;
               } else {
                 this.trackFailureReason("SCAN: NO_MARKET_DATA");
+                // Add to cooldown - scanner targets shouldn't have missing data
+                // If they do, the market may have closed since scanning
+                this.failedEntryCooldowns.set(
+                  tokenId,
+                  Date.now() + this.NO_MARKET_DATA_COOLDOWN_MS,
+                );
               }
             } catch (err) {
               const errMsg = err instanceof Error ? err.message : String(err);
