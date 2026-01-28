@@ -93,6 +93,13 @@ import {
   getWebSocketUserClient,
   setupWebSocketBypass,
   type MarketDataFacade,
+  // Diagnostic mode
+  isDiagModeEnabled,
+  parseDiagModeConfig,
+  runDiagWorkflow,
+  isGitHubActions,
+  ghNotice,
+  type DiagWorkflowDeps,
 } from "./lib";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -6965,6 +6972,159 @@ class ChurnEngine {
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DIAGNOSTIC MODE SUPPORT
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get dependencies for diagnostic workflow
+   */
+  getDiagDeps(): DiagWorkflowDeps {
+    return {
+      client: this.client,
+      address: this.address,
+      logger: this.logger,
+      waitForWhaleSignal: this.waitForWhaleSignalDiag.bind(this),
+      runMarketScan: this.runMarketScanDiag.bind(this),
+      getMarketData: this.getMarketDataDiag.bind(this),
+    };
+  }
+
+  /**
+   * Wait for a whale signal (for diagnostic mode)
+   * Returns the first whale buy signal within the timeout
+   */
+  private async waitForWhaleSignalDiag(timeoutMs: number): Promise<{
+    tokenId: string;
+    marketId?: string;
+    outcomeLabel?: string;
+    price?: number;
+  } | null> {
+    const startTime = Date.now();
+    const pollIntervalMs = 1000; // Check every second
+
+    // Ensure we have leaderboard wallets
+    await this.biasAccumulator.refreshLeaderboard();
+
+    while (Date.now() - startTime < timeoutMs) {
+      // Fetch latest trades
+      await this.biasAccumulator.fetchLeaderboardTrades();
+
+      // Check for active biases
+      const biases = this.biasAccumulator.getActiveBiases();
+
+      if (biases.length > 0) {
+        // Return the first active bias as a whale signal
+        const bias = biases[0];
+
+        // Try to get market data for price
+        let price: number | undefined;
+        if (this.marketDataFacade) {
+          const state = await this.marketDataFacade.getOrderbookState(
+            bias.tokenId,
+          );
+          if (state && state.midPriceCents > 0) {
+            price = state.midPriceCents / 100; // Convert cents to decimal
+          }
+        }
+
+        return {
+          tokenId: bias.tokenId,
+          marketId: bias.marketId,
+          outcomeLabel: "YES", // Default assumption for whale buys
+          price,
+        };
+      }
+
+      // Wait before next poll
+      await this.sleep(pollIntervalMs);
+    }
+
+    return null; // Timeout - no signal received
+  }
+
+  /**
+   * Run market scan once (for diagnostic mode)
+   * Returns one eligible market candidate
+   */
+  private async runMarketScanDiag(): Promise<{
+    tokenId: string;
+    marketId?: string;
+    outcomeLabel?: string;
+    price?: number;
+  } | null> {
+    // Force a scan if scanner is enabled
+    if (!this.config.scanActiveMarkets) {
+      console.log("⚠️ Market scanner is disabled (SCAN_ACTIVE_MARKETS=false)");
+      return null;
+    }
+
+    // Scan for active markets
+    const markets = await this.marketScanner.scanActiveMarkets();
+
+    if (!markets || markets.length === 0) {
+      console.log("📊 No eligible markets found in scan");
+      return null;
+    }
+
+    // Return the first market
+    const market = markets[0];
+
+    return {
+      tokenId: market.tokenId,
+      marketId: market.marketId,
+      outcomeLabel: "YES", // Default assumption - YES token
+      price: market.price,
+    };
+  }
+
+  /**
+   * Get market data for a token (for diagnostic mode)
+   */
+  private async getMarketDataDiag(tokenId: string): Promise<{
+    bid?: number;
+    ask?: number;
+    mid?: number;
+    spread?: number;
+  } | null> {
+    if (!this.marketDataFacade) {
+      return null;
+    }
+
+    const state = await this.marketDataFacade.getOrderbookState(tokenId);
+    if (!state) {
+      return null;
+    }
+
+    return {
+      bid: state.bestBidCents / 100,
+      ask: state.bestAskCents / 100,
+      mid: state.midPriceCents / 100,
+      spread: state.spreadCents,
+    };
+  }
+
+  /**
+   * Get the CLOB client (for diagnostic mode)
+   */
+  getClient(): ClobClient {
+    return this.client;
+  }
+
+  /**
+   * Get the wallet address (for diagnostic mode)
+   */
+  getAddress(): string {
+    return this.address;
+  }
+
+  /**
+   * Get the logger (for diagnostic mode)
+   */
+  getLogger(): SimpleLogger {
+    return this.logger;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -6972,6 +7132,65 @@ class ChurnEngine {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function main(): Promise<void> {
+  // ─────────────────────────────────────────────────────────────────────────
+  // CHECK FOR DIAGNOSTIC MODE FIRST
+  // ─────────────────────────────────────────────────────────────────────────
+  if (isDiagModeEnabled()) {
+    console.log("");
+    console.log("═".repeat(60));
+    console.log("  🔬 DIAGNOSTIC MODE DETECTED");
+    console.log("═".repeat(60));
+    console.log("");
+
+    if (isGitHubActions()) {
+      ghNotice("Diagnostic mode enabled - running one-shot workflow");
+    }
+
+    const diagConfig = parseDiagModeConfig();
+    const engine = new ChurnEngine();
+
+    // Handle shutdown
+    process.on("SIGINT", () => {
+      console.log("\nReceived SIGINT, shutting down...");
+      engine.stop();
+      process.exit(1);
+    });
+
+    process.on("SIGTERM", () => {
+      console.log("\nReceived SIGTERM, shutting down...");
+      engine.stop();
+      process.exit(1);
+    });
+
+    // Initialize engine (but don't run normal loop)
+    const initialized = await engine.initialize();
+    if (!initialized) {
+      console.error("Failed to initialize engine for diagnostic mode");
+      process.exit(1);
+    }
+
+    // Run diagnostic workflow
+    try {
+      const result = await runDiagWorkflow(engine.getDiagDeps(), diagConfig);
+
+      // Stop engine
+      engine.stop();
+
+      // Exit with workflow exit code
+      console.log(
+        `\n🔬 Diagnostic workflow completed. Exit code: ${result.exitCode}`,
+      );
+      process.exit(result.exitCode);
+    } catch (err) {
+      console.error("Fatal error in diagnostic workflow:", err);
+      engine.stop();
+      process.exit(1);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // NORMAL MODE
+  // ─────────────────────────────────────────────────────────────────────────
   const engine = new ChurnEngine();
 
   // Handle shutdown
