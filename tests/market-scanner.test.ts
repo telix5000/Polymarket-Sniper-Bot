@@ -25,7 +25,7 @@ describe("MarketScanner", () => {
     enabled: true,
     entryBandCents: 10, // 10 cent movement required
     scanWindowSeconds: 60, // 1 minute window
-    minSpreadCents: 5, // Max 5 cent spread
+    maxSpreadCents: 5, // Max 5 cent spread (reject wider)
     minDepthUsdAtExit: 20, // $20 minimum depth
     preferredEntryLowCents: 30, // Min 30 cents
     preferredEntryHighCents: 70, // Max 70 cents
@@ -68,7 +68,7 @@ describe("MarketScanner", () => {
     test("should return config via getConfig", () => {
       const config = scanner.getConfig();
       assert.strictEqual(config.entryBandCents, testConfig.entryBandCents);
-      assert.strictEqual(config.minSpreadCents, testConfig.minSpreadCents);
+      assert.strictEqual(config.maxSpreadCents, testConfig.maxSpreadCents);
     });
   });
 
@@ -531,6 +531,27 @@ describe("MarketScanner", () => {
       const stats = scanner.getStats();
       assert.ok(stats.trackedTokens <= 200);
     });
+
+    test("should evict LRU tokens when limit exceeded", () => {
+      // Create scanner with smaller limit for testing via a custom instance
+      // Default MAX_TRACKED_TOKENS is 500, let's just verify the mechanism works
+      // by adding many tokens and checking the count is bounded
+      for (let i = 0; i < 600; i++) {
+        scanner.evaluate(
+          createMarketData({
+            tokenId: `lru-test-${i}`,
+            midPriceCents: 50,
+          }),
+        );
+      }
+
+      // Should be bounded by MAX_TRACKED_TOKENS (500 by default)
+      const stats = scanner.getStats();
+      assert.ok(
+        stats.trackedTokens <= 500,
+        `Expected tracked tokens <= 500, got ${stats.trackedTokens}`,
+      );
+    });
   });
 
   describe("Edge Cases", () => {
@@ -581,7 +602,7 @@ describe("DEFAULT_SCANNER_CONFIG", () => {
     assert.strictEqual(DEFAULT_SCANNER_CONFIG.enabled, true);
     assert.strictEqual(DEFAULT_SCANNER_CONFIG.entryBandCents, 12);
     assert.strictEqual(DEFAULT_SCANNER_CONFIG.scanWindowSeconds, 300);
-    assert.strictEqual(DEFAULT_SCANNER_CONFIG.minSpreadCents, 6);
+    assert.strictEqual(DEFAULT_SCANNER_CONFIG.maxSpreadCents, 6);
     assert.strictEqual(DEFAULT_SCANNER_CONFIG.minDepthUsdAtExit, 25);
     assert.strictEqual(DEFAULT_SCANNER_CONFIG.preferredEntryLowCents, 35);
     assert.strictEqual(DEFAULT_SCANNER_CONFIG.preferredEntryHighCents, 65);

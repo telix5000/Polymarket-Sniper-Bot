@@ -53,8 +53,16 @@
 // Types
 // ============================================================================
 
-/** Reason why a market was selected as a candidate */
-export type ScannerReason = "movement" | "liquidity" | "leaderboard";
+/**
+ * Reason why a market was selected as a candidate
+ *
+ * - "movement": Significant price movement detected (>= entryBandCents)
+ * - "leaderboard": Activity from watched wallets (optional boost when enabled)
+ *
+ * Note: Liquidity is a GATE, not a REASON. Markets must have sufficient
+ * liquidity to be candidates, but liquidity alone doesn't trigger selection.
+ */
+export type ScannerReason = "movement" | "leaderboard";
 
 /** A candidate market/token output by the scanner */
 export interface ScannerCandidate {
@@ -80,8 +88,8 @@ export interface ScannerConfig {
   scanWindowSeconds: number;
 
   // Liquidity presence
-  /** Maximum spread in cents (default: 6) */
-  minSpreadCents: number;
+  /** Maximum acceptable spread in cents (markets with wider spread are rejected, default: 6) */
+  maxSpreadCents: number;
   /** Minimum depth in USD at exit (default: 25) */
   minDepthUsdAtExit: number;
 
@@ -113,7 +121,7 @@ export const DEFAULT_SCANNER_CONFIG: ScannerConfig = {
   scanWindowSeconds: 300,
 
   // Liquidity presence
-  minSpreadCents: 6,
+  maxSpreadCents: 6,
   minDepthUsdAtExit: 25,
 
   // Safe price zone
@@ -165,6 +173,9 @@ export class MarketScanner {
   // Price history per token for movement detection
   private readonly priceHistory = new Map<string, PriceEntry[]>();
 
+  // Track access order for LRU eviction of price history
+  private readonly priceHistoryAccessOrder: string[] = [];
+
   // Leaderboard trade history for boost detection
   private readonly leaderboardTrades: LeaderboardTradeEntry[] = [];
 
@@ -173,6 +184,7 @@ export class MarketScanner {
 
   // Maximum entries to prevent unbounded memory growth
   private readonly MAX_PRICE_HISTORY_ENTRIES = 100;
+  private readonly MAX_TRACKED_TOKENS = 500;
   private readonly MAX_LEADERBOARD_ENTRIES = 500;
   private readonly MAX_DEDUP_ENTRIES = 1000;
 
@@ -293,6 +305,7 @@ export class MarketScanner {
    */
   clear(): void {
     this.priceHistory.clear();
+    this.priceHistoryAccessOrder.length = 0;
     this.leaderboardTrades.length = 0;
     this.recentCandidates.clear();
   }
@@ -334,10 +347,14 @@ export class MarketScanner {
 
   /**
    * Check if market has sufficient liquidity
+   *
+   * Note: We check bid depth because exits are sells. The scanner
+   * doesn't know whether execution will buy or sell, but exits
+   * (taking profit or cutting losses) require selling into bids.
    */
   private hasLiquidity(data: MarketDataInput): boolean {
-    // Spread must be tight enough
-    if (data.spreadCents > this.config.minSpreadCents) {
+    // Spread must be tight enough (reject wide spreads)
+    if (data.spreadCents > this.config.maxSpreadCents) {
       return false;
     }
 
@@ -407,6 +424,8 @@ export class MarketScanner {
     timestamp: number,
   ): void {
     let history = this.priceHistory.get(tokenId);
+    const isNewToken = !history;
+
     if (!history) {
       history = [];
       this.priceHistory.set(tokenId, history);
@@ -426,6 +445,32 @@ export class MarketScanner {
     } else {
       this.priceHistory.set(tokenId, pruned);
     }
+
+    // Update LRU access order for memory protection
+    this.touchToken(tokenId, isNewToken);
+
+    // LRU eviction: remove least recently used tokens if over limit
+    while (this.priceHistory.size > this.MAX_TRACKED_TOKENS) {
+      const lruToken = this.priceHistoryAccessOrder.shift();
+      if (lruToken) {
+        this.priceHistory.delete(lruToken);
+      }
+    }
+  }
+
+  /**
+   * Update LRU access order for a token
+   */
+  private touchToken(tokenId: string, isNew: boolean): void {
+    if (!isNew) {
+      // Remove from current position
+      const idx = this.priceHistoryAccessOrder.indexOf(tokenId);
+      if (idx !== -1) {
+        this.priceHistoryAccessOrder.splice(idx, 1);
+      }
+    }
+    // Add to end (most recently used)
+    this.priceHistoryAccessOrder.push(tokenId);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -497,9 +542,9 @@ export function loadScannerConfig(): ScannerConfig {
     ),
 
     // Liquidity presence
-    minSpreadCents: envNum(
-      "SCANNER_MIN_SPREAD_CENTS",
-      DEFAULT_SCANNER_CONFIG.minSpreadCents,
+    maxSpreadCents: envNum(
+      "SCANNER_MAX_SPREAD_CENTS",
+      DEFAULT_SCANNER_CONFIG.maxSpreadCents,
     ),
     minDepthUsdAtExit: envNum(
       "SCANNER_MIN_DEPTH_USD",
