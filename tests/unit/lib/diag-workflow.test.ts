@@ -132,7 +132,7 @@ describe("mapOrderFailureReason", () => {
     test("should map live trading disabled to no_wallet_credentials", () => {
       assert.strictEqual(
         mapOrderFailureReason("SIMULATED"),
-        "unknown_error", // SIMULATED doesn't contain "live trading"
+        "no_wallet_credentials",
       );
       assert.strictEqual(
         mapOrderFailureReason("live trading disabled"),
