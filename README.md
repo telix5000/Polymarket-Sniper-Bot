@@ -14,6 +14,35 @@ cp .env.example .env
 
 # 3. Run
 npm start
+
+# 4. (Optional) Run with live dashboard
+DASHBOARD_ENABLED=true npm start
+```
+
+## Live Dashboard
+
+The bot includes a Glances-style live terminal dashboard that shows real-time updates:
+
+- **Wallet & Metrics**: USDC balance, POL, effective bankroll, reserve
+- **Trading Stats**: Total trades, win rate, P&L, EV
+- **Positions**: Open positions with current price and P&L
+- **Whale Activity**: Live feed of whale trades being copied
+- **System Status**: API latency, WebSocket connection status
+
+Enable with `DASHBOARD_ENABLED=true`. Press `q` or `Ctrl+C` to exit.
+
+### Docker with Dashboard
+
+```bash
+# Interactive mode required for dashboard
+docker run -it --rm \
+  -e PRIVATE_KEY=your_key \
+  -e RPC_URL=your_rpc \
+  -e DASHBOARD_ENABLED=true \
+  polymarket-bot
+
+# Or with docker-compose
+docker-compose run --rm polymarket-bot
 ```
 
 ## Configuration
@@ -24,6 +53,7 @@ npm start
 | `RPC_URL` | No | Polygon RPC endpoint (default: `https://polygon-rpc.com`). Infura recommended: `https://polygon-mainnet.infura.io/v3/YOUR_API_KEY` |
 | `MAX_TRADE_USD` | No | Bet size in USD (default: `25`) |
 | `LIVE_TRADING` | No | Set to `I_UNDERSTAND_THE_RISKS` to enable real trades (default: simulation) |
+| `DASHBOARD_ENABLED` | No | Set to `true` to enable live terminal dashboard |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram bot token for notifications |
 | `TELEGRAM_CHAT_ID` | No | Telegram chat ID for notifications |
 
