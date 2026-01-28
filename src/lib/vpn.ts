@@ -945,6 +945,10 @@ export function emitRoutingPolicyLog(rpcUrl?: string, logger?: Logger): void {
   }
 }
 
+// Emit routing policy diagnostics once when the VPN module is loaded.
+// This ensures VPN_ROUTING_POLICY (and any VPN_MISROUTED_WRITE_HOST) events
+// are emitted at startup for administrators and automated checks.
+emitRoutingPolicyLog();
 /**
  * Verify that all write hosts route through VPN BEFORE placing an order.
  * This is a pre-order safety check.
