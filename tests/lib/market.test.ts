@@ -401,6 +401,27 @@ describe("Market Token Lookup", () => {
       }
     });
 
+    test("should return null for missing outcomes with more than 2 tokens", async () => {
+      const originalGet = axios.get;
+      const multiTokenNoOutcomesResponse = {
+        ...mockMarketResponse,
+        outcomes: undefined, // Missing outcomes field
+        clobTokenIds: '["token-1", "token-2", "token-3"]', // 3+ tokens without outcomes
+      };
+      axios.get = async () => ({ data: [multiTokenNoOutcomesResponse] });
+
+      try {
+        const result = await getOppositeTokenId("token-1");
+        assert.strictEqual(
+          result,
+          null,
+          "Should return null for non-binary markets without outcomes field",
+        );
+      } finally {
+        axios.get = originalGet;
+      }
+    });
+
     test("should handle malformed outcomes field gracefully", async () => {
       const originalGet = axios.get;
       const malformedOutcomesResponse = {

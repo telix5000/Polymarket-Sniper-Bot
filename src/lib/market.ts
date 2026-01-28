@@ -267,6 +267,13 @@ function parseMarketResponse(
     } else {
       // No outcomes field - fallback to legacy assumption (index 0 = YES, index 1 = NO)
       // This maintains backward compatibility but logs a warning
+      // IMPORTANT: Only allow legacy fallback for binary markets (exactly 2 tokens)
+      if (tokenIds.length !== 2) {
+        console.warn(
+          `[Market] Missing outcomes field for non-binary market ${market.id} with ${tokenIds.length} tokens - cannot determine YES/NO mapping`,
+        );
+        return null;
+      }
       console.warn(
         `[Market] Missing outcomes field for market ${market.id} - using legacy index assumption`,
       );
