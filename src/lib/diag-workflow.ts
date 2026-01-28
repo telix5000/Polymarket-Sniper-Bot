@@ -32,7 +32,7 @@ import {
 import { postOrder } from "./order";
 import type { Logger } from "./types";
 import { getPositions, invalidatePositions } from "./positions";
-import { smartSell } from "./smart-sell";
+import { smartSell } from "../core/smart-sell";
 import { verifyWritePathBeforeOrder } from "./vpn";
 
 // ═══════════════════════════════════════════════════════════════════════════

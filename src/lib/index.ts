@@ -86,7 +86,8 @@ export * from "./pol-reserve";
 export * from "./ethers-compat";
 // Error handling is now in /infra (re-export for backward compatibility)
 export * from "../infra/error-handling";
-export * from "./smart-sell";
+// Smart sell is now in /core (re-export for backward compatibility)
+export * from "../core/smart-sell";
 
 // On-chain monitoring
 export * from "./onchain-monitor";
@@ -107,9 +108,9 @@ export * from "./market-data-facade";
 // Market scanner (simplified discovery)
 export * from "./market-scanner";
 
-// Dynamic EV and hedging
-export * from "./dynamic-ev-engine";
-export * from "./dynamic-hedge-policy";
+// Dynamic EV and hedging (now in /core, re-export for backward compatibility)
+export * from "../core/dynamic-ev-engine";
+export * from "../core/dynamic-hedge-policy";
 
 // Diagnostic mode
 export * from "./diag-mode";

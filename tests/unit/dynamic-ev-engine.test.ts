@@ -13,7 +13,7 @@ import {
   EV_DEFAULTS,
   type TradeOutcome,
   type DynamicEvConfig,
-} from "../../src/lib/dynamic-ev-engine";
+} from "../../src/core/dynamic-ev-engine";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
