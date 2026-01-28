@@ -303,6 +303,9 @@ export class OrderStateStore {
 // WebSocketUserClient Implementation
 // ============================================================================
 
+// Import VPN status for logging at disconnect
+import { isVpnActive, getVpnType } from "./vpn";
+
 export class WebSocketUserClient {
   private ws: WebSocket | null = null;
   private state: WsUserConnectionState = "DISCONNECTED";
@@ -328,6 +331,7 @@ export class WebSocketUserClient {
 
   // Keepalive state - sends "PING" text message on interval
   private pingTimer: NodeJS.Timeout | null = null;
+  private lastPongAt = 0;
 
   // Stable connection timer - resets backoff after connection is stable
   private stableConnectionTimer: NodeJS.Timeout | null = null;
@@ -339,6 +343,13 @@ export class WebSocketUserClient {
   private messagesReceived = 0;
   private lastMessageAt = 0;
   private connectTime = 0;
+
+  // Disconnect tracking (Part D: WS 1006 Monitoring)
+  private disconnectCount = 0;
+  private lastDisconnectCode: number | null = null;
+  private lastDisconnectTime = 0;
+  private lastDisconnectVpnActive: boolean | null = null;
+  private lastDisconnectVpnType: "wireguard" | "openvpn" | "none" | null = null;
 
   // Configuration
   private readonly url: string;
@@ -497,24 +508,39 @@ export class WebSocketUserClient {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Get client metrics
+   * Get client metrics including disconnect tracking (Part D: WS 1006 Monitoring)
    */
   getMetrics(): {
     state: WsUserConnectionState;
     messagesReceived: number;
     lastMessageAgeMs: number;
+    lastPongAgeMs: number;
     reconnectAttempts: number;
     uptimeMs: number;
     orderStoreMetrics: ReturnType<OrderStateStore["getMetrics"]>;
+    // Disconnect tracking
+    disconnectCount: number;
+    lastDisconnectCode: number | null;
+    lastDisconnectAgeMs: number;
+    lastDisconnectVpnActive: boolean | null;
+    lastDisconnectVpnType: string | null;
   } {
     return {
       state: this.state,
       messagesReceived: this.messagesReceived,
       lastMessageAgeMs:
         this.lastMessageAt > 0 ? Date.now() - this.lastMessageAt : 0,
+      lastPongAgeMs: this.lastPongAt > 0 ? Date.now() - this.lastPongAt : 0,
       reconnectAttempts: this.reconnectAttempt,
       uptimeMs: this.connectTime > 0 ? Date.now() - this.connectTime : 0,
       orderStoreMetrics: this.orderStore.getMetrics(),
+      // Disconnect tracking
+      disconnectCount: this.disconnectCount,
+      lastDisconnectCode: this.lastDisconnectCode,
+      lastDisconnectAgeMs:
+        this.lastDisconnectTime > 0 ? Date.now() - this.lastDisconnectTime : 0,
+      lastDisconnectVpnActive: this.lastDisconnectVpnActive,
+      lastDisconnectVpnType: this.lastDisconnectVpnType,
     };
   }
 
@@ -613,6 +639,7 @@ export class WebSocketUserClient {
         const msgStr = data.toString();
         // Handle PONG response to our PING keepalive
         if (msgStr === "PONG") {
+          this.lastPongAt = Date.now();
           return;
         }
         const message = JSON.parse(msgStr);
@@ -624,8 +651,35 @@ export class WebSocketUserClient {
 
     this.ws.on("close", (code: number, reason: Buffer) => {
       const reasonStr = reason.toString() || "No reason provided";
+      const lastMsgAge =
+        this.lastMessageAt > 0 ? Date.now() - this.lastMessageAt : -1;
+      const lastPongAge =
+        this.lastPongAt > 0 ? Date.now() - this.lastPongAt : -1;
+
+      // Track disconnect metrics (Part D: WS 1006 Monitoring)
+      this.disconnectCount++;
+      this.lastDisconnectCode = code;
+      this.lastDisconnectTime = Date.now();
+      this.lastDisconnectVpnActive = isVpnActive();
+      this.lastDisconnectVpnType = getVpnType();
+
+      // Emit structured disconnect event for diagnostics
+      const disconnectEvent = {
+        event: "WS_USER_DISCONNECT",
+        timestamp: new Date().toISOString(),
+        code,
+        reason: reasonStr,
+        lastMessageAgeMs: lastMsgAge,
+        lastPongAgeMs: lastPongAge,
+        disconnectCount: this.disconnectCount,
+        vpnActive: this.lastDisconnectVpnActive,
+        vpnType: this.lastDisconnectVpnType,
+        timeSinceLastMessage: lastMsgAge,
+      };
+      console.log(JSON.stringify(disconnectEvent));
+
       console.log(
-        `[WS-User] Connection closed: code=${code}, reason="${reasonStr}"`,
+        `[WS-User] Connection closed: code=${code}, reason="${reasonStr}", disconnectCount=${this.disconnectCount}`,
       );
 
       this.ws = null;

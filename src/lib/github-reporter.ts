@@ -441,6 +441,9 @@ ${contextStr}
   /**
    * Report diagnostic workflow results to GitHub Issues
    * Called when DIAG_MODE completes to report the results
+   *
+   * Enhanced (Parts E, G): Includes VPN routing policy, spread guardrail details,
+   * and hedge simulation output when DIAG_HEDGE_SIMULATE=true.
    */
   async reportDiagnosticWorkflow(details: {
     traceId: string;
@@ -451,12 +454,31 @@ ${contextStr}
       reason?: string;
       marketId?: string;
       tokenId?: string;
+      // Enhanced detail for spread guardrail and hedge simulation
+      detail?: Record<string, unknown>;
     }>;
+    // Optional VPN routing policy effective event
+    vpnRoutingPolicy?: {
+      vpnActive: boolean;
+      vpnType: string;
+      writeRouteCheck?: Array<{
+        hostname: string;
+        mismatch: boolean;
+      }>;
+    };
+    // Optional guardrail summary (Part G)
+    guardrailSummary?: {
+      totalBuyAttempts: number;
+      blockedBySpread: number;
+      blockedByLiquidity: number;
+      blockedByPriceCap: number;
+      allowedBuys: number;
+    };
   }): Promise<boolean> {
     const successCount = details.steps.filter((s) => s.result === "OK").length;
     const totalSteps = details.steps.length;
 
-    // Format step results
+    // Format step results with enhanced spread guardrail details
     const stepLines = details.steps
       .map((s) => {
         const icon =
@@ -471,9 +493,74 @@ ${contextStr}
         const tokenStr = s.tokenId
           ? ` [token: ${s.tokenId.slice(0, 16)}...]`
           : "";
-        return `- ${icon} **${s.step}**: ${s.result}${reasonStr}${tokenStr}`;
+
+        let detailBlock = "";
+
+        // Part G: Include spread guardrail details for rejected buys
+        if (
+          s.result === "REJECTED" &&
+          s.reason === "spread_too_wide" &&
+          s.detail
+        ) {
+          const diag = s.detail.spreadGuardrailDiagnostic as
+            | {
+                bestBid?: number;
+                bestAsk?: number;
+                spread?: number;
+                thresholdUsed?: number;
+                marketStateClassification?: string;
+                guardrailDecision?: string;
+                signalPrice?: number;
+                whaleTradePrice?: number;
+              }
+            | undefined;
+
+          if (diag) {
+            detailBlock = `\n  > Spread: ${diag.spread?.toFixed(2) ?? "N/A"} (bid=${diag.bestBid?.toFixed(2) ?? "N/A"} ask=${diag.bestAsk?.toFixed(2) ?? "N/A"}, threshold=${diag.thresholdUsed?.toFixed(2) ?? "N/A"})\n  > MarketState: ${diag.marketStateClassification ?? "N/A"}\n  > SignalPrice: ${diag.signalPrice?.toFixed(2) ?? "N/A"}`;
+            if (diag.whaleTradePrice !== undefined) {
+              detailBlock += `\n  > WhalePrice: ${diag.whaleTradePrice.toFixed(2)}`;
+            }
+            detailBlock += `\n  > GuardrailDecision: ${diag.guardrailDecision ?? "UNKNOWN"}`;
+          }
+        }
+
+        // Part C: Include hedge simulation output
+        if (
+          s.detail?.simulationMode === "MOCK_POSITION" &&
+          s.detail?.hedgeSimEvent
+        ) {
+          const hedgeSim = s.detail.hedgeSimEvent as {
+            triggerEvaluation?: { wouldTrigger?: boolean };
+            wouldPlaceOrder?: { side?: string; size?: number } | null;
+          };
+          detailBlock = `\n  > [DIAG_HEDGE_SIM] Mode: MOCK_POSITION\n  > Trigger would fire: ${hedgeSim.triggerEvaluation?.wouldTrigger ?? "N/A"}\n  > Would place order: ${hedgeSim.wouldPlaceOrder ? `YES (${hedgeSim.wouldPlaceOrder.side} ${hedgeSim.wouldPlaceOrder.size} shares)` : "NO"}`;
+        }
+
+        return `- ${icon} **${s.step}**: ${s.result}${reasonStr}${tokenStr}${detailBlock}`;
       })
       .join("\n");
+
+    // Part E: Include VPN routing policy summary
+    let vpnSection = "";
+    if (details.vpnRoutingPolicy) {
+      const vp = details.vpnRoutingPolicy;
+      vpnSection = `\n\n## VPN Routing Policy\n- **VPN Active**: ${vp.vpnActive}\n- **VPN Type**: ${vp.vpnType}`;
+      if (vp.writeRouteCheck && vp.writeRouteCheck.length > 0) {
+        const misrouted = vp.writeRouteCheck.filter((c) => c.mismatch);
+        if (misrouted.length > 0) {
+          vpnSection += `\n- ⚠️ **WRITE_ROUTE_MISMATCH**: ${misrouted.map((c) => c.hostname).join(", ")}`;
+        } else {
+          vpnSection += `\n- ✅ All WRITE hosts route through VPN`;
+        }
+      }
+    }
+
+    // Part G: Include guardrail summary
+    let guardrailSection = "";
+    if (details.guardrailSummary) {
+      const gs = details.guardrailSummary;
+      guardrailSection = `\n\n## Guardrail Summary\n- **Total Buy Attempts**: ${gs.totalBuyAttempts}\n- **Blocked by Spread**: ${gs.blockedBySpread}\n- **Blocked by Liquidity**: ${gs.blockedByLiquidity}\n- **Blocked by Price Cap**: ${gs.blockedByPriceCap}\n- **Allowed Buys**: ${gs.allowedBuys}`;
+    }
 
     // Always use at least "warning" severity for diagnostic reports
     // to ensure they pass the default minSeverity threshold ("warning")
@@ -483,7 +570,9 @@ ${contextStr}
         `Diagnostic workflow completed.\n\n` +
         `**Trace ID**: ${details.traceId}\n` +
         `**Duration**: ${(details.durationMs / 1000).toFixed(1)}s\n\n` +
-        `## Step Results\n${stepLines}`,
+        `## Step Results\n${stepLines}` +
+        vpnSection +
+        guardrailSection,
       severity: "warning",
       context: {
         traceId: details.traceId,

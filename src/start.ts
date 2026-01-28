@@ -59,6 +59,9 @@ import {
   setupRpcBypass,
   setupPolymarketReadBypass,
   setupReadApiBypass,
+  // VPN routing policy events
+  emitRoutingPolicyPreEvent,
+  emitRoutingPolicyEffectiveEvent,
   // POL Reserve (auto gas fill)
   runPolReserve,
   shouldRebalance,
@@ -4982,8 +4985,13 @@ class ChurnEngine {
     }
 
     try {
+      // Step 1: Capture pre-VPN routing BEFORE starting VPN
       capturePreVpnRouting();
 
+      // Step 2: Emit VPN_ROUTING_POLICY_PRE event BEFORE VPN starts
+      emitRoutingPolicyPreEvent(this.logger);
+
+      // Step 3: Start VPN
       if (wgEnabled) {
         console.log("🔒 Starting WireGuard...");
         await startWireguard();
@@ -4994,7 +5002,7 @@ class ChurnEngine {
         console.log("🔒 OpenVPN connected");
       }
 
-      // Setup bypass routes
+      // Step 4: Setup bypass routes
       if (process.env.VPN_BYPASS_RPC !== "false") {
         await setupRpcBypass(this.config.rpcUrl, this.logger);
       }
@@ -5006,6 +5014,9 @@ class ChurnEngine {
       } else {
         await setupReadApiBypass(this.logger);
       }
+
+      // Step 5: Emit VPN_ROUTING_POLICY_EFFECTIVE event AFTER VPN is up and bypass routes are applied
+      emitRoutingPolicyEffectiveEvent(this.logger);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`⚠️ VPN setup failed: ${msg}`);
@@ -7313,9 +7324,39 @@ async function main(): Promise<void> {
       );
       console.log("   Press Ctrl+C to stop the container manually.");
 
+      // ═══════════════════════════════════════════════════════════════════════
+      // Part F: Gracefully stop WebSocket connections before entering halt mode
+      // This prevents the WS 1006 reconnect loop observed in diagnostics
+      // ═══════════════════════════════════════════════════════════════════════
+      console.log("\n🔌 Gracefully disconnecting WebSocket connections...");
+      try {
+        const marketWs = getWebSocketMarketClient();
+        const userWs = getWebSocketUserClient();
+
+        // Log final metrics before disconnect
+        const marketMetrics = marketWs.getMetrics();
+        const userMetrics = userWs.getMetrics();
+        console.log(
+          `   [WS-Market] Final metrics: disconnectCount=${marketMetrics.disconnectCount}, lastCode=${marketMetrics.lastDisconnectCode}`,
+        );
+        console.log(
+          `   [WS-User] Final metrics: disconnectCount=${userMetrics.disconnectCount}, lastCode=${userMetrics.lastDisconnectCode}`,
+        );
+
+        // Gracefully disconnect both WS clients
+        marketWs.disconnect();
+        userWs.disconnect();
+        console.log("✅ WebSocket connections gracefully closed.");
+      } catch (wsErr) {
+        console.warn(
+          `⚠️ Error disconnecting WebSocket: ${wsErr instanceof Error ? wsErr.message : wsErr}`,
+        );
+      }
+
       // Keep the process alive indefinitely without a constant-condition loop.
       // Signal handlers (SIGINT/SIGTERM) above will still terminate the process.
       // IMPORTANT: We do NOT re-enter trading loops in halt mode.
+      // WS connections are now STOPPED and will not reconnect.
       await new Promise<never>(() => {
         // Intentionally never resolve: idle until the process receives a termination signal.
       });

@@ -763,23 +763,236 @@ export const DIAG_MAX_SPREAD = 0.3;
 export const DIAG_MAX_BEST_ASK = 0.95;
 
 /**
+ * Market state classification for guardrail decisions.
+ * Helps understand WHY a trade was rejected.
+ */
+export type MarketStateClassification =
+  | "NEARLY_RESOLVED" // bestAsk >= 0.95
+  | "EMPTY_OR_FAKE_BOOK" // bestBid <= 0.01 AND bestAsk >= 0.99
+  | "LOW_LIQUIDITY" // totalDepth < minDepth (not implemented yet)
+  | "NORMAL_BUT_WIDE" // spread exceeds threshold but not pathological
+  | "TRADEABLE"; // book is acceptable
+
+/**
+ * Guardrail decision classification for reporting.
+ */
+export type GuardrailDecision =
+  | "CORRECT" // guardrail correctly blocked a bad trade
+  | "POSSIBLY_TOO_STRICT" // guardrail may be too strict, could miss opportunity
+  | "UNKNOWN"; // cannot determine
+
+/**
+ * Structured spread guardrail diagnostic object.
+ * Contains all information needed to understand why a trade was blocked.
+ */
+export interface SpreadGuardrailDiagnostic {
+  bestBid: number | null;
+  bestAsk: number;
+  spread: number | null;
+  spreadPct: number | null;
+  thresholdUsed: number;
+  signalPrice: number | undefined;
+  chosenLimitPrice: number | undefined;
+  guardrailType: "SPREAD_TOO_WIDE" | "NEARLY_RESOLVED" | "EMPTY_BOOK" | "OK";
+  marketStateClassification: MarketStateClassification;
+  guardrailDecision: GuardrailDecision;
+  // Whale comparison (optional, for WHALE_BUY signals)
+  whaleTradePrice?: number;
+  whaleSpreadAtTrade?: number;
+  whaleViolatedThreshold?: boolean;
+}
+
+/**
+ * Classify the market state based on orderbook heuristics.
+ */
+export function classifyMarketState(
+  bestBid: number | null,
+  bestAsk: number,
+  totalDepth?: number,
+  minDepth?: number,
+): MarketStateClassification {
+  // Check for empty/fake book first (most severe)
+  if (bestBid !== null && bestBid <= 0.01 && bestAsk >= 0.99) {
+    return "EMPTY_OR_FAKE_BOOK";
+  }
+
+  // Check for nearly resolved market
+  if (bestAsk >= 0.95) {
+    return "NEARLY_RESOLVED";
+  }
+
+  // Check for low liquidity (if depth info provided)
+  if (
+    totalDepth !== undefined &&
+    minDepth !== undefined &&
+    totalDepth < minDepth
+  ) {
+    return "LOW_LIQUIDITY";
+  }
+
+  // Calculate spread if we have both sides
+  if (bestBid !== null) {
+    const spread = bestAsk - bestBid;
+    if (spread > DIAG_MAX_SPREAD) {
+      return "NORMAL_BUT_WIDE";
+    }
+  }
+
+  return "TRADEABLE";
+}
+
+/**
+ * Determine guardrail decision classification.
+ * Helps understand if the guardrail is working correctly or being too strict.
+ */
+export function classifyGuardrailDecision(
+  marketState: MarketStateClassification,
+  whaleTradePrice?: number,
+  bestAsk?: number,
+): GuardrailDecision {
+  // If market is nearly resolved or empty, guardrail is correct
+  if (
+    marketState === "NEARLY_RESOLVED" ||
+    marketState === "EMPTY_OR_FAKE_BOOK"
+  ) {
+    return "CORRECT";
+  }
+
+  // If whale traded at a similar price to bestAsk, we might be missing opportunity
+  if (whaleTradePrice !== undefined && bestAsk !== undefined) {
+    const whalePriceDiff = Math.abs(whaleTradePrice - bestAsk);
+    if (whalePriceDiff < 0.05) {
+      // Whale paid similar price
+      return "POSSIBLY_TOO_STRICT";
+    }
+  }
+
+  // Default: cannot determine
+  return "UNKNOWN";
+}
+
+/**
+ * Create a full spread guardrail diagnostic object.
+ */
+export function createSpreadGuardrailDiagnostic(
+  bestBid: number | null,
+  bestAsk: number,
+  signalPrice?: number,
+  chosenLimitPrice?: number,
+  whaleTradePrice?: number,
+): SpreadGuardrailDiagnostic {
+  const spread = bestBid !== null ? bestAsk - bestBid : null;
+  const spreadPct = spread !== null ? (spread / bestAsk) * 100 : null;
+  const marketState = classifyMarketState(bestBid, bestAsk);
+
+  // Determine guardrail type
+  let guardrailType: SpreadGuardrailDiagnostic["guardrailType"] = "OK";
+  let thresholdUsed = DIAG_MAX_SPREAD;
+
+  if (bestBid !== null && bestBid <= 0.01 && bestAsk >= 0.99) {
+    guardrailType = "EMPTY_BOOK";
+    thresholdUsed = 0.01; // bid threshold
+  } else if (bestAsk > DIAG_MAX_BEST_ASK) {
+    guardrailType = "NEARLY_RESOLVED";
+    thresholdUsed = DIAG_MAX_BEST_ASK;
+  } else if (spread !== null && spread > DIAG_MAX_SPREAD) {
+    guardrailType = "SPREAD_TOO_WIDE";
+    thresholdUsed = DIAG_MAX_SPREAD;
+  }
+
+  // Calculate whale comparison if provided
+  let whaleSpreadAtTrade: number | undefined;
+  let whaleViolatedThreshold: boolean | undefined;
+  if (whaleTradePrice !== undefined && bestBid !== null) {
+    // Approximate what spread whale traded at
+    whaleSpreadAtTrade = whaleTradePrice - bestBid;
+    whaleViolatedThreshold = whaleSpreadAtTrade > DIAG_MAX_SPREAD;
+  }
+
+  const guardrailDecision = classifyGuardrailDecision(
+    marketState,
+    whaleTradePrice,
+    bestAsk,
+  );
+
+  return {
+    bestBid,
+    bestAsk,
+    spread,
+    spreadPct,
+    thresholdUsed,
+    signalPrice,
+    chosenLimitPrice,
+    guardrailType,
+    marketStateClassification: marketState,
+    guardrailDecision,
+    whaleTradePrice,
+    whaleSpreadAtTrade,
+    whaleViolatedThreshold,
+  };
+}
+
+/**
+ * Format spread guardrail diagnostic for GitHub issue / logging.
+ */
+export function formatSpreadGuardrailDiagnostic(
+  diag: SpreadGuardrailDiagnostic,
+): string {
+  const lines: string[] = [];
+
+  lines.push(
+    `Spread: ${diag.spread?.toFixed(2) ?? "N/A"} (bid=${diag.bestBid?.toFixed(2) ?? "N/A"} ask=${diag.bestAsk.toFixed(2)}, threshold=${diag.thresholdUsed.toFixed(2)})`,
+  );
+  lines.push(`MarketState: ${diag.marketStateClassification}`);
+  if (diag.signalPrice !== undefined) {
+    lines.push(`SignalPrice: ${diag.signalPrice.toFixed(2)}`);
+  }
+  if (diag.whaleTradePrice !== undefined) {
+    lines.push(`WhalePrice: ${diag.whaleTradePrice.toFixed(2)}`);
+  }
+  lines.push(`GuardrailDecision: ${diag.guardrailDecision}`);
+
+  return lines.join("\n");
+}
+
+/**
  * Check if a book is tradeable for diagnostic mode.
- * Returns null if tradeable, or a reason string if not.
+ * Returns detailed diagnostic information for rejected trades.
  */
 export function checkBookTradeable(
   bestBid: number | null,
   bestAsk: number,
-): { tradeable: boolean; reason?: string; detail?: Record<string, unknown> } {
+  signalPrice?: number,
+  whaleTradePrice?: number,
+): {
+  tradeable: boolean;
+  reason?: string;
+  detail?: Record<string, unknown>;
+  diagnostic?: SpreadGuardrailDiagnostic;
+} {
+  // Create full diagnostic
+  const diagnostic = createSpreadGuardrailDiagnostic(
+    bestBid,
+    bestAsk,
+    signalPrice,
+    undefined,
+    whaleTradePrice,
+  );
+
   // Check if bestAsk is too high (market nearly resolved)
   if (bestAsk > DIAG_MAX_BEST_ASK) {
     return {
       tradeable: false,
       reason: "BOOK_TOO_WIDE",
       detail: {
+        bestBid,
         bestAsk,
         threshold: DIAG_MAX_BEST_ASK,
         issue: "bestAsk > threshold - market nearly resolved",
+        marketStateClassification: diagnostic.marketStateClassification,
+        guardrailDecision: diagnostic.guardrailDecision,
       },
+      diagnostic,
     };
   }
 
@@ -796,12 +1009,15 @@ export function checkBookTradeable(
           spread,
           threshold: DIAG_MAX_SPREAD,
           issue: "spread > threshold - illiquid market",
+          marketStateClassification: diagnostic.marketStateClassification,
+          guardrailDecision: diagnostic.guardrailDecision,
         },
+        diagnostic,
       };
     }
   }
 
-  return { tradeable: true };
+  return { tradeable: true, diagnostic };
 }
 
 /**
@@ -964,8 +1180,10 @@ async function attemptDiagBuy(
     // STEP 2.5: Check book tradeability (SAFE DIAGNOSTIC MODE)
     // Skip trades on extreme books to prevent accidental loss
     // ═══════════════════════════════════════════════════════════════════════
-    const bookCheck = checkBookTradeable(bestBid, bestAsk);
+    const bookCheck = checkBookTradeable(bestBid, bestAsk, signal.price);
     if (!bookCheck.tradeable) {
+      // Include full spread guardrail diagnostic in trace
+      const diagnostic = bookCheck.diagnostic;
       tracer.trace({
         step,
         action: "book_too_wide",
@@ -977,6 +1195,18 @@ async function attemptDiagBuy(
           ...bookCheck.detail,
           bestBid,
           bestAsk,
+          signalPrice: signal.price,
+          // Include enhanced diagnostic fields for reporting
+          spreadGuardrailDiagnostic: diagnostic
+            ? {
+                spread: diagnostic.spread,
+                spreadPct: diagnostic.spreadPct,
+                thresholdUsed: diagnostic.thresholdUsed,
+                guardrailType: diagnostic.guardrailType,
+                marketStateClassification: diagnostic.marketStateClassification,
+                guardrailDecision: diagnostic.guardrailDecision,
+              }
+            : undefined,
         },
       });
 
@@ -987,6 +1217,11 @@ async function attemptDiagBuy(
         `   bestBid=${bestBid?.toFixed(4) ?? "N/A"}, bestAsk=${bestAsk.toFixed(4)}, ` +
           `spread=${bestBid ? (bestAsk - bestBid).toFixed(4) : "N/A"}`,
       );
+      if (diagnostic) {
+        console.log(
+          `   MarketState: ${diagnostic.marketStateClassification}, GuardrailDecision: ${diagnostic.guardrailDecision}`,
+        );
+      }
 
       return {
         success: false,
@@ -995,6 +1230,7 @@ async function attemptDiagBuy(
           ...bookCheck.detail,
           bestBid,
           bestAsk,
+          spreadGuardrailDiagnostic: diagnostic,
         },
       };
     }
@@ -1377,7 +1613,7 @@ async function attemptDiagSell(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HEDGE VERIFICATION STEP
+// HEDGE VERIFICATION STEP (with DIAG_HEDGE_SIMULATE support)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
@@ -1389,6 +1625,150 @@ const DEFAULT_HEDGE_CONFIG = {
   maxHedgeRatio: 0.7, // Never hedge more than 70%
   maxAdverseCents: 30, // Hard stop at 30¢ adverse
 };
+
+/**
+ * Check if hedge simulation is enabled.
+ * When DIAG_HEDGE_SIMULATE=true, run hedge simulation even when buy is blocked.
+ */
+export function isDiagHedgeSimulateEnabled(): boolean {
+  return process.env.DIAG_HEDGE_SIMULATE === "true";
+}
+
+/**
+ * DIAG_HEDGE_SIM event structure for reporting hedge simulation results.
+ */
+export interface DiagHedgeSimEvent {
+  event: "DIAG_HEDGE_SIM";
+  timestamp: string;
+  simulationMode: "ACTUAL_POSITION" | "MOCK_POSITION";
+  // Input parameters
+  tokenId: string;
+  marketId?: string;
+  forceShares: number;
+  signalPrice: number;
+  simulatedEntryPrice: number;
+  side: "LONG" | "SHORT";
+  // Trigger condition evaluation
+  triggerEvaluation: {
+    triggerThresholdCents: number;
+    simulatedMarkPrice: number;
+    adverseMoveCents: number;
+    wouldTrigger: boolean;
+  };
+  // Hedge side/token selection
+  hedgeSideSelection: {
+    hedgeSide: "BUY" | "SELL";
+    hedgeTokenId: string | null; // opposite outcome token
+    reason: string;
+  };
+  // Computed hedge size
+  hedgeSizeComputation: {
+    positionSize: number;
+    hedgeRatio: number;
+    computedHedgeSize: number;
+    maxHedgeRatio: number;
+    cappedHedgeSize: number;
+  };
+  // Price caps / slippage / safety limits
+  safetyLimits: {
+    maxAdverseCents: number;
+    hardStopWouldTrigger: boolean;
+    slippageApplied: number;
+  };
+  // Final order payload summary (redacted)
+  wouldPlaceOrder: {
+    side: "BUY" | "SELL";
+    tokenIdPrefix: string;
+    size: number;
+    priceRange: string;
+  } | null;
+}
+
+/**
+ * Run a hedge simulation for diagnostic purposes.
+ * This simulates what would happen if the buy had executed and price moved adversely.
+ */
+export function runHedgeSimulation(
+  tokenId: string,
+  signalPrice: number,
+  forceShares: number,
+  hedgeConfig: typeof DEFAULT_HEDGE_CONFIG,
+  marketId?: string,
+): DiagHedgeSimEvent {
+  const timestamp = new Date().toISOString();
+  const simulatedEntryPrice = signalPrice * 100; // Convert to cents
+  const side: "LONG" | "SHORT" = "LONG"; // BUY = LONG position
+
+  // Simulate price moving adversely to trigger hedge
+  const epsilon = 1; // 1¢ past trigger
+  const simulatedMarkPrice =
+    simulatedEntryPrice - hedgeConfig.triggerCents - epsilon;
+  const adverseMoveCents = simulatedEntryPrice - simulatedMarkPrice;
+
+  // Evaluate trigger condition
+  const wouldTrigger = adverseMoveCents >= hedgeConfig.triggerCents;
+
+  // Hedge side selection (for LONG position, hedge by SELLING or buying opposite token)
+  const hedgeSide: "BUY" | "SELL" = "SELL"; // Typically sell to reduce exposure
+
+  // Compute hedge size
+  const positionSize = forceShares;
+  const computedHedgeSize = positionSize * hedgeConfig.hedgeRatio;
+  const cappedHedgeSize = Math.min(
+    computedHedgeSize,
+    positionSize * hedgeConfig.maxHedgeRatio,
+  );
+
+  // Check hard stop
+  const hardStopWouldTrigger = adverseMoveCents >= hedgeConfig.maxAdverseCents;
+
+  // Build event
+  const event: DiagHedgeSimEvent = {
+    event: "DIAG_HEDGE_SIM",
+    timestamp,
+    simulationMode: "MOCK_POSITION",
+    tokenId,
+    marketId,
+    forceShares,
+    signalPrice,
+    simulatedEntryPrice,
+    side,
+    triggerEvaluation: {
+      triggerThresholdCents: hedgeConfig.triggerCents,
+      simulatedMarkPrice,
+      adverseMoveCents,
+      wouldTrigger,
+    },
+    hedgeSideSelection: {
+      hedgeSide,
+      hedgeTokenId: null, // Would need market data to resolve opposite token
+      reason: `LONG position -> ${hedgeSide} to reduce exposure`,
+    },
+    hedgeSizeComputation: {
+      positionSize,
+      hedgeRatio: hedgeConfig.hedgeRatio,
+      computedHedgeSize,
+      maxHedgeRatio: hedgeConfig.maxHedgeRatio,
+      cappedHedgeSize,
+    },
+    safetyLimits: {
+      maxAdverseCents: hedgeConfig.maxAdverseCents,
+      hardStopWouldTrigger,
+      slippageApplied: 2, // 2% default slippage
+    },
+    wouldPlaceOrder:
+      wouldTrigger && !hardStopWouldTrigger
+        ? {
+            side: hedgeSide,
+            tokenIdPrefix: tokenId.slice(0, 16) + "...",
+            size: cappedHedgeSize,
+            priceRange: `${(simulatedMarkPrice / 100).toFixed(4)} ± 2%`,
+          }
+        : null,
+  };
+
+  return event;
+}
 
 /**
  * Hedge trigger evaluation result
@@ -1481,6 +1861,66 @@ async function runHedgeVerificationStep(
 
   if (!buyContext.executedShares || buyContext.executedShares <= 0) {
     // Case 2: Buy context exists but no shares executed (order was rejected)
+    // If DIAG_HEDGE_SIMULATE=true, run hedge simulation anyway
+
+    if (isDiagHedgeSimulateEnabled()) {
+      // Run hedge simulation with mock position
+      console.log(
+        `🔬 ${step}: DIAG_HEDGE_SIMULATE=true - running hedge simulation despite rejected buy`,
+      );
+
+      const hedgeConfig = deps.hedgeConfig ?? DEFAULT_HEDGE_CONFIG;
+      const simulatedSignalPrice = 0.5; // Default 50¢ if no price available
+
+      const hedgeSimEvent = runHedgeSimulation(
+        buyContext.tokenId,
+        simulatedSignalPrice,
+        cfg.forceShares,
+        hedgeConfig,
+        buyContext.marketId,
+      );
+
+      // Emit the simulation event
+      console.log(JSON.stringify(hedgeSimEvent));
+
+      tracer.trace({
+        step,
+        action: "hedge_simulation_completed",
+        result: "OK",
+        marketId: buyContext.marketId,
+        tokenId: buyContext.tokenId,
+        detail: {
+          simulationMode: "MOCK_POSITION",
+          buyWasRejected: true,
+          hedgeSimEvent,
+        },
+      });
+
+      console.log(
+        `✅ ${step}: Hedge simulation completed (MOCK_POSITION mode)`,
+      );
+      console.log(
+        `   Trigger would fire: ${hedgeSimEvent.triggerEvaluation.wouldTrigger}`,
+      );
+      console.log(
+        `   Would place order: ${hedgeSimEvent.wouldPlaceOrder ? "YES" : "NO"}`,
+      );
+
+      ghEndGroup();
+      return {
+        step,
+        result: "OK",
+        marketId: buyContext.marketId,
+        tokenId: buyContext.tokenId,
+        detail: {
+          simulationMode: "MOCK_POSITION",
+          hedgeSimEvent,
+        },
+        traceEvents: tracer.getStepEvents(step),
+      };
+    }
+
+    // Standard skip (no simulation)
     const skipReason = "no_executed_position";
 
     tracer.trace({
@@ -1492,6 +1932,7 @@ async function runHedgeVerificationStep(
         skipReason,
         executedShares: buyContext.executedShares ?? 0,
         message: "Hedge verification skipped: no shares were executed in buy",
+        diagHedgeSimulate: isDiagHedgeSimulateEnabled(),
       },
     });
 
