@@ -647,3 +647,243 @@ describe("Liquidation Mode", () => {
     });
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLAUSE OPUS AUDIT TESTS - Verify audit fixes are working
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("Clause Opus Audit Compliance", () => {
+  const config = createTestConfig();
+
+  describe("Clause 2.1 - SHORT Entry Rejection", () => {
+    it("rejects SHORT bias entries (LONG-only enforcement)", () => {
+      const decisionEngine = new DecisionEngine(config);
+      
+      const decision = decisionEngine.evaluateEntry({
+        tokenId: "test-token",
+        bias: "SHORT",
+        orderbook: {
+          bestAskCents: 50,
+          bestBidCents: 48,
+          midPriceCents: 49,
+          spreadCents: 2,
+          bidDepthUsd: 100,
+          askDepthUsd: 100,
+        },
+        activity: {
+          tradesInWindow: 15,
+          bookUpdatesInWindow: 25,
+          lastTradeTime: Date.now(),
+          lastUpdateTime: Date.now(),
+        },
+        referencePriceCents: 49,
+        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evAllowed: { allowed: true },
+        currentPositions: [],
+        effectiveBankroll: 1000,
+        totalDeployedUsd: 0,
+      });
+
+      assert.strictEqual(decision.allowed, false, "SHORT entries should be rejected");
+      assert.ok(
+        decision.reason?.toLowerCase().includes("short") || 
+        decision.reason?.toLowerCase().includes("long-only"),
+        `Should mention SHORT rejection, got: ${decision.reason}`
+      );
+    });
+
+    it("allows LONG bias entries", () => {
+      const decisionEngine = new DecisionEngine(config);
+      
+      const decision = decisionEngine.evaluateEntry({
+        tokenId: "test-token",
+        bias: "LONG",
+        orderbook: {
+          bestAskCents: 50,
+          bestBidCents: 48,
+          midPriceCents: 49,
+          spreadCents: 2,
+          bidDepthUsd: 100,
+          askDepthUsd: 100,
+        },
+        activity: {
+          tradesInWindow: 15,
+          bookUpdatesInWindow: 25,
+          lastTradeTime: Date.now(),
+          lastUpdateTime: Date.now(),
+        },
+        referencePriceCents: 49,
+        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evAllowed: { allowed: true },
+        currentPositions: [],
+        effectiveBankroll: 1000,
+        totalDeployedUsd: 0,
+      });
+
+      assert.strictEqual(decision.allowed, true, "LONG entries should be allowed");
+      assert.strictEqual(decision.side, "LONG", "Side should be LONG");
+    });
+
+    it("rejects NONE bias entries", () => {
+      const decisionEngine = new DecisionEngine(config);
+      
+      const decision = decisionEngine.evaluateEntry({
+        tokenId: "test-token",
+        bias: "NONE",
+        orderbook: {
+          bestAskCents: 50,
+          bestBidCents: 48,
+          midPriceCents: 49,
+          spreadCents: 2,
+          bidDepthUsd: 100,
+          askDepthUsd: 100,
+        },
+        activity: {
+          tradesInWindow: 15,
+          bookUpdatesInWindow: 25,
+          lastTradeTime: Date.now(),
+          lastUpdateTime: Date.now(),
+        },
+        referencePriceCents: 49,
+        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evAllowed: { allowed: true },
+        currentPositions: [],
+        effectiveBankroll: 1000,
+        totalDeployedUsd: 0,
+      });
+
+      assert.strictEqual(decision.allowed, false, "NONE bias entries should be rejected");
+    });
+  });
+
+  describe("Clause 3.3 - Spread Gating Against Churn Budget", () => {
+    it("rejects entries when spread exceeds minSpreadCents", () => {
+      const decisionEngine = new DecisionEngine(config);
+      
+      // Spread of 10¢ should exceed the 6¢ limit
+      const decision = decisionEngine.evaluateEntry({
+        tokenId: "test-token",
+        bias: "LONG",
+        orderbook: {
+          bestAskCents: 55,
+          bestBidCents: 45,
+          midPriceCents: 50,
+          spreadCents: 10, // Exceeds minSpreadCents (6)
+          bidDepthUsd: 100,
+          askDepthUsd: 100,
+        },
+        activity: {
+          tradesInWindow: 15,
+          bookUpdatesInWindow: 25,
+          lastTradeTime: Date.now(),
+          lastUpdateTime: Date.now(),
+        },
+        referencePriceCents: 50,
+        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evAllowed: { allowed: true },
+        currentPositions: [],
+        effectiveBankroll: 1000,
+        totalDeployedUsd: 0,
+      });
+
+      assert.strictEqual(decision.allowed, false, "Entries with spread > minSpreadCents should be rejected");
+      assert.ok(
+        decision.reason?.toLowerCase().includes("spread"),
+        `Should mention spread issue, got: ${decision.reason}`
+      );
+    });
+
+    it("rejects entries when spread exceeds 2x churn budget", () => {
+      const decisionEngine = new DecisionEngine(config);
+      
+      // Spread of 5¢ should exceed 2x churnCostCentsEstimate (2 * 2 = 4)
+      // but be within minSpreadCents (6)
+      const decision = decisionEngine.evaluateEntry({
+        tokenId: "test-token",
+        bias: "LONG",
+        orderbook: {
+          bestAskCents: 52.5,
+          bestBidCents: 47.5,
+          midPriceCents: 50,
+          spreadCents: 5, // Exceeds 2x churn (4) but under minSpreadCents (6)
+          bidDepthUsd: 100,
+          askDepthUsd: 100,
+        },
+        activity: {
+          tradesInWindow: 15,
+          bookUpdatesInWindow: 25,
+          lastTradeTime: Date.now(),
+          lastUpdateTime: Date.now(),
+        },
+        referencePriceCents: 50,
+        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evAllowed: { allowed: true },
+        currentPositions: [],
+        effectiveBankroll: 1000,
+        totalDeployedUsd: 0,
+      });
+
+      assert.strictEqual(decision.allowed, false, "Entries with spread > 2x churn budget should be rejected");
+      assert.ok(
+        decision.reason?.toLowerCase().includes("spread") || decision.reason?.toLowerCase().includes("churn"),
+        `Should mention spread/churn issue, got: ${decision.reason}`
+      );
+    });
+
+    it("allows entries when spread is within acceptable limits", () => {
+      const decisionEngine = new DecisionEngine(config);
+      
+      // Spread of 3¢ should be acceptable (< minSpreadCents and < 2x churn)
+      const decision = decisionEngine.evaluateEntry({
+        tokenId: "test-token",
+        bias: "LONG",
+        orderbook: {
+          bestAskCents: 51.5,
+          bestBidCents: 48.5,
+          midPriceCents: 50,
+          spreadCents: 3, // Within limits
+          bidDepthUsd: 100,
+          askDepthUsd: 100,
+        },
+        activity: {
+          tradesInWindow: 15,
+          bookUpdatesInWindow: 25,
+          lastTradeTime: Date.now(),
+          lastUpdateTime: Date.now(),
+        },
+        referencePriceCents: 50,
+        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evAllowed: { allowed: true },
+        currentPositions: [],
+        effectiveBankroll: 1000,
+        totalDeployedUsd: 0,
+      });
+
+      assert.strictEqual(decision.allowed, true, "Entries with acceptable spread should be allowed");
+    });
+  });
+
+  describe("Entry Bounds Buffer", () => {
+    it("entry price bounds are correctly configured", () => {
+      // minEntryPriceCents should equal maxAdverseCents (room to be wrong)
+      assert.strictEqual(
+        config.minEntryPriceCents,
+        config.maxAdverseCents,
+        "MIN_ENTRY should equal MAX_ADVERSE for loss room"
+      );
+
+      // maxEntryPriceCents should leave room for TP
+      const expectedMax = 100 - config.tpCents - config.entryBufferCents;
+      assert.ok(
+        config.maxEntryPriceCents <= expectedMax,
+        `MAX_ENTRY (${config.maxEntryPriceCents}) should be <= ${expectedMax}`
+      );
+
+      // Buffer should be at least 2¢ for meaningful protection
+      assert.ok(
+        config.entryBufferCents >= 2,
+        `Buffer (${config.entryBufferCents}¢) should be at least 2¢`
+      );
+    });
+  });
+});

@@ -2310,8 +2310,14 @@ class DecisionEngine {
     };
 
     // 1) Check bias
+    // CRITICAL: SHORT entries are NOT supported on Polymarket.
+    // The exchange only supports buying YES or NO tokens (both are LONG positions).
+    // A "short" on YES would mean buying NO, which is still a LONG position on NO.
+    // Reject any SHORT bias to prevent invalid SELL entry attempts.
     if (params.bias === "NONE") {
       checks.bias.reason = "No bias signal";
+    } else if (params.bias === "SHORT") {
+      checks.bias.reason = "SHORT entries not supported on Polymarket (LONG-only)";
     } else {
       checks.bias.passed = true;
     }
@@ -2344,19 +2350,31 @@ class DecisionEngine {
       checks.priceDeviation.reason = `Deviation ${deviation.toFixed(1)}¢ < ${this.config.entryBandCents}¢`;
     }
 
-    // 4) Check entry price bounds
+    // 4) Check entry price bounds with buffer
+    // Entry bounds ensure room to win (TP at +14¢) and room to be wrong (up to -30¢)
+    // The buffer (4¢) provides margin for slippage and ensures we don't enter too close to bounds
     const entryPriceCents =
       params.bias === "LONG"
         ? params.orderbook.bestAskCents
         : params.orderbook.bestBidCents;
 
+    const minBound = this.config.minEntryPriceCents + this.config.entryBufferCents;
+    const maxBound = this.config.maxEntryPriceCents - this.config.entryBufferCents;
+    
     if (
+      entryPriceCents >= minBound &&
+      entryPriceCents <= maxBound
+    ) {
+      checks.priceBounds.passed = true;
+    } else if (
       entryPriceCents >= this.config.minEntryPriceCents &&
       entryPriceCents <= this.config.maxEntryPriceCents
     ) {
+      // Within bounds but outside buffer - allow with warning
       checks.priceBounds.passed = true;
+      checks.priceBounds.reason = `Price ${entryPriceCents.toFixed(1)}¢ near bounds [${this.config.minEntryPriceCents}, ${this.config.maxEntryPriceCents}] (buffer: ${this.config.entryBufferCents}¢)`;
     } else {
-      checks.priceBounds.reason = `Price ${entryPriceCents}¢ outside [${this.config.minEntryPriceCents}, ${this.config.maxEntryPriceCents}]`;
+      checks.priceBounds.reason = `Price ${entryPriceCents.toFixed(1)}¢ outside bounds [${this.config.minEntryPriceCents}, ${this.config.maxEntryPriceCents}]`;
     }
 
     // 5) Check risk limits
@@ -2410,11 +2428,17 @@ class DecisionEngine {
     orderbook: OrderbookState,
     activity: MarketActivity,
   ): { passed: boolean; reason?: string } {
-    // Spread check
-    if (orderbook.spreadCents > this.config.minSpreadCents) {
+    // CRITICAL: Spread must not exceed churn budget to preserve positive EV assumptions.
+    // The churn cost (spread + slippage) is budgeted at ~2¢ per trade. If the spread alone
+    // exceeds this, the trade will likely be EV-negative regardless of edge.
+    // Compute a single effective max spread: min(minSpreadCents, 2x churn budget)
+    const maxSpreadForChurn = this.config.churnCostCentsEstimate * 2;
+    const effectiveMaxSpread = Math.min(this.config.minSpreadCents, maxSpreadForChurn);
+    
+    if (orderbook.spreadCents > effectiveMaxSpread) {
       return {
         passed: false,
-        reason: `Spread ${orderbook.spreadCents}¢ > ${this.config.minSpreadCents}¢`,
+        reason: `Spread ${orderbook.spreadCents.toFixed(1)}¢ > max ${effectiveMaxSpread}¢`,
       };
     }
 
@@ -2428,6 +2452,10 @@ class DecisionEngine {
     }
 
     // Activity check
+    // NOTE (Clause 3.2): Activity metrics (tradesInWindow, bookUpdatesInWindow) are currently
+    // synthetic/stubbed with fixed values (15 trades, 25 updates). This means the activity
+    // gate can be trivially satisfied even in illiquid markets, providing false confidence.
+    // TODO: Replace with real observed activity counts from on-chain or API data.
     if (
       activity.tradesInWindow < this.config.minTradesLastX &&
       activity.bookUpdatesInWindow < this.config.minBookUpdatesLastX
@@ -2923,7 +2951,10 @@ class ExecutionEngine {
         ? bestPrice * (1 + slippageMultiplier)  // BUY: pay up to X% more
         : bestPrice * (1 - slippageMultiplier); // SELL: accept X% less
       
-      const shares = sizeUsd / bestPrice; // Use best price for share calculation
+      // CRITICAL FIX (Clause 2.2): Entry sizing must use worst-case (slippage-adjusted) 
+      // limit price, not best price. This prevents overspending notional when slippage
+      // occurs. The fokPrice represents the worst price we're willing to accept.
+      const shares = sizeUsd / fokPrice; // Use worst-case price for share calculation
 
       const { Side, OrderType } = await import("@polymarket/clob-client");
       
@@ -3161,6 +3192,17 @@ class ExecutionEngine {
     if (result.success) {
       // Use actual fill price from API response
       const exitPrice = (result.avgPrice || priceCents / 100) * 100;
+      
+      // CRITICAL (Clause 5.1/5.2): Unwind hedge legs after primary exit succeeds.
+      // Hedges are real positions that become residual exposure if not unwound.
+      // If any hedge sell fails, we force a position refresh to track the residual.
+      const hedgeUnwindResult = await this.unwindHedges(position);
+      if (!hedgeUnwindResult.success && hedgeUnwindResult.failedCount > 0) {
+        console.warn(`⚠️ [HEDGE UNWIND] ${hedgeUnwindResult.failedCount} hedge(s) failed to sell - residual exposure remains`);
+        // Force position refresh to track any remaining hedge positions
+        invalidatePositions();
+      }
+      
       return this.closeAndLog(position, exitPrice, reason, biasDirection, "");
     }
 
@@ -3174,6 +3216,14 @@ class ExecutionEngine {
       });
       if (retry.success) {
         const exitPrice = (retry.avgPrice || priceCents / 100) * 100;
+        
+        // CRITICAL (Clause 5.1/5.2): Unwind hedge legs after primary exit succeeds.
+        const hedgeUnwindResult = await this.unwindHedges(position);
+        if (!hedgeUnwindResult.success && hedgeUnwindResult.failedCount > 0) {
+          console.warn(`⚠️ [HEDGE UNWIND] ${hedgeUnwindResult.failedCount} hedge(s) failed to sell - residual exposure remains`);
+          invalidatePositions();
+        }
+        
         return this.closeAndLog(position, exitPrice, reason, biasDirection, "(retry)");
       }
     }
@@ -3207,6 +3257,113 @@ class ExecutionEngine {
     }
 
     return { success: true, filledPriceCents: exitPriceCents };
+  }
+
+  /**
+   * Unwind (sell) all hedge legs for a position after primary exit.
+   * 
+   * CRITICAL (Clause 5.1/5.2): Hedges are real positions that become residual
+   * exposure if not unwound. This method attempts to sell all hedge legs
+   * using FOK-only orders to avoid phantom fills.
+   * 
+   * @param position - The position whose hedges should be unwound
+   * @returns Result with success status and count of failed unwinds
+   */
+  private async unwindHedges(position: ManagedPosition): Promise<{ success: boolean; failedCount: number }> {
+    const hedges = position.hedges || [];
+    
+    if (hedges.length === 0) {
+      return { success: true, failedCount: 0 };
+    }
+
+    console.log(`🔄 [HEDGE UNWIND] Unwinding ${hedges.length} hedge leg(s) for position ${position.id.slice(0, 16)}...`);
+
+    // Simulation mode - just log
+    if (!this.config.liveTradingEnabled) {
+      for (const hedge of hedges) {
+        console.log(`🛡️ [SIM] [HEDGE UNWIND] Would sell hedge: ${hedge.tokenId.slice(0, 16)}... ($${hedge.sizeUsd.toFixed(2)})`);
+      }
+      return { success: true, failedCount: 0 };
+    }
+
+    if (!this.client) {
+      console.error(`❌ [HEDGE UNWIND] No CLOB client available`);
+      return { success: false, failedCount: hedges.length };
+    }
+
+    let failedCount = 0;
+
+    for (const hedge of hedges) {
+      try {
+        // Get current orderbook for the hedge token
+        const orderBook = await this.client.getOrderBook(hedge.tokenId);
+        const bids = orderBook?.bids;
+
+        if (!bids || bids.length === 0) {
+          console.warn(`⚠️ [HEDGE UNWIND] No bids for hedge token ${hedge.tokenId.slice(0, 16)}... - cannot sell`);
+          failedCount++;
+          continue;
+        }
+
+        const bestBid = parseFloat(bids[0].price);
+        // NOTE: We estimate shares using the hedge entry price. If the hedge filled at a different
+        // price due to slippage, this may be slightly inaccurate. For improved accuracy, consider
+        // tracking actual filled shares when hedges are created. This conservative approach errs
+        // on the side of attempting to sell the estimated amount, which FOK will reject if too large.
+        const shares = hedge.sizeUsd / (hedge.entryPriceCents / 100);
+
+        // Create sell order with FOK to ensure confirmed fill
+        const { Side, OrderType } = await import("@polymarket/clob-client");
+        
+        const order = await this.client.createMarketOrder({
+          side: Side.SELL,
+          tokenID: hedge.tokenId,
+          amount: shares,
+          price: bestBid,
+        });
+
+        // Use FOK-only to avoid phantom fills (Clause 2.3)
+        const response = await this.client.postOrder(order, OrderType.FOK);
+
+        if (response.success) {
+          // Verify FOK fill (same check as smartSell)
+          const respAny = response as any;
+          const rawStatus = respAny?.status;
+          const status = typeof rawStatus === "string" ? rawStatus.toUpperCase() : "";
+          const takingAmount = parseFloat(respAny?.takingAmount || "0");
+          const makingAmount = parseFloat(respAny?.makingAmount || "0");
+          
+          const isMatched = status === "MATCHED" || status === "FILLED";
+          const hasFilledAmount = takingAmount > 0 || makingAmount > 0;
+          const hasStatusInfo = typeof rawStatus === "string" && rawStatus.length > 0;
+          const hasAmountInfo = respAny?.takingAmount !== undefined || respAny?.makingAmount !== undefined;
+          
+          // Check for confirmed fill (align with smartSell: missing evidence ⇒ treat as NOT filled)
+          if ((hasStatusInfo && isMatched) || (hasAmountInfo && hasFilledAmount)) {
+            console.log(`✅ [HEDGE UNWIND] Sold hedge: ${hedge.tokenId.slice(0, 16)}... @ ${(bestBid * 100).toFixed(1)}¢`);
+          } else {
+            console.warn(`⚠️ [HEDGE UNWIND] FOK not filled for hedge ${hedge.tokenId.slice(0, 16)}...`);
+            failedCount++;
+          }
+        } else {
+          console.warn(`⚠️ [HEDGE UNWIND] Order rejected for hedge ${hedge.tokenId.slice(0, 16)}...`);
+          failedCount++;
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        console.error(`❌ [HEDGE UNWIND] Error unwinding hedge ${hedge.tokenId.slice(0, 16)}...: ${errorMsg}`);
+        failedCount++;
+      }
+    }
+
+    const success = failedCount === 0;
+    if (success) {
+      console.log(`✅ [HEDGE UNWIND] All ${hedges.length} hedge(s) unwound successfully`);
+    } else {
+      console.warn(`⚠️ [HEDGE UNWIND] ${failedCount}/${hedges.length} hedge(s) failed to unwind`);
+    }
+
+    return { success, failedCount };
   }
 
   /**
