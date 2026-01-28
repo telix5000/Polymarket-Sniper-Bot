@@ -277,21 +277,42 @@ export class DiagTracer {
 /**
  * Sanitize detail object to remove sensitive data
  */
-function sanitizeDetail(
+/**
+ * Check if a key name is sensitive and should be redacted.
+ * Uses specific patterns to avoid false positives like "tokenId", "marketKey", etc.
+ */
+function isSensitiveKey(key: string): boolean {
+  const lowerKey = key.toLowerCase();
+
+  // Specific sensitive key patterns (exact matches or specific suffixes/prefixes)
+  const sensitivePatterns = [
+    /^(private)?key$/i, // "key", "privateKey"
+    /^api[_-]?key$/i, // "apiKey", "api_key", "api-key"
+    /^secret[_-]?key$/i, // "secretKey", "secret_key"
+    /secret$/i, // ends with "secret"
+    /^password$/i,
+    /^passwd$/i,
+    /^credential[s]?$/i,
+    /^auth[_-]?token$/i, // "authToken", "auth_token"
+    /^access[_-]?token$/i, // "accessToken", "access_token"
+    /^bearer[_-]?token$/i, // "bearerToken", "bearer_token"
+    /^refresh[_-]?token$/i, // "refreshToken", "refresh_token"
+    /^jwt$/i,
+    /^api[_-]?secret$/i,
+    /^private[_-]?key$/i,
+  ];
+
+  return sensitivePatterns.some((pattern) => pattern.test(lowerKey));
+}
+
+export function sanitizeDetail(
   detail: Record<string, unknown>,
 ): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(detail)) {
-    // Skip sensitive keys
-    const lowerKey = key.toLowerCase();
-    if (
-      lowerKey.includes("key") ||
-      lowerKey.includes("secret") ||
-      lowerKey.includes("token") ||
-      lowerKey.includes("password") ||
-      lowerKey.includes("credential")
-    ) {
+    // Skip sensitive keys using specific pattern matching
+    if (isSensitiveKey(key)) {
       sanitized[key] = "[REDACTED]";
       continue;
     }
@@ -313,6 +334,17 @@ function sanitizeDetail(
     // Recursively sanitize nested objects
     if (typeof value === "object" && value !== null && !Array.isArray(value)) {
       sanitized[key] = sanitizeDetail(value as Record<string, unknown>);
+      continue;
+    }
+
+    // Recursively sanitize arrays containing objects
+    if (Array.isArray(value)) {
+      sanitized[key] = value.map((item) => {
+        if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+          return sanitizeDetail(item as Record<string, unknown>);
+        }
+        return item;
+      });
       continue;
     }
 
@@ -458,7 +490,13 @@ export function mapErrorToReason(error: unknown): DiagReason {
   if (message.includes("binary") || message.includes("not binary")) {
     return "not_binary_market";
   }
-  if (message.includes("outcome") || message.includes("token")) {
+  // More specific pattern for outcome token resolution errors
+  if (
+    message.includes("outcome token") ||
+    (message.includes("outcome") && message.includes("token")) ||
+    message.includes("resolve outcome token") ||
+    message.includes("cannot resolve outcome")
+  ) {
     return "cannot_resolve_outcome_token";
   }
 
@@ -500,9 +538,3 @@ export function mapErrorToReason(error: unknown): DiagReason {
 
   return "unknown_error";
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// EXPORTS
-// ═══════════════════════════════════════════════════════════════════════════
-
-export { sanitizeDetail };

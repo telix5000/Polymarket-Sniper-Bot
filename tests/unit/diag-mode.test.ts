@@ -291,6 +291,34 @@ describe("mapErrorToReason", () => {
     );
   });
 
+  test("should map outcome token resolution errors", () => {
+    assert.strictEqual(
+      mapErrorToReason(new Error("cannot resolve outcome token")),
+      "cannot_resolve_outcome_token",
+    );
+    assert.strictEqual(
+      mapErrorToReason(new Error("outcome token not found")),
+      "cannot_resolve_outcome_token",
+    );
+    assert.strictEqual(
+      mapErrorToReason(new Error("cannot resolve outcome")),
+      "cannot_resolve_outcome_token",
+    );
+  });
+
+  test("should NOT map generic token/outcome errors to outcome_token", () => {
+    // "token price unavailable" should NOT match outcome token error
+    assert.strictEqual(
+      mapErrorToReason(new Error("token price unavailable")),
+      "unknown_error",
+    );
+    // "outcome calculation failed" should NOT match outcome token error
+    assert.strictEqual(
+      mapErrorToReason(new Error("outcome calculation failed")),
+      "unknown_error",
+    );
+  });
+
   test("should map orderbook errors", () => {
     assert.strictEqual(
       mapErrorToReason(new Error("orderbook unavailable")),
@@ -341,13 +369,14 @@ describe("mapErrorToReason", () => {
 });
 
 describe("sanitizeDetail", () => {
-  test("should redact sensitive keys", () => {
+  test("should redact sensitive keys with specific patterns", () => {
     const input = {
       privateKey: "0x1234567890abcdef",
       apiKey: "secret123",
       password: "hunter2",
-      token: "bearer-token",
-      credential: "my-cred",
+      authToken: "bearer-token",
+      credentials: "my-cred",
+      secret: "my-secret",
       normalField: "visible",
     };
 
@@ -356,9 +385,28 @@ describe("sanitizeDetail", () => {
     assert.strictEqual(result.privateKey, "[REDACTED]");
     assert.strictEqual(result.apiKey, "[REDACTED]");
     assert.strictEqual(result.password, "[REDACTED]");
-    assert.strictEqual(result.token, "[REDACTED]");
-    assert.strictEqual(result.credential, "[REDACTED]");
+    assert.strictEqual(result.authToken, "[REDACTED]");
+    assert.strictEqual(result.credentials, "[REDACTED]");
+    assert.strictEqual(result.secret, "[REDACTED]");
     assert.strictEqual(result.normalField, "visible");
+  });
+
+  test("should NOT redact tokenId, marketKey, and similar legitimate fields", () => {
+    const input = {
+      tokenId: "token-123",
+      marketKey: "market-456",
+      keyMetrics: { value: 100 },
+      tokenPrice: 0.45,
+      outcomeToken: "yes-token",
+    };
+
+    const result = sanitizeDetail(input) as Record<string, unknown>;
+
+    assert.strictEqual(result.tokenId, "token-123");
+    assert.strictEqual(result.marketKey, "market-456");
+    assert.deepStrictEqual(result.keyMetrics, { value: 100 });
+    assert.strictEqual(result.tokenPrice, 0.45);
+    assert.strictEqual(result.outcomeToken, "yes-token");
   });
 
   test("should redact private key patterns", () => {
@@ -401,6 +449,30 @@ describe("sanitizeDetail", () => {
     const inner = outer.inner as Record<string, unknown>;
     assert.strictEqual(inner.password, "[REDACTED]");
     assert.strictEqual(inner.visible, "ok");
+  });
+
+  test("should recursively sanitize arrays containing objects", () => {
+    const input = {
+      items: [
+        { apiKey: "secret1", name: "item1" },
+        { password: "secret2", value: 100 },
+        "plain-string",
+        42,
+      ],
+    };
+
+    const result = sanitizeDetail(input) as Record<string, unknown>;
+
+    const items = result.items as Array<unknown>;
+    const item0 = items[0] as Record<string, unknown>;
+    const item1 = items[1] as Record<string, unknown>;
+
+    assert.strictEqual(item0.apiKey, "[REDACTED]");
+    assert.strictEqual(item0.name, "item1");
+    assert.strictEqual(item1.password, "[REDACTED]");
+    assert.strictEqual(item1.value, 100);
+    assert.strictEqual(items[2], "plain-string");
+    assert.strictEqual(items[3], 42);
   });
 
   test("should pass through safe values unchanged", () => {

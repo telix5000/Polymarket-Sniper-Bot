@@ -223,15 +223,12 @@ async function runWhaleBuyStep(
 
   try {
     // Wait for whale signal with timeout
+    // Note: waitForWhaleSignal already has internal polling with timeout
     console.log(
       `⏳ Waiting for whale signal (timeout: ${cfg.whaleTimeoutSec}s)...`,
     );
 
-    const signal = await withTimeout(
-      deps.waitForWhaleSignal(cfg.whaleTimeoutSec * 1000),
-      cfg.whaleTimeoutSec * 1000,
-      "timeout_waiting_for_whale",
-    );
+    const signal = await deps.waitForWhaleSignal(cfg.whaleTimeoutSec * 1000);
 
     if (!signal) {
       tracer.trace({
@@ -685,11 +682,17 @@ async function attemptDiagBuy(
     const price = signal.price ?? 0.5; // Default to 50¢ if no price
     const sizeUsd = cfg.forceShares * price;
 
+    // Validate outcome label - must be "YES" or "NO"
+    const outcome: "YES" | "NO" =
+      signal.outcomeLabel === "YES" || signal.outcomeLabel === "NO"
+        ? signal.outcomeLabel
+        : "YES";
+
     const result = await withTimeout(
       postOrder({
         client: deps.client,
         tokenId: signal.tokenId,
-        outcome: (signal.outcomeLabel as "YES" | "NO") ?? "YES",
+        outcome,
         side: "BUY",
         sizeUsd,
         marketId: signal.marketId,
@@ -716,7 +719,7 @@ async function attemptDiagBuy(
       });
 
       console.log(
-        `✅ BUY executed: $${result.filledUsd?.toFixed(4)} @ ${result.avgPrice?.toFixed(4)}`,
+        `✅ BUY executed: $${result.filledUsd?.toFixed(4) ?? "N/A"} @ ${result.avgPrice?.toFixed(4) ?? "N/A"}`,
       );
 
       // Invalidate position cache so sell step can see the new position
@@ -851,9 +854,12 @@ async function attemptDiagSell(
         },
       });
 
-      console.log(
-        `✅ SELL executed: $${result.filledUsd?.toFixed(4)} @ ${(result.actualPrice ?? result.avgPrice)?.toFixed(4)}`,
-      );
+      const filledUsdDisplay =
+        result.filledUsd != null ? result.filledUsd.toFixed(4) : "N/A";
+      const priceValue = result.actualPrice ?? result.avgPrice;
+      const priceDisplay = priceValue != null ? priceValue.toFixed(4) : "N/A";
+
+      console.log(`✅ SELL executed: $${filledUsdDisplay} @ ${priceDisplay}`);
 
       // Invalidate position cache
       invalidatePositions();

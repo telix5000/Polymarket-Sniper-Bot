@@ -6978,9 +6978,16 @@ class ChurnEngine {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Get dependencies for diagnostic workflow
+   * Get dependencies for diagnostic workflow.
+   * This method is intentionally not private as it's accessed in main() after initialization.
+   * It should only be called after initialize() returns true, which ensures client/address/logger are set.
    */
   getDiagDeps(): DiagWorkflowDeps {
+    if (!this.client || !this.address) {
+      throw new Error(
+        "getDiagDeps() called before initialization. Call initialize() first.",
+      );
+    }
     return {
       client: this.client,
       address: this.address,
