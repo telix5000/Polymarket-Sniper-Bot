@@ -71,6 +71,38 @@ The bot follows top Polymarket traders (whales) and copies their trades.
 |----------|---------|-------------|
 | `WHALE_TRADE_USD` | `500` | Minimum trade size to consider as "whale trade" |
 | `COPY_ANY_WHALE_BUY` | `false` | If `true`, copy ANY whale buy immediately without bias confirmation |
+| `WHALE_PRICE_MIN` | (none) | Minimum price (0-1) to filter whale trades, e.g., `0.25` for 25¢ |
+| `WHALE_PRICE_MAX` | (none) | Maximum price (0-1) to filter whale trades, e.g., `0.45` for 45¢ |
+
+### Price-Range Filtering
+
+Filter whale trades by price to focus on specific market conditions. This is useful when you want to:
+- Focus on "underdog" trades (low prices)
+- Avoid near-certain markets (prices close to 0 or 1)
+- Target a specific price sweet spot
+
+**Example: Only copy trades between 25¢ and 45¢**:
+```env
+WHALE_PRICE_MIN=0.25
+WHALE_PRICE_MAX=0.45
+```
+
+**One-sided filter (minimum only)**:
+```env
+WHALE_PRICE_MIN=0.30
+# No max set - copies any trade at 30¢ or higher
+```
+
+**One-sided filter (maximum only)**:
+```env
+WHALE_PRICE_MAX=0.70
+# No min set - copies any trade at 70¢ or lower
+```
+
+**Notes:**
+- If `WHALE_PRICE_MIN > WHALE_PRICE_MAX`, a warning is logged and filtering is disabled
+- Trades without price information pass through the filter
+- Filter is applied before bias/copy logic, so filtered trades don't create signals
 
 ### Whale Tracking Modes
 

@@ -146,6 +146,17 @@ function shouldCooldownOnFailure(reason: string | undefined): boolean {
   );
 }
 
+/**
+ * Parse an optional float from environment variable
+ * Returns undefined if not set or invalid
+ */
+function parseOptionalFloat(value: string | undefined): number | undefined {
+  if (value === undefined || value === "") return undefined;
+  const parsed = parseFloat(value);
+  if (isNaN(parsed)) return undefined;
+  return parsed;
+}
+
 interface ChurnConfig {
   // ═══════════════════════════════════════════════════════════════════════════
   // USER CONFIGURABLE (the ONLY thing you should change)
@@ -258,6 +269,11 @@ interface ChurnConfig {
   onchainMonitorEnabled: boolean;
   onchainMinWhaleTradeUsd: number;
   infuraTier: "core" | "developer" | "team" | "growth";
+
+  // Whale Price-Range Filtering - Filter whale trades by price
+  // Only trades within the specified price range will create signals
+  whalePriceMin?: number; // Minimum price (0-1), e.g., 0.25
+  whalePriceMax?: number; // Maximum price (0-1), e.g., 0.45
 }
 
 function loadConfig(): ChurnConfig {
@@ -397,6 +413,13 @@ function loadConfig(): ChurnConfig {
     // Infura tier plan: "core" (free), "developer" ($50/mo), "team" ($225/mo), "growth" (enterprise)
     // Affects rate limiting to avoid hitting API caps
     infuraTier: parseInfuraTierEnv(process.env.INFURA_TIER),
+
+    // Whale Price-Range Filtering - Filter whale trades by price
+    // When set, only whale trades within [WHALE_PRICE_MIN, WHALE_PRICE_MAX] create signals
+    // If only one is set, acts as a one-sided filter (e.g., only min = "at least 25¢")
+    // If min > max, logs a warning and skips filtering
+    whalePriceMin: parseOptionalFloat(process.env.WHALE_PRICE_MIN),
+    whalePriceMax: parseOptionalFloat(process.env.WHALE_PRICE_MAX),
   };
 }
 
@@ -818,6 +841,7 @@ interface LeaderboardTrade {
   side: "BUY" | "SELL";
   sizeUsd: number;
   timestamp: number;
+  price?: number; // Trade price in [0,1] for price-range filtering
 }
 
 interface TokenBias {
@@ -847,11 +871,76 @@ class BiasAccumulator {
   private readonly config: ChurnConfig;
   private biasChangeCallbacks: ((event: BiasChangeEvent) => void)[] = [];
 
+  // Price range filtering state
+  private priceFilterEnabled = false;
+  private priceFilterInvalid = false; // true if min > max
+  private priceFilterLoggedOnce = false;
+
   // API endpoints - using data-api v1 for leaderboard (gamma-api leaderboard is deprecated)
   private readonly DATA_API = "https://data-api.polymarket.com";
 
   constructor(config: ChurnConfig) {
     this.config = config;
+    this.initPriceRangeFilter();
+  }
+
+  /**
+   * Initialize and validate price range filter settings
+   */
+  private initPriceRangeFilter(): void {
+    const { whalePriceMin, whalePriceMax } = this.config;
+    
+    // Check if any price range filtering is configured
+    if (whalePriceMin !== undefined || whalePriceMax !== undefined) {
+      // Validate min <= max if both are set
+      if (whalePriceMin !== undefined && whalePriceMax !== undefined && whalePriceMin > whalePriceMax) {
+        console.warn(`⚠️ [Price Filter] WHALE_PRICE_MIN (${whalePriceMin}) > WHALE_PRICE_MAX (${whalePriceMax}) - filter DISABLED`);
+        this.priceFilterInvalid = true;
+        this.priceFilterEnabled = false;
+      } else {
+        this.priceFilterEnabled = true;
+        const minStr = whalePriceMin !== undefined ? `${(whalePriceMin * 100).toFixed(0)}¢` : "none";
+        const maxStr = whalePriceMax !== undefined ? `${(whalePriceMax * 100).toFixed(0)}¢` : "none";
+        console.log(`🎯 [Price Filter] Whale trades filtered to price range: min=${minStr}, max=${maxStr}`);
+      }
+    }
+  }
+
+  /**
+   * Check if a trade passes the price range filter
+   * Returns true if trade should be included, false if filtered out
+   */
+  private passesWhalePriceFilter(trade: LeaderboardTrade): boolean {
+    // If filter is disabled or invalid, pass all trades
+    if (!this.priceFilterEnabled || this.priceFilterInvalid) {
+      return true;
+    }
+
+    const { whalePriceMin, whalePriceMax } = this.config;
+    const price = trade.price;
+
+    // If no price available on trade, pass it through (can't filter)
+    if (price === undefined || price === null) {
+      return true;
+    }
+
+    // Check minimum bound
+    if (whalePriceMin !== undefined && price < whalePriceMin) {
+      if (!this.priceFilterLoggedOnce) {
+        debug(`[Price Filter] Trade filtered: price ${(price * 100).toFixed(1)}¢ < min ${(whalePriceMin * 100).toFixed(1)}¢`);
+      }
+      return false;
+    }
+
+    // Check maximum bound
+    if (whalePriceMax !== undefined && price > whalePriceMax) {
+      if (!this.priceFilterLoggedOnce) {
+        debug(`[Price Filter] Trade filtered: price ${(price * 100).toFixed(1)}¢ > max ${(whalePriceMax * 100).toFixed(1)}¢`);
+      }
+      return false;
+    }
+
+    return true;
   }
 
   /**
@@ -1075,7 +1164,8 @@ class BiasAccumulator {
           const tokenId = activity.asset || activity.tokenId;
           if (!tokenId) continue;
 
-          const sizeUsd = activity.usdcSize ?? (Number(activity.size) * Number(activity.price) || 0);
+          const tradePrice = Number(activity.price) || 0;
+          const sizeUsd = activity.usdcSize ?? (Number(activity.size) * tradePrice || 0);
           if (sizeUsd <= 0) continue;
 
           trades.push({
@@ -1085,6 +1175,7 @@ class BiasAccumulator {
             side: "BUY", // Only BUY trades
             sizeUsd,
             timestamp,
+            price: tradePrice > 0 ? tradePrice : undefined,
           });
         }
         return trades;
@@ -1140,12 +1231,33 @@ class BiasAccumulator {
    * Add trades and maintain window
    * Deduplicates by txHash+tokenId+wallet to prevent counting the same trade twice
    * (e.g., from both on-chain events and API polling)
+   * 
+   * Also applies price-range filtering if WHALE_PRICE_MIN/MAX are configured
    */
   private addTrades(trades: LeaderboardTrade[]): void {
     const now = Date.now();
     const windowStart = now - this.config.biasWindowSeconds * 1000;
 
-    for (const trade of trades) {
+    // Apply price range filtering
+    let filteredCount = 0;
+    const filteredTrades = trades.filter(trade => {
+      if (this.passesWhalePriceFilter(trade)) {
+        return true;
+      }
+      filteredCount++;
+      return false;
+    });
+
+    // Log filtering summary (once per batch if any filtered)
+    if (filteredCount > 0 && this.priceFilterEnabled) {
+      const { whalePriceMin, whalePriceMax } = this.config;
+      const minStr = whalePriceMin !== undefined ? `${(whalePriceMin * 100).toFixed(0)}¢` : "none";
+      const maxStr = whalePriceMax !== undefined ? `${(whalePriceMax * 100).toFixed(0)}¢` : "none";
+      console.log(`🎯 [Price Filter] Filtered ${filteredCount}/${trades.length} whale trades (range: ${minStr}-${maxStr})`);
+      this.priceFilterLoggedOnce = true;
+    }
+
+    for (const trade of filteredTrades) {
       const existing = this.trades.get(trade.tokenId) || [];
       
       // Deduplication: check if this trade already exists
