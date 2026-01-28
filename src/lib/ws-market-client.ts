@@ -12,15 +12,13 @@
  * - Health metrics and logging
  * - Keepalive via "PING" text messages (not WebSocket ping frames)
  *
- * Official endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/
- * Market Channel: Subscribe via payload {"type":"subscribe","channel":"market","assets_ids":[...]}
- *
- * IMPORTANT: Both Market and User channels use the SAME base URL.
- * Channel selection is done via subscribe payload, NOT URL path.
+ * Official endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/market
+ * Per Polymarket docs: URL path determines channel (market vs user)
+ * Market Channel: Subscribe via payload {"type":"market","assets_ids":[...]}
  */
 
 import WebSocket from "ws";
-import { POLYMARKET_WS } from "./constants";
+import { POLYMARKET_WS, getMarketWsUrl } from "./constants";
 import { getMarketDataStore, type OrderbookLevel } from "./market-data-store";
 
 // ============================================================================
@@ -48,17 +46,15 @@ export interface WsClientOptions {
   onMessage?: (type: string, data: any) => void;
 }
 
-/** Subscription message format */
+/** Initial subscription message format (per Polymarket docs) */
 interface SubscribeMessage {
-  type: "subscribe";
-  channel: "market";
+  type: "market";
   assets_ids: string[];
 }
 
-/** Unsubscribe message format */
-interface UnsubscribeMessage {
-  type: "unsubscribe";
-  channel: "market";
+/** Additional subscription/unsubscription message format */
+interface SubscriptionOperationMessage {
+  operation: "subscribe" | "unsubscribe";
   assets_ids: string[];
 }
 
@@ -127,7 +123,8 @@ export class WebSocketMarketClient {
   private onMessageCb?: (type: string, data: any) => void;
 
   constructor(options?: WsClientOptions) {
-    this.url = options?.url ?? POLYMARKET_WS.BASE_URL;
+    // Use getMarketWsUrl() for correct path: /ws/market (not just /ws/)
+    this.url = options?.url ?? getMarketWsUrl();
     this.reconnectBaseMs =
       options?.reconnectBaseMs ?? POLYMARKET_WS.RECONNECT_BASE_MS;
     this.reconnectMaxMs =
@@ -322,13 +319,13 @@ export class WebSocketMarketClient {
       // Start stable connection timer to reset backoff
       this.startStableConnectionTimer();
 
-      // Send pending subscriptions
+      // Send pending subscriptions (use initial format for first subscribe after connect)
       if (this.pendingSubscriptions.size > 0) {
-        this.sendSubscribe(Array.from(this.pendingSubscriptions));
+        this.sendSubscribe(Array.from(this.pendingSubscriptions), true);
         this.pendingSubscriptions.clear();
       } else if (this.subscriptions.size > 0) {
-        // Re-subscribe to all on reconnect
-        this.sendSubscribe(Array.from(this.subscriptions));
+        // Re-subscribe to all on reconnect (use initial format)
+        this.sendSubscribe(Array.from(this.subscriptions), true);
       }
 
       this.onConnectCb?.();
@@ -375,14 +372,21 @@ export class WebSocketMarketClient {
       }
     });
 
-    this.ws.on("error", (err: Error & { code?: string }) => {
-      // Log detailed error info including any status codes
-      const errorInfo = err.code
-        ? `${err.message} (code: ${err.code})`
-        : err.message;
-      console.error(`[WS-Market] WebSocket error: ${errorInfo}`);
-      this.onErrorCb?.(err);
-    });
+    this.ws.on(
+      "error",
+      (err: Error & { code?: string; statusCode?: number }) => {
+        // Log detailed error info including URL, any status codes, and error codes
+        // This helps diagnose handshake failures (e.g., 404 from wrong URL path)
+        const parts: string[] = [err.message];
+        if (err.code) parts.push(`code: ${err.code}`);
+        if (err.statusCode) parts.push(`statusCode: ${err.statusCode}`);
+        const errorInfo = parts.join(", ");
+        console.error(
+          `[WS-Market] WebSocket error connecting to ${this.url}: ${errorInfo}`,
+        );
+        this.onErrorCb?.(err);
+      },
+    );
   }
 
   private handleMessage(message: any): void {
@@ -518,14 +522,19 @@ export class WebSocketMarketClient {
   // Private - Message Sending
   // ═══════════════════════════════════════════════════════════════════════════
 
-  private sendSubscribe(tokenIds: string[]): void {
+  /**
+   * Send initial subscribe or additional subscription.
+   * Per Polymarket docs:
+   * - Initial: {"type": "market", "assets_ids": [...]}
+   * - Additional: {"operation": "subscribe", "assets_ids": [...]}
+   */
+  private sendSubscribe(tokenIds: string[], isInitial = false): void {
     if (!this.ws || this.state !== "CONNECTED") return;
 
-    const message: SubscribeMessage = {
-      type: "subscribe",
-      channel: "market",
-      assets_ids: tokenIds,
-    };
+    // Use initial format on first connect, operation format for additions
+    const message: SubscribeMessage | SubscriptionOperationMessage = isInitial
+      ? { type: "market", assets_ids: tokenIds }
+      : { operation: "subscribe", assets_ids: tokenIds };
 
     try {
       this.ws.send(JSON.stringify(message));
@@ -538,9 +547,8 @@ export class WebSocketMarketClient {
   private sendUnsubscribe(tokenIds: string[]): void {
     if (!this.ws || this.state !== "CONNECTED") return;
 
-    const message: UnsubscribeMessage = {
-      type: "unsubscribe",
-      channel: "market",
+    const message: SubscriptionOperationMessage = {
+      operation: "unsubscribe",
       assets_ids: tokenIds,
     };
 
