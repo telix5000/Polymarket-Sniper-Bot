@@ -77,7 +77,7 @@ async function getProxyAddress(
     };
 
     return proxyAddress;
-  } catch (err) {
+  } catch {
     logger?.debug?.(`No proxy wallet found (using main wallet)`);
     return null;
   }

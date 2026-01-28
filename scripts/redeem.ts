@@ -90,7 +90,7 @@ async function main() {
         logger.info(`   Gained: +$${usdcGain.toFixed(2)} 🎉`);
       }
       logger.info(``);
-    } catch (err) {
+    } catch {
       logger.warn(`Could not fetch updated USDC balance`);
     }
 
