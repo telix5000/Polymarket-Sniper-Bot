@@ -2350,15 +2350,14 @@ class DecisionEngine {
       checks.priceDeviation.reason = `Deviation ${deviation.toFixed(1)}¢ < ${this.config.entryBandCents}¢`;
     }
 
-    // 4) Check entry price bounds
+    // 4) Check entry price bounds with buffer
+    // Entry bounds ensure room to win (TP at +14¢) and room to be wrong (up to -30¢)
+    // The buffer (4¢) provides margin for slippage and ensures we don't enter too close to bounds
     const entryPriceCents =
       params.bias === "LONG"
         ? params.orderbook.bestAskCents
         : params.orderbook.bestBidCents;
 
-    // 4) Check entry price bounds with buffer
-    // Entry bounds ensure room to win (TP at +14¢) and room to be wrong (up to -30¢)
-    // The buffer (4¢) provides margin for slippage and ensures we don't enter too close to bounds
     const minBound = this.config.minEntryPriceCents + this.config.entryBufferCents;
     const maxBound = this.config.maxEntryPriceCents - this.config.entryBufferCents;
     
@@ -3315,6 +3314,10 @@ class ExecutionEngine {
         }
 
         const bestBid = parseFloat(bids[0].price);
+        // NOTE: We estimate shares using the hedge entry price. If the hedge filled at a different
+        // price due to slippage, this may be slightly inaccurate. For improved accuracy, consider
+        // tracking actual filled shares when hedges are created. This conservative approach errs
+        // on the side of attempting to sell the estimated amount, which FOK will reject if too large.
         const shares = hedge.sizeUsd / (hedge.entryPriceCents / 100);
 
         // Create sell order with FOK to ensure confirmed fill
