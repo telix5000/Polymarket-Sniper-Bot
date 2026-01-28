@@ -442,8 +442,8 @@ ${contextStr}
    * Report diagnostic workflow results to GitHub Issues
    * Called when DIAG_MODE completes to report the results
    *
-   * Enhanced (Parts E, G): Includes VPN routing policy, spread guardrail details,
-   * and hedge simulation output when DIAG_HEDGE_SIMULATE=true.
+   * Enhanced: Includes VPN routing policy, key failures, candidate rejection summary,
+   * and next actions section.
    */
   async reportDiagnosticWorkflow(details: {
     traceId: string;
@@ -461,12 +461,24 @@ ${contextStr}
     vpnRoutingPolicy?: {
       vpnActive: boolean;
       vpnType: string;
+      defaultsApplied?: {
+        VPN_BYPASS_RPC: boolean;
+        VPN_BYPASS_POLYMARKET_READS: boolean;
+        VPN_BYPASS_POLYMARKET_WS: boolean;
+      };
+      envOverrides?: Record<string, string>;
+      bypassedHosts?: string[];
+      writeHosts?: string[];
       writeRouteCheck?: Array<{
         hostname: string;
+        resolvedIp?: string | null;
+        outgoingInterface?: string | null;
+        outgoingGateway?: string | null;
+        routeThroughVpn?: boolean;
         mismatch: boolean;
       }>;
     };
-    // Optional guardrail summary (Part G)
+    // Optional guardrail summary
     guardrailSummary?: {
       totalBuyAttempts: number;
       blockedBySpread: number;
@@ -474,11 +486,70 @@ ${contextStr}
       blockedByPriceCap: number;
       allowedBuys: number;
     };
+    // Candidate rejection summary
+    candidateRejectionSummary?: {
+      totalCandidates: number;
+      byRule: {
+        askTooHigh: number;
+        spreadTooWide: number;
+        emptyBook: number;
+        cooldown: number;
+      };
+      sampleRejected?: Array<{
+        tokenId: string;
+        rule: string;
+        bestBid?: number;
+        bestAsk?: number;
+      }>;
+    };
+    // Key failures encountered
+    keyFailures?: Array<{
+      type: "CLOUDFLARE_BLOCKED" | "WRITE_ROUTE_MISMATCH" | "EMPTY_BOOK" | "AUTH_FAILED" | "OTHER";
+      host?: string;
+      statusCode?: number;
+      marketId?: string;
+      tokenId?: string;
+      details?: string;
+    }>;
+    // Bot version/commit info
+    botVersion?: string;
+    commitSha?: string;
+    // Diagnostic config used
+    diagConfig?: {
+      whaleTimeoutSec?: number;
+      orderTimeoutSec?: number;
+      maxAttempts?: number;
+      bookMaxAsk?: number;
+      bookMaxSpread?: number;
+    };
   }): Promise<boolean> {
     const successCount = details.steps.filter((s) => s.result === "OK").length;
     const totalSteps = details.steps.length;
 
-    // Format step results with enhanced spread guardrail details
+    // ═══════════════════════════════════════════════════════════════════════
+    // 1) HEADER
+    // ═══════════════════════════════════════════════════════════════════════
+    let headerSection = `## 📊 Diagnostic Report\n\n`;
+    headerSection += `| Field | Value |\n|-------|-------|\n`;
+    headerSection += `| **Trace ID** | \`${details.traceId}\` |\n`;
+    headerSection += `| **Timestamp** | ${new Date().toISOString()} |\n`;
+    headerSection += `| **Duration** | ${(details.durationMs / 1000).toFixed(1)}s |\n`;
+    if (details.botVersion) {
+      headerSection += `| **Bot Version** | ${details.botVersion} |\n`;
+    }
+    if (details.commitSha) {
+      headerSection += `| **Commit** | \`${details.commitSha.slice(0, 7)}\` |\n`;
+    }
+    if (details.diagConfig) {
+      const cfg = details.diagConfig;
+      headerSection += `| **Whale Timeout** | ${cfg.whaleTimeoutSec ?? "N/A"}s |\n`;
+      headerSection += `| **Order Timeout** | ${cfg.orderTimeoutSec ?? "N/A"}s |\n`;
+      headerSection += `| **Max Attempts** | ${cfg.maxAttempts ?? "N/A"} |\n`;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 2) STEP RESULTS
+    // ═══════════════════════════════════════════════════════════════════════
     const stepLines = details.steps
       .map((s) => {
         const icon =
@@ -496,7 +567,7 @@ ${contextStr}
 
         let detailBlock = "";
 
-        // Part G: Include spread guardrail details for rejected buys
+        // Include spread guardrail details for rejected buys
         if (
           s.result === "REJECTED" &&
           s.reason === "spread_too_wide" &&
@@ -524,7 +595,7 @@ ${contextStr}
           }
         }
 
-        // Part C: Include hedge simulation output
+        // Include hedge simulation output
         if (
           s.detail?.simulationMode === "MOCK_POSITION" &&
           s.detail?.hedgeSimEvent
@@ -540,39 +611,184 @@ ${contextStr}
       })
       .join("\n");
 
-    // Part E: Include VPN routing policy summary
+    const stepResultsSection = `\n\n## 📋 Step Results\n${stepLines}`;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 3) VPN ROUTING POLICY (EFFECTIVE)
+    // ═══════════════════════════════════════════════════════════════════════
     let vpnSection = "";
     if (details.vpnRoutingPolicy) {
       const vp = details.vpnRoutingPolicy;
-      vpnSection = `\n\n## VPN Routing Policy\n- **VPN Active**: ${vp.vpnActive}\n- **VPN Type**: ${vp.vpnType}`;
+      vpnSection = `\n\n## 🔐 VPN Routing Policy (Effective)\n`;
+      vpnSection += `| Setting | Value |\n|---------|-------|\n`;
+      vpnSection += `| **VPN Active** | ${vp.vpnActive ? "✅ Yes" : "❌ No"} |\n`;
+      vpnSection += `| **VPN Type** | ${vp.vpnType} |\n`;
+
+      if (vp.defaultsApplied) {
+        vpnSection += `\n**Defaults Applied:**\n`;
+        vpnSection += `- VPN_BYPASS_RPC: ${vp.defaultsApplied.VPN_BYPASS_RPC}\n`;
+        vpnSection += `- VPN_BYPASS_POLYMARKET_READS: ${vp.defaultsApplied.VPN_BYPASS_POLYMARKET_READS}\n`;
+        vpnSection += `- VPN_BYPASS_POLYMARKET_WS: ${vp.defaultsApplied.VPN_BYPASS_POLYMARKET_WS}\n`;
+      }
+
+      if (vp.envOverrides && Object.keys(vp.envOverrides).length > 0) {
+        vpnSection += `\n**Environment Overrides:**\n`;
+        for (const [key, val] of Object.entries(vp.envOverrides)) {
+          vpnSection += `- ${key}: ${val}\n`;
+        }
+      }
+
+      if (vp.bypassedHosts && vp.bypassedHosts.length > 0) {
+        vpnSection += `\n**Bypassed Hosts:** ${vp.bypassedHosts.join(", ")}\n`;
+      }
+
       if (vp.writeRouteCheck && vp.writeRouteCheck.length > 0) {
         const misrouted = vp.writeRouteCheck.filter((c) => c.mismatch);
         if (misrouted.length > 0) {
-          vpnSection += `\n- ⚠️ **WRITE_ROUTE_MISMATCH**: ${misrouted.map((c) => c.hostname).join(", ")}`;
+          vpnSection += `\n### ⚠️ WRITE_ROUTE_MISMATCH - LIKELY GEO-BLOCK CAUSE\n`;
+          vpnSection += `The following WRITE hosts are NOT routed through VPN:\n`;
+          for (const m of misrouted) {
+            vpnSection += `- **${m.hostname}**: IP=${m.resolvedIp ?? "N/A"}, Interface=${m.outgoingInterface ?? "N/A"}, Gateway=${m.outgoingGateway ?? "N/A"}\n`;
+          }
         } else {
-          vpnSection += `\n- ✅ All WRITE hosts route through VPN`;
+          vpnSection += `\n✅ **All WRITE hosts route through VPN correctly**\n`;
         }
       }
     }
 
-    // Part G: Include guardrail summary
+    // ═══════════════════════════════════════════════════════════════════════
+    // 4) KEY FAILURES
+    // ═══════════════════════════════════════════════════════════════════════
+    let keyFailuresSection = "";
+    if (details.keyFailures && details.keyFailures.length > 0) {
+      keyFailuresSection = `\n\n## ❌ Key Failures\n`;
+      for (const failure of details.keyFailures) {
+        keyFailuresSection += `\n### ${failure.type}\n`;
+        if (failure.host) keyFailuresSection += `- **Host**: ${failure.host}\n`;
+        if (failure.statusCode)
+          keyFailuresSection += `- **Status**: ${failure.statusCode}\n`;
+        if (failure.marketId)
+          keyFailuresSection += `- **Market**: ${failure.marketId}\n`;
+        if (failure.tokenId)
+          keyFailuresSection += `- **Token**: ${failure.tokenId.slice(0, 20)}...\n`;
+        if (failure.details)
+          keyFailuresSection += `- **Details**: ${failure.details}\n`;
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 5) CANDIDATE REJECTION SUMMARY
+    // ═══════════════════════════════════════════════════════════════════════
+    let candidateSection = "";
+    if (details.candidateRejectionSummary) {
+      const crs = details.candidateRejectionSummary;
+      candidateSection = `\n\n## 📊 Candidate Rejection Summary\n`;
+      candidateSection += `| Metric | Count |\n|--------|-------|\n`;
+      candidateSection += `| Total Candidates | ${crs.totalCandidates} |\n`;
+      candidateSection += `| Ask Too High | ${crs.byRule.askTooHigh} |\n`;
+      candidateSection += `| Spread Too Wide | ${crs.byRule.spreadTooWide} |\n`;
+      candidateSection += `| Empty Book | ${crs.byRule.emptyBook} |\n`;
+      candidateSection += `| Cooldown | ${crs.byRule.cooldown} |\n`;
+
+      if (crs.sampleRejected && crs.sampleRejected.length > 0) {
+        candidateSection += `\n**Sample Rejected Entries (up to 3):**\n`;
+        for (const sample of crs.sampleRejected.slice(0, 3)) {
+          candidateSection += `- Token: \`${sample.tokenId.slice(0, 16)}...\` | Rule: ${sample.rule} | Bid: ${sample.bestBid?.toFixed(2) ?? "N/A"} | Ask: ${sample.bestAsk?.toFixed(2) ?? "N/A"}\n`;
+        }
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 6) GUARDRAIL SUMMARY
+    // ═══════════════════════════════════════════════════════════════════════
     let guardrailSection = "";
     if (details.guardrailSummary) {
       const gs = details.guardrailSummary;
-      guardrailSection = `\n\n## Guardrail Summary\n- **Total Buy Attempts**: ${gs.totalBuyAttempts}\n- **Blocked by Spread**: ${gs.blockedBySpread}\n- **Blocked by Liquidity**: ${gs.blockedByLiquidity}\n- **Blocked by Price Cap**: ${gs.blockedByPriceCap}\n- **Allowed Buys**: ${gs.allowedBuys}`;
+      guardrailSection = `\n\n## 🛡️ Guardrail Summary\n`;
+      guardrailSection += `| Metric | Count |\n|--------|-------|\n`;
+      guardrailSection += `| Total Buy Attempts | ${gs.totalBuyAttempts} |\n`;
+      guardrailSection += `| Blocked by Spread | ${gs.blockedBySpread} |\n`;
+      guardrailSection += `| Blocked by Liquidity | ${gs.blockedByLiquidity} |\n`;
+      guardrailSection += `| Blocked by Price Cap | ${gs.blockedByPriceCap} |\n`;
+      guardrailSection += `| Allowed Buys | ${gs.allowedBuys} |\n`;
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 7) NEXT ACTIONS (AUTO-GENERATED)
+    // ═══════════════════════════════════════════════════════════════════════
+    let nextActionsSection = "";
+    const nextActions: string[] = [];
+
+    // Check for write route mismatch
+    if (
+      details.vpnRoutingPolicy?.writeRouteCheck?.some((c) => c.mismatch)
+    ) {
+      nextActions.push(
+        "🔧 **Fix VPN routing**: Ensure clob.polymarket.com routes through the VPN interface (wg0/tun0). Check `ip route get <clob_ip>` and verify it doesn't use the pre-VPN gateway.",
+      );
+    }
+
+    // Check for Cloudflare blocked
+    if (
+      details.keyFailures?.some((f) => f.type === "CLOUDFLARE_BLOCKED")
+    ) {
+      nextActions.push(
+        "🌐 **Cloudflare 403**: Verify WRITE host routes through VPN. Check VPN server IP isn't geo-blocked. Try a different VPN endpoint location.",
+      );
+    }
+
+    // Check for empty book rejections
+    const emptyBookCount =
+      details.candidateRejectionSummary?.byRule.emptyBook ?? 0;
+    const spreadTooWideCount =
+      details.candidateRejectionSummary?.byRule.spreadTooWide ?? 0;
+    if (emptyBookCount > 0 || spreadTooWideCount > 0) {
+      nextActions.push(
+        "📈 **Empty/Wide books**: Adjust candidate selection to skip dead markets. Increase DIAG_MAX_CANDIDATE_ATTEMPTS. Consider scanning different market categories.",
+      );
+    }
+
+    // Check for auth failures
+    if (details.keyFailures?.some((f) => f.type === "AUTH_FAILED")) {
+      nextActions.push(
+        "🔑 **Auth failed**: Verify PRIVATE_KEY is correct. Check CLOB API credentials. Ensure wallet has sufficient allowance.",
+      );
+    }
+
+    // Generic VPN not active warning
+    if (details.vpnRoutingPolicy && !details.vpnRoutingPolicy.vpnActive) {
+      nextActions.push(
+        "⚠️ **VPN not active**: Orders to clob.polymarket.com may be geo-blocked. Enable VPN with WIREGUARD_ENABLED=true or OPENVPN_ENABLED=true.",
+      );
+    }
+
+    if (nextActions.length > 0) {
+      nextActionsSection = `\n\n## 🔧 Next Actions\n`;
+      for (const action of nextActions) {
+        nextActionsSection += `- ${action}\n`;
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 8) ATTACHMENTS / ARTIFACTS
+    // ═══════════════════════════════════════════════════════════════════════
+    let attachmentsSection = `\n\n## 📎 Attachments\n`;
+    attachmentsSection += `- Diagnostic trace file: \`/app/diag-trace.jsonl\` (available as GitHub Actions artifact)\n`;
+    attachmentsSection += `- Trace ID for log correlation: \`${details.traceId}\`\n`;
 
     // Always use at least "warning" severity for diagnostic reports
     // to ensure they pass the default minSeverity threshold ("warning")
     return this.report({
       title: `Diagnostic Workflow: ${successCount}/${totalSteps} steps succeeded`,
       message:
-        `Diagnostic workflow completed.\n\n` +
-        `**Trace ID**: ${details.traceId}\n` +
-        `**Duration**: ${(details.durationMs / 1000).toFixed(1)}s\n\n` +
-        `## Step Results\n${stepLines}` +
+        headerSection +
+        stepResultsSection +
         vpnSection +
-        guardrailSection,
+        keyFailuresSection +
+        candidateSection +
+        guardrailSection +
+        nextActionsSection +
+        attachmentsSection,
       severity: "warning",
       context: {
         traceId: details.traceId,
