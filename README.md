@@ -1,6 +1,6 @@
-# Polymarket Sniper Bot
+# Polymarket Bot
 
-A trading bot for Polymarket that follows whale wallets.
+A trading bot for Polymarket prediction markets with real-time terminal dashboard.
 
 ## Quick Start
 

@@ -300,7 +300,7 @@ ${contextStr}
 ${report.stackTrace ? `### Stack Trace\n\`\`\`\n${this.sanitize(report.stackTrace.slice(0, 2000))}\n\`\`\`` : ""}
 
 ---
-*This issue was automatically created by the Polymarket Sniper Bot error reporter.*
+*This issue was automatically created by the Polymarket Bot error reporter.*
 `;
   }
 }

@@ -1,7 +1,7 @@
 version: "3.9"
 
 services:
-  polymarket-sniper-bot:
+  polymarket-bot:
     build: .
     restart: unless-stopped
     privileged: true
@@ -17,6 +17,9 @@ services:
       # Trading
       - LIVE_TRADING=${LIVE_TRADING:-false}
 
+      # Dashboard (optional) - Enable live terminal dashboard
+      - DASHBOARD_ENABLED=${DASHBOARD_ENABLED:-false}
+
       # VPN (optional) - Set WIREGUARD_ENABLED=true or OPENVPN_ENABLED=true
       - WIREGUARD_ENABLED=${WIREGUARD_ENABLED:-false}
       - WG_CONFIG=${WG_CONFIG}
@@ -30,5 +33,8 @@ services:
 
       # Copy Trading (optional)
       - TARGET_ADDRESSES=${TARGET_ADDRESSES}
+    # Enable TTY for dashboard mode (required for terminal UI)
+    tty: true
+    stdin_open: true
     tmpfs:
       - /data:size=32m,mode=0700
