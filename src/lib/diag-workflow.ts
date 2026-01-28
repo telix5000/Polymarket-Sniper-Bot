@@ -1353,7 +1353,7 @@ export function formatRejectionStatsSummary(
  * Helps understand WHY a trade was rejected.
  */
 export type MarketStateClassification =
-  | "NEARLY_RESOLVED" // bestAsk >= 0.95
+  | "NEARLY_RESOLVED" // bestAsk > 0.95
   | "EMPTY_OR_FAKE_BOOK" // bestBid <= 0.01 AND bestAsk >= 0.99
   | "LOW_LIQUIDITY" // totalDepth < minDepth (not implemented yet)
   | "NORMAL_BUT_WIDE" // spread exceeds threshold but not pathological
@@ -1402,8 +1402,8 @@ export function classifyMarketState(
     return "EMPTY_OR_FAKE_BOOK";
   }
 
-  // Check for nearly resolved market
-  if (bestAsk >= 0.95) {
+  // Check for nearly resolved market (use strict > to match trading decision)
+  if (bestAsk > 0.95) {
     return "NEARLY_RESOLVED";
   }
 
@@ -2485,7 +2485,11 @@ async function runHedgeVerificationStep(
       );
 
       const hedgeConfig = deps.hedgeConfig ?? DEFAULT_HEDGE_CONFIG;
-      const simulatedSignalPrice = 0.5; // Default 50¢ if no price available
+      // Prefer entry price from buyContext if available; fall back to 50¢ default
+      const simulatedSignalPrice =
+        buyContext.entryPriceCents !== undefined
+          ? buyContext.entryPriceCents / 100
+          : 0.5;
 
       const hedgeSimEvent = runHedgeSimulation(
         buyContext.tokenId,

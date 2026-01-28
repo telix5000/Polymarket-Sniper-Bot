@@ -8,7 +8,6 @@ import {
   formatSpreadGuardrailDiagnostic,
   checkBookTradeable,
   DIAG_MAX_BEST_ASK,
-  DIAG_MAX_SPREAD,
   // Book sanity pre-filter
   performBookSanityCheck,
   isInCooldown,
@@ -274,10 +273,15 @@ describe("classifyMarketState", () => {
     assert.strictEqual(classifyMarketState(0.005, 1.0), "EMPTY_OR_FAKE_BOOK");
   });
 
-  test("should classify as NEARLY_RESOLVED when bestAsk >= 0.95", () => {
-    // classifyMarketState uses >= for classification (not trading decision)
-    assert.strictEqual(classifyMarketState(0.9, 0.95), "NEARLY_RESOLVED");
-    assert.strictEqual(classifyMarketState(0.8, 0.96), "NEARLY_RESOLVED");
+  test("should classify as NEARLY_RESOLVED when bestAsk > 0.95", () => {
+    // classifyMarketState uses > for classification (matching trading decision)
+    assert.strictEqual(classifyMarketState(0.9, 0.96), "NEARLY_RESOLVED");
+    assert.strictEqual(classifyMarketState(0.8, 0.99), "NEARLY_RESOLVED");
+  });
+
+  test("should classify as TRADEABLE at exactly bestAsk=0.95 (boundary)", () => {
+    // bestAsk = 0.95 exactly is considered tradeable (uses strict > inequality)
+    assert.strictEqual(classifyMarketState(0.9, 0.95), "TRADEABLE");
   });
 
   test("should classify as NORMAL_BUT_WIDE when spread > threshold", () => {
@@ -421,6 +425,15 @@ describe("checkBookTradeable", () => {
     const result = checkBookTradeable(0.45, 0.55);
 
     assert.strictEqual(result.tradeable, true);
+    assert.ok(result.diagnostic, "Should include diagnostic");
+    assert.strictEqual(result.diagnostic?.guardrailType, "OK");
+  });
+
+  test("should return tradeable=true at exactly bestAsk=0.95 (boundary)", () => {
+    // Trading is allowed at exactly 0.95 (strict inequality > is used, not >=)
+    const result = checkBookTradeable(0.9, 0.95);
+
+    assert.strictEqual(result.tradeable, true, "bestAsk=0.95 should be tradeable");
     assert.ok(result.diagnostic, "Should include diagnostic");
     assert.strictEqual(result.diagnostic?.guardrailType, "OK");
   });
