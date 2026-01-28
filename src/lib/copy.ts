@@ -58,14 +58,26 @@ function generateTradeKey(trade: {
   if (typeof trade.outcomeIndex === "number") {
     outcomeIndex = trade.outcomeIndex;
   } else if (trade.outcome) {
-    outcomeIndex = trade.outcome.toUpperCase() === "NO" ? 1 : 0;
+    const upperOutcome = trade.outcome.toUpperCase();
+    if (upperOutcome === "NO") {
+      outcomeIndex = 1;
+    } else if (upperOutcome === "YES") {
+      outcomeIndex = 0;
+    } else {
+      // Unexpected outcome value - use sentinel to avoid incorrect deduplication
+      console.warn(`[copy] Unexpected outcome value: ${trade.outcome}`);
+      outcomeIndex = -1;
+    }
   } else {
-    // Default to 0 (YES) if both are missing
-    outcomeIndex = 0;
+    // Both outcomeIndex and outcome missing - use sentinel to indicate incomplete data
+    outcomeIndex = -1;
   }
   
   const side = (trade.side || "BUY").toUpperCase();
-  const size = Number(trade.size) || 0;
+  
+  // Use sentinel value (-1) for missing/invalid size to avoid incorrect deduplication
+  const parsedSize = Number(trade.size);
+  const size = Number.isFinite(parsedSize) ? parsedSize : -1;
   
   // Use higher precision (6 decimals) to avoid collisions with similar-sized trades
   return `${txHash}:${conditionId}:${outcomeIndex}:${side}:${size.toFixed(6)}`;
@@ -120,6 +132,7 @@ export async function fetchRecentTrades(
       
       try {
         // Get cursor for this wallet (timestamp of last seen trade)
+        // Note: Using strict < to handle trades with identical timestamps
         const cursor = walletCursors.get(addr.toLowerCase()) || 0;
         
         const url = `${POLYMARKET_API.DATA}/trades?user=${addr}&limit=${limitPerWallet}`;
@@ -135,8 +148,9 @@ export async function fetchRecentTrades(
           // Skip if older than max age
           if (now - ts > maxAgeMs) continue;
           
-          // Skip if before cursor (already processed)
-          if (ts <= cursor) continue;
+          // Skip if at or before cursor (already processed)
+          // Use strict < to avoid missing trades with the same timestamp
+          if (ts < cursor) continue;
           
           // Generate composite dedup key
           const key = generateTradeKey({
@@ -159,11 +173,21 @@ export async function fetchRecentTrades(
           // Track max timestamp for cursor update
           maxTimestamp = Math.max(maxTimestamp, ts);
 
-          // Build normalized trade signal
-          // Normalize outcome to "YES" or "NO" (case-insensitive)
-          let normalizedOutcome: "YES" | "NO" = "YES";
-          if (t.outcomeIndex === 1 || t.outcome?.toUpperCase() === "NO") {
-            normalizedOutcome = "NO";
+          // Normalize outcome to "YES" or "NO" (case-insensitive) with explicit validation
+          let normalizedOutcome: "YES" | "NO" | null = null;
+          if (typeof t.outcomeIndex === "number") {
+            normalizedOutcome = t.outcomeIndex === 1 ? "NO" : "YES";
+          } else if (typeof t.outcome === "string") {
+            const upper = t.outcome.toUpperCase();
+            if (upper === "YES" || upper === "NO") {
+              normalizedOutcome = upper as "YES" | "NO";
+            }
+          }
+          
+          // Skip trade if outcome cannot be determined reliably
+          if (!normalizedOutcome) {
+            console.warn(`[copy] Skipping trade with unknown outcome for wallet ${addr.slice(0, 10)}...`);
+            continue;
           }
           
           walletTrades.push({
@@ -181,12 +205,17 @@ export async function fetchRecentTrades(
           });
         }
         
-        // Update cursor for this wallet
+        // Update cursor for this wallet (only if we processed new trades)
+        // Note: cursor is not updated if all trades were skipped - this is intentional
         if (maxTimestamp > cursor) {
           walletCursors.set(addr.toLowerCase(), maxTimestamp);
         }
-      } catch {
-        // Continue on error - individual wallet failure shouldn't stop others
+      } catch (error) {
+        // Log error but continue - individual wallet failure shouldn't stop others
+        console.error(
+          `[copy] Error fetching trades for wallet ${addr.slice(0, 10)}...:`,
+          error instanceof Error ? error.message : error
+        );
       }
       
       return walletTrades;

@@ -248,7 +248,6 @@ export class GitHubReporter {
     entryFailureReasons: string[];
     orderbookFetchFailures: number;
     onchainMonitorStatus: string;
-    mempoolMonitorStatus: string;
     rpcLatencyMs: number;
     apiLatencyMs: number;
     balance: number;
@@ -266,8 +265,7 @@ export class GitHubReporter {
         `Whale Detection:\n` +
         `- Wallets loaded: ${details.whaleWalletsLoaded}\n` +
         `- Whale trades detected: ${details.whaleTradesDetected}\n` +
-        `- On-chain monitor: ${details.onchainMonitorStatus}\n` +
-        `- Mempool monitor: ${details.mempoolMonitorStatus}\n\n` +
+        `- On-chain monitor: ${details.onchainMonitorStatus}\n\n` +
         `Entry Pipeline:\n` +
         `- Markets scanned: ${details.marketsScanned}\n` +
         `- Entry attempts: ${details.entryAttemptsCount}\n` +
@@ -296,7 +294,6 @@ export class GitHubReporter {
         entrySuccesses: details.entrySuccessCount,
         orderbookFetchFailures: details.orderbookFetchFailures,
         onchainMonitor: details.onchainMonitorStatus,
-        mempoolMonitor: details.mempoolMonitorStatus,
         rpcLatencyMs: details.rpcLatencyMs,
         apiLatencyMs: details.apiLatencyMs,
       },
