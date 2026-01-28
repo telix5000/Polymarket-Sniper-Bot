@@ -82,9 +82,37 @@ describe("mapOrderFailureReason", () => {
     );
   });
 
+  test("should map PRICE_TOO_HIGH to price_out_of_range", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("PRICE_TOO_HIGH"),
+      "price_out_of_range",
+    );
+  });
+
+  test("should map PRICE_TOO_LOW to price_out_of_range", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("PRICE_TOO_LOW"),
+      "price_out_of_range",
+    );
+  });
+
   test("should map orderbook errors to orderbook_unavailable", () => {
     assert.strictEqual(
       mapOrderFailureReason("orderbook unavailable"),
+      "orderbook_unavailable",
+    );
+  });
+
+  test("should map NO_ASKS to orderbook_unavailable", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("NO_ASKS"),
+      "orderbook_unavailable",
+    );
+  });
+
+  test("should map NO_BIDS to orderbook_unavailable", () => {
+    assert.strictEqual(
+      mapOrderFailureReason("NO_BIDS"),
       "orderbook_unavailable",
     );
   });
