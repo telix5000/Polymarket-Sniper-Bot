@@ -724,6 +724,7 @@ export class WebSocketUserClient {
     }
 
     // Subscribe to user channel with auth credentials in payload
+    // NOTE: This message contains sensitive credentials - NEVER log the message content
     const message = {
       type: "user",
       channel: "user",
@@ -738,7 +739,8 @@ export class WebSocketUserClient {
       this.ws.send(JSON.stringify(message));
       console.log("[WS-User] Sent subscribe to user channel with auth");
     } catch (err) {
-      console.error(`[WS-User] Failed to send subscribe: ${err}`);
+      // Do not log the message content as it contains sensitive credentials
+      console.error("[WS-User] Failed to send subscribe message");
     }
   }
 

@@ -4835,7 +4835,7 @@ class ChurnEngine {
       : [];
 
     // Use dynamic reserves for effective bankroll calculation
-    const { effectiveBankroll, reserveUsd } =
+    const { effectiveBankroll } =
       this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
 
     if (effectiveBankroll <= 0) {
