@@ -158,10 +158,16 @@ export function isLiquidOrderbook(
   }
 
   // Check depth if provided
-  if (orderbook.bidDepthUsd !== undefined && orderbook.bidDepthUsd < minDepthUsd) {
+  if (
+    orderbook.bidDepthUsd !== undefined &&
+    orderbook.bidDepthUsd < minDepthUsd
+  ) {
     return false;
   }
-  if (orderbook.askDepthUsd !== undefined && orderbook.askDepthUsd < minDepthUsd) {
+  if (
+    orderbook.askDepthUsd !== undefined &&
+    orderbook.askDepthUsd < minDepthUsd
+  ) {
     return false;
   }
 
@@ -230,7 +236,14 @@ export function calculateSafeLimitPrice(
   };
 
   // Check for invalid orderbook
-  if (!bestBid || !bestAsk || bestBid <= 0 || bestAsk <= 0 || isNaN(bestBid) || isNaN(bestAsk)) {
+  if (
+    !bestBid ||
+    !bestAsk ||
+    bestBid <= 0 ||
+    bestAsk <= 0 ||
+    isNaN(bestBid) ||
+    isNaN(bestAsk)
+  ) {
     diagnostics.rawLimitPrice = 0;
     diagnostics.clampedLimitPrice = 0;
     return {
@@ -272,7 +285,11 @@ export function calculateSafeLimitPrice(
   }
 
   // Check for insufficient depth
-  if (side === "BUY" && askDepthUsd !== undefined && askDepthUsd < minDepthUsd) {
+  if (
+    side === "BUY" &&
+    askDepthUsd !== undefined &&
+    askDepthUsd < minDepthUsd
+  ) {
     diagnostics.rawLimitPrice = bestAsk;
     diagnostics.clampedLimitPrice = bestAsk;
     return {
@@ -284,7 +301,11 @@ export function calculateSafeLimitPrice(
       diagnostics,
     };
   }
-  if (side === "SELL" && bidDepthUsd !== undefined && bidDepthUsd < minDepthUsd) {
+  if (
+    side === "SELL" &&
+    bidDepthUsd !== undefined &&
+    bidDepthUsd < minDepthUsd
+  ) {
     diagnostics.rawLimitPrice = bestBid;
     diagnostics.clampedLimitPrice = bestBid;
     return {
@@ -388,7 +409,10 @@ export function logPriceFormation(
       `Raw: ${(result.rawPrice * 100).toFixed(2)}¢, Clamped: ${(result.limitPrice * 100).toFixed(2)}¢, ` +
       `Spread: ${result.diagnostics.spreadCents.toFixed(1)}¢, Side: ${result.diagnostics.side}`;
 
-    if (result.rejectionReason === "SPREAD_TOO_WIDE" || result.rejectionReason === "INVALID_ORDERBOOK") {
+    if (
+      result.rejectionReason === "SPREAD_TOO_WIDE" ||
+      result.rejectionReason === "INVALID_ORDERBOOK"
+    ) {
       // These are more serious - use error annotation
       if (isGitHubActions()) {
         ghError(message);

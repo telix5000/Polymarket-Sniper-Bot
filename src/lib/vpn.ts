@@ -836,19 +836,43 @@ export interface RoutingPlan {
  * Known hosts and their categories.
  * CRITICAL: clob.polymarket.com is WRITE_API and must NEVER be bypassed.
  */
-const KNOWN_HOSTS: Array<{ hostname: string; category: EgressCategory; expectedRoute: ExpectedRoute }> = [
+const KNOWN_HOSTS: Array<{
+  hostname: string;
+  category: EgressCategory;
+  expectedRoute: ExpectedRoute;
+}> = [
   // READ APIs - can be bypassed for speed
-  { hostname: "gamma-api.polymarket.com", category: "READ_API", expectedRoute: "BYPASS" },
-  { hostname: "data-api.polymarket.com", category: "READ_API", expectedRoute: "BYPASS" },
+  {
+    hostname: "gamma-api.polymarket.com",
+    category: "READ_API",
+    expectedRoute: "BYPASS",
+  },
+  {
+    hostname: "data-api.polymarket.com",
+    category: "READ_API",
+    expectedRoute: "BYPASS",
+  },
 
   // WRITE APIs - MUST go through VPN
-  { hostname: "clob.polymarket.com", category: "WRITE_API", expectedRoute: "VPN" },
+  {
+    hostname: "clob.polymarket.com",
+    category: "WRITE_API",
+    expectedRoute: "VPN",
+  },
 
   // WebSocket - configurable bypass
-  { hostname: "ws-subscriptions-clob.polymarket.com", category: "WEBSOCKET", expectedRoute: "BYPASS" },
+  {
+    hostname: "ws-subscriptions-clob.polymarket.com",
+    category: "WEBSOCKET",
+    expectedRoute: "BYPASS",
+  },
 
   // RPC - typically bypassed
-  { hostname: "polygon-mainnet.infura.io", category: "RPC", expectedRoute: "BYPASS" },
+  {
+    hostname: "polygon-mainnet.infura.io",
+    category: "RPC",
+    expectedRoute: "BYPASS",
+  },
 ];
 
 /**
@@ -863,9 +887,12 @@ function resolveAllIpv4(hostname: string, logger?: Logger): string[] {
 
   try {
     // Get all IPv4 addresses using getent ahostsv4
-    const output = execSync(`getent ahostsv4 ${hostname} 2>/dev/null | awk '{print $1}' | sort -u`, {
-      encoding: "utf8",
-    }).trim();
+    const output = execSync(
+      `getent ahostsv4 ${hostname} 2>/dev/null | awk '{print $1}' | sort -u`,
+      {
+        encoding: "utf8",
+      },
+    ).trim();
 
     if (!output) return [];
 
@@ -887,7 +914,9 @@ function getRouteForIp(ip: string): { interface?: string; gateway?: string } {
 
   try {
     // ip route get <ip> shows the route used to reach that IP
-    const output = execSync(`ip route get ${ip} 2>/dev/null`, { encoding: "utf8" }).trim();
+    const output = execSync(`ip route get ${ip} 2>/dev/null`, {
+      encoding: "utf8",
+    }).trim();
 
     // Parse output like: "1.2.3.4 via 10.0.0.1 dev eth0 src 192.168.1.2"
     const viaMatch = output.match(/via\s+(\d+\.\d+\.\d+\.\d+)/);
@@ -905,7 +934,10 @@ function getRouteForIp(ip: string): { interface?: string; gateway?: string } {
 /**
  * Check if a route goes through VPN (i.e., NOT through the pre-VPN gateway/interface).
  */
-function isRouteThroughVpn(route: { interface?: string; gateway?: string }): boolean {
+function isRouteThroughVpn(route: {
+  interface?: string;
+  gateway?: string;
+}): boolean {
   if (!preVpnRouting?.gateway || !preVpnRouting?.iface) {
     // Can't determine - assume VPN if we have an interface
     return !!route.interface;
@@ -927,7 +959,10 @@ function isRouteThroughVpn(route: { interface?: string; gateway?: string }): boo
  * @param logger - Optional logger
  * @returns Routing plan with all hosts and their routes
  */
-export function generateRoutingPlan(rpcUrl?: string, logger?: Logger): RoutingPlan {
+export function generateRoutingPlan(
+  rpcUrl?: string,
+  logger?: Logger,
+): RoutingPlan {
   const hosts: HostRoutingInfo[] = [];
 
   // Build host list including custom RPC
@@ -941,7 +976,8 @@ export function generateRoutingPlan(rpcUrl?: string, logger?: Logger): RoutingPl
         hostsToCheck.push({
           hostname: rpcHostname,
           category: "RPC",
-          expectedRoute: process.env.VPN_BYPASS_RPC === "false" ? "VPN" : "BYPASS",
+          expectedRoute:
+            process.env.VPN_BYPASS_RPC === "false" ? "VPN" : "BYPASS",
         });
       }
     } catch {
@@ -955,17 +991,26 @@ export function generateRoutingPlan(rpcUrl?: string, logger?: Logger): RoutingPl
     let expectedRoute = hostConfig.expectedRoute;
 
     // WebSocket bypass is configurable
-    if (hostConfig.category === "WEBSOCKET" && process.env.VPN_BYPASS_POLYMARKET_WS === "false") {
+    if (
+      hostConfig.category === "WEBSOCKET" &&
+      process.env.VPN_BYPASS_POLYMARKET_WS === "false"
+    ) {
       expectedRoute = "VPN";
     }
 
     // READ API bypass is configurable
-    if (hostConfig.category === "READ_API" && process.env.VPN_BYPASS_POLYMARKET_READS !== "true") {
+    if (
+      hostConfig.category === "READ_API" &&
+      process.env.VPN_BYPASS_POLYMARKET_READS !== "true"
+    ) {
       expectedRoute = "VPN";
     }
 
     // RPC bypass is configurable
-    if (hostConfig.category === "RPC" && process.env.VPN_BYPASS_RPC === "false") {
+    if (
+      hostConfig.category === "RPC" &&
+      process.env.VPN_BYPASS_RPC === "false"
+    ) {
       expectedRoute = "VPN";
     }
 
@@ -978,7 +1023,8 @@ export function generateRoutingPlan(rpcUrl?: string, logger?: Logger): RoutingPl
     const firstIp = resolvedIps[0];
     const route = firstIp ? getRouteForIp(firstIp) : {};
 
-    const actuallyThroughVpn = vpnActive && firstIp ? isRouteThroughVpn(route) : false;
+    const actuallyThroughVpn =
+      vpnActive && firstIp ? isRouteThroughVpn(route) : false;
     const routeMatches =
       !vpnActive ||
       (expectedRoute === "VPN" && actuallyThroughVpn) ||
@@ -1111,7 +1157,10 @@ export function printRoutingPlan(plan: RoutingPlan, logger?: Logger): void {
  * @param logger - Optional logger
  * @returns true if all WRITE hosts route through VPN
  */
-export function validateWriteRouting(rpcUrl?: string, logger?: Logger): boolean {
+export function validateWriteRouting(
+  rpcUrl?: string,
+  logger?: Logger,
+): boolean {
   if (!vpnActive) {
     logger?.warn?.("VPN not active - cannot validate WRITE routing");
     return false;

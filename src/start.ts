@@ -7233,9 +7233,8 @@ async function main(): Promise<void> {
       );
 
       // Write diagnostic trace to JSONL file for artifact upload
-      const { writeDiagWorkflowTrace, getDiagTracePath } = await import(
-        "./lib/github-reporter"
-      );
+      const { writeDiagWorkflowTrace, getDiagTracePath } =
+        await import("./lib/github-reporter");
       writeDiagWorkflowTrace({
         traceId: result.traceId,
         startTime: result.startTime,
@@ -7246,7 +7245,9 @@ async function main(): Promise<void> {
           reason: s.reason,
           marketId: s.marketId,
           tokenId: s.tokenId,
-          traceEvents: s.traceEvents as unknown as Array<Record<string, unknown>>,
+          traceEvents: s.traceEvents as unknown as Array<
+            Record<string, unknown>
+          >,
         })),
         exitCode: result.exitCode,
       });
@@ -7261,7 +7262,9 @@ async function main(): Promise<void> {
       const holdSeconds = parseInt(process.env.DIAG_HOLD_SECONDS ?? "0", 10);
 
       if (isGitHubActions() || diagExitEnabled) {
-        const reason = isGitHubActions() ? "GitHub Actions detected" : "DIAG_EXIT=1";
+        const reason = isGitHubActions()
+          ? "GitHub Actions detected"
+          : "DIAG_EXIT=1";
         console.log(`\n🏁 ${reason} - exiting after diagnostic workflow.`);
         process.exit(diagExitCode);
       }
@@ -7279,8 +7282,12 @@ async function main(): Promise<void> {
       }
 
       // Default: Enter idle state indefinitely (safest for containers)
-      console.log("\n💤 DIAG complete, holding indefinitely (container will not restart)...");
-      console.log("   Set DIAG_EXIT=1 to exit, or DIAG_HOLD_SECONDS=N to hold for N seconds.");
+      console.log(
+        "\n💤 DIAG complete, holding indefinitely (container will not restart)...",
+      );
+      console.log(
+        "   Set DIAG_EXIT=1 to exit, or DIAG_HOLD_SECONDS=N to hold for N seconds.",
+      );
       console.log("   Press Ctrl+C to stop the container manually.");
 
       // Keep the process alive indefinitely without a constant-condition loop.

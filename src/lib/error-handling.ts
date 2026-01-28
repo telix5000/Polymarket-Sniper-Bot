@@ -453,7 +453,8 @@ export function parseError(error: unknown): ParsedError {
   ) {
     return {
       code: ErrorCode.HTTP_4XX,
-      message: "API request failed. The request may be malformed or the resource not found.",
+      message:
+        "API request failed. The request may be malformed or the resource not found.",
       recoverable: false,
     };
   }
@@ -642,7 +643,12 @@ export function emitCloudflareBlockEvent(
  */
 export function mapErrorToDiagReason(
   error: unknown,
-): "cloudflare_blocked" | "api_error" | "timeout" | "network_error" | "unknown_error" {
+):
+  | "cloudflare_blocked"
+  | "api_error"
+  | "timeout"
+  | "network_error"
+  | "unknown_error" {
   const parsed = parseError(error);
 
   switch (parsed.code) {
