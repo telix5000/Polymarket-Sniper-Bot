@@ -133,17 +133,41 @@ function debug(message: string, ...args: any[]): void {
 
 /**
  * Check if an entry failure reason should trigger a cooldown
- * These are price/liquidity issues that won't change quickly
+ * Only cooldown for TRANSIENT errors (rate limits, network issues, order failures)
+ * Do NOT cooldown for permanent market conditions (liquidity, spread, depth, price bounds)
  */
 function shouldCooldownOnFailure(reason: string | undefined): boolean {
   if (!reason) return false;
   const lowerReason = reason.toLowerCase();
-  return (
-    lowerReason.includes("liquidity") ||
-    lowerReason.includes("bounds") ||
-    lowerReason.includes("spread") ||
-    (lowerReason.includes("price") && lowerReason.includes("outside"))
-  );
+
+  // Transient errors - SHOULD cooldown (will retry after delay)
+  if (lowerReason.includes("rate_limit") || lowerReason.includes("rate limit"))
+    return true;
+  if (
+    lowerReason.includes("network_error") ||
+    lowerReason.includes("network error")
+  )
+    return true;
+  if (
+    lowerReason.includes("order placement") ||
+    lowerReason.includes("order failed")
+  )
+    return true;
+  if (lowerReason.includes("timeout")) return true;
+
+  // Permanent market conditions - do NOT cooldown (market is just not suitable)
+  if (lowerReason.includes("invalid liquidity")) return false;
+  if (lowerReason.includes("dust book")) return false;
+  if (lowerReason.includes("spread") && lowerReason.includes(">")) return false;
+  if (lowerReason.includes("depth")) return false;
+  if (
+    lowerReason.includes("price") &&
+    (lowerReason.includes("outside") || lowerReason.includes("bounds"))
+  )
+    return false;
+
+  // Default: do NOT cooldown (fail fast and check next candidate)
+  return false;
 }
 
 /**
@@ -218,6 +242,9 @@ interface ChurnConfig {
   minTradesLastX: number;
   minBookUpdatesLastX: number;
   activityWindowSeconds: number;
+
+  // Cooldown Settings
+  entryCooldownSecondsTransient: number;
 
   // EV Controls
   rollingWindowTrades: number;
@@ -327,18 +354,24 @@ function loadConfig(): ChurnConfig {
     maxHedgeRatio: 0.7, // Never hedge more than 70%
 
     // Entry price bounds - room to win, hedge, and be wrong
-    minEntryPriceCents: 30, // <30¢ = one bad tick kills you
-    maxEntryPriceCents: 82, // >82¢ = no room for TP
-    preferredEntryLowCents: 35, // Ideal zone starts
-    preferredEntryHighCents: 65, // Ideal zone ends
+    minEntryPriceCents: envNum("MIN_ENTRY_PRICE_CENTS", 30), // <30¢ = one bad tick kills you
+    maxEntryPriceCents: envNum("MAX_ENTRY_PRICE_CENTS", 82), // >82¢ = no room for TP
+    preferredEntryLowCents: envNum("PREFERRED_ENTRY_LOW_CENTS", 35), // Ideal zone starts
+    preferredEntryHighCents: envNum("PREFERRED_ENTRY_HIGH_CENTS", 65), // Ideal zone ends
     entryBufferCents: 4, // Safety buffer
 
     // Liquidity gates - keeps churn cost at ~2¢
-    minSpreadCents: 6, // Max acceptable spread
-    minDepthUsdAtExit: 25, // Need liquidity to exit
+    minSpreadCents: envNum("MIN_SPREAD_CENTS", 6), // Max acceptable spread
+    minDepthUsdAtExit: envNum("MIN_DEPTH_USD_AT_EXIT", 25), // Need liquidity to exit
     minTradesLastX: 10, // Market must be active
     minBookUpdatesLastX: 20, // Book must be updating
     activityWindowSeconds: 300, // 5min activity window
+
+    // Cooldown settings
+    entryCooldownSecondsTransient: envNum(
+      "ENTRY_COOLDOWN_SECONDS_TRANSIENT",
+      30,
+    ), // Cooldown for transient errors
 
     // EV controls - bot stops itself when math says stop
     rollingWindowTrades: 200, // Sample size for stats
@@ -352,9 +385,9 @@ function loadConfig(): ChurnConfig {
     biasMode: "leaderboard_flow",
     leaderboardTopN: 100, // Track top 100 wallets for more signals
     biasWindowSeconds: 3600, // 1 hour window
-    biasMinNetUsd: 300, // $300 net flow minimum
-    biasMinTrades: 3, // At least 3 trades
-    biasStaleSeconds: 900, // Bias expires after 15min
+    biasMinNetUsd: envNum("BIAS_MIN_NET_USD", 300), // $300 net flow minimum
+    biasMinTrades: envNum("BIAS_MIN_TRADES", 3), // At least 3 trades
+    biasStaleSeconds: envNum("BIAS_STALE_SECONDS", 900), // Bias expires after 15min
     allowEntriesOnlyWithBias: true,
     onBiasFlip: "MANAGE_EXITS_ONLY",
     onBiasNone: "PAUSE_ENTRIES",
@@ -1265,13 +1298,30 @@ class BiasAccumulator {
 
           tradesInWindow++;
 
+          // TASK 4: Validate token ID mapping - add diagnostics
           const tokenId = activity.asset || activity.tokenId;
-          if (!tokenId) continue;
+          const conditionId = activity.conditionId ?? activity.marketId;
+          const outcome = activity.outcome; // YES/NO
+
+          // Reject if tokenId is empty or invalid
+          if (!tokenId || tokenId.trim() === "") {
+            debug(
+              `[Whale Trade] Rejected: empty tokenId | conditionId: ${conditionId || "N/A"} | outcome: ${outcome || "N/A"} | wallet: ${(wallet ?? "unknown").slice(0, 10)}...`,
+            );
+            continue;
+          }
 
           const tradePrice = Number(activity.price) || 0;
           const sizeUsd =
             activity.usdcSize ?? (Number(activity.size) * tradePrice || 0);
           if (sizeUsd <= 0) continue;
+
+          // Log candidate construction for diagnostics
+          if (DEBUG) {
+            debug(
+              `[Whale Trade] Candidate: tokenId=${tokenId.slice(0, 12)}... | conditionId=${conditionId?.slice(0, 12) || "N/A"} | outcome=${outcome || "N/A"} | size=$${sizeUsd.toFixed(0)}`,
+            );
+          }
 
           trades.push({
             tokenId,
@@ -1435,14 +1485,25 @@ class BiasAccumulator {
     const tradeCount = recentTrades.length;
     const isStale = lastActivityTime > 0 && lastActivityTime < staleThreshold;
 
-    // Determine direction - only LONG since we only track BUYs
-    // Whales buying = we buy too
+    // Determine direction - STRICT eligibility check
+    // In copyAnyWhaleBuy mode: allow 1 trade minimum
+    // Otherwise: require ALL criteria (flow >= min, trades >= min, not stale)
     let direction: BiasDirection = "NONE";
-    if (!isStale && tradeCount >= this.config.biasMinTrades) {
-      if (netUsd >= this.config.biasMinNetUsd) {
+
+    if (this.config.copyAnyWhaleBuy) {
+      // Copy-any-buy mode: just need 1 trade and not stale
+      if (tradeCount >= 1 && !isStale) {
         direction = "LONG";
       }
-      // No SHORT direction - we don't copy sells, we have our own exit math
+    } else {
+      // Conservative mode: ALL criteria must be met
+      if (
+        !isStale &&
+        tradeCount >= this.config.biasMinTrades &&
+        netUsd >= this.config.biasMinNetUsd
+      ) {
+        direction = "LONG";
+      }
     }
 
     return {
@@ -1478,7 +1539,8 @@ class BiasAccumulator {
         }
       } else {
         // Conservative mode: require full bias confirmation
-        if (bias.direction !== "NONE") {
+        // Only add if direction is LONG (which means ALL criteria passed)
+        if (bias.direction === "LONG") {
           biases.push(bias);
         }
       }
@@ -1501,7 +1563,10 @@ class BiasAccumulator {
         return { allowed: true };
       }
       if (bias.isStale) {
-        return { allowed: false, reason: "BIAS_STALE" };
+        return {
+          allowed: false,
+          reason: `BIAS_STALE (last: ${Math.round((Date.now() - bias.lastActivityTime) / 1000)}s ago)`,
+        };
       }
       return { allowed: false, reason: "NO_WHALE_BUY_SEEN" };
     }
@@ -1512,19 +1577,29 @@ class BiasAccumulator {
 
     const bias = this.getBias(tokenId);
 
+    // Strict eligibility: check ALL criteria
     if (bias.direction === "NONE") {
       if (bias.isStale) {
-        return { allowed: false, reason: "BIAS_STALE" };
+        return {
+          allowed: false,
+          reason: `BIAS_STALE (last: ${Math.round((Date.now() - bias.lastActivityTime) / 1000)}s ago)`,
+        };
       }
       if (bias.tradeCount < this.config.biasMinTrades) {
         return {
           allowed: false,
-          reason: `BIAS_INSUFFICIENT_TRADES (${bias.tradeCount} < ${this.config.biasMinTrades})`,
+          reason: `BIAS_BELOW_MIN_TRADES (${bias.tradeCount} < ${this.config.biasMinTrades})`,
+        };
+      }
+      if (bias.netUsd < this.config.biasMinNetUsd) {
+        return {
+          allowed: false,
+          reason: `BIAS_BELOW_MIN_FLOW ($${bias.netUsd.toFixed(0)} < $${this.config.biasMinNetUsd})`,
         };
       }
       return {
         allowed: false,
-        reason: `BIAS_NONE (net_usd=${bias.netUsd.toFixed(2)})`,
+        reason: `BIAS_NONE (net=$${bias.netUsd.toFixed(0)}, trades=${bias.tradeCount})`,
       };
     }
 
@@ -2719,14 +2794,13 @@ class DecisionEngine {
     orderbook: OrderbookState,
     activity: MarketActivity,
   ): { passed: boolean; reason?: string } {
-    // CRITICAL: Spread must not exceed churn budget to preserve positive EV assumptions.
-    // The churn cost (spread + slippage) is budgeted at ~2¢ per trade. If the spread alone
-    // exceeds this, the trade will likely be EV-negative regardless of edge.
-    // Compute a single effective max spread: min(minSpreadCents, 2x churn budget)
-    const maxSpreadForChurn = this.config.churnCostCentsEstimate * 2;
-    const effectiveMaxSpread = Math.min(
-      this.config.minSpreadCents,
-      maxSpreadForChurn,
+    // TASK 2: Use ONLY MIN_SPREAD_CENTS from config for the liquidity gate
+    // Do NOT compute min() with churn cost - that creates the "4¢ max when config is 6¢" problem
+    // Dynamic slippage/latency affects ORDER PRICING, not gate thresholds
+    const effectiveMaxSpread = this.config.minSpreadCents;
+
+    debug(
+      `[Liquidity Gate] Spread check: ${orderbook.spreadCents.toFixed(1)}¢ vs max ${effectiveMaxSpread}¢`,
     );
 
     if (orderbook.spreadCents > effectiveMaxSpread) {
@@ -3039,7 +3113,10 @@ type MarketDataFailureReason =
   | "NOT_FOUND" // Token ID not found in system
   | "RATE_LIMIT" // API rate limit hit
   | "NETWORK_ERROR" // Network/connection failure
-  | "PARSE_ERROR"; // Response parsing failed
+  | "PARSE_ERROR" // Response parsing failed
+  | "INVALID_LIQUIDITY" // Spread too wide (permanent market condition)
+  | "DUST_BOOK" // 1¢/99¢ spreads - no room to trade (permanent)
+  | "INVALID_PRICES"; // Missing/zero/NaN prices (permanent)
 
 /** Structured result from fetchTokenMarketData */
 type FetchMarketDataResult =
@@ -4273,10 +4350,13 @@ class ChurnEngine {
   private recentlySoldPositions = new Map<string, number>();
   private readonly SOLD_POSITION_COOLDOWN_MS = 30 * 1000; // 30 seconds cooldown
 
-  // Cooldown for tokens that fail entry checks (price/spread issues)
+  // Cooldown for tokens that fail entry checks (transient errors only)
   // Prevents spamming the same failing token repeatedly
   private failedEntryCooldowns = new Map<string, number>();
-  private readonly FAILED_ENTRY_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown for failing tokens
+  // TASK 5: Use config value for transient error cooldown
+  private get FAILED_ENTRY_COOLDOWN_MS(): number {
+    return this.config.entryCooldownSecondsTransient * 1000;
+  }
   // Market data cooldown manager with exponential backoff for closed/settled markets
   private marketDataCooldownManager = new MarketDataCooldownManager();
   // Summary logging interval for market data cooldowns
@@ -4299,6 +4379,9 @@ class ChurnEngine {
     marketDataFetchAttempts: 0,
     marketDataFetchSuccesses: 0,
     startupReportSent: false,
+    // TASK 6: Add funnel tracking counters
+    candidatesSeen: 0, // Total candidates processed
+    candidatesRejectedLiquidity: 0, // Rejected due to spread/depth/dust book
   };
   private readonly STARTUP_DIAGNOSTIC_DELAY_MS = 60 * 1000; // Send diagnostic after 60 seconds
   private readonly MAX_FAILURE_REASONS = 50;
@@ -5317,6 +5400,9 @@ class ChurnEngine {
         // These checks happen atomically in processEntry, preventing over-allocation.
         // Note: Cooldown filtering already done above (eligibleBiases), no duplicate check needed
         const entryPromises = eligibleBiases.slice(0, 3).map(async (bias) => {
+          // TASK 6: Track candidate in funnel
+          this.diagnostics.candidatesSeen++;
+
           this.diagnostics.entryAttempts++;
           debug(
             `Attempting entry for ${bias.tokenId.slice(0, 12)}... (bias: ${bias.direction}, flow: $${bias.netUsd.toFixed(0)})`,
@@ -5357,13 +5443,14 @@ class ChurnEngine {
 
                 // Add to cooldown if failed due to price/liquidity issues (not bankroll)
                 // This prevents spamming the same failing token repeatedly
+                // TASK 5: Only cooldown for TRANSIENT errors (not permanent market conditions)
                 if (shouldCooldownOnFailure(result.reason)) {
                   this.failedEntryCooldowns.set(
                     bias.tokenId,
                     Date.now() + this.FAILED_ENTRY_COOLDOWN_MS,
                   );
                   console.log(
-                    `   ⏳ Token on cooldown for 60s (price/liquidity issue)`,
+                    `   ⏳ Token on cooldown for ${this.config.entryCooldownSecondsTransient}s (transient error)`,
                   );
                 }
               }
@@ -5384,25 +5471,52 @@ class ChurnEngine {
             } else {
               // Handle structured failure with appropriate cooldown
               const { reason, detail } = fetchResult;
-              const cooldownMs = this.marketDataCooldownManager.recordFailure(
-                bias.tokenId,
-                reason,
-              );
-              const info = this.marketDataCooldownManager.getCooldownInfo(
-                bias.tokenId,
-              );
 
-              this.trackFailureReason(`NO_MARKET_DATA:${reason}`);
+              // TASK 6: Track rejection reasons in funnel
+              if (
+                reason === "INVALID_LIQUIDITY" ||
+                reason === "DUST_BOOK" ||
+                reason === "INVALID_PRICES"
+              ) {
+                this.diagnostics.candidatesRejectedLiquidity++;
+              }
 
-              // Only log for long cooldowns (NO_ORDERBOOK/NOT_FOUND) or periodically for transient errors
-              if (shouldApplyLongCooldown(reason)) {
-                console.log(
-                  `⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}... | reason: ${reason} | strike ${info?.strikes || 1} | cooldown: ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
+              // TASK 5: Only cooldown transient errors, NOT permanent market conditions
+              // Permanent conditions (dust books, invalid liquidity, invalid prices) should NOT cooldown
+              const isPermanentCondition =
+                reason === "INVALID_LIQUIDITY" ||
+                reason === "DUST_BOOK" ||
+                reason === "INVALID_PRICES";
+
+              if (!isPermanentCondition) {
+                const cooldownMs = this.marketDataCooldownManager.recordFailure(
+                  bias.tokenId,
+                  reason,
                 );
-              } else if (this.cycleCount % 20 === 0) {
-                console.warn(
-                  `⚠️ [Entry] Transient error for ${bias.tokenId.slice(0, 12)}... | ${reason}: ${detail?.slice(0, 50) || "unknown"} | retry in ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
+                const info = this.marketDataCooldownManager.getCooldownInfo(
+                  bias.tokenId,
                 );
+
+                this.trackFailureReason(`NO_MARKET_DATA:${reason}`);
+
+                // Only log for long cooldowns (NO_ORDERBOOK/NOT_FOUND) or periodically for transient errors
+                if (shouldApplyLongCooldown(reason)) {
+                  console.log(
+                    `⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}... | reason: ${reason} | strike ${info?.strikes || 1} | cooldown: ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
+                  );
+                } else if (this.cycleCount % 20 === 0) {
+                  console.warn(
+                    `⚠️ [Entry] Transient error for ${bias.tokenId.slice(0, 12)}... | ${reason}: ${detail?.slice(0, 50) || "unknown"} | retry in ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
+                  );
+                }
+              } else {
+                // Permanent condition - log but don't cooldown
+                this.trackFailureReason(`NO_MARKET_DATA:${reason}`);
+                if (this.cycleCount % 20 === 0) {
+                  console.log(
+                    `⚠️ [Entry] Permanent condition for ${bias.tokenId.slice(0, 12)}... | ${reason}: ${detail?.slice(0, 50) || "unknown"} | no cooldown`,
+                  );
+                }
               }
             }
           } catch (err) {
@@ -5485,13 +5599,14 @@ class ChurnEngine {
                     `SCAN: ${result.reason || "unknown"}`,
                   );
                   // Add to cooldown if failed due to price/liquidity issues
+                  // TASK 5: Only cooldown for TRANSIENT errors
                   if (shouldCooldownOnFailure(result.reason)) {
                     this.failedEntryCooldowns.set(
                       tokenId,
                       Date.now() + this.FAILED_ENTRY_COOLDOWN_MS,
                     );
                     console.log(
-                      `⏳ [Scanner] Token ${tokenId.slice(0, 12)}... on cooldown for ${Math.round(this.FAILED_ENTRY_COOLDOWN_MS / 1000)}s`,
+                      `⏳ [Scanner] Token ${tokenId.slice(0, 12)}... on cooldown for ${this.config.entryCooldownSecondsTransient}s`,
                     );
                   }
                   // Only log scan failures periodically to avoid spam
@@ -5517,24 +5632,42 @@ class ChurnEngine {
                 return result;
               } else {
                 // Handle structured failure with appropriate cooldown
-                const { reason } = fetchResult;
-                const cooldownMs = this.marketDataCooldownManager.recordFailure(
-                  tokenId,
-                  reason,
-                );
-                const info =
-                  this.marketDataCooldownManager.getCooldownInfo(tokenId);
+                const { reason, detail } = fetchResult;
 
-                this.trackFailureReason(`SCAN: NO_MARKET_DATA:${reason}`);
+                // TASK 5: Only cooldown transient errors, NOT permanent market conditions
+                const isPermanentCondition =
+                  reason === "INVALID_LIQUIDITY" ||
+                  reason === "DUST_BOOK" ||
+                  reason === "INVALID_PRICES";
 
-                // Periodic logging for market data failures
-                if (
-                  this.cycleCount % 50 === 0 &&
-                  shouldApplyLongCooldown(reason)
-                ) {
-                  console.log(
-                    `⚠️ [Scanner] No market data for ${tokenId.slice(0, 12)}... | reason: ${reason} | strike ${info?.strikes || 1} | cooldown: ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
-                  );
+                if (!isPermanentCondition) {
+                  const cooldownMs =
+                    this.marketDataCooldownManager.recordFailure(
+                      tokenId,
+                      reason,
+                    );
+                  const info =
+                    this.marketDataCooldownManager.getCooldownInfo(tokenId);
+
+                  this.trackFailureReason(`SCAN: NO_MARKET_DATA:${reason}`);
+
+                  // Periodic logging for market data failures
+                  if (
+                    this.cycleCount % 50 === 0 &&
+                    shouldApplyLongCooldown(reason)
+                  ) {
+                    console.log(
+                      `⚠️ [Scanner] No market data for ${tokenId.slice(0, 12)}... | reason: ${reason} | strike ${info?.strikes || 1} | cooldown: ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
+                    );
+                  }
+                } else {
+                  // Permanent condition - log but don't cooldown
+                  this.trackFailureReason(`SCAN: NO_MARKET_DATA:${reason}`);
+                  if (this.cycleCount % 50 === 0) {
+                    console.log(
+                      `⚠️ [Scanner] Permanent condition for ${tokenId.slice(0, 12)}... | ${reason}: ${detail?.slice(0, 50) || "unknown"} | no cooldown`,
+                    );
+                  }
                 }
               }
             } catch (err) {
@@ -5742,6 +5875,12 @@ class ChurnEngine {
         : "0";
     console.log(
       `   📊 Diagnostics: API trades detected: ${this.diagnostics.whaleTradesDetected} | Entry attempts: ${this.diagnostics.entryAttempts} (${entrySuccessRate}% success) | OB failures: ${this.diagnostics.orderbookFetchFailures}`,
+    );
+
+    // TASK 6: Display funnel counters
+    console.log(
+      `   🔬 Funnel: Candidates seen: ${this.diagnostics.candidatesSeen} | ` +
+        `Rejected liquidity: ${this.diagnostics.candidatesRejectedLiquidity}`,
     );
 
     // Warn if network is not healthy
@@ -6086,6 +6225,42 @@ class ChurnEngine {
           };
         }
 
+        // TASK 3: Add orderbook sanity gates for facade path too
+        // Check for dust book (1¢/99¢ spreads)
+        if (state.bestBidCents <= 2 && state.bestAskCents >= 98) {
+          this.diagnostics.orderbookFetchFailures++;
+          return {
+            ok: false,
+            reason: "DUST_BOOK",
+            detail: `Dust book: bid=${state.bestBidCents}¢, ask=${state.bestAskCents}¢`,
+          };
+        }
+
+        // Check for invalid prices
+        if (
+          state.bestBidCents <= 0 ||
+          state.bestAskCents <= 0 ||
+          isNaN(state.bestBidCents) ||
+          isNaN(state.bestAskCents)
+        ) {
+          this.diagnostics.orderbookFetchFailures++;
+          return {
+            ok: false,
+            reason: "INVALID_PRICES",
+            detail: `Invalid prices: bid=${state.bestBidCents}¢, ask=${state.bestAskCents}¢`,
+          };
+        }
+
+        // Check spread
+        if (state.spreadCents > this.config.minSpreadCents) {
+          this.diagnostics.orderbookFetchFailures++;
+          return {
+            ok: false,
+            reason: "INVALID_LIQUIDITY",
+            detail: `Spread ${state.spreadCents.toFixed(1)}¢ > max ${this.config.minSpreadCents}¢`,
+          };
+        }
+
         const activity: MarketActivity = {
           tradesInWindow: 15,
           bookUpdatesInWindow: 25,
@@ -6165,6 +6340,41 @@ class ChurnEngine {
           ok: false,
           reason: "PARSE_ERROR",
           detail: "Failed to parse bid/ask prices",
+        };
+      }
+
+      // TASK 3: Add orderbook sanity gates - reject dust books immediately
+      // These are permanent market conditions, not transient errors
+      // DO NOT put token on cooldown for these - just reject and keep scanning
+
+      // Check for invalid prices (missing/zero/NaN already handled above)
+      if (bestBid <= 0 || bestAsk <= 0) {
+        this.diagnostics.orderbookFetchFailures++;
+        return {
+          ok: false,
+          reason: "INVALID_PRICES",
+          detail: `Invalid prices: bid=${bestBid}, ask=${bestAsk}`,
+        };
+      }
+
+      // Check for dust book (1¢/99¢ spreads - no room to trade)
+      if (bestBid <= 0.02 && bestAsk >= 0.98) {
+        this.diagnostics.orderbookFetchFailures++;
+        return {
+          ok: false,
+          reason: "DUST_BOOK",
+          detail: `Dust book: bid=${(bestBid * 100).toFixed(1)}¢, ask=${(bestAsk * 100).toFixed(1)}¢`,
+        };
+      }
+
+      // Check spread before computing depth (fail fast)
+      const spreadCents = (bestAsk - bestBid) * 100;
+      if (spreadCents > this.config.minSpreadCents) {
+        this.diagnostics.orderbookFetchFailures++;
+        return {
+          ok: false,
+          reason: "INVALID_LIQUIDITY",
+          detail: `Spread ${spreadCents.toFixed(1)}¢ > max ${this.config.minSpreadCents}¢`,
         };
       }
 

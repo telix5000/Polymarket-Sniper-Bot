@@ -35,7 +35,7 @@ function passesWhalePriceFilter(
   trade: LeaderboardTrade,
   config: PriceFilterConfig,
   filterEnabled: boolean,
-  filterInvalid: boolean
+  filterInvalid: boolean,
 ): boolean {
   // If filter is disabled or invalid, pass all trades
   if (!filterEnabled || filterInvalid) {
@@ -66,19 +66,26 @@ function passesWhalePriceFilter(
 /**
  * Determine if price filter should be enabled and valid
  */
-function initPriceFilter(config: PriceFilterConfig): { enabled: boolean; invalid: boolean } {
+function initPriceFilter(config: PriceFilterConfig): {
+  enabled: boolean;
+  invalid: boolean;
+} {
   const { whalePriceMin, whalePriceMax } = config;
-  
+
   // Check if any price range filtering is configured
   if (whalePriceMin === undefined && whalePriceMax === undefined) {
     return { enabled: false, invalid: false };
   }
-  
+
   // Validate min <= max if both are set
-  if (whalePriceMin !== undefined && whalePriceMax !== undefined && whalePriceMin > whalePriceMax) {
+  if (
+    whalePriceMin !== undefined &&
+    whalePriceMax !== undefined &&
+    whalePriceMin > whalePriceMax
+  ) {
     return { enabled: false, invalid: true };
   }
-  
+
   return { enabled: true, invalid: false };
 }
 
@@ -119,21 +126,30 @@ describe("Whale Price-Range Filter Configuration", () => {
   });
 
   test("should enable filter when both bounds are valid (min <= max)", () => {
-    const config: PriceFilterConfig = { whalePriceMin: 0.25, whalePriceMax: 0.45 };
+    const config: PriceFilterConfig = {
+      whalePriceMin: 0.25,
+      whalePriceMax: 0.45,
+    };
     const { enabled, invalid } = initPriceFilter(config);
     assert.strictEqual(enabled, true);
     assert.strictEqual(invalid, false);
   });
 
   test("should mark filter as invalid when min > max", () => {
-    const config: PriceFilterConfig = { whalePriceMin: 0.75, whalePriceMax: 0.25 };
+    const config: PriceFilterConfig = {
+      whalePriceMin: 0.75,
+      whalePriceMax: 0.25,
+    };
     const { enabled, invalid } = initPriceFilter(config);
     assert.strictEqual(enabled, false);
     assert.strictEqual(invalid, true);
   });
 
   test("should enable filter when min equals max", () => {
-    const config: PriceFilterConfig = { whalePriceMin: 0.50, whalePriceMax: 0.50 };
+    const config: PriceFilterConfig = {
+      whalePriceMin: 0.5,
+      whalePriceMax: 0.5,
+    };
     const { enabled, invalid } = initPriceFilter(config);
     assert.strictEqual(enabled, true);
     assert.strictEqual(invalid, false);
@@ -144,14 +160,17 @@ describe("Whale Price-Range Filter Logic", () => {
   describe("Filter Disabled", () => {
     test("should pass all trades when filter is not enabled", () => {
       const config: PriceFilterConfig = {};
-      const trade = createTrade(0.10); // Would be below any reasonable min
+      const trade = createTrade(0.1); // Would be below any reasonable min
       const passes = passesWhalePriceFilter(trade, config, false, false);
       assert.strictEqual(passes, true);
     });
 
     test("should pass all trades when filter is invalid (min > max)", () => {
-      const config: PriceFilterConfig = { whalePriceMin: 0.75, whalePriceMax: 0.25 };
-      const trade = createTrade(0.10);
+      const config: PriceFilterConfig = {
+        whalePriceMin: 0.75,
+        whalePriceMax: 0.25,
+      };
+      const trade = createTrade(0.1);
       const passes = passesWhalePriceFilter(trade, config, false, true);
       assert.strictEqual(passes, true);
     });
@@ -168,13 +187,13 @@ describe("Whale Price-Range Filter Logic", () => {
     });
 
     test("should pass trade above minimum price", () => {
-      const trade = createTrade(0.50);
+      const trade = createTrade(0.5);
       const passes = passesWhalePriceFilter(trade, config, enabled, invalid);
       assert.strictEqual(passes, true);
     });
 
     test("should filter trade below minimum price", () => {
-      const trade = createTrade(0.20);
+      const trade = createTrade(0.2);
       const passes = passesWhalePriceFilter(trade, config, enabled, invalid);
       assert.strictEqual(passes, false);
     });
@@ -197,7 +216,7 @@ describe("Whale Price-Range Filter Logic", () => {
     });
 
     test("should pass trade below maximum price", () => {
-      const trade = createTrade(0.50);
+      const trade = createTrade(0.5);
       const passes = passesWhalePriceFilter(trade, config, enabled, invalid);
       assert.strictEqual(passes, true);
     });
@@ -216,7 +235,10 @@ describe("Whale Price-Range Filter Logic", () => {
   });
 
   describe("Both Bounds (Range Filter)", () => {
-    const config: PriceFilterConfig = { whalePriceMin: 0.25, whalePriceMax: 0.45 };
+    const config: PriceFilterConfig = {
+      whalePriceMin: 0.25,
+      whalePriceMax: 0.45,
+    };
     const { enabled, invalid } = initPriceFilter(config);
 
     test("should pass trade at minimum price", () => {
@@ -238,7 +260,7 @@ describe("Whale Price-Range Filter Logic", () => {
     });
 
     test("should filter trade below minimum", () => {
-      const trade = createTrade(0.20);
+      const trade = createTrade(0.2);
       const passes = passesWhalePriceFilter(trade, config, enabled, invalid);
       assert.strictEqual(passes, false);
     });
@@ -256,14 +278,17 @@ describe("Whale Price-Range Filter Logic", () => {
     });
 
     test("should filter very high price trades", () => {
-      const trade = createTrade(0.90);
+      const trade = createTrade(0.9);
       const passes = passesWhalePriceFilter(trade, config, enabled, invalid);
       assert.strictEqual(passes, false);
     });
   });
 
   describe("Missing Price Handling", () => {
-    const config: PriceFilterConfig = { whalePriceMin: 0.25, whalePriceMax: 0.45 };
+    const config: PriceFilterConfig = {
+      whalePriceMin: 0.25,
+      whalePriceMax: 0.45,
+    };
     const { enabled, invalid } = initPriceFilter(config);
 
     test("should pass trade with undefined price", () => {
@@ -282,7 +307,10 @@ describe("Whale Price-Range Filter Logic", () => {
 
   describe("Edge Cases", () => {
     test("should handle price exactly at 0", () => {
-      const config: PriceFilterConfig = { whalePriceMin: 0.0, whalePriceMax: 0.50 };
+      const config: PriceFilterConfig = {
+        whalePriceMin: 0.0,
+        whalePriceMax: 0.5,
+      };
       const { enabled, invalid } = initPriceFilter(config);
       const trade = createTrade(0);
       const passes = passesWhalePriceFilter(trade, config, enabled, invalid);
@@ -290,7 +318,10 @@ describe("Whale Price-Range Filter Logic", () => {
     });
 
     test("should handle price exactly at 1", () => {
-      const config: PriceFilterConfig = { whalePriceMin: 0.50, whalePriceMax: 1.0 };
+      const config: PriceFilterConfig = {
+        whalePriceMin: 0.5,
+        whalePriceMax: 1.0,
+      };
       const { enabled, invalid } = initPriceFilter(config);
       const trade = createTrade(1.0);
       const passes = passesWhalePriceFilter(trade, config, enabled, invalid);
@@ -298,7 +329,10 @@ describe("Whale Price-Range Filter Logic", () => {
     });
 
     test("should handle very small price differences", () => {
-      const config: PriceFilterConfig = { whalePriceMin: 0.249999, whalePriceMax: 0.250001 };
+      const config: PriceFilterConfig = {
+        whalePriceMin: 0.249999,
+        whalePriceMax: 0.250001,
+      };
       const { enabled, invalid } = initPriceFilter(config);
       const trade = createTrade(0.25);
       const passes = passesWhalePriceFilter(trade, config, enabled, invalid);
@@ -325,20 +359,23 @@ describe("Whale Price-Range Filter Logic", () => {
 
 describe("Batch Trade Filtering", () => {
   test("should filter multiple trades correctly", () => {
-    const config: PriceFilterConfig = { whalePriceMin: 0.25, whalePriceMax: 0.45 };
+    const config: PriceFilterConfig = {
+      whalePriceMin: 0.25,
+      whalePriceMax: 0.45,
+    };
     const { enabled, invalid } = initPriceFilter(config);
 
     const trades = [
-      createTrade(0.10), // Below min - should be filtered
+      createTrade(0.1), // Below min - should be filtered
       createTrade(0.25), // At min - should pass
       createTrade(0.35), // In range - should pass
       createTrade(0.45), // At max - should pass
-      createTrade(0.60), // Above max - should be filtered
+      createTrade(0.6), // Above max - should be filtered
       createTrade(undefined), // No price - should pass
     ];
 
-    const filtered = trades.filter(trade =>
-      passesWhalePriceFilter(trade, config, enabled, invalid)
+    const filtered = trades.filter((trade) =>
+      passesWhalePriceFilter(trade, config, enabled, invalid),
     );
 
     assert.strictEqual(filtered.length, 4, "Should have 4 trades pass");
@@ -352,14 +389,10 @@ describe("Batch Trade Filtering", () => {
     const config: PriceFilterConfig = {};
     const { enabled, invalid } = initPriceFilter(config);
 
-    const trades = [
-      createTrade(0.05),
-      createTrade(0.50),
-      createTrade(0.95),
-    ];
+    const trades = [createTrade(0.05), createTrade(0.5), createTrade(0.95)];
 
-    const filtered = trades.filter(trade =>
-      passesWhalePriceFilter(trade, config, enabled, invalid)
+    const filtered = trades.filter((trade) =>
+      passesWhalePriceFilter(trade, config, enabled, invalid),
     );
 
     assert.strictEqual(filtered.length, 3, "All trades should pass");
