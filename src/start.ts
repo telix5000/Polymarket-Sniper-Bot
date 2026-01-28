@@ -56,6 +56,7 @@ import {
   startOpenvpn,
   setupRpcBypass,
   setupPolymarketReadBypass,
+  setupReadApiBypass,
   // POL Reserve (auto gas fill)
   runPolReserve,
   shouldRebalance,
@@ -86,10 +87,8 @@ import {
   LatencyMonitor,
   initLatencyMonitor,
   getLatencyMonitor,
-  // Web dashboard
-  WebDashboard,
-  initWebDashboard,
-  shouldStartWebDashboard,
+  // Telegram
+  isTelegramEnabled,
 } from "./lib";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -115,6 +114,32 @@ const envBool = (key: string, defaultValue: boolean): boolean => {
 const envStr = (key: string, defaultValue: string): string => {
   return process.env[key] ?? defaultValue;
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DEBUG LOGGING - Set DEBUG=true in env to enable verbose logs
+// ═══════════════════════════════════════════════════════════════════════════
+const DEBUG = envBool("DEBUG", false);
+
+function debug(message: string, ...args: any[]): void {
+  if (DEBUG) {
+    console.log(`🔍 [DEBUG] ${message}`, ...args);
+  }
+}
+
+/**
+ * Check if an entry failure reason should trigger a cooldown
+ * These are price/liquidity issues that won't change quickly
+ */
+function shouldCooldownOnFailure(reason: string | undefined): boolean {
+  if (!reason) return false;
+  const lowerReason = reason.toLowerCase();
+  return (
+    lowerReason.includes("liquidity") ||
+    lowerReason.includes("bounds") ||
+    lowerReason.includes("spread") ||
+    lowerReason.includes("price") && lowerReason.includes("outside")
+  );
+}
 
 interface ChurnConfig {
   // ═══════════════════════════════════════════════════════════════════════════
@@ -441,6 +466,7 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log(`   Bet size: $${config.maxTradeUsd} per trade`);
   log(`   Live trading: ${config.liveTradingEnabled ? "✅ ENABLED" : "⚠️ SIMULATION"}`);
   log(`   Telegram: ${config.telegramBotToken && config.telegramChatId ? "✅ ENABLED" : "❌ DISABLED"}`);
+  log(`   Debug mode: ${DEBUG ? "✅ ENABLED (verbose logs)" : "❌ DISABLED"}`);
   if (config.liquidationMode !== "off") {
     const modeDesc = config.liquidationMode === "losing" ? "LOSING ONLY (negative P&L)" : "ALL POSITIONS";
     log(`   Liquidation: ⚠️ ${modeDesc}`);
@@ -1068,9 +1094,14 @@ class BiasAccumulator {
         }
         return trades;
       } catch (err) {
-        // Log errors for diagnostics (use console.log to ensure visibility in production)
+        // Log errors - keep visible in production, but also debug
         const errMsg = err instanceof Error ? err.message : String(err);
-        console.log(`[API] Fetch failed for ${wallet.slice(0, 10)}...: ${errMsg}`);
+        // Only log to console if it's not a timeout/network issue (those are noisy)
+        if (!errMsg.includes("timeout") && !errMsg.includes("ECONNRESET")) {
+          console.warn(`[API] Fetch failed for ${wallet.slice(0, 10)}...: ${errMsg}`);
+        } else {
+          debug(`[API] Fetch failed for ${wallet.slice(0, 10)}...: ${errMsg}`);
+        }
         return [];
       }
     });
@@ -1083,12 +1114,23 @@ class BiasAccumulator {
     // DIAGNOSTIC: Log API fetch results - show first 5, then every 10th, or when trades found
     // ═══════════════════════════════════════════════════════════════════════════
     if (this.fetchCount < 5 || this.fetchCount % 10 === 0 || newTrades.length > 0) {
+      const cyclesForFullCoverage = Math.ceil(wallets.length / BATCH_SIZE);
       console.log(
-        `📊 [API Poll #${this.fetchCount}] Fetched ${totalFetches} wallets | ` +
-        `Success: ${successfulFetches} | Empty: ${emptyResponses} | ` +
-        `Trades found: ${totalTradesFound} | In window: ${tradesInWindow} | New BUYs: ${newTrades.length}`
+        `📊 [API Poll #${this.fetchCount}] Batch ${startIdx + 1}-${endIdx} of ${wallets.length} wallets (cycle ${(this.fetchCount % cyclesForFullCoverage) + 1}/${cyclesForFullCoverage}) | ` +
+        `Success: ${successfulFetches} | Trades found: ${totalTradesFound} | In window: ${tradesInWindow} | New BUYs: ${newTrades.length}`
       );
     }
+    
+    // Debug: Show individual trades found
+    if (DEBUG && newTrades.length > 0) {
+      for (const trade of newTrades.slice(0, 5)) {
+        debug(`  Trade: ${trade.tokenId.slice(0, 12)}... | $${trade.sizeUsd.toFixed(0)} | wallet: ${trade.wallet.slice(0, 10)}...`);
+      }
+      if (newTrades.length > 5) {
+        debug(`  ... and ${newTrades.length - 5} more trades`);
+      }
+    }
+    
     this.fetchCount++;
 
     // Add to accumulator and prune old trades
@@ -3358,7 +3400,6 @@ class ChurnEngine {
   private marketScanner: MarketScanner;
   private dynamicReserveManager: DynamicReserveManager;
   private latencyMonitor: LatencyMonitor;
-  private webDashboard: WebDashboard | null = null;
 
   private client: any = null;
   private wallet: any = null;
@@ -3377,6 +3418,11 @@ class ChurnEngine {
   // Maps tokenId to timestamp when it was sold
   private recentlySoldPositions = new Map<string, number>();
   private readonly SOLD_POSITION_COOLDOWN_MS = 30 * 1000; // 30 seconds cooldown
+  
+  // Cooldown for tokens that fail entry checks (price/spread issues)
+  // Prevents spamming the same failing token repeatedly
+  private failedEntryCooldowns = new Map<string, number>();
+  private readonly FAILED_ENTRY_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown for failing tokens
   
   // Pending whale signals from mempool - for fast copy trading
   private pendingWhaleSignals: Map<string, PendingTradeSignal> = new Map();
@@ -3452,7 +3498,7 @@ class ChurnEngine {
 
     // Log position closes
     this.positionManager.onTransition((t) => {
-      if (t.toState === "CLOSED" && this.config.telegramBotToken) {
+      if (t.toState === "CLOSED" && isTelegramEnabled()) {
         const emoji = t.pnlCents >= 0 ? "✅" : "❌";
         sendTelegram(
           "Position Closed",
@@ -3536,24 +3582,6 @@ class ChurnEngine {
     this.latencyMonitor.start();
     console.log("⏱️ Latency monitoring enabled (dynamic slippage adjustment)");
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // WEB DASHBOARD - Glances-style real-time monitoring (accessible via port)
-    // ═══════════════════════════════════════════════════════════════════════
-    if (shouldStartWebDashboard()) {
-      try {
-        this.webDashboard = initWebDashboard();
-        this.webDashboard.start();
-        this.webDashboard.setTradingMode(this.config.liveTradingEnabled);
-        console.log(`🌐 Web dashboard enabled at http://localhost:${this.webDashboard.getPort()}`);
-      } catch (err) {
-        // Log error but don't prevent bot from starting
-        const errMsg = err instanceof Error ? err.message : String(err);
-        console.warn(`⚠️ Web dashboard failed to start: ${errMsg}`);
-        console.warn(`   Bot will continue without dashboard functionality`);
-        this.webDashboard = null;
-      }
-    }
-
     // Authenticate with CLOB
     const auth = await createClobClient(
       this.config.privateKey,
@@ -3633,7 +3661,7 @@ class ChurnEngine {
 
         this.liquidationMode = true;
 
-        if (this.config.telegramBotToken) {
+        if (isTelegramEnabled()) {
           await sendTelegram(
             `🔥 Liquidation Mode (${modeDesc})`,
             `Balance: $${usdcBalance.toFixed(2)}\n` +
@@ -3685,7 +3713,7 @@ class ChurnEngine {
     }
 
     // Send startup notification
-    if (this.config.telegramBotToken) {
+    if (isTelegramEnabled()) {
       await sendTelegram(
         "🤖 Polymarket Bot Started",
         `Balance: $${usdcBalance.toFixed(2)}\n` +
@@ -3925,8 +3953,13 @@ class ChurnEngine {
       if (process.env.VPN_BYPASS_RPC !== "false") {
         await setupRpcBypass(this.config.rpcUrl, this.logger);
       }
+      
+      // Bypass read-only APIs (gamma-api, data-api) - they don't need VPN
+      // Use the polymarket-specific bypass when explicitly enabled; otherwise use the generic one.
       if (process.env.VPN_BYPASS_POLYMARKET_READS === "true") {
         await setupPolymarketReadBypass(this.logger);
+      } else {
+        await setupReadApiBypass(this.logger);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -4034,7 +4067,7 @@ class ChurnEngine {
         this.recentlySoldPositions.clear();
         this.dynamicReserveManager.reset();
 
-        if (this.config.telegramBotToken) {
+        if (isTelegramEnabled()) {
           await sendTelegram(
             "✅ Liquidation Complete",
             `All positions sold!\nBalance: $${usdcBalance.toFixed(2)}\nResuming normal trading...`,
@@ -4079,7 +4112,7 @@ class ChurnEngine {
       this.recentlySoldPositions.clear();
       this.dynamicReserveManager.reset();
 
-      if (this.config.telegramBotToken) {
+      if (isTelegramEnabled()) {
         await sendTelegram(
           "✅ Losers Liquidated",
           `All losing positions sold!\nRemaining winners: ${positions.length}\nBalance: $${usdcBalance.toFixed(2)}\nResuming normal trading...`,
@@ -4144,7 +4177,7 @@ class ChurnEngine {
             // Invalidate position cache to ensure fresh data on next fetch
             invalidatePositions();
 
-            if (this.config.telegramBotToken) {
+            if (isTelegramEnabled()) {
               await sendTelegram(
                 "🔥 Position Liquidated",
                 `Sold: $${result.filledUsd?.toFixed(2) || positionToSell.value.toFixed(2)}\n` +
@@ -4242,43 +4275,6 @@ class ChurnEngine {
     // Use dynamic reserves for effective bankroll calculation
     const { effectiveBankroll, reserveUsd } = this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
 
-    // ─────────────────────────────────────────────────────────────────
-    // UPDATE WEB DASHBOARD (if enabled)
-    // ─────────────────────────────────────────────────────────────────
-    if (this.webDashboard) {
-      this.webDashboard.updateWallet(usdcBalance, polBalance, effectiveBankroll, reserveUsd);
-      
-      // Update position metrics
-      const openPositions = this.positionManager.getOpenPositions();
-      const deployedUsd = openPositions.reduce(
-        (sum, p) => sum + p.entrySizeUsd,
-        0
-      );
-      const deployedPercent = effectiveBankroll > 0 ? (deployedUsd / effectiveBankroll) * 100 : 0;
-      this.webDashboard.updatePositionMetrics(
-        openPositions.length,
-        this.config.maxOpenPositionsTotal,
-        deployedUsd,
-        deployedPercent
-      );
-      
-      // Update trading metrics from EV tracker
-      const evMetrics = this.evTracker.getMetrics();
-      this.webDashboard.updateTradingMetrics(
-        evMetrics.totalTrades,
-        evMetrics.winRate,
-        evMetrics.totalPnlUsd,
-        evMetrics.evCents
-      );
-      
-      // Update system metrics
-      const latencyStats = this.latencyMonitor.getNetworkHealth();
-      // WebSocket is considered connected only if the on-chain monitor is actually running
-      const wsConnected = !!this.onchainMonitor?.isRunning();
-      const apiLatencyMs = Math.max(latencyStats.rpcLatencyMs, latencyStats.apiLatencyMs);
-      this.webDashboard.updateSystemMetrics(apiLatencyMs, wsConnected);
-    }
-
     if (effectiveBankroll <= 0) {
       // No effective bankroll available this cycle; skip trading logic
       return; // No money to trade
@@ -4339,10 +4335,36 @@ class ChurnEngine {
     const evAllowed = this.evTracker.isTradingAllowed();
     const activeBiases = this.biasAccumulator.getActiveBiases();
     
+    // Debug: show all active biases before filtering
+    if (DEBUG && activeBiases.length > 0) {
+      debug(`Active biases before cooldown filter: ${activeBiases.length}`);
+      for (const bias of activeBiases.slice(0, 5)) {
+        const onCooldown = this.failedEntryCooldowns.has(bias.tokenId);
+        debug(`  ${bias.tokenId.slice(0, 12)}... | dir: ${bias.direction} | $${bias.netUsd.toFixed(0)} flow | trades: ${bias.tradeCount} | cooldown: ${onCooldown}`);
+      }
+    }
+    
+    // Clean up expired cooldowns
+    for (const [tokenId, expiry] of this.failedEntryCooldowns.entries()) {
+      if (now >= expiry) {
+        debug(`Cooldown expired for ${tokenId.slice(0, 12)}...`);
+        this.failedEntryCooldowns.delete(tokenId);
+      }
+    }
+    
+    // Filter out tokens that are on cooldown (failed recently due to price/liquidity)
+    const eligibleBiases = activeBiases.filter(bias => {
+      const cooldownExpiry = this.failedEntryCooldowns.get(bias.tokenId);
+      return !cooldownExpiry || now >= cooldownExpiry;
+    });
+    
+    const skippedCount = activeBiases.length - eligibleBiases.length;
+    
     if (evAllowed.allowed) {
-      if (activeBiases.length > 0) {
+      if (eligibleBiases.length > 0) {
         // Log when we have active biases - helps diagnose trade detection
-        console.log(`🐋 [Bias] ${activeBiases.length} active whale signals detected`);
+        const cooldownMsg = skippedCount > 0 ? ` (${skippedCount} on cooldown)` : '';
+        console.log(`🐋 [Bias] ${eligibleBiases.length} eligible whale signals${cooldownMsg}`);
         
         // Execute whale-signal entries in parallel to avoid missing opportunities
         // when multiple whale signals arrive simultaneously.
@@ -4352,20 +4374,31 @@ class ChurnEngine {
         // - maxDeployedFractionTotal (30%) - max exposure cap
         // - maxOpenPositionsPerMarket (2) - per-token limit
         // These checks happen atomically in processEntry, preventing over-allocation.
-        const entryPromises = activeBiases.slice(0, 3).map(async (bias) => {
+        const entryPromises = eligibleBiases.slice(0, 3).map(async (bias) => {
           this.diagnostics.entryAttempts++;
+          debug(`Attempting entry for ${bias.tokenId.slice(0, 12)}... (bias: ${bias.direction}, flow: $${bias.netUsd.toFixed(0)})`);
           try {
             this.diagnostics.marketDataFetchAttempts++;
             const marketData = await this.fetchTokenMarketData(bias.tokenId);
             if (marketData) {
               this.diagnostics.marketDataFetchSuccesses++;
+              debug(`Market data: mid=${marketData.orderbook.midPriceCents}¢, spread=${marketData.orderbook.spreadCents}¢, bid=${marketData.orderbook.bestBidCents}¢, ask=${marketData.orderbook.bestAskCents}¢`);
               const result = await this.executionEngine.processEntry(bias.tokenId, marketData, usdcBalance);
               if (result.success) {
                 this.diagnostics.entrySuccesses++;
                 console.log(`✅ [Entry] SUCCESS: Copied whale trade on ${bias.tokenId.slice(0, 12)}...`);
+                // Clear any cooldown on success
+                this.failedEntryCooldowns.delete(bias.tokenId);
               } else {
                 this.trackFailureReason(result.reason || "unknown");
                 console.log(`❌ [Entry] FAILED: ${bias.tokenId.slice(0, 12)}... - ${result.reason}`);
+                
+                // Add to cooldown if failed due to price/liquidity issues (not bankroll)
+                // This prevents spamming the same failing token repeatedly
+                if (shouldCooldownOnFailure(result.reason)) {
+                  this.failedEntryCooldowns.set(bias.tokenId, Date.now() + this.FAILED_ENTRY_COOLDOWN_MS);
+                  console.log(`   ⏳ Token on cooldown for 60s (price/liquidity issue)`);
+                }
               }
               // Track missed opportunities - check for actual reason strings from processEntry
               if (!result.success && (result.reason === "NO_BANKROLL" || result.reason?.startsWith("Max deployed") || result.reason === "No effective bankroll")) {
@@ -4373,6 +4406,7 @@ class ChurnEngine {
               }
               return result;
             } else {
+              debug(`No market data returned for ${bias.tokenId.slice(0, 12)}...`);
               console.log(`⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}...`);
               this.trackFailureReason("NO_MARKET_DATA");
             }
@@ -4385,15 +4419,26 @@ class ChurnEngine {
         });
         
         await Promise.all(entryPromises);
+      } else if (activeBiases.length > 0 && eligibleBiases.length === 0) {
+        // All biases are on cooldown - only log occasionally
+        if (this.cycleCount % 30 === 0) {
+          console.log(`⏳ [Bias] ${activeBiases.length} whale signals on cooldown (price/liquidity issues)`);
+        }
       } else if (scannedOpportunities.length > 0 && this.config.scanActiveMarkets) {
         // No whale signals - scan for trades from active markets
+        // Filter out tokens on cooldown
+        const eligibleScanned = scannedOpportunities.filter(tokenId => {
+          const cooldownExpiry = this.failedEntryCooldowns.get(tokenId);
+          return !cooldownExpiry || now >= cooldownExpiry;
+        });
+        
         // Only log occasionally to avoid spam
-        if (this.cycleCount % 50 === 0) {
-          console.log(`🔍 No active whale signals - scanning ${scannedOpportunities.length} active markets for opportunities...`);
+        if (this.cycleCount % 50 === 0 && eligibleScanned.length > 0) {
+          console.log(`🔍 No active whale signals - scanning ${eligibleScanned.length} active markets for opportunities...`);
         }
         
         // Try top scanned markets (limit to avoid rate limiting)
-        const scannedEntryPromises = scannedOpportunities.slice(0, 2).map(async (tokenId) => {
+        const scannedEntryPromises = eligibleScanned.slice(0, 2).map(async (tokenId) => {
           this.diagnostics.entryAttempts++;
           try {
             // Check if we already have a position in this market
@@ -4410,8 +4455,16 @@ class ChurnEngine {
               if (result.success) {
                 this.diagnostics.entrySuccesses++;
                 console.log(`✅ [Scanner] SUCCESS: Entered scanned market ${tokenId.slice(0, 12)}...`);
+                this.failedEntryCooldowns.delete(tokenId);
               } else {
                 this.trackFailureReason(`SCAN: ${result.reason || "unknown"}`);
+                // Add to cooldown if failed due to price/liquidity issues
+                if (shouldCooldownOnFailure(result.reason)) {
+                  this.failedEntryCooldowns.set(tokenId, Date.now() + this.FAILED_ENTRY_COOLDOWN_MS);
+                  console.log(
+                    `⏳ [Scanner] Token ${tokenId.slice(0, 12)}... on cooldown for ${Math.round(this.FAILED_ENTRY_COOLDOWN_MS / 1000)}s`
+                  );
+                }
                 // Only log scan failures periodically to avoid spam
                 if (this.cycleCount % 20 === 0) {
                   console.log(`❌ [Scanner] FAILED: ${tokenId.slice(0, 12)}... - ${result.reason}`);
@@ -4575,7 +4628,7 @@ class ChurnEngine {
     console.log("");
     
     // Telegram update
-    if (this.config.telegramBotToken && metrics.totalTrades > 0) {
+    if (isTelegramEnabled() && metrics.totalTrades > 0) {
       await sendTelegram(
         "📊 Status",
         `Balance: $${usdcBalance.toFixed(2)}\nPOL: ${polBalance.toFixed(1)}${polWarning}\nPositions: ${positionDisplay}\nFollowing: ${trackedWallets} wallets\nWin: ${winPct}%\nP&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`
@@ -4786,7 +4839,7 @@ class ChurnEngine {
     if (result?.success) {
       console.log(`⛽ Refilled! Swapped $${result.usdcSwapped?.toFixed(2)} → ${result.polReceived?.toFixed(2)} POL`);
 
-      if (this.config.telegramBotToken) {
+      if (isTelegramEnabled()) {
         await sendTelegram(
           "⛽ Gas Refilled",
           `Swapped $${result.usdcSwapped?.toFixed(2)} USDC for ${result.polReceived?.toFixed(2)} POL`,
@@ -4906,7 +4959,7 @@ class ChurnEngine {
       if (result.redeemed > 0) {
         console.log(`🎁 Redeemed ${result.redeemed} position(s) worth $${result.totalValue.toFixed(2)}`);
 
-        if (this.config.telegramBotToken) {
+        if (isTelegramEnabled()) {
           await sendTelegram(
             "🎁 Positions Redeemed",
             `Collected ${result.redeemed} settled position(s)\nValue: $${result.totalValue.toFixed(2)}`,
@@ -4934,12 +4987,7 @@ class ChurnEngine {
       this.onchainMonitor.stop();
     }
 
-    // Stop web dashboard if running
-    if (this.webDashboard) {
-      this.webDashboard.stop();
-    }
-
-    if (this.config.telegramBotToken) {
+    if (isTelegramEnabled()) {
       sendTelegram("🛑 Bot Stopped", "Polymarket Bot has been stopped").catch(() => {});
     }
   }

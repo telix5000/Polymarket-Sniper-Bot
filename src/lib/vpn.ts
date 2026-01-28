@@ -660,8 +660,9 @@ export async function setupPolymarketReadBypass(
   // cannot differentiate between read and write requests to the same host.
   const hosts = [
     // "clob.polymarket.com" - EXCLUDED: handles orders which need VPN protection
-    "gamma-api.polymarket.com", // Gamma API (reads only)
-    "strapi-matic.poly.market", // Strapi API (reads only)
+    "gamma-api.polymarket.com", // Gamma API (reads only) - CONFIRMED: does NOT need VPN
+    "data-api.polymarket.com", // Data API (reads only) - used for whale tracking
+    // "strapi-matic.poly.market" - NOT USED by this bot
   ];
 
   for (const host of hosts) {
@@ -673,6 +674,46 @@ export async function setupPolymarketReadBypass(
     }
   }
 }
+
+/**
+ * Setup Gamma API bypass - this API does NOT need VPN (confirmed)
+ * Called by default when VPN is active to speed up market scanning and whale tracking
+ */
+export async function setupReadApiBypass(
+  logger?: Logger,
+): Promise<void> {
+  if (!vpnActive) {
+    // No VPN active, no need for bypass
+    return;
+  }
+
+  if (!preVpnRouting?.gateway) {
+    logger?.warn?.(
+      "Cannot setup read API bypass: pre-VPN routing not captured",
+    );
+    return;
+  }
+
+  // These APIs do NOT require VPN (confirmed by user):
+  // - gamma-api.polymarket.com: Market data, volumes
+  // - data-api.polymarket.com: Leaderboard, whale activity, positions
+  const readOnlyApis = [
+    "gamma-api.polymarket.com",
+    "data-api.polymarket.com",
+  ];
+
+  for (const host of readOnlyApis) {
+    const result = addBypassRoute(host, logger);
+    if (result) {
+      logger?.info?.(
+        `Read API bypass: ${host} -> ${result.ip} via ${result.gateway}`,
+      );
+    }
+  }
+}
+
+// Legacy alias for backward compatibility
+export const setupGammaApiBypass = setupReadApiBypass;
 
 /**
  * Check VPN requirements for live trading
