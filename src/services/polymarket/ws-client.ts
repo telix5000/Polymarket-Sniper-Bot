@@ -51,4 +51,8 @@ export {
 } from "../../lib/market-data-facade";
 
 // WebSocket URLs from constants
-export { POLYMARKET_WS, getMarketWsUrl, getUserWsUrl } from "../../lib/constants";
+export {
+  POLYMARKET_WS,
+  getMarketWsUrl,
+  getUserWsUrl,
+} from "../../lib/constants";

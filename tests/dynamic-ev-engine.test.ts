@@ -480,9 +480,21 @@ describe("DynamicEvEngine", () => {
 
       const decision = engine.evaluateEntry();
 
-      assert.strictEqual(decision.allowed, true, "Should allow entry when disabled");
-      assert.strictEqual(decision.sizeFactor, 1.0, "Should use full size when disabled");
-      assert.strictEqual(decision.reason, "DYNAMIC_EV_DISABLED", "Should show disabled reason");
+      assert.strictEqual(
+        decision.allowed,
+        true,
+        "Should allow entry when disabled",
+      );
+      assert.strictEqual(
+        decision.sizeFactor,
+        1.0,
+        "Should use full size when disabled",
+      );
+      assert.strictEqual(
+        decision.reason,
+        "DYNAMIC_EV_DISABLED",
+        "Should show disabled reason",
+      );
     });
 
     it("should apply EV gating when enabled", () => {
@@ -501,7 +513,7 @@ describe("DynamicEvEngine", () => {
       // When EV is negative and enabled, should either pause or reduce size
       assert(
         decision.sizeFactor < 1.0 || !decision.allowed,
-        "Should apply EV gating when enabled"
+        "Should apply EV gating when enabled",
       );
     });
   });

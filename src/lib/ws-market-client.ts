@@ -11,6 +11,8 @@
  * - Staleness tracking per tokenId
  * - Health metrics and logging
  * - Keepalive via "PING" text messages (not WebSocket ping frames)
+ * - Dead socket detection via PONG timeout (fixes code 1006 disconnects)
+ * - Re-subscribes to all tokens after reconnect (exactly once)
  *
  * Official endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/market
  * Per Polymarket docs: URL path determines channel (market vs user)
@@ -39,6 +41,7 @@ export interface WsClientOptions {
   reconnectMaxMs?: number;
   stableConnectionMs?: number;
   pingIntervalMs?: number;
+  pongTimeoutMs?: number;
   connectionTimeoutMs?: number;
   onConnect?: () => void;
   onDisconnect?: (code: number, reason: string) => void;
@@ -99,6 +102,9 @@ export class WebSocketMarketClient {
 
   // Keepalive state - sends "PING" text message on interval
   private pingTimer: NodeJS.Timeout | null = null;
+  private lastPongAt = 0;
+  private pongTimeoutTimer: NodeJS.Timeout | null = null;
+  private pongTimeoutMs: number;
 
   // Stable connection timer - resets backoff after connection is stable
   private stableConnectionTimer: NodeJS.Timeout | null = null;
@@ -142,6 +148,8 @@ export class WebSocketMarketClient {
       options?.stableConnectionMs ?? POLYMARKET_WS.STABLE_CONNECTION_MS;
     this.pingIntervalMs =
       options?.pingIntervalMs ?? POLYMARKET_WS.PING_INTERVAL_MS;
+    this.pongTimeoutMs =
+      options?.pongTimeoutMs ?? POLYMARKET_WS.PONG_TIMEOUT_MS;
     this.connectionTimeoutMs =
       options?.connectionTimeoutMs ?? POLYMARKET_WS.CONNECTION_TIMEOUT_MS;
 
@@ -290,6 +298,7 @@ export class WebSocketMarketClient {
     subscriptions: number;
     messagesReceived: number;
     lastMessageAgeMs: number;
+    lastPongAgeMs: number;
     reconnectAttempts: number;
     uptimeMs: number;
   } {
@@ -299,6 +308,7 @@ export class WebSocketMarketClient {
       messagesReceived: this.messagesReceived,
       lastMessageAgeMs:
         this.lastMessageAt > 0 ? Date.now() - this.lastMessageAt : 0,
+      lastPongAgeMs: this.lastPongAt > 0 ? Date.now() - this.lastPongAt : 0,
       reconnectAttempts: this.reconnectAttempt,
       uptimeMs: this.connectTime > 0 ? Date.now() - this.connectTime : 0,
     };
@@ -348,23 +358,30 @@ export class WebSocketMarketClient {
         const msgStr = data.toString();
         // Handle PONG response to our PING keepalive
         if (msgStr === "PONG") {
+          this.lastPongAt = Date.now();
+          this.clearPongTimeout();
           return;
         }
         const message = JSON.parse(msgStr);
         this.handleMessage(message);
-      } catch (err) {
+      } catch {
         // Non-JSON message (like PONG) - ignore
       }
     });
 
     this.ws.on("close", (code: number, reason: Buffer) => {
       const reasonStr = reason.toString() || "No reason provided";
+      const lastMsgAge =
+        this.lastMessageAt > 0 ? Date.now() - this.lastMessageAt : -1;
+      const lastPongAge =
+        this.lastPongAt > 0 ? Date.now() - this.lastPongAt : -1;
       console.log(
-        `[WS-Market] Connection closed: code=${code}, reason="${reasonStr}"`,
+        `[WS-Market] Connection closed: code=${code}, reason="${reasonStr}", lastMessageAgeMs=${lastMsgAge}, lastPongAgeMs=${lastPongAge}`,
       );
 
       this.ws = null;
       this.clearPing();
+      this.clearPongTimeout();
       this.clearStableConnectionTimer();
 
       // Update store state
@@ -579,13 +596,20 @@ export class WebSocketMarketClient {
   /**
    * Start sending "PING" text messages at interval for keepalive.
    * The server should respond with "PONG".
+   * If no PONG is received within pongTimeoutMs, the socket is considered dead.
    */
   private startPing(): void {
     this.clearPing();
+    this.lastPongAt = Date.now(); // Initialize to avoid immediate timeout
     this.pingTimer = setInterval(() => {
       if (this.ws && this.state === "CONNECTED") {
         try {
           this.ws.send("PING");
+          // Only start pong timeout if one isn't already running
+          // This prevents resetting the timeout on every ping
+          if (!this.pongTimeoutTimer) {
+            this.startPongTimeout();
+          }
         } catch {
           // Send failed, connection likely dead
           console.warn("[WS-Market] Ping send failed, scheduling reconnect");
@@ -599,6 +623,40 @@ export class WebSocketMarketClient {
     if (this.pingTimer) {
       clearInterval(this.pingTimer);
       this.pingTimer = null;
+    }
+    this.clearPongTimeout();
+  }
+
+  /**
+   * Start a timeout that fires if PONG is not received in time.
+   * This detects "silent" dead sockets where TCP connection hangs.
+   */
+  private startPongTimeout(): void {
+    this.clearPongTimeout();
+    this.pongTimeoutTimer = setTimeout(() => {
+      if (this.state === "CONNECTED") {
+        const lastMsgAge =
+          this.lastMessageAt > 0 ? Date.now() - this.lastMessageAt : -1;
+        console.warn(
+          `[WS-Market] No PONG received within ${this.pongTimeoutMs}ms, socket appears dead (lastMessageAgeMs=${lastMsgAge}), scheduling reconnect`,
+        );
+        // Force close the socket to trigger reconnect
+        if (this.ws) {
+          try {
+            this.ws.terminate();
+          } catch {
+            // Ignore terminate errors
+          }
+        }
+        this.scheduleReconnect();
+      }
+    }, this.pongTimeoutMs);
+  }
+
+  private clearPongTimeout(): void {
+    if (this.pongTimeoutTimer) {
+      clearTimeout(this.pongTimeoutTimer);
+      this.pongTimeoutTimer = null;
     }
   }
 

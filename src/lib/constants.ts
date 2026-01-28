@@ -69,7 +69,10 @@ export const POLYMARKET_WS = {
   DEPTH_WINDOW_CENTS: envNum("MARKETDATA_DEPTH_WINDOW_CENTS", 5),
 
   // Keepalive ping interval (send "PING" text message)
-  PING_INTERVAL_MS: envNum("WS_PING_INTERVAL_MS", 10000),
+  PING_INTERVAL_MS: envNum("WS_PING_INTERVAL_MS", 25000),
+
+  // Pong timeout - how long to wait for PONG response before assuming dead socket
+  PONG_TIMEOUT_MS: envNum("WS_PONG_TIMEOUT_MS", 10000),
 
   // Connection timeout
   CONNECTION_TIMEOUT_MS: envNum("WS_CONNECTION_TIMEOUT_MS", 10000),
