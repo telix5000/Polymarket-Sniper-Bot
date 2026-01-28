@@ -300,11 +300,11 @@ export class DecisionEngine {
     const deviation = Math.abs(currentPriceCents - params.referencePriceCents);
 
     // Threshold for considering prices equal (accounts for floating point imprecision)
-    const PRICE_EQUALITY_THRESHOLD_CENTS = 0.01;
+    const priceEqualityThresholdCents = 0.01;
 
     // If reference equals current (new entry), skip this check - the bias signal is our edge
     // If reference differs (re-entry), require minimum deviation
-    if (deviation < PRICE_EQUALITY_THRESHOLD_CENTS) {
+    if (deviation < priceEqualityThresholdCents) {
       // New entry: reference price equals current price, skip deviation check
       checks.priceDeviation.passed = true;
       checks.priceDeviation.reason = "New entry (whale/scanner signal)";
@@ -522,12 +522,18 @@ export class DecisionEngine {
     }
 
     // Tight spread bonus (0-25 points)
-    const spreadRatio = params.spreadCents / this.config.minSpreadCents;
-    score += Math.max(0, 25 * (2 - spreadRatio));
+    // Guard against division by zero
+    if (this.config.minSpreadCents > 0) {
+      const spreadRatio = params.spreadCents / this.config.minSpreadCents;
+      score += Math.max(0, 25 * (2 - spreadRatio));
+    }
 
     // Depth bonus (0-25 points)
-    const depthRatio = params.depthUsd / this.config.minDepthUsdAtExit;
-    score += Math.min(25, 25 * (depthRatio - 1));
+    // Guard against division by zero
+    if (this.config.minDepthUsdAtExit > 0) {
+      const depthRatio = params.depthUsd / this.config.minDepthUsdAtExit;
+      score += Math.max(0, Math.min(25, 25 * (depthRatio - 1)));
+    }
 
     // Activity bonus (0-20 points)
     score += Math.min(20, params.activityScore * 20);

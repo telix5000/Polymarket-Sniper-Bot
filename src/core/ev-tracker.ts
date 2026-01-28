@@ -119,6 +119,8 @@ export function createTradeResult(
     timestamp: Date.now(),
     pnlCents,
     pnlUsd,
+    // Note: Break-even trades (pnlCents === 0) are classified as losses.
+    // This is intentional - we want to incentivize actual wins, not break-evens.
     isWin: pnlCents > 0,
   };
 }

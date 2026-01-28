@@ -715,7 +715,9 @@ describe("EV Tracker", () => {
     });
 
     it("should calculate break-even at ~48% win rate", () => {
-      // At exactly 48% wins with 14¢ avg win and 9¢ avg loss
+      // Break-even formula: p > (avgLoss + churn) / (avgWin + avgLoss)
+      // With avgWin=14¢, avgLoss=9¢, churn=2¢: p > (9 + 2) / (14 + 9) = 47.8%
+      // At exactly 48% wins:
       // EV = 0.48 * 14 - 0.52 * 9 - 2 = 6.72 - 4.68 - 2 = 0.04 (slightly positive)
       for (let i = 0; i < 48; i++) {
         tracker.recordTrade(createTradeResult("token-1", "LONG", 50, 64, 25));
@@ -725,10 +727,10 @@ describe("EV Tracker", () => {
       }
 
       const metrics = tracker.getMetrics();
-      // EV should be close to 0
+      // EV should be close to 0 (between -0.5 and +0.5)
       assert.ok(
-        Math.abs(metrics.evCents) < 1,
-        `Expected near-zero EV, got ${metrics.evCents}`,
+        metrics.evCents > -0.5 && metrics.evCents < 0.5,
+        `Expected EV near break-even (-0.5 to +0.5), got ${metrics.evCents}`,
       );
     });
   });
@@ -748,12 +750,13 @@ describe("EV Tracker", () => {
       // Create a fresh tracker for this test
       const freshTracker = new EvTracker();
 
-      // Add trades with 60% win rate - interleave to avoid early pause trigger
-      // Pattern: WWLWWLWWLWWLWWLWWLWWLL (12 wins, 8 losses)
+      // Add trades with positive EV - interleave to avoid early pause trigger
+      // Condition: (i % 5 < 3 || i >= 18) produces wins at positions:
+      // 0,1,2, 5,6,7, 10,11,12, 15,16,17, 18,19 = 14 wins
+      // Losses at: 3,4, 8,9, 13,14 = 6 losses
+      // Total: 70% win rate (sufficient for positive EV)
       for (let i = 0; i < 20; i++) {
         if (i % 5 < 3 || i >= 18) {
-          // Wins at positions 0,1,2, 5,6,7, 10,11,12, 15,16,17
-          // Losses at positions 3,4, 8,9, 13,14, 18,19
           freshTracker.recordTrade(
             createTradeResult("token-1", "LONG", 50, 64, 25),
           ); // Win
