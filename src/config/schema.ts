@@ -17,6 +17,7 @@ export type LiquidationMode = "off" | "losing" | "all";
 
 /**
  * Log level for output verbosity
+ * NOTE: Canonical definition is in infra/logging - this is a re-export alias
  */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -50,18 +51,20 @@ export interface TradingConfig {
 
 /**
  * Entry and exit price bands configuration (in cents)
+ * Note: Prices in Polymarket are expressed as decimals 0-1, which map to 0-100 cents.
+ * These config values are in cents (1-100) to match the trading math.
  */
 export interface PriceBandsConfig {
-  /** Minimum price movement to enter (cents) */
+  /** Minimum price change required to trigger entry (in cents, e.g., 12 = 12¢ movement needed) */
   entryBandCents: number;
 
-  /** Take profit target (cents) */
+  /** Take profit target - close position when gain reaches this (in cents) */
   tpCents: number;
 
-  /** Price at which to trigger hedging (cents) */
+  /** Price at which to trigger hedging (in cents of adverse movement) */
   hedgeTriggerCents: number;
 
-  /** Maximum adverse movement before hard stop (cents) */
+  /** Maximum adverse movement before hard stop (in cents) */
   maxAdverseCents: number;
 
   /** Maximum hold time (seconds) */

@@ -2,26 +2,17 @@
  * Logging Infrastructure
  *
  * Provides a consistent logging interface and utilities for the application.
- * This module defines the Logger interface and provides additional
- * logging utilities for structured output.
+ * Re-exports the Logger type from models for convenience.
  */
 
-/**
- * Logger interface for consistent logging across the application
- */
-export interface Logger {
-  /** Log informational message */
-  info(msg: string): void;
+// Import Logger from models for use in this file
+import type { Logger as LoggerType } from "../../models/common";
 
-  /** Log warning message */
-  warn(msg: string): void;
+// Re-export Logger from models (canonical definition)
+export type { Logger } from "../../models/common";
 
-  /** Log error message */
-  error(msg: string): void;
-
-  /** Log debug message (optional) */
-  debug?(msg: string): void;
-}
+// Internal alias for use in this file
+type Logger = LoggerType;
 
 /**
  * Log levels for filtering output

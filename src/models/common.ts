@@ -12,6 +12,7 @@ export type Preset = "conservative" | "balanced" | "aggressive";
 
 /**
  * Logger interface for consistent logging across the application
+ * NOTE: This is the canonical definition used by both models and infra
  */
 export interface Logger {
   /** Log informational message */

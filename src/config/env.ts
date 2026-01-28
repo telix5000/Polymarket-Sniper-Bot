@@ -89,8 +89,8 @@ export function parseOptionalFloatWithDefault(
   // Warn if value seems like a percentage (outside [0,1] range)
   if (parsed < 0 || parsed > 1) {
     console.warn(
-      `⚠️ Price value ${parsed} is outside expected [0,1] range. ` +
-        `Use decimal format (e.g., 0.25 for 25¢, not 25).`,
+      `[WARN] Price value ${parsed} is outside expected [0,1] range. ` +
+        `Use decimal format (e.g., 0.25 for 25 cents, not 25).`,
     );
     // Fall back to the provided default to avoid using an invalid configuration value
     return defaultValue;
@@ -105,7 +105,7 @@ export function parseOptionalFloatWithDefault(
  * @param key - Environment variable name
  * @param defaultValue - Default value if not set or invalid
  * @param validValues - Array of valid values
- * @param aliases - Optional map of alias -> canonical value
+ * @param aliases - Optional map of alias -> canonical value (alias values must be in validValues)
  * @returns Parsed value or default
  */
 export function envEnum<T extends string>(
@@ -119,9 +119,13 @@ export function envEnum<T extends string>(
 
   const normalized = value.toLowerCase().trim();
 
-  // Check aliases first
+  // Check aliases first - ensure the alias maps to a valid value
   if (aliases && normalized in aliases) {
-    return aliases[normalized];
+    const aliasedValue = aliases[normalized];
+    if (validValues.includes(aliasedValue)) {
+      return aliasedValue;
+    }
+    // Alias maps to invalid value - fall through to default handling
   }
 
   // Check valid values

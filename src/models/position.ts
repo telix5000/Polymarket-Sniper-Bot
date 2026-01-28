@@ -24,10 +24,10 @@ export interface Position {
   /** Size of the position in shares */
   size: number;
 
-  /** Average entry price in USD (0-1 representing cents) */
+  /** Average entry price as a decimal (0-1, where 0.50 = 50 cents) */
   avgPrice: number;
 
-  /** Current market price in USD (0-1 representing cents) */
+  /** Current market price as a decimal (0-1, where 0.50 = 50 cents) */
   curPrice: number;
 
   /** Profit/loss as a percentage */
