@@ -131,31 +131,59 @@ describe("WebSocketMarketClient", () => {
 // URL and Configuration Tests
 // ============================================================================
 
+import { getMarketWsUrl, getUserWsUrl } from "../../src/lib/constants";
+
 describe("WebSocket URL Configuration", () => {
-  it("should have correct base URL without path segments", () => {
-    // The base URL MUST be exactly this - no /user or /market path segments
+  it("should have HOST constant for base host", () => {
+    // HOST should be without trailing path
+    assert.strictEqual(
+      POLYMARKET_WS.HOST,
+      "wss://ws-subscriptions-clob.polymarket.com",
+    );
+  });
+
+  it("getMarketWsUrl() returns correct market channel URL", () => {
+    // Per Polymarket docs: wss://ws-subscriptions-clob.polymarket.com/ws/market
+    const url = getMarketWsUrl();
+    assert.strictEqual(
+      url,
+      "wss://ws-subscriptions-clob.polymarket.com/ws/market",
+    );
+    assert.ok(url.endsWith("/ws/market"));
+  });
+
+  it("getUserWsUrl() returns correct user channel URL", () => {
+    // Per Polymarket docs: wss://ws-subscriptions-clob.polymarket.com/ws/user
+    const url = getUserWsUrl();
+    assert.strictEqual(
+      url,
+      "wss://ws-subscriptions-clob.polymarket.com/ws/user",
+    );
+    assert.ok(url.endsWith("/ws/user"));
+  });
+
+  it("should have deprecated BASE_URL for backward compatibility", () => {
+    // BASE_URL kept for backward compat but should not be used alone (returns 404)
     const expectedUrl = "wss://ws-subscriptions-clob.polymarket.com/ws/";
     assert.strictEqual(POLYMARKET_WS.BASE_URL, expectedUrl);
   });
 
-  it("should have trailing slash in base URL", () => {
-    assert.ok(POLYMARKET_WS.BASE_URL.endsWith("/"));
-  });
-
   it("should NOT have USER_URL constant (removed)", () => {
-    // USER_URL was removed - both clients use BASE_URL
+    // USER_URL was removed - use getUserWsUrl() instead
     assert.strictEqual((POLYMARKET_WS as any).USER_URL, undefined);
+    // Verify replacement functions exist
+    assert.strictEqual(typeof getMarketWsUrl, "function");
+    assert.strictEqual(typeof getUserWsUrl, "function");
   });
 
-  it("should use correct default for new clients", () => {
-    // Creating a client verifies the default URL is used internally
+  it("should use correct market URL for new clients", () => {
+    // Creating a client should use getMarketWsUrl() internally
     const testClient = new WebSocketMarketClient();
-    // We can't directly access the private url property, but we verify
-    // the constant is correct and the client is created
     assert.ok(testClient);
+    // Verify the URL function returns correct value
     assert.strictEqual(
-      POLYMARKET_WS.BASE_URL,
-      "wss://ws-subscriptions-clob.polymarket.com/ws/",
+      getMarketWsUrl(),
+      "wss://ws-subscriptions-clob.polymarket.com/ws/market",
     );
     testClient.disconnect();
   });

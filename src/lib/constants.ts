@@ -37,9 +37,13 @@ export const POLYMARKET_API = {
 
 // WebSocket Endpoints and Configuration
 export const POLYMARKET_WS = {
-  // Official CLOB WebSocket endpoint - MUST be exactly this URL with trailing slash
-  // Both Market and User channels connect to the SAME base URL.
-  // Channel selection (market vs user) is done via subscribe payload, NOT URL path.
+  // WebSocket host (without path) - configurable via env var
+  // Per Polymarket docs: https://docs.polymarket.com/quickstart/websocket/WSS-Quickstart
+  // The URL is constructed as: BASE_HOST + "/ws/" + channel_type (market or user)
+  HOST: envStr("POLY_WS_HOST", "wss://ws-subscriptions-clob.polymarket.com"),
+
+  // @deprecated Use getMarketWsUrl() or getUserWsUrl() instead
+  // Kept for backward compatibility - this URL alone returns 404
   BASE_URL: envStr(
     "POLY_WS_BASE_URL",
     "wss://ws-subscriptions-clob.polymarket.com/ws/",
@@ -70,6 +74,22 @@ export const POLYMARKET_WS = {
   // Connection timeout
   CONNECTION_TIMEOUT_MS: envNum("WS_CONNECTION_TIMEOUT_MS", 10000),
 } as const;
+
+/**
+ * Get the WebSocket URL for the Market channel (public orderbook data).
+ * Per Polymarket docs: wss://ws-subscriptions-clob.polymarket.com/ws/market
+ */
+export function getMarketWsUrl(): string {
+  return `${POLYMARKET_WS.HOST}/ws/market`;
+}
+
+/**
+ * Get the WebSocket URL for the User channel (authenticated order/trade events).
+ * Per Polymarket docs: wss://ws-subscriptions-clob.polymarket.com/ws/user
+ */
+export function getUserWsUrl(): string {
+  return `${POLYMARKET_WS.HOST}/ws/user`;
+}
 
 // Polygon Network
 export const POLYGON = {

@@ -8,16 +8,14 @@
  *
  * This eliminates the need to poll for order status and fill detection.
  *
- * Official endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/
+ * Official endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/user
+ * Per Polymarket docs: URL path determines channel (market vs user)
  * Authentication: Sent via subscribe payload with API credentials
- *
- * IMPORTANT: Both Market and User channels use the SAME base URL.
- * Channel selection is done via subscribe payload with type="user".
  */
 
 import WebSocket from "ws";
 import type { ClobClient } from "@polymarket/clob-client";
-import { POLYMARKET_WS } from "./constants";
+import { POLYMARKET_WS, getUserWsUrl } from "./constants";
 
 // ============================================================================
 // Types
@@ -359,8 +357,8 @@ export class WebSocketUserClient {
   private onBalanceCb?: (event: BalanceEvent) => void;
 
   constructor(options?: WsUserClientOptions) {
-    // Use the same BASE_URL as market client - channel is selected via subscribe payload
-    this.url = options?.url ?? POLYMARKET_WS.BASE_URL;
+    // Use getUserWsUrl() for correct path: /ws/user (not just /ws/)
+    this.url = options?.url ?? getUserWsUrl();
     this.reconnectBaseMs =
       options?.reconnectBaseMs ?? POLYMARKET_WS.RECONNECT_BASE_MS;
     this.reconnectMaxMs =
@@ -527,6 +525,11 @@ export class WebSocketUserClient {
   /**
    * Extract and validate API credentials from CLOB client.
    * Returns null if credentials are missing or incomplete.
+   *
+   * NOTE: The CLOB client stores credentials with field names:
+   * - creds.key (NOT apiKey) - this is the API key
+   * - creds.secret
+   * - creds.passphrase
    */
   private async extractAuthCredentials(
     clobClient: ClobClient,
@@ -535,16 +538,40 @@ export class WebSocketUserClient {
       // Try to get credentials from CLOB client's internal state
       const creds = (clobClient as any).creds;
 
-      const apiKey = creds?.apiKey || process.env.POLY_API_KEY || "";
+      // IMPORTANT: CLOB client uses "key" not "apiKey" for the API key field.
+      // The derived credentials from createOrDeriveApiKey() return { key, secret, passphrase }.
+      // We also check "apiKey" as a defensive fallback in case the CLOB client API changes
+      // or for backward compatibility with older versions.
+      const apiKey =
+        creds?.key || creds?.apiKey || process.env.POLY_API_KEY || "";
       const secret = creds?.secret || process.env.POLY_API_SECRET || "";
       const passphrase = creds?.passphrase || process.env.POLY_PASSPHRASE || "";
 
+      // Debug logging for credential mapping - only log when DEBUG is enabled
+      // or when credentials are missing (to help diagnose issues)
+      const hasApiKey = !!apiKey;
+      const hasSecret = !!secret;
+      const hasPassphrase = !!passphrase;
+
+      if (process.env.DEBUG || !hasApiKey || !hasSecret || !hasPassphrase) {
+        console.log("[WS-User] Credential mapping check:", {
+          hasCredsObject: !!creds,
+          hasKey: !!creds?.key,
+          hasApiKey: !!creds?.apiKey,
+          hasSecret: !!creds?.secret,
+          hasPassphrase: !!creds?.passphrase,
+          mappedApiKey: hasApiKey,
+          mappedSecret: hasSecret,
+          mappedPassphrase: hasPassphrase,
+        });
+      }
+
       // Validate all required credentials are present
-      if (!apiKey || !secret || !passphrase) {
-        console.warn("[WS-User] Missing credentials:", {
-          hasApiKey: !!apiKey,
-          hasSecret: !!secret,
-          hasPassphrase: !!passphrase,
+      if (!hasApiKey || !hasSecret || !hasPassphrase) {
+        console.warn("[WS-User] Missing credentials after mapping:", {
+          hasApiKey,
+          hasSecret,
+          hasPassphrase,
         });
         return null;
       }
@@ -619,14 +646,21 @@ export class WebSocketUserClient {
       }
     });
 
-    this.ws.on("error", (err: Error & { code?: string }) => {
-      // Log detailed error info including any status codes
-      const errorInfo = err.code
-        ? `${err.message} (code: ${err.code})`
-        : err.message;
-      console.error(`[WS-User] WebSocket error: ${errorInfo}`);
-      this.onErrorCb?.(err);
-    });
+    this.ws.on(
+      "error",
+      (err: Error & { code?: string; statusCode?: number }) => {
+        // Log detailed error info including URL, any status codes, and error codes
+        // This helps diagnose handshake failures (e.g., 404 from wrong URL path)
+        const parts: string[] = [err.message];
+        if (err.code) parts.push(`code: ${err.code}`);
+        if (err.statusCode) parts.push(`statusCode: ${err.statusCode}`);
+        const errorInfo = parts.join(", ");
+        console.error(
+          `[WS-User] WebSocket error connecting to ${this.url}: ${errorInfo}`,
+        );
+        this.onErrorCb?.(err);
+      },
+    );
   }
 
   private handleMessage(message: any): void {
@@ -713,7 +747,11 @@ export class WebSocketUserClient {
 
   /**
    * Send subscribe message for user channel with auth credentials in payload.
-   * This replaces the old approach of sending auth via HTTP headers.
+   * Per Polymarket docs: {"type": "user", "markets": [...], "auth": {...}}
+   *
+   * The "markets" field can contain condition IDs to filter which markets to receive
+   * updates for. An empty array means receive updates for all user's active markets.
+   * Per the official Python quickstart, an empty array is the standard approach.
    */
   private sendSubscribe(): void {
     if (!this.ws || !this.authCredentials) {
@@ -725,9 +763,11 @@ export class WebSocketUserClient {
 
     // Subscribe to user channel with auth credentials in payload
     // NOTE: This message contains sensitive credentials - NEVER log the message content
+    // Format per Polymarket Python quickstart: {"type": "user", "markets": [], "auth": {...}}
+    // Empty markets array = receive updates for all user's active markets
     const message = {
       type: "user",
-      channel: "user",
+      markets: [] as string[], // Can be populated with condition IDs to filter
       auth: {
         apiKey: this.authCredentials.apiKey,
         secret: this.authCredentials.secret,

@@ -372,28 +372,51 @@ describe("WebSocketUserClient", () => {
 // User WebSocket URL Configuration Tests
 // ============================================================================
 
-describe("WebSocketUserClient URL Configuration", () => {
-  it("should use same BASE_URL as market client (no separate USER_URL)", () => {
-    // Both Market and User clients should use the same base URL
-    // The USER_URL constant should no longer exist
-    assert.strictEqual((POLYMARKET_WS as any).USER_URL, undefined);
+import { getUserWsUrl, getMarketWsUrl } from "../../src/lib/constants";
 
-    // BASE_URL should be the canonical endpoint
+describe("WebSocketUserClient URL Configuration", () => {
+  it("getUserWsUrl() returns correct user channel URL", () => {
+    // Per Polymarket docs: wss://ws-subscriptions-clob.polymarket.com/ws/user
+    const url = getUserWsUrl();
     assert.strictEqual(
-      POLYMARKET_WS.BASE_URL,
-      "wss://ws-subscriptions-clob.polymarket.com/ws/",
+      url,
+      "wss://ws-subscriptions-clob.polymarket.com/ws/user",
     );
+    assert.ok(url.endsWith("/ws/user"));
   });
 
-  it("should use base URL for new user clients by default", () => {
-    // Creating a client without URL option should use BASE_URL
+  it("getMarketWsUrl() and getUserWsUrl() use same host but different paths", () => {
+    const marketUrl = getMarketWsUrl();
+    const userUrl = getUserWsUrl();
+
+    // Same host
+    assert.ok(
+      marketUrl.startsWith("wss://ws-subscriptions-clob.polymarket.com"),
+    );
+    assert.ok(userUrl.startsWith("wss://ws-subscriptions-clob.polymarket.com"));
+
+    // Different paths
+    assert.ok(marketUrl.endsWith("/ws/market"));
+    assert.ok(userUrl.endsWith("/ws/user"));
+    assert.notStrictEqual(marketUrl, userUrl);
+  });
+
+  it("should NOT have USER_URL constant (use getUserWsUrl instead)", () => {
+    // USER_URL was removed - use getUserWsUrl() instead
+    assert.strictEqual((POLYMARKET_WS as any).USER_URL, undefined);
+    // Verify replacement functions exist
+    assert.strictEqual(typeof getUserWsUrl, "function");
+    assert.strictEqual(typeof getMarketWsUrl, "function");
+  });
+
+  it("should use user URL for new user clients by default", () => {
+    // Creating a client without URL option should use getUserWsUrl()
     const testClient = new WebSocketUserClient();
-    // The default URL should be the base URL (channel selected via payload)
-    // Client is created successfully
     assert.ok(testClient);
+    // Verify the URL function returns correct value
     assert.strictEqual(
-      POLYMARKET_WS.BASE_URL,
-      "wss://ws-subscriptions-clob.polymarket.com/ws/",
+      getUserWsUrl(),
+      "wss://ws-subscriptions-clob.polymarket.com/ws/user",
     );
     testClient.disconnect();
   });
@@ -406,7 +429,7 @@ describe("WebSocketUserClient URL Configuration", () => {
 describe("WebSocketUserClient Cleanup", () => {
   it("should reset state on disconnect", () => {
     const client = new WebSocketUserClient({
-      url: "wss://test.example.com/ws/",
+      url: "wss://test.example.com/ws/user",
     });
 
     client.disconnect();

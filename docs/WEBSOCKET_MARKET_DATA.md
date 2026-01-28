@@ -44,7 +44,7 @@ A new streaming architecture with three layers:
                 │ Updates in real-time
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    WebSocketMarketClient                             │
-│   Connects to wss://ws-subscriptions-clob.polymarket.com/ws/         │
+│   Connects to wss://ws-subscriptions-clob.polymarket.com/ws/market  │
 │   - Subscribes to "market" channel for tokenIds                      │
 │   - Handles L2 snapshots and deltas                                  │
 │   - Exponential backoff reconnection with jitter                     │
@@ -134,7 +134,7 @@ const mode = facade.getMode(); // "WS_OK" | "WS_STALE_FALLBACK" | "REST_ONLY"
 
 WebSocket traffic to `ws-subscriptions-clob.polymarket.com` bypasses VPN:
 
-- Market channel is public, read-only data
+- Market channel is public, read-only data (no auth required)
 - User channel uses application-layer auth (not IP-based)
 - Bypass reduces latency for real-time streaming
 
@@ -146,7 +146,7 @@ All settings via environment variables (see `.env.example`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `POLY_WS_BASE_URL` | `wss://ws-subscriptions-clob.polymarket.com/ws/` | WebSocket endpoint (SAME for both Market and User channels) |
+| `POLY_WS_HOST` | `wss://ws-subscriptions-clob.polymarket.com` | WebSocket host (without path) |
 | `WS_RECONNECT_BASE_MS` | `1000` | Initial reconnect delay |
 | `WS_RECONNECT_MAX_MS` | `30000` | Max reconnect delay |
 | `WS_STABLE_CONNECTION_MS` | `15000` | Connection stable threshold to reset backoff |
@@ -156,7 +156,11 @@ All settings via environment variables (see `.env.example`):
 | `MARKETDATA_MAX_TOKENS` | `500` | Max tracked tokens (LRU eviction) |
 | `MARKETDATA_DEPTH_WINDOW_CENTS` | `5` | Depth calculation window |
 
-**Note:** Both Market and User channels use the same base URL. Channel selection is done via the subscribe message payload, not the URL path.
+**Note:** Per Polymarket docs, the URL path determines the channel:
+- Market channel: `wss://ws-subscriptions-clob.polymarket.com/ws/market` (public, no auth)
+- User channel: `wss://ws-subscriptions-clob.polymarket.com/ws/user` (requires auth)
+
+The code uses `getMarketWsUrl()` and `getUserWsUrl()` helper functions to construct the correct URLs.
 
 ## Observability
 
