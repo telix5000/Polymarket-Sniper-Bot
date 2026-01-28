@@ -135,7 +135,7 @@ function shouldCooldownOnFailure(reason: string | undefined): boolean {
   const lowerReason = reason.toLowerCase();
   return (
     lowerReason.includes("liquidity") ||
-    lowerReason.includes("pricebounds") ||
+    lowerReason.includes("bounds") ||
     lowerReason.includes("spread") ||
     lowerReason.includes("price") && lowerReason.includes("outside")
   );
@@ -3954,11 +3954,12 @@ class ChurnEngine {
         await setupRpcBypass(this.config.rpcUrl, this.logger);
       }
       
-      // Always bypass read-only APIs (gamma-api, data-api) - they don't need VPN
-      await setupReadApiBypass(this.logger);
-      
+      // Bypass read-only APIs (gamma-api, data-api) - they don't need VPN
+      // Use the polymarket-specific bypass when explicitly enabled; otherwise use the generic one.
       if (process.env.VPN_BYPASS_POLYMARKET_READS === "true") {
         await setupPolymarketReadBypass(this.logger);
+      } else {
+        await setupReadApiBypass(this.logger);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -4460,6 +4461,9 @@ class ChurnEngine {
                 // Add to cooldown if failed due to price/liquidity issues
                 if (shouldCooldownOnFailure(result.reason)) {
                   this.failedEntryCooldowns.set(tokenId, Date.now() + this.FAILED_ENTRY_COOLDOWN_MS);
+                  console.log(
+                    `⏳ [Scanner] Token ${tokenId.slice(0, 12)}... on cooldown for ${Math.round(this.FAILED_ENTRY_COOLDOWN_MS / 1000)}s`
+                  );
                 }
                 // Only log scan failures periodically to avoid spam
                 if (this.cycleCount % 20 === 0) {
