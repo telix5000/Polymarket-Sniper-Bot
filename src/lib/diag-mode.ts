@@ -82,8 +82,19 @@ export type DiagReason =
   | "hedge_not_triggered"
   | "hedge_order_rejected"
   | "hard_stop_triggered"
+  // Candidate pre-filter issues (skipped at candidate stage, not execution)
+  | "skipped_bad_book"
+  | "candidate_cooldown"
   // Other
   | "unknown_error";
+
+/**
+ * Book sanity rejection rule - indicates which specific rule rejected a candidate
+ */
+export type BookSanityRule =
+  | "ask_too_high" // bestAsk >= BOOK_MAX_ASK
+  | "spread_too_wide" // spread >= BOOK_MAX_SPREAD
+  | "empty_book"; // bestBid <= 0.01 && bestAsk >= 0.99
 
 /**
  * Trace event emitted during diagnostic workflow
@@ -115,6 +126,12 @@ export interface DiagModeConfig {
   orderTimeoutSec: number;
   /** Force exactly 1 share for all orders */
   forceShares: number;
+  /** Cooldown in seconds for rejected candidates (default: 600) */
+  badBookCooldownSec: number;
+  /** Maximum bestAsk for book sanity check (default: 0.95) */
+  bookMaxAsk: number;
+  /** Maximum spread for book sanity check (default: 0.20) */
+  bookMaxSpread: number;
 }
 
 /**
@@ -403,11 +420,22 @@ export function parseDiagModeConfig(): DiagModeConfig {
   );
   const forceShares = parseInt(process.env.DIAG_FORCE_SHARES ?? "1", 10);
 
+  // Book sanity configuration
+  const badBookCooldownSec = parseInt(
+    process.env.DIAG_BAD_BOOK_COOLDOWN_SEC ?? "600",
+    10,
+  );
+  const bookMaxAsk = parseFloat(process.env.DIAG_BOOK_MAX_ASK ?? "0.95");
+  const bookMaxSpread = parseFloat(process.env.DIAG_BOOK_MAX_SPREAD ?? "0.20");
+
   return {
     enabled,
     whaleTimeoutSec: isNaN(whaleTimeoutSec) ? 60 : whaleTimeoutSec,
     orderTimeoutSec: isNaN(orderTimeoutSec) ? 30 : orderTimeoutSec,
     forceShares: isNaN(forceShares) || forceShares < 1 ? 1 : forceShares,
+    badBookCooldownSec: isNaN(badBookCooldownSec) ? 600 : badBookCooldownSec,
+    bookMaxAsk: isNaN(bookMaxAsk) ? 0.95 : bookMaxAsk,
+    bookMaxSpread: isNaN(bookMaxSpread) ? 0.2 : bookMaxSpread,
   };
 }
 

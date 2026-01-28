@@ -60,6 +60,248 @@ interface PreVpnRouting {
 
 let preVpnRouting: PreVpnRouting | null = null;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// VPN ROUTING POLICY EVENTS (Diagnostic Improvement - Part A)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Write route check result for a single host
+ */
+export interface WriteRouteCheckResult {
+  hostname: string;
+  resolvedIp: string | null;
+  outgoingInterface: string | null;
+  outgoingGateway: string | null;
+  routeThroughVpn: boolean;
+  mismatch: boolean; // true if vpnActive=true but not routed through VPN
+}
+
+/**
+ * VPN Routing Policy PRE event structure
+ * Emitted BEFORE VPN starts
+ */
+export interface VpnRoutingPolicyPreEvent {
+  event: "VPN_ROUTING_POLICY_PRE";
+  timestamp: string;
+  preVpnRouting: {
+    gateway: string | null;
+    iface: string | null;
+  };
+  vpnConfigured: {
+    wireguard: boolean;
+    openvpn: boolean;
+  };
+}
+
+/**
+ * VPN Routing Policy EFFECTIVE event structure
+ * Emitted AFTER VPN is up AND bypass routes are applied
+ */
+export interface VpnRoutingPolicyEffectiveEvent {
+  event: "VPN_ROUTING_POLICY_EFFECTIVE";
+  timestamp: string;
+  vpnActive: boolean;
+  vpnType: "wireguard" | "openvpn" | "none";
+  preVpnRouting: {
+    gateway: string | null;
+    iface: string | null;
+  };
+  envConfig: {
+    VPN_BYPASS_RPC: string;
+    VPN_BYPASS_POLYMARKET_READS: string;
+    VPN_BYPASS_POLYMARKET_WS: string;
+  };
+  bypassedHosts: string[];
+  writeHosts: string[];
+  writeRouteCheck: WriteRouteCheckResult[];
+}
+
+/**
+ * Emit VPN_ROUTING_POLICY_PRE event BEFORE starting VPN.
+ * This captures the pre-VPN routing state for diagnostics.
+ */
+export function emitRoutingPolicyPreEvent(
+  logger?: Logger,
+): VpnRoutingPolicyPreEvent {
+  const wgConfigured =
+    process.env.WIREGUARD_ENABLED === "true" ||
+    !!process.env.WG_CONFIG ||
+    !!process.env.WIREGUARD_CONFIG;
+  const ovpnConfigured =
+    process.env.OPENVPN_ENABLED === "true" ||
+    !!process.env.OVPN_CONFIG ||
+    !!process.env.OPENVPN_CONFIG;
+
+  const event: VpnRoutingPolicyPreEvent = {
+    event: "VPN_ROUTING_POLICY_PRE",
+    timestamp: new Date().toISOString(),
+    preVpnRouting: {
+      gateway: preVpnRouting?.gateway ?? null,
+      iface: preVpnRouting?.iface ?? null,
+    },
+    vpnConfigured: {
+      wireguard: wgConfigured,
+      openvpn: ovpnConfigured,
+    },
+  };
+
+  console.log(JSON.stringify(event));
+  logger?.info?.(
+    `VPN_ROUTING_POLICY_PRE: preVpnGateway=${event.preVpnRouting.gateway}, preVpnIface=${event.preVpnRouting.iface}`,
+  );
+
+  return event;
+}
+
+/**
+ * Verify write path routing for a specific hostname.
+ * Uses `ip route get` to check actual routing.
+ */
+export function checkWriteHostRoute(
+  hostname: string,
+  logger?: Logger,
+): WriteRouteCheckResult {
+  const result: WriteRouteCheckResult = {
+    hostname,
+    resolvedIp: null,
+    outgoingInterface: null,
+    outgoingGateway: null,
+    routeThroughVpn: false,
+    mismatch: false,
+  };
+
+  // Validate hostname
+  if (!isValidHostname(hostname)) {
+    logger?.warn?.(`Invalid hostname for route check: ${hostname}`);
+    return result;
+  }
+
+  try {
+    // Resolve hostname to IP using getent ahostsv4
+    const ip = execSync(
+      `getent ahostsv4 ${hostname} | awk 'NR==1 {print $1; exit}'`,
+      { encoding: "utf8" },
+    ).trim();
+
+    if (!ip || !isValidIp(ip)) {
+      logger?.warn?.(`Cannot resolve IP for ${hostname}: got "${ip}"`);
+      return result;
+    }
+
+    result.resolvedIp = ip;
+
+    // Get the actual route using `ip route get`
+    const routeOutput = execSync(`ip route get ${ip} 2>/dev/null`, {
+      encoding: "utf8",
+    }).trim();
+
+    // Parse output: "1.2.3.4 via 10.0.0.1 dev eth0 src 192.168.1.2"
+    const viaMatch = routeOutput.match(/via\s+(\d+\.\d+\.\d+\.\d+)/);
+    const devMatch = routeOutput.match(/dev\s+(\S+)/);
+
+    result.outgoingGateway = viaMatch?.[1] ?? null;
+    result.outgoingInterface = devMatch?.[1] ?? null;
+
+    // Determine if route goes through VPN
+    // If the route uses the pre-VPN gateway/interface, it's bypassing VPN
+    if (preVpnRouting?.gateway && preVpnRouting?.iface) {
+      const usesBypass =
+        result.outgoingGateway === preVpnRouting.gateway ||
+        result.outgoingInterface === preVpnRouting.iface;
+      result.routeThroughVpn = !usesBypass;
+    } else {
+      // Can't determine - assume VPN if we have a different interface
+      result.routeThroughVpn = !!result.outgoingInterface;
+    }
+
+    // Check for mismatch: VPN is active but write host is not routed through VPN
+    if (vpnActive && !result.routeThroughVpn) {
+      result.mismatch = true;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger?.warn?.(`Failed to check route for ${hostname}: ${msg}`);
+  }
+
+  return result;
+}
+
+/**
+ * Emit VPN_ROUTING_POLICY_EFFECTIVE event AFTER VPN is up and bypass routes are applied.
+ * This is the FINAL effective routing state.
+ */
+export function emitRoutingPolicyEffectiveEvent(
+  logger?: Logger,
+): VpnRoutingPolicyEffectiveEvent {
+  // Check routes for all write hosts
+  const writeRouteChecks: WriteRouteCheckResult[] = [];
+  for (const hostname of WRITE_HOSTS) {
+    const check = checkWriteHostRoute(hostname, logger);
+    writeRouteChecks.push(check);
+
+    // Emit warning and WRITE_ROUTE_MISMATCH event if misrouted
+    if (check.mismatch) {
+      const mismatchEvent = {
+        event: "WRITE_ROUTE_MISMATCH",
+        timestamp: new Date().toISOString(),
+        hostname: check.hostname,
+        resolvedIp: check.resolvedIp,
+        outgoingInterface: check.outgoingInterface,
+        outgoingGateway: check.outgoingGateway,
+        vpnActive,
+        preVpnGateway: preVpnRouting?.gateway ?? null,
+        preVpnIface: preVpnRouting?.iface ?? null,
+        message: `WRITE host ${hostname} is NOT routed through VPN but vpnActive=true`,
+      };
+      console.warn(JSON.stringify(mismatchEvent));
+      logger?.warn?.(
+        `WRITE_ROUTE_MISMATCH: ${hostname} (${check.resolvedIp}) routes via ${check.outgoingInterface}/${check.outgoingGateway} but VPN is active`,
+      );
+
+      if (process.env.GITHUB_ACTIONS === "true") {
+        console.log(
+          `::warning::WRITE_ROUTE_MISMATCH: ${hostname} not routed through VPN despite vpnActive=true`,
+        );
+      }
+    }
+  }
+
+  const event: VpnRoutingPolicyEffectiveEvent = {
+    event: "VPN_ROUTING_POLICY_EFFECTIVE",
+    timestamp: new Date().toISOString(),
+    vpnActive,
+    vpnType,
+    preVpnRouting: {
+      gateway: preVpnRouting?.gateway ?? null,
+      iface: preVpnRouting?.iface ?? null,
+    },
+    envConfig: {
+      VPN_BYPASS_RPC: process.env.VPN_BYPASS_RPC ?? "true",
+      VPN_BYPASS_POLYMARKET_READS:
+        process.env.VPN_BYPASS_POLYMARKET_READS ?? "false",
+      VPN_BYPASS_POLYMARKET_WS: process.env.VPN_BYPASS_POLYMARKET_WS ?? "true",
+    },
+    bypassedHosts: getBypassedHosts(),
+    writeHosts: [...WRITE_HOSTS],
+    writeRouteCheck: writeRouteChecks,
+  };
+
+  console.log(JSON.stringify(event));
+  logger?.info?.(
+    `VPN_ROUTING_POLICY_EFFECTIVE: vpnActive=${vpnActive}, vpnType=${vpnType}, ` +
+      `bypassed=${event.bypassedHosts.length}, writeRouteOK=${writeRouteChecks.every((c) => !c.mismatch)}`,
+  );
+
+  return event;
+}
+
+/**
+ * Get the current pre-VPN routing info (for external access)
+ */
+export function getPreVpnRouting(): PreVpnRouting | null {
+  return preVpnRouting;
+}
+
 // Validation patterns to prevent command injection
 const HOSTNAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$/;
 const IP_PATTERN = /^(\d{1,3}\.){3}\d{1,3}$/;

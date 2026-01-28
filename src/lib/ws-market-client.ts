@@ -89,6 +89,9 @@ interface MarketChannelMessage {
 // WebSocketMarketClient Implementation
 // ============================================================================
 
+// Import VPN status for logging at disconnect
+import { isVpnActive, getVpnType } from "./vpn";
+
 export class WebSocketMarketClient {
   private ws: WebSocket | null = null;
   private state: WsConnectionState = "DISCONNECTED";
@@ -122,6 +125,13 @@ export class WebSocketMarketClient {
   private messagesReceived = 0;
   private lastMessageAt = 0;
   private connectTime = 0;
+
+  // Disconnect tracking (Part D: WS 1006 Monitoring)
+  private disconnectCount = 0;
+  private lastDisconnectCode: number | null = null;
+  private lastDisconnectTime = 0;
+  private lastDisconnectVpnActive: boolean | null = null;
+  private lastDisconnectVpnType: "wireguard" | "openvpn" | "none" | null = null;
 
   // Configuration
   private readonly url: string;
@@ -291,7 +301,7 @@ export class WebSocketMarketClient {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Get client metrics
+   * Get client metrics including disconnect tracking (Part D: WS 1006 Monitoring)
    */
   getMetrics(): {
     state: WsConnectionState;
@@ -301,6 +311,12 @@ export class WebSocketMarketClient {
     lastPongAgeMs: number;
     reconnectAttempts: number;
     uptimeMs: number;
+    // Disconnect tracking
+    disconnectCount: number;
+    lastDisconnectCode: number | null;
+    lastDisconnectAgeMs: number;
+    lastDisconnectVpnActive: boolean | null;
+    lastDisconnectVpnType: string | null;
   } {
     return {
       state: this.state,
@@ -311,6 +327,13 @@ export class WebSocketMarketClient {
       lastPongAgeMs: this.lastPongAt > 0 ? Date.now() - this.lastPongAt : 0,
       reconnectAttempts: this.reconnectAttempt,
       uptimeMs: this.connectTime > 0 ? Date.now() - this.connectTime : 0,
+      // Disconnect tracking
+      disconnectCount: this.disconnectCount,
+      lastDisconnectCode: this.lastDisconnectCode,
+      lastDisconnectAgeMs:
+        this.lastDisconnectTime > 0 ? Date.now() - this.lastDisconnectTime : 0,
+      lastDisconnectVpnActive: this.lastDisconnectVpnActive,
+      lastDisconnectVpnType: this.lastDisconnectVpnType,
     };
   }
 
@@ -375,8 +398,30 @@ export class WebSocketMarketClient {
         this.lastMessageAt > 0 ? Date.now() - this.lastMessageAt : -1;
       const lastPongAge =
         this.lastPongAt > 0 ? Date.now() - this.lastPongAt : -1;
+
+      // Track disconnect metrics (Part D: WS 1006 Monitoring)
+      this.disconnectCount++;
+      this.lastDisconnectCode = code;
+      this.lastDisconnectTime = Date.now();
+      this.lastDisconnectVpnActive = isVpnActive();
+      this.lastDisconnectVpnType = getVpnType();
+
+      // Emit structured disconnect event for diagnostics
+      const disconnectEvent = {
+        event: "WS_MARKET_DISCONNECT",
+        timestamp: new Date().toISOString(),
+        code,
+        reason: reasonStr,
+        lastMessageAgeMs: lastMsgAge,
+        lastPongAgeMs: lastPongAge,
+        disconnectCount: this.disconnectCount,
+        vpnActive: this.lastDisconnectVpnActive,
+        vpnType: this.lastDisconnectVpnType,
+      };
+      console.log(JSON.stringify(disconnectEvent));
+
       console.log(
-        `[WS-Market] Connection closed: code=${code}, reason="${reasonStr}", lastMessageAgeMs=${lastMsgAge}, lastPongAgeMs=${lastPongAge}`,
+        `[WS-Market] Connection closed: code=${code}, reason="${reasonStr}", lastMessageAgeMs=${lastMsgAge}, lastPongAgeMs=${lastPongAge}, disconnectCount=${this.disconnectCount}`,
       );
 
       this.ws = null;
