@@ -111,7 +111,7 @@ export interface PositionManagerInterface {
     priceCents: number,
     evMetrics: EvMetrics,
     biasDirection: BiasDirection,
-  ): { action: "HOLD" | "EXIT" | "HEDGE"; reason?: ExitReason };
+  ): { action: "NONE" | "HOLD" | "EXIT" | "HEDGE"; reason?: ExitReason };
   beginExit(
     positionId: string,
     reason: ExitReason,
