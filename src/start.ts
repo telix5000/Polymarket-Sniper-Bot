@@ -78,7 +78,6 @@ import {
   // Market utilities for hedge token lookup
   getOppositeTokenId,
   // GitHub error reporting
-  getGitHubReporter,
   initGitHubReporter,
   reportError,
   // Latency monitoring for dynamic slippage
@@ -3488,6 +3487,17 @@ class ChurnEngine {
       });
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // MEMPOOL MONITORING - See PENDING trades BEFORE they confirm!
+    // Runs independently of on-chain monitor - can use either or both
+    // ═══════════════════════════════════════════════════════════════════════
+    if (this.config.mempoolMonitorEnabled) {
+      // Fire and forget - don't await, let it run in parallel
+      this.initializeMempoolMonitor().catch((err) => {
+        console.warn(`⚠️ Mempool monitor background init failed: ${err instanceof Error ? err.message : err}`);
+      });
+    }
+
     // Send startup notification
     if (this.config.telegramBotToken) {
       await sendTelegram(
@@ -3614,80 +3624,86 @@ class ChurnEngine {
       console.warn(`⚠️ On-chain monitor init failed: ${err instanceof Error ? err.message : err}`);
       console.warn(`   Falling back to API polling only (still works, just slower)`);
     }
+  }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // MEMPOOL MONITOR - See PENDING trades BEFORE they confirm!
-    // This is FASTER than on-chain events - we can copy at the same price
-    // ═══════════════════════════════════════════════════════════════════════
-    if (this.config.mempoolMonitorEnabled) {
-      try {
-        // Detect WebSocket URL from RPC URL
-        let wsUrl = this.config.rpcUrl;
-        if (wsUrl.startsWith("https://")) {
-          wsUrl = wsUrl.replace("https://", "wss://").replace("/v3/", "/ws/v3/");
+  /**
+   * Initialize mempool monitor for PENDING trade detection
+   * This is FASTER than on-chain events - sees trades BEFORE they confirm!
+   * 
+   * NOTE: Runs independently of on-chain monitor - you can use either or both
+   */
+  private async initializeMempoolMonitor(): Promise<void> {
+    if (!this.config.mempoolMonitorEnabled) {
+      return;
+    }
+
+    try {
+      // Detect WebSocket URL from RPC URL
+      let wsUrl = this.config.rpcUrl;
+      if (wsUrl.startsWith("https://")) {
+        wsUrl = wsUrl.replace("https://", "wss://").replace("/v3/", "/ws/v3/");
+      }
+
+      const mempoolConfig = createMempoolMonitorConfig(
+        wsUrl,
+        this.biasAccumulator.getWhaleWallets(),
+        {
+          enabled: true,
+          minTradeSizeUsd: this.config.onchainMinWhaleTradeUsd,
+          gasPriceMultiplier: this.config.mempoolGasPriceMultiplier,
+        }
+      );
+
+      this.mempoolMonitor = new MempoolMonitor(mempoolConfig);
+
+      // ═══════════════════════════════════════════════════════════════════
+      // PENDING BUY → COPY IMMEDIATELY (faster than on-chain!)
+      // ═══════════════════════════════════════════════════════════════════
+      this.mempoolMonitor.onPendingTrade((signal) => {
+        if (signal.side === "BUY") {
+          console.log(`🔮 MEMPOOL: Whale BUY pending | $${signal.estimatedSizeUsd.toFixed(0)} | Token: ${signal.tokenId.slice(0, 12)}...`);
+          console.log(`   ⚡ COPY SIGNAL - Execute with gas > ${(signal.gasPriceGwei * this.config.mempoolGasPriceMultiplier).toFixed(1)} gwei`);
+          
+          // Store the pending signal for the next cycle to act on
+          this.pendingWhaleSignals.set(signal.tokenId, signal);
+          
+          // Feed to bias accumulator immediately
+          this.biasAccumulator.recordTrade({
+            tokenId: signal.tokenId,
+            wallet: signal.whaleWallet,
+            side: "BUY",
+            sizeUsd: signal.estimatedSizeUsd,
+            timestamp: signal.detectedAt,
+          });
         }
 
-        const mempoolConfig = createMempoolMonitorConfig(
-          wsUrl,
-          this.biasAccumulator.getWhaleWallets(),
-          {
-            enabled: true,
-            minTradeSizeUsd: this.config.onchainMinWhaleTradeUsd,
-            gasPriceMultiplier: this.config.mempoolGasPriceMultiplier,
-          }
-        );
-
-        this.mempoolMonitor = new MempoolMonitor(mempoolConfig);
-
         // ═══════════════════════════════════════════════════════════════════
-        // PENDING BUY → COPY IMMEDIATELY (faster than on-chain!)
+        // PENDING SELL → EARLY EXIT WARNING (get out before price drops!)
         // ═══════════════════════════════════════════════════════════════════
-        this.mempoolMonitor.onPendingTrade((signal) => {
-          if (signal.side === "BUY") {
-            console.log(`🔮 MEMPOOL: Whale BUY pending | $${signal.estimatedSizeUsd.toFixed(0)} | Token: ${signal.tokenId.slice(0, 12)}...`);
-            console.log(`   ⚡ COPY SIGNAL - Execute with gas > ${(signal.gasPriceGwei * this.config.mempoolGasPriceMultiplier).toFixed(1)} gwei`);
+        if (signal.side === "SELL") {
+          // Check if we hold this token
+          const ourPositions = this.positionManager.getPositionsByToken(signal.tokenId);
+          if (ourPositions.length > 0) {
+            console.log(`🚨 MEMPOOL: Whale SELLING our token! | $${signal.estimatedSizeUsd.toFixed(0)}`);
+            console.log(`   ⚠️ EARLY EXIT SIGNAL - Consider selling before price drops!`);
             
-            // Store the pending signal for the next cycle to act on
-            this.pendingWhaleSignals.set(signal.tokenId, signal);
-            
-            // Feed to bias accumulator immediately
-            this.biasAccumulator.recordTrade({
-              tokenId: signal.tokenId,
-              wallet: signal.whaleWallet,
-              side: "BUY",
-              sizeUsd: signal.estimatedSizeUsd,
-              timestamp: signal.detectedAt,
-            });
-          }
-
-          // ═══════════════════════════════════════════════════════════════════
-          // PENDING SELL → EARLY EXIT WARNING (get out before price drops!)
-          // ═══════════════════════════════════════════════════════════════════
-          if (signal.side === "SELL") {
-            // Check if we hold this token
-            const ourPositions = this.positionManager.getPositionsByToken(signal.tokenId);
-            if (ourPositions.length > 0) {
-              console.log(`🚨 MEMPOOL: Whale SELLING our token! | $${signal.estimatedSizeUsd.toFixed(0)}`);
-              console.log(`   ⚠️ EARLY EXIT SIGNAL - Consider selling before price drops!`);
-              
-              // Mark positions for urgent exit
-              for (const pos of ourPositions) {
-                console.log(`   📍 Position ${pos.id.slice(0, 8)}... | Entry: ${pos.entryPriceCents.toFixed(1)}¢ | Size: $${pos.entrySizeUsd.toFixed(2)}`);
-                // The next cycle will see this and can prioritize exit
-              }
+            // Mark positions for urgent exit
+            for (const pos of ourPositions) {
+              console.log(`   📍 Position ${pos.id.slice(0, 8)}... | Entry: ${pos.entryPriceCents.toFixed(1)}¢ | Size: $${pos.entrySizeUsd.toFixed(2)}`);
+              // The next cycle will see this and can prioritize exit
             }
           }
-        });
-
-        const started = await this.mempoolMonitor.start();
-        if (started) {
-          console.log(`🔮 Mempool monitor: ACTIVE | Watching for PENDING whale trades`);
-          console.log(`🔮 Speed advantage: See trades BEFORE confirmation → copy at same price!`);
         }
-      } catch (err) {
-        console.warn(`⚠️ Mempool monitor init failed: ${err instanceof Error ? err.message : err}`);
-        console.warn(`   Note: Not all RPC providers support pending tx subscription`);
+      });
+
+      const started = await this.mempoolMonitor.start();
+      if (started) {
+        console.log(`🔮 Mempool monitor: ACTIVE | Watching for PENDING whale trades`);
+        console.log(`🔮 Speed advantage: See trades BEFORE confirmation → copy at same price!`);
       }
+    } catch (err) {
+      console.warn(`⚠️ Mempool monitor init failed: ${err instanceof Error ? err.message : err}`);
+      console.warn(`   Note: Not all RPC providers support pending tx subscription`);
     }
   }
 

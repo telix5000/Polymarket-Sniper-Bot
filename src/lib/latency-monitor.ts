@@ -383,7 +383,7 @@ export class LatencyMonitor {
    * - Critical latency (> 1000ms): Approach max slippage
    */
   calculateRecommendedSlippage(latencyMs: number): number {
-    const { baseSlippagePct, maxSlippagePct, degradedThresholdMs, criticalThresholdMs } = this.config;
+    const { baseSlippagePct, maxSlippagePct, criticalThresholdMs } = this.config;
 
     if (latencyMs <= 200) {
       return baseSlippagePct;
