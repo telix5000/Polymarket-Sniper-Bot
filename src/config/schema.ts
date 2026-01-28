@@ -318,6 +318,9 @@ export interface PollingConfig {
   /** Position poll interval (ms) */
   positionPollIntervalMs: number;
 
+  /** Balance cache refresh interval (ms) - throttles RPC calls for wallet balance checks */
+  balanceRefreshIntervalMs: number;
+
   /** Log level */
   logLevel: LogLevel | string;
 }
