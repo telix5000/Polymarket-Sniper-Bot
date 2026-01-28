@@ -1,6 +1,6 @@
 /**
  * V2 Telegram - Notifications
- * 
+ *
  * Includes rate limiting and exponential backoff to handle 429 errors.
  */
 
@@ -43,7 +43,10 @@ function sleep(ms: number): Promise<void> {
 /**
  * Send message with rate limiting and retry logic
  */
-export async function sendTelegram(title: string, message: string): Promise<void> {
+export async function sendTelegram(
+  title: string,
+  message: string,
+): Promise<void> {
   console.log(`[${title}] ${message}`);
 
   if (!config) return;
@@ -54,7 +57,7 @@ export async function sendTelegram(title: string, message: string): Promise<void
   const elapsed = now - lastSendTime;
   const waitTime = elapsed < MIN_INTERVAL_MS ? MIN_INTERVAL_MS - elapsed : 0;
   lastSendTime = now + waitTime; // Reserve the slot for when we'll actually send
-  
+
   if (waitTime > 0) {
     await sleep(waitTime);
   }
@@ -80,14 +83,19 @@ export async function sendTelegram(title: string, message: string): Promise<void
       if (status === 429 && attempt < MAX_RETRIES) {
         // Try to get retry-after from response, otherwise use exponential backoff
         const retryAfter = axiosError.response?.headers?.["retry-after"];
-        const parsedRetryAfter = retryAfter ? parseInt(String(retryAfter), 10) : NaN;
-        
-        // Use retry-after header if valid, otherwise exponential backoff
-        const delayMs = !Number.isNaN(parsedRetryAfter) && parsedRetryAfter > 0
-          ? parsedRetryAfter * 1000
-          : BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+        const parsedRetryAfter = retryAfter
+          ? parseInt(String(retryAfter), 10)
+          : NaN;
 
-        console.log(`[Telegram] Rate limited (429), retrying in ${delayMs}ms...`);
+        // Use retry-after header if valid, otherwise exponential backoff
+        const delayMs =
+          !Number.isNaN(parsedRetryAfter) && parsedRetryAfter > 0
+            ? parsedRetryAfter * 1000
+            : BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+
+        console.log(
+          `[Telegram] Rate limited (429), retrying in ${delayMs}ms...`,
+        );
         lastSendTime = Date.now() + delayMs; // Update reservation during retry
         await sleep(delayMs);
         continue;
@@ -95,7 +103,9 @@ export async function sendTelegram(title: string, message: string): Promise<void
 
       // Max retries exceeded for 429 errors, log and exit
       if (status === 429) {
-        console.log(`[Telegram] Rate limit exceeded after ${MAX_RETRIES} retries, skipping message`);
+        console.log(
+          `[Telegram] Rate limit exceeded after ${MAX_RETRIES} retries, skipping message`,
+        );
       }
       // Other errors are silently ignored to avoid blocking the bot
       return;

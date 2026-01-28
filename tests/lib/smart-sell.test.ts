@@ -67,7 +67,7 @@ describe("Smart Sell - Liquidity Analysis", () => {
       const bids: OrderBookLevel[] = [
         { price: 0.5, size: 50 },
         { price: 0.48, size: 50 }, // 4% slippage from best bid
-        { price: 0.40, size: 100 }, // 20% slippage - should be excluded
+        { price: 0.4, size: 100 }, // 20% slippage - should be excluded
       ];
 
       const result = analyzeLiquidity(bids, 100, 5); // 5% max slippage
@@ -135,7 +135,9 @@ describe("Smart Sell - Optimal Slippage Calculation", () => {
 
     it("caps provided slippage at MAX_SLIPPAGE_PCT", () => {
       const position = createMockPosition();
-      const result = calculateOptimalSlippage(position, { maxSlippagePct: 100 });
+      const result = calculateOptimalSlippage(position, {
+        maxSlippagePct: 100,
+      });
 
       assert.strictEqual(result, SELL.MAX_SLIPPAGE_PCT);
     });

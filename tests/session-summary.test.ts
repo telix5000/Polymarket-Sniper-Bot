@@ -162,11 +162,7 @@ describe("V2 Session Summary Position Stats", () => {
       assert.strictEqual(stats.winners, 0, "Should have 0 winners");
       assert.strictEqual(stats.losers, 0, "Should have 0 losers");
       assert.strictEqual(stats.breakeven, 1, "Should have 1 breakeven");
-      assert.strictEqual(
-        stats.unrealizedPnl,
-        0,
-        "Unrealized P&L should be $0",
-      );
+      assert.strictEqual(stats.unrealizedPnl, 0, "Unrealized P&L should be $0");
     });
   });
 
@@ -388,11 +384,7 @@ describe("V2 Session Summary Position Stats", () => {
         20,
         "Unrealized P&L should be $20",
       );
-      assert.strictEqual(
-        unrealizedPct,
-        20,
-        "Unrealized P&L pct should be 20%",
-      );
+      assert.strictEqual(unrealizedPct, 20, "Unrealized P&L pct should be 20%");
     });
 
     test("handles case where total cost is zero (avoid division by zero)", () => {
@@ -434,9 +426,15 @@ describe("V2 Session Summary Display Format", () => {
     // Match the actual HTML format used in getLedgerSummary()
     const line = `💰 <b>Unrealized P&amp;L</b>: ${sign}${$(stats.unrealizedPnl)} (${sign}${unrealizedPct.toFixed(1)}%)`;
 
-    assert.ok(line.includes("<b>Unrealized P&amp;L</b>"), "Should have HTML bold tag with escaped ampersand");
+    assert.ok(
+      line.includes("<b>Unrealized P&amp;L</b>"),
+      "Should have HTML bold tag with escaped ampersand",
+    );
     assert.ok(line.includes("+$40.47"), "Should show positive amount with +");
-    assert.ok(line.includes("+20.2%"), "Should show positive percentage with +");
+    assert.ok(
+      line.includes("+20.2%"),
+      "Should show positive percentage with +",
+    );
   });
 
   test("unrealized P&L line format for negative losses (with HTML)", () => {
@@ -447,7 +445,10 @@ describe("V2 Session Summary Display Format", () => {
     // Match the actual HTML format used in getLedgerSummary()
     const line = `💰 <b>Unrealized P&amp;L</b>: ${sign}${$(stats.unrealizedPnl)} (${sign}${unrealizedPct.toFixed(1)}%)`;
 
-    assert.ok(line.includes("<b>Unrealized P&amp;L</b>"), "Should have HTML bold tag with escaped ampersand");
+    assert.ok(
+      line.includes("<b>Unrealized P&amp;L</b>"),
+      "Should have HTML bold tag with escaped ampersand",
+    );
     assert.ok(line.includes("$-25.50"), "Should show negative amount");
     assert.ok(line.includes("-25.5%"), "Should show negative percentage");
   });

@@ -86,20 +86,26 @@ export interface PostOrderInput {
  */
 export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
   const { client, tokenId, side, sizeUsd, logger, maxAcceptablePrice } = input;
-  
+
   // Determine order type - use override, or default based on side
   // Priority: explicit override > side-specific env > master ORDER_TYPE env > FOK
-  const orderType = input.orderType ?? (side === "BUY" ? BUY.DEFAULT_ORDER_TYPE : SELL.DEFAULT_ORDER_TYPE);
+  const orderType =
+    input.orderType ??
+    (side === "BUY" ? BUY.DEFAULT_ORDER_TYPE : SELL.DEFAULT_ORDER_TYPE);
 
   // Check live trading
   if (!isLiveTradingEnabled()) {
-    logger?.warn?.(`[SIM] ${side} ${sizeUsd.toFixed(2)} USD (${orderType}) - live trading disabled`);
+    logger?.warn?.(
+      `[SIM] ${side} ${sizeUsd.toFixed(2)} USD (${orderType}) - live trading disabled`,
+    );
     return { success: true, reason: "SIMULATED" };
   }
 
   // Check minimum size
   if (sizeUsd < ORDER.MIN_ORDER_USD) {
-    logger?.debug?.(`Order rejected: ORDER_TOO_SMALL (${sizeUsd.toFixed(4)} < ${ORDER.MIN_ORDER_USD})`);
+    logger?.debug?.(
+      `Order rejected: ORDER_TOO_SMALL (${sizeUsd.toFixed(4)} < ${ORDER.MIN_ORDER_USD})`,
+    );
     return { success: false, reason: "ORDER_TOO_SMALL" };
   }
 
@@ -110,7 +116,9 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     // Token-level cooldown
     const lastOrder = inFlight.get(tokenId);
     if (lastOrder && now - lastOrder < ORDER.COOLDOWN_MS) {
-      logger?.debug?.(`Order rejected: IN_FLIGHT (token ${tokenId.slice(0, 8)}... cooldown)`);
+      logger?.debug?.(
+        `Order rejected: IN_FLIGHT (token ${tokenId.slice(0, 8)}... cooldown)`,
+      );
       return { success: false, reason: "IN_FLIGHT" };
     }
 
@@ -118,7 +126,9 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     if (input.marketId) {
       const lastMarket = marketCooldown.get(input.marketId);
       if (lastMarket && now - lastMarket < ORDER.MARKET_COOLDOWN_MS) {
-        logger?.debug?.(`Order rejected: MARKET_COOLDOWN (market ${input.marketId.slice(0, 8)}...)`);
+        logger?.debug?.(
+          `Order rejected: MARKET_COOLDOWN (market ${input.marketId.slice(0, 8)}...)`,
+        );
         return { success: false, reason: "MARKET_COOLDOWN" };
       }
     }
@@ -133,7 +143,9 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       try {
         const market = await client.getMarket(input.marketId);
         if (!market) {
-          logger?.debug?.(`Order rejected: MARKET_NOT_FOUND (${input.marketId})`);
+          logger?.debug?.(
+            `Order rejected: MARKET_NOT_FOUND (${input.marketId})`,
+          );
           return { success: false, reason: "MARKET_NOT_FOUND" };
         }
       } catch {
@@ -147,15 +159,22 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       orderBook = await client.getOrderBook(tokenId);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      if (errorMessage.includes("No orderbook exists") || errorMessage.includes("404")) {
-        logger?.debug?.(`Order rejected: MARKET_CLOSED (no orderbook for ${tokenId.slice(0, 8)}...)`);
+      if (
+        errorMessage.includes("No orderbook exists") ||
+        errorMessage.includes("404")
+      ) {
+        logger?.debug?.(
+          `Order rejected: MARKET_CLOSED (no orderbook for ${tokenId.slice(0, 8)}...)`,
+        );
         return { success: false, reason: "MARKET_CLOSED" };
       }
       throw err;
     }
 
     if (!orderBook) {
-      logger?.debug?.(`Order rejected: NO_ORDERBOOK (null response for ${tokenId.slice(0, 8)}...)`);
+      logger?.debug?.(
+        `Order rejected: NO_ORDERBOOK (null response for ${tokenId.slice(0, 8)}...)`,
+      );
       return { success: false, reason: "NO_ORDERBOOK" };
     }
 
@@ -164,7 +183,9 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
 
     if (!levels || levels.length === 0) {
       const reason = isBuy ? "NO_ASKS" : "NO_BIDS";
-      logger?.debug?.(`Order rejected: ${reason} (empty ${isBuy ? "asks" : "bids"} for ${tokenId.slice(0, 8)}...)`);
+      logger?.debug?.(
+        `Order rejected: ${reason} (empty ${isBuy ? "asks" : "bids"} for ${tokenId.slice(0, 8)}...)`,
+      );
       return { success: false, reason };
     }
 
@@ -172,24 +193,36 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
 
     // Price validation
     if (bestPrice <= ORDER.MIN_TRADEABLE_PRICE) {
-      logger?.debug?.(`Order rejected: ZERO_PRICE (${bestPrice} <= ${ORDER.MIN_TRADEABLE_PRICE})`);
+      logger?.debug?.(
+        `Order rejected: ZERO_PRICE (${bestPrice} <= ${ORDER.MIN_TRADEABLE_PRICE})`,
+      );
       return { success: false, reason: "ZERO_PRICE" };
     }
 
     // Loser position check for buys (price too low indicates likely losing outcome)
-    if (isBuy && bestPrice < ORDER.GLOBAL_MIN_BUY_PRICE && !input.skipDuplicateCheck) {
-      logger?.debug?.(`Order rejected: LOSER_POSITION (price ${bestPrice} < ${ORDER.GLOBAL_MIN_BUY_PRICE})`);
+    if (
+      isBuy &&
+      bestPrice < ORDER.GLOBAL_MIN_BUY_PRICE &&
+      !input.skipDuplicateCheck
+    ) {
+      logger?.debug?.(
+        `Order rejected: LOSER_POSITION (price ${bestPrice} < ${ORDER.GLOBAL_MIN_BUY_PRICE})`,
+      );
       return { success: false, reason: "LOSER_POSITION" };
     }
 
     // Price protection check
     if (maxAcceptablePrice !== undefined) {
       if (isBuy && bestPrice > maxAcceptablePrice) {
-        logger?.debug?.(`Order rejected: PRICE_TOO_HIGH (${bestPrice} > max ${maxAcceptablePrice})`);
+        logger?.debug?.(
+          `Order rejected: PRICE_TOO_HIGH (${bestPrice} > max ${maxAcceptablePrice})`,
+        );
         return { success: false, reason: "PRICE_TOO_HIGH" };
       }
       if (!isBuy && bestPrice < maxAcceptablePrice) {
-        logger?.debug?.(`Order rejected: PRICE_TOO_LOW (${bestPrice} < min ${maxAcceptablePrice})`);
+        logger?.debug?.(
+          `Order rejected: PRICE_TOO_LOW (${bestPrice} < min ${maxAcceptablePrice})`,
+        );
         return { success: false, reason: "PRICE_TOO_LOW" };
       }
     }
@@ -206,14 +239,21 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     // For SELL orders with shares specified, also check if remainingShares is exhausted
     const shouldContinue = () => {
       if (remaining <= ORDER.MIN_ORDER_USD) return false;
-      if (!isBuy && remainingShares !== undefined && remainingShares <= ORDER.MIN_SHARES_THRESHOLD) return false;
+      if (
+        !isBuy &&
+        remainingShares !== undefined &&
+        remainingShares <= ORDER.MIN_SHARES_THRESHOLD
+      )
+        return false;
       return retryCount < ORDER.MAX_RETRIES;
     };
 
     while (shouldContinue()) {
       // Refresh orderbook for each iteration
       const currentOrderBook = await client.getOrderBook(tokenId);
-      const currentLevels = isBuy ? currentOrderBook.asks : currentOrderBook.bids;
+      const currentLevels = isBuy
+        ? currentOrderBook.asks
+        : currentOrderBook.bids;
 
       if (!currentLevels || currentLevels.length === 0) {
         break;
@@ -257,7 +297,8 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
         // Use the appropriate order type
         // FOK = Fill immediately or fail (does NOT sit on orderbook)
         // GTC = Post as limit order and WAIT for fill (sits on orderbook)
-        const clobOrderType = orderType === "GTC" ? OrderType.GTC : OrderType.FOK;
+        const clobOrderType =
+          orderType === "GTC" ? OrderType.GTC : OrderType.FOK;
         const response = await client.postOrder(signedOrder, clobOrderType);
 
         if (response.success) {
@@ -265,8 +306,11 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           // Don't update accounting - the order sits on the orderbook waiting
           // Return immediately with orderId for tracking
           if (orderType === "GTC") {
-            const orderId = (response as any).orderId || (response as any).orderHashes?.[0];
-            logger?.info?.(`GTC ${side} order posted: ${orderId?.slice(0, 12) || 'unknown'}... @ ${(levelPrice * 100).toFixed(1)}¢`);
+            const orderId =
+              (response as any).orderId || (response as any).orderHashes?.[0];
+            logger?.info?.(
+              `GTC ${side} order posted: ${orderId?.slice(0, 12) || "unknown"}... @ ${(levelPrice * 100).toFixed(1)}¢`,
+            );
             return {
               success: true,
               orderId,
@@ -274,7 +318,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
               reason: "GTC_POSTED", // Indicates order is posted, not filled
             };
           }
-          
+
           // For FOK orders: order filled immediately, update accounting
           const filledValue = amount * levelPrice;
           remaining -= filledValue;
@@ -291,7 +335,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           const errorObj = response as any;
           let cleanMessage = "";
           let reasonCode = "";
-          
+
           if (errorObj?.errorMsg) {
             cleanMessage = errorObj.errorMsg;
           } else if (errorObj?.error) {
@@ -299,7 +343,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           } else {
             cleanMessage = "Unknown error";
           }
-          
+
           // Check for Cloudflare block
           if (isCloudflareBlock(cleanMessage) || isCloudflareBlock(response)) {
             logger?.error?.(
@@ -307,18 +351,27 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
             );
             return { success: false, reason: "CLOUDFLARE_BLOCKED" };
           }
-          
+
           // Check for specific error types
           const lowerMsg = cleanMessage.toLowerCase();
-          
-          if (lowerMsg.includes("not enough balance") || lowerMsg.includes("insufficient balance")) {
+
+          if (
+            lowerMsg.includes("not enough balance") ||
+            lowerMsg.includes("insufficient balance")
+          ) {
             reasonCode = "INSUFFICIENT_BALANCE";
-          } else if (lowerMsg.includes("not enough allowance") || lowerMsg.includes("insufficient allowance")) {
+          } else if (
+            lowerMsg.includes("not enough allowance") ||
+            lowerMsg.includes("insufficient allowance")
+          ) {
             reasonCode = "INSUFFICIENT_ALLOWANCE";
-          } else if (lowerMsg.includes("price exceeds max") || lowerMsg.includes("slippage")) {
+          } else if (
+            lowerMsg.includes("price exceeds max") ||
+            lowerMsg.includes("slippage")
+          ) {
             reasonCode = "PRICE_SLIPPAGE";
           }
-          
+
           lastErrorReason = reasonCode || cleanMessage; // Track for final return
           logger?.warn?.(`Order attempt failed: ${lastErrorReason}`);
         }
@@ -331,12 +384,12 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
           );
           return { success: false, reason: "CLOUDFLARE_BLOCKED" };
         }
-        
+
         // Extract clean error message
         const errorObj = err as any;
         let cleanMessage = "";
         let reasonCode = "";
-        
+
         // Try to extract the actual error message from common CLOB response structures
         if (errorObj?.response?.data?.error) {
           cleanMessage = errorObj.response.data.error;
@@ -347,27 +400,36 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
         } else {
           cleanMessage = String(err);
         }
-        
+
         // Check for specific error types and assign reason codes
         const lowerMsg = cleanMessage.toLowerCase();
-        
-        if (lowerMsg.includes("not enough balance") || lowerMsg.includes("insufficient balance")) {
+
+        if (
+          lowerMsg.includes("not enough balance") ||
+          lowerMsg.includes("insufficient balance")
+        ) {
           reasonCode = "INSUFFICIENT_BALANCE";
           cleanMessage = `Insufficient balance: ${cleanMessage}`;
-        } else if (lowerMsg.includes("not enough allowance") || lowerMsg.includes("insufficient allowance")) {
+        } else if (
+          lowerMsg.includes("not enough allowance") ||
+          lowerMsg.includes("insufficient allowance")
+        ) {
           reasonCode = "INSUFFICIENT_ALLOWANCE";
           cleanMessage = `Insufficient allowance: ${cleanMessage}`;
-        } else if (lowerMsg.includes("price exceeds max") || lowerMsg.includes("slippage")) {
+        } else if (
+          lowerMsg.includes("price exceeds max") ||
+          lowerMsg.includes("slippage")
+        ) {
           reasonCode = "PRICE_SLIPPAGE";
           cleanMessage = `Price slippage: ${cleanMessage}`;
         } else {
           reasonCode = formatErrorForLog(err);
         }
-        
+
         logger?.warn?.(`Order execution error: ${cleanMessage}`);
-        
+
         lastErrorReason = reasonCode || cleanMessage; // Track for final return
-        
+
         if (retryCount >= ORDER.MAX_RETRIES) {
           return { success: false, reason: lastErrorReason };
         }
@@ -385,10 +447,12 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       };
     }
 
-    logger?.debug?.(`Order rejected: NO_FILLS after ${ORDER.MAX_RETRIES} retries for ${tokenId.slice(0, 8)}...`);
-    return { 
-      success: false, 
-      reason: lastErrorReason !== "NO_ERROR" ? lastErrorReason : "NO_FILLS" 
+    logger?.debug?.(
+      `Order rejected: NO_FILLS after ${ORDER.MAX_RETRIES} retries for ${tokenId.slice(0, 8)}...`,
+    );
+    return {
+      success: false,
+      reason: lastErrorReason !== "NO_ERROR" ? lastErrorReason : "NO_FILLS",
     };
   } catch (err) {
     // Check for Cloudflare block
@@ -396,8 +460,15 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       return { success: false, reason: "CLOUDFLARE_BLOCKED" };
     }
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("No orderbook") || msg.includes("404") || msg.includes("closed") || msg.includes("resolved")) {
-      logger?.debug?.(`Order rejected: MARKET_CLOSED (error: ${msg.slice(0, 50)})`);
+    if (
+      msg.includes("No orderbook") ||
+      msg.includes("404") ||
+      msg.includes("closed") ||
+      msg.includes("resolved")
+    ) {
+      logger?.debug?.(
+        `Order rejected: MARKET_CLOSED (error: ${msg.slice(0, 50)})`,
+      );
       return { success: false, reason: "MARKET_CLOSED" };
     }
     logger?.debug?.(`Order rejected: ${msg.slice(0, 100)}`);
@@ -424,13 +495,13 @@ export interface TrackedGtcOrder {
   orderId: string;
   tokenId: string;
   side: OrderSide;
-  price: number;           // Price the order was placed at
-  sizeUsd: number;         // Original order size in USD
-  shares: number;          // Number of shares in the order
-  createdAt: number;       // Timestamp when order was placed
-  expiresAt: number;       // When to auto-cancel (internal timeout)
-  reason: string;          // Why this order was placed (e.g., "whale_copy", "deviance_arb")
-  onChainPriceAtCreation?: number;  // On-chain price when order was created (for deviance tracking)
+  price: number; // Price the order was placed at
+  sizeUsd: number; // Original order size in USD
+  shares: number; // Number of shares in the order
+  createdAt: number; // Timestamp when order was placed
+  expiresAt: number; // When to auto-cancel (internal timeout)
+  reason: string; // Why this order was placed (e.g., "whale_copy", "deviance_arb")
+  onChainPriceAtCreation?: number; // On-chain price when order was created (for deviance tracking)
 }
 
 /**
@@ -444,14 +515,14 @@ export interface OrderToReprice {
 
 /**
  * GTC Order Tracker - Monitors open GTC orders and adjusts them based on price deviance
- * 
+ *
  * CRITICAL: GTC orders sit on the orderbook and can fill at any time!
  * We need to monitor them and:
  * - Cancel when price drifts too far (market moved against us)
  * - REPRICE when on-chain deviance shifts (better price available)
  * - Cancel when order is too old (conditions may have changed)
  * - Cancel when whale flow reverses (our thesis is now wrong)
- * 
+ *
  * DEVIANCE-AWARE REPRICING:
  * When on-chain price changes, we may want to adjust our GTC price to capture
  * the new deviance. This is like a "trailing limit order" that follows on-chain.
@@ -462,15 +533,16 @@ export class GtcOrderTracker {
   private readonly defaultExpiryMs: number;
   private readonly repriceThresholdCents: number;
 
-  constructor(options?: { 
-    maxPriceDriftPct?: number; 
+  constructor(options?: {
+    maxPriceDriftPct?: number;
     defaultExpiryMs?: number;
     repriceThresholdCents?: number;
   }) {
     // Cancel GTC if price drifts more than 3% from our order price
     this.maxPriceDriftPct = options?.maxPriceDriftPct ?? 3;
     // Default expiry: 1 hour (can be overridden per-order)
-    this.defaultExpiryMs = options?.defaultExpiryMs ?? BUY.GTC_EXPIRATION_SECONDS * 1000;
+    this.defaultExpiryMs =
+      options?.defaultExpiryMs ?? BUY.GTC_EXPIRATION_SECONDS * 1000;
     // Reprice if deviance shifts by more than 1 cent
     this.repriceThresholdCents = options?.repriceThresholdCents ?? 1;
   }
@@ -478,14 +550,20 @@ export class GtcOrderTracker {
   /**
    * Track a new GTC order
    */
-  track(order: Omit<TrackedGtcOrder, "createdAt" | "expiresAt"> & { expiresAt?: number }): void {
+  track(
+    order: Omit<TrackedGtcOrder, "createdAt" | "expiresAt"> & {
+      expiresAt?: number;
+    },
+  ): void {
     const now = Date.now();
     this.orders.set(order.orderId, {
       ...order,
       createdAt: now,
       expiresAt: order.expiresAt ?? now + this.defaultExpiryMs,
     });
-    console.log(`📋 Tracking GTC ${order.side}: ${order.orderId.slice(0, 12)}... @ ${(order.price * 100).toFixed(1)}¢`);
+    console.log(
+      `📋 Tracking GTC ${order.side}: ${order.orderId.slice(0, 12)}... @ ${(order.price * 100).toFixed(1)}¢`,
+    );
   }
 
   /**
@@ -508,12 +586,12 @@ export class GtcOrderTracker {
    * Get orders for a specific token
    */
   getOrdersForToken(tokenId: string): TrackedGtcOrder[] {
-    return this.getOrders().filter(o => o.tokenId === tokenId);
+    return this.getOrders().filter((o) => o.tokenId === tokenId);
   }
 
   /**
    * Check which orders should be cancelled based on current conditions
-   * 
+   *
    * @param currentPrices - Map of tokenId → current market price
    * @returns Array of orderIds that should be cancelled
    */
@@ -524,7 +602,9 @@ export class GtcOrderTracker {
     for (const order of this.orders.values()) {
       // Check 1: Time expiry
       if (now >= order.expiresAt) {
-        console.log(`⏰ GTC order expired: ${order.orderId.slice(0, 12)}... (${order.side} @ ${(order.price * 100).toFixed(1)}¢)`);
+        console.log(
+          `⏰ GTC order expired: ${order.orderId.slice(0, 12)}... (${order.side} @ ${(order.price * 100).toFixed(1)}¢)`,
+        );
         toCancel.push(order);
         continue;
       }
@@ -532,25 +612,27 @@ export class GtcOrderTracker {
       // Check 2: Price drift - cancel if market moved AWAY from our order
       // BUY order at 65¢: cancel if price went DOWN (now 60¢) - order won't fill, market moved away
       // SELL order at 70¢: cancel if price went UP (now 75¢) - order won't fill, market moved away
-      // 
+      //
       // Note: If price moves TOWARD our order, that's GOOD - it will fill at our target price
       const currentPrice = currentPrices.get(order.tokenId);
       if (currentPrice !== undefined) {
-        const driftPct = Math.abs((currentPrice - order.price) / order.price) * 100;
-        
+        const driftPct =
+          Math.abs((currentPrice - order.price) / order.price) * 100;
+
         if (driftPct > this.maxPriceDriftPct) {
           // For BUY orders: cancel if price went DOWN (market moved away, order won't fill)
           // For SELL orders: cancel if price went UP (market moved away, order won't fill)
           const priceWentDown = currentPrice < order.price;
           const priceWentUp = currentPrice > order.price;
-          const shouldCancel = (order.side === "BUY" && priceWentDown) || 
-                               (order.side === "SELL" && priceWentUp);
-          
+          const shouldCancel =
+            (order.side === "BUY" && priceWentDown) ||
+            (order.side === "SELL" && priceWentUp);
+
           if (shouldCancel) {
             console.log(
               `📉 GTC order stale (market moved away): ${order.orderId.slice(0, 12)}... ` +
-              `${order.side} @ ${(order.price * 100).toFixed(1)}¢ → now ${(currentPrice * 100).toFixed(1)}¢ ` +
-              `(${driftPct.toFixed(1)}% drift)`
+                `${order.side} @ ${(order.price * 100).toFixed(1)}¢ → now ${(currentPrice * 100).toFixed(1)}¢ ` +
+                `(${driftPct.toFixed(1)}% drift)`,
             );
             toCancel.push(order);
           }
@@ -563,35 +645,40 @@ export class GtcOrderTracker {
 
   /**
    * Cancel orders via CLOB client
-   * 
+   *
    * @param client - CLOB client for cancellation
    * @param orders - Orders to cancel
    * @returns Number of successfully cancelled orders
    */
-  async cancelOrders(client: ClobClient, orders: TrackedGtcOrder[]): Promise<number> {
+  async cancelOrders(
+    client: ClobClient,
+    orders: TrackedGtcOrder[],
+  ): Promise<number> {
     if (orders.length === 0) return 0;
 
     try {
       // Use batch cancel API with order IDs
-      const orderIds = orders.map(o => o.orderId);
+      const orderIds = orders.map((o) => o.orderId);
       await client.cancelOrders(orderIds);
-      
+
       // Untrack all cancelled orders
       for (const order of orders) {
         this.untrack(order.orderId);
-        console.log(`✅ Cancelled GTC: ${order.orderId.slice(0, 12)}... (${order.side} @ ${(order.price * 100).toFixed(1)}¢)`);
+        console.log(
+          `✅ Cancelled GTC: ${order.orderId.slice(0, 12)}... (${order.side} @ ${(order.price * 100).toFixed(1)}¢)`,
+        );
       }
-      
+
       return orders.length;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`⚠️ Failed to cancel GTC orders: ${msg}`);
-      
+
       // Try to untrack orders that might already be filled/cancelled
       for (const order of orders) {
         this.untrack(order.orderId);
       }
-      
+
       return 0;
     }
   }
@@ -599,10 +686,16 @@ export class GtcOrderTracker {
   /**
    * Cancel all orders for a token (e.g., when whale flow reverses)
    */
-  async cancelOrdersForToken(client: ClobClient, tokenId: string, reason: string): Promise<number> {
+  async cancelOrdersForToken(
+    client: ClobClient,
+    tokenId: string,
+    reason: string,
+  ): Promise<number> {
     const orders = this.getOrdersForToken(tokenId);
     if (orders.length > 0) {
-      console.log(`🔄 Cancelling ${orders.length} GTC orders for token ${tokenId.slice(0, 8)}... (${reason})`);
+      console.log(
+        `🔄 Cancelling ${orders.length} GTC orders for token ${tokenId.slice(0, 8)}... (${reason})`,
+      );
     }
     return this.cancelOrders(client, orders);
   }
@@ -610,12 +703,17 @@ export class GtcOrderTracker {
   /**
    * Get summary stats for logging
    */
-  getStats(): { total: number; buys: number; sells: number; totalValueUsd: number } {
+  getStats(): {
+    total: number;
+    buys: number;
+    sells: number;
+    totalValueUsd: number;
+  } {
     const orders = this.getOrders();
     return {
       total: orders.length,
-      buys: orders.filter(o => o.side === "BUY").length,
-      sells: orders.filter(o => o.side === "SELL").length,
+      buys: orders.filter((o) => o.side === "BUY").length,
+      sells: orders.filter((o) => o.side === "SELL").length,
       totalValueUsd: orders.reduce((sum, o) => sum + o.sizeUsd, 0),
     };
   }

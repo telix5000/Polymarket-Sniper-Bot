@@ -6,7 +6,11 @@
  */
 
 import "dotenv/config";
-import { createClobClient, redeemAllPositions, getUsdcBalance } from "../src/lib";
+import {
+  createClobClient,
+  redeemAllPositions,
+  getUsdcBalance,
+} from "../src/lib";
 
 const logger = {
   info: (message: string) => console.log(message),
@@ -43,12 +47,16 @@ async function main() {
   }
 
   const { wallet, address } = authResult;
-  logger.info(`✅ Authenticated: ${address.slice(0, 8)}...${address.slice(-6)}`);
+  logger.info(
+    `✅ Authenticated: ${address.slice(0, 8)}...${address.slice(-6)}`,
+  );
   logger.info(``);
 
   // Check balance before
   const balanceBefore = await wallet.provider!.getBalance(address);
-  logger.info(`💰 POL Balance: ${(parseFloat(balanceBefore.toString()) / 1e18).toFixed(4)} POL`);
+  logger.info(
+    `💰 POL Balance: ${(parseFloat(balanceBefore.toString()) / 1e18).toFixed(4)} POL`,
+  );
 
   // Check USDC balance before
   const usdcBefore = await getUsdcBalance(wallet, address);

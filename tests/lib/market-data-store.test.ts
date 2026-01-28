@@ -1,6 +1,6 @@
 /**
  * Market Data Store Tests
- * 
+ *
  * Tests for:
  * - Staleness detection and fallback
  * - Deduplication of updates
@@ -22,7 +22,10 @@ import {
 // Test Helpers
 // ============================================================================
 
-function createTestLevels(): { bids: OrderbookLevel[]; asks: OrderbookLevel[] } {
+function createTestLevels(): {
+  bids: OrderbookLevel[];
+  asks: OrderbookLevel[];
+} {
   return {
     bids: [
       { price: 0.55, size: 100 },
@@ -77,7 +80,10 @@ describe("MarketDataStore", () => {
 
       assert.strictEqual(data?.mid, 0.555);
       // Use approximate comparison for floating point
-      assert.ok(Math.abs(data!.spreadCents - 1) < 0.0001, `Spread should be ~1 cent, got ${data!.spreadCents}`);
+      assert.ok(
+        Math.abs(data!.spreadCents - 1) < 0.0001,
+        `Spread should be ~1 cent, got ${data!.spreadCents}`,
+      );
     });
 
     it("should return null for unknown token", () => {

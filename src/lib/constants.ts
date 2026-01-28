@@ -37,29 +37,36 @@ export const POLYMARKET_API = {
 
 // WebSocket Endpoints and Configuration
 export const POLYMARKET_WS = {
-  // Official CLOB WebSocket endpoints
-  BASE_URL: envStr("POLY_WS_BASE_URL", "wss://ws-subscriptions-clob.polymarket.com/ws/"),
-  USER_URL: envStr("POLY_WS_USER_URL", "wss://ws-subscriptions-clob.polymarket.com/ws/user"),
-  
+  // Official CLOB WebSocket endpoint - MUST be exactly this URL with trailing slash
+  // Both Market and User channels connect to the SAME base URL.
+  // Channel selection (market vs user) is done via subscribe payload, NOT URL path.
+  BASE_URL: envStr(
+    "POLY_WS_BASE_URL",
+    "wss://ws-subscriptions-clob.polymarket.com/ws/",
+  ),
+
   // Reconnection settings (exponential backoff with jitter)
-  RECONNECT_BASE_MS: envNum("WS_RECONNECT_BASE_MS", 500),
+  RECONNECT_BASE_MS: envNum("WS_RECONNECT_BASE_MS", 1000),
   RECONNECT_MAX_MS: envNum("WS_RECONNECT_MAX_MS", 30000),
-  
+
+  // Time in ms a connection must be stable before resetting backoff
+  STABLE_CONNECTION_MS: envNum("WS_STABLE_CONNECTION_MS", 15000),
+
   // Staleness threshold - data older than this triggers REST fallback
   STALE_MS: envNum("WS_STALE_MS", 2000),
-  
+
   // REST fallback rate limiting
   REST_FALLBACK_MIN_INTERVAL_MS: envNum("REST_FALLBACK_MIN_INTERVAL_MS", 500),
-  
+
   // Memory protection - cap tracked tokens
   MAX_TOKENS: envNum("MARKETDATA_MAX_TOKENS", 500),
-  
+
   // Depth window for shallow depth calculation (cents from touch)
   DEPTH_WINDOW_CENTS: envNum("MARKETDATA_DEPTH_WINDOW_CENTS", 5),
-  
-  // Ping/pong heartbeat interval
-  HEARTBEAT_INTERVAL_MS: envNum("WS_HEARTBEAT_INTERVAL_MS", 30000),
-  
+
+  // Keepalive ping interval (send "PING" text message)
+  PING_INTERVAL_MS: envNum("WS_PING_INTERVAL_MS", 10000),
+
   // Connection timeout
   CONNECTION_TIMEOUT_MS: envNum("WS_CONNECTION_TIMEOUT_MS", 10000),
 } as const;
@@ -81,7 +88,7 @@ export const ORDER = {
   MIN_ORDER_USD: 0.01,
   MIN_TRADEABLE_PRICE: 0.001,
   MIN_SHARES_THRESHOLD: 0.0001,
-  GLOBAL_MIN_BUY_PRICE: 0.10,
+  GLOBAL_MIN_BUY_PRICE: 0.1,
   DEFAULT_SLIPPAGE_PCT: 3,
   COOLDOWN_MS: 1000,
   MARKET_COOLDOWN_MS: 5000,
@@ -124,7 +131,10 @@ const MASTER_ORDER_TYPE = envStr<"FOK" | "GTC" | "">("ORDER_TYPE", "", [
  * Get order type with fallback logic:
  * specific env > master ORDER_TYPE > default
  */
-function getOrderType(specificEnv: string, defaultValue: "FOK" | "GTC"): "FOK" | "GTC" {
+function getOrderType(
+  specificEnv: string,
+  defaultValue: "FOK" | "GTC",
+): "FOK" | "GTC" {
   const specific = process.env[specificEnv];
   if (specific === "FOK" || specific === "GTC") {
     return specific;

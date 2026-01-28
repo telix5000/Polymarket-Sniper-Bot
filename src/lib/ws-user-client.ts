@@ -1,15 +1,18 @@
 /**
  * WebSocketUserClient - CLOB WebSocket client for user order/trade events
- * 
- * Connects to Polymarket's CLOB User WebSocket for authenticated events:
+ *
+ * Connects to Polymarket's CLOB WebSocket for authenticated events:
  * - Order status changes (OPEN, MATCHED, CANCELLED, etc.)
  * - Trade/fill events
  * - Balance updates
- * 
+ *
  * This eliminates the need to poll for order status and fill detection.
- * 
- * Official endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/user
- * Authentication: Uses CLOB API key via L1 authentication headers
+ *
+ * Official endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/
+ * Authentication: Sent via subscribe payload with API credentials
+ *
+ * IMPORTANT: Both Market and User channels use the SAME base URL.
+ * Channel selection is done via subscribe payload with type="user".
  */
 
 import WebSocket from "ws";
@@ -21,33 +24,33 @@ import { POLYMARKET_WS } from "./constants";
 // ============================================================================
 
 /** WebSocket connection state */
-export type WsUserConnectionState = 
-  | "DISCONNECTED" 
-  | "CONNECTING" 
+export type WsUserConnectionState =
+  | "DISCONNECTED"
+  | "CONNECTING"
   | "AUTHENTICATING"
-  | "CONNECTED" 
+  | "CONNECTED"
   | "RECONNECTING";
 
 /** Order status from WebSocket */
-export type OrderStatus = 
-  | "LIVE"      // Order is on the orderbook
-  | "MATCHED"   // Order was fully filled
-  | "DELAYED"   // Order is being processed
+export type OrderStatus =
+  | "LIVE" // Order is on the orderbook
+  | "MATCHED" // Order was fully filled
+  | "DELAYED" // Order is being processed
   | "CANCELLED" // Order was cancelled
-  | "EXPIRED";  // Order expired (GTC timeout)
+  | "EXPIRED"; // Order expired (GTC timeout)
 
 /** User channel message types */
-export type UserEventType = 
-  | "order"         // Order status change
-  | "trade"         // Trade/fill event
-  | "balance";      // Balance update
+export type UserEventType =
+  | "order" // Order status change
+  | "trade" // Trade/fill event
+  | "balance"; // Balance update
 
 /** Order event from WebSocket */
 export interface OrderEvent {
   type: "order";
-  id: string;           // Order ID
+  id: string; // Order ID
   status: OrderStatus;
-  asset_id: string;     // Token ID
+  asset_id: string; // Token ID
   side: "BUY" | "SELL";
   price: string;
   original_size: string;
@@ -62,11 +65,11 @@ export interface OrderEvent {
 /** Trade/fill event from WebSocket */
 export interface TradeEvent {
   type: "trade";
-  id: string;           // Trade ID
+  id: string; // Trade ID
   taker_order_id: string;
   maker_order_id: string;
   status: string;
-  asset_id: string;     // Token ID
+  asset_id: string; // Token ID
   side: "BUY" | "SELL";
   price: string;
   size: string;
@@ -95,7 +98,8 @@ export interface WsUserClientOptions {
   url?: string;
   reconnectBaseMs?: number;
   reconnectMaxMs?: number;
-  heartbeatIntervalMs?: number;
+  stableConnectionMs?: number;
+  pingIntervalMs?: number;
   connectionTimeoutMs?: number;
   onConnect?: () => void;
   onDisconnect?: (code: number, reason: string) => void;
@@ -138,7 +142,7 @@ export class OrderStateStore {
   private orders = new Map<string, TrackedOrder>();
   private trades = new Map<string, TrackedTrade>();
   private ordersByToken = new Map<string, Set<string>>();
-  
+
   // Metrics
   private totalOrderUpdates = 0;
   private totalTrades = 0;
@@ -160,7 +164,7 @@ export class OrderStateStore {
     };
 
     this.orders.set(order.orderId, order);
-    
+
     // Index by token
     if (!this.ordersByToken.has(order.tokenId)) {
       this.ordersByToken.set(order.tokenId, new Set());
@@ -168,11 +172,11 @@ export class OrderStateStore {
     this.ordersByToken.get(order.tokenId)!.add(order.orderId);
 
     this.totalOrderUpdates++;
-    
+
     // Log state transition
     console.log(
       `📋 [OrderState] ${order.side} ${order.orderId.slice(0, 12)}... → ${order.status} ` +
-      `(${order.sizeMatched}/${order.originalSize} filled @ ${(order.price * 100).toFixed(1)}¢)`
+        `(${order.sizeMatched}/${order.originalSize} filled @ ${(order.price * 100).toFixed(1)}¢)`,
     );
 
     return order;
@@ -199,7 +203,7 @@ export class OrderStateStore {
     const fillValue = trade.size * trade.price;
     console.log(
       `💰 [Trade] ${trade.side} fill: ${trade.size.toFixed(4)} shares @ ${(trade.price * 100).toFixed(1)}¢ ` +
-      `= $${fillValue.toFixed(2)} (order: ${trade.orderId.slice(0, 12)}...)`
+        `= $${fillValue.toFixed(2)} (order: ${trade.orderId.slice(0, 12)}...)`,
     );
 
     return trade;
@@ -218,7 +222,7 @@ export class OrderStateStore {
   getOrdersForToken(tokenId: string): TrackedOrder[] {
     const orderIds = this.ordersByToken.get(tokenId);
     if (!orderIds) return [];
-    
+
     const orders: TrackedOrder[] = [];
     for (const id of orderIds) {
       const order = this.orders.get(id);
@@ -231,7 +235,7 @@ export class OrderStateStore {
    * Get active (LIVE) orders
    */
   getActiveOrders(): TrackedOrder[] {
-    return Array.from(this.orders.values()).filter(o => o.status === "LIVE");
+    return Array.from(this.orders.values()).filter((o) => o.status === "LIVE");
   }
 
   /**
@@ -248,7 +252,7 @@ export class OrderStateStore {
    */
   cleanup(maxAgeMs: number = 24 * 60 * 60 * 1000): void {
     const cutoff = Date.now() - maxAgeMs;
-    
+
     // Clean old orders
     for (const [id, order] of this.orders.entries()) {
       if (order.updatedAt < cutoff && order.status !== "LIVE") {
@@ -305,16 +309,34 @@ export class WebSocketUserClient {
   private ws: WebSocket | null = null;
   private state: WsUserConnectionState = "DISCONNECTED";
   private clobClient: ClobClient | null = null;
-  
+
+  // Auth credentials cached from CLOB client
+  private authCredentials: {
+    apiKey: string;
+    secret: string;
+    passphrase: string;
+  } | null = null;
+
+  // Flag to disable reconnection when auth credentials are missing
+  private authDisabled = false;
+
   // State stores
   private orderStore = new OrderStateStore();
-  
-  // Reconnection state
+
+  // Reconnection state - single-flight guard to prevent concurrent reconnect loops
   private reconnectAttempt = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private isReconnecting = false;
+
+  // Keepalive state - sends "PING" text message on interval
+  private pingTimer: NodeJS.Timeout | null = null;
+
+  // Stable connection timer - resets backoff after connection is stable
+  private stableConnectionTimer: NodeJS.Timeout | null = null;
+
+  // Connection timeout
   private connectionTimer: NodeJS.Timeout | null = null;
-  
+
   // Metrics
   private messagesReceived = 0;
   private lastMessageAt = 0;
@@ -324,9 +346,10 @@ export class WebSocketUserClient {
   private readonly url: string;
   private readonly reconnectBaseMs: number;
   private readonly reconnectMaxMs: number;
-  private readonly heartbeatIntervalMs: number;
+  private readonly stableConnectionMs: number;
+  private readonly pingIntervalMs: number;
   private readonly connectionTimeoutMs: number;
-  
+
   // Callbacks
   private onConnectCb?: () => void;
   private onDisconnectCb?: (code: number, reason: string) => void;
@@ -336,12 +359,19 @@ export class WebSocketUserClient {
   private onBalanceCb?: (event: BalanceEvent) => void;
 
   constructor(options?: WsUserClientOptions) {
-    this.url = options?.url ?? POLYMARKET_WS.USER_URL;
-    this.reconnectBaseMs = options?.reconnectBaseMs ?? POLYMARKET_WS.RECONNECT_BASE_MS;
-    this.reconnectMaxMs = options?.reconnectMaxMs ?? POLYMARKET_WS.RECONNECT_MAX_MS;
-    this.heartbeatIntervalMs = options?.heartbeatIntervalMs ?? POLYMARKET_WS.HEARTBEAT_INTERVAL_MS;
-    this.connectionTimeoutMs = options?.connectionTimeoutMs ?? POLYMARKET_WS.CONNECTION_TIMEOUT_MS;
-    
+    // Use the same BASE_URL as market client - channel is selected via subscribe payload
+    this.url = options?.url ?? POLYMARKET_WS.BASE_URL;
+    this.reconnectBaseMs =
+      options?.reconnectBaseMs ?? POLYMARKET_WS.RECONNECT_BASE_MS;
+    this.reconnectMaxMs =
+      options?.reconnectMaxMs ?? POLYMARKET_WS.RECONNECT_MAX_MS;
+    this.stableConnectionMs =
+      options?.stableConnectionMs ?? POLYMARKET_WS.STABLE_CONNECTION_MS;
+    this.pingIntervalMs =
+      options?.pingIntervalMs ?? POLYMARKET_WS.PING_INTERVAL_MS;
+    this.connectionTimeoutMs =
+      options?.connectionTimeoutMs ?? POLYMARKET_WS.CONNECTION_TIMEOUT_MS;
+
     this.onConnectCb = options?.onConnect;
     this.onDisconnectCb = options?.onDisconnect;
     this.onErrorCb = options?.onError;
@@ -359,40 +389,79 @@ export class WebSocketUserClient {
    * @param clobClient - Authenticated CLOB client for credentials
    */
   async connect(clobClient: ClobClient): Promise<void> {
-    if (this.state === "CONNECTED" || this.state === "CONNECTING" || this.state === "AUTHENTICATING") {
+    if (
+      this.state === "CONNECTED" ||
+      this.state === "CONNECTING" ||
+      this.state === "AUTHENTICATING"
+    ) {
+      console.log(`[WS-User] Already ${this.state}, skipping connect`);
+      return;
+    }
+
+    // Check if auth has been permanently disabled due to missing credentials
+    if (this.authDisabled) {
+      console.warn(
+        "[WS-User] Auth disabled due to missing credentials - not attempting connection",
+      );
+      return;
+    }
+
+    // Single-flight guard: if we're already in a reconnect loop, skip
+    if (this.isReconnecting && this.reconnectTimer) {
+      console.log("[WS-User] Reconnect already scheduled, skipping");
       return;
     }
 
     this.clobClient = clobClient;
+
+    // Extract and validate auth credentials
+    const creds = await this.extractAuthCredentials(clobClient);
+    if (!creds) {
+      console.warn(
+        "[WS-User] ⚠️ Missing API credentials (apiKey/secret/passphrase) - User WebSocket DISABLED",
+      );
+      console.warn(
+        "[WS-User] Order tracking will rely on REST API polling instead",
+      );
+      this.authDisabled = true;
+      this.state = "DISCONNECTED";
+      this.onErrorCb?.(new Error("Missing API credentials for User WebSocket"));
+      return;
+    }
+    this.authCredentials = creds;
+
     this.state = this.reconnectAttempt > 0 ? "RECONNECTING" : "CONNECTING";
-    console.log(`[WS-User] ${this.state} to ${this.url}...`);
+    console.log(
+      `[WS-User] ${this.state} to ${this.url} (attempt ${this.reconnectAttempt + 1})...`,
+    );
 
     try {
-      // Get authentication headers from CLOB client
-      // The user WebSocket requires L1 auth headers
-      const authHeaders = await this.getAuthHeaders(clobClient);
-      
-      this.ws = new WebSocket(this.url, {
-        headers: authHeaders,
-      });
+      // Connect to base URL (same as market client) - no auth headers needed
+      // Auth is sent via subscribe payload after connection
+      this.ws = new WebSocket(this.url);
       this.setupEventHandlers();
       this.startConnectionTimeout();
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      console.error(`[WS-User] Connection error: ${error.message}`);
+      console.error(`[WS-User] Connection failed: ${error.message}`);
       this.onErrorCb?.(error);
       this.scheduleReconnect();
     }
   }
 
   /**
-   * Disconnect from WebSocket
+   * Disconnect from WebSocket - performs clean shutdown
    */
   disconnect(): void {
-    this.clearTimers();
+    console.log("[WS-User] Disconnecting...");
+    this.clearAllTimers();
+    this.isReconnecting = false;
+    this.reconnectAttempt = 0;
     this.state = "DISCONNECTED";
-    
+
     if (this.ws) {
+      // Remove all listeners before closing to prevent callbacks
+      this.ws.removeAllListeners();
       try {
         this.ws.close(1000, "Client disconnect");
       } catch {
@@ -400,7 +469,7 @@ export class WebSocketUserClient {
       }
       this.ws = null;
     }
-    
+
     console.log("[WS-User] Disconnected");
   }
 
@@ -443,7 +512,8 @@ export class WebSocketUserClient {
     return {
       state: this.state,
       messagesReceived: this.messagesReceived,
-      lastMessageAgeMs: this.lastMessageAt > 0 ? Date.now() - this.lastMessageAt : 0,
+      lastMessageAgeMs:
+        this.lastMessageAt > 0 ? Date.now() - this.lastMessageAt : 0,
       reconnectAttempts: this.reconnectAttempt,
       uptimeMs: this.connectTime > 0 ? Date.now() - this.connectTime : 0,
       orderStoreMetrics: this.orderStore.getMetrics(),
@@ -454,38 +524,38 @@ export class WebSocketUserClient {
   // Private - Authentication
   // ═══════════════════════════════════════════════════════════════════════════
 
-  private async getAuthHeaders(clobClient: ClobClient): Promise<Record<string, string>> {
-    // The CLOB client has built-in authentication
-    // We need to create L1 auth headers for WebSocket connection
-    // This uses the same credentials as the CLOB client
+  /**
+   * Extract and validate API credentials from CLOB client.
+   * Returns null if credentials are missing or incomplete.
+   */
+  private async extractAuthCredentials(
+    clobClient: ClobClient,
+  ): Promise<{ apiKey: string; secret: string; passphrase: string } | null> {
     try {
-      // Get the API key and secret from the CLOB client's internal state
-      // The createL1Headers method generates the required auth headers
-      const headers = await (clobClient as any).createL1Headers?.() ?? {};
-      
-      // If createL1Headers is not available, fall back to basic auth approach
-      if (Object.keys(headers).length === 0) {
-        // The WebSocket server expects POLY_ADDRESS and POLY_SIGNATURE headers
-        // These are typically set during CLOB client initialization
-        const creds = (clobClient as any).creds;
-        if (creds?.apiKey) {
-          return {
-            "POLY_API_KEY": creds.apiKey,
-            "POLY_API_SECRET": creds.secret || "",
-            "POLY_PASSPHRASE": creds.passphrase || "",
-          };
-        }
+      // Try to get credentials from CLOB client's internal state
+      const creds = (clobClient as any).creds;
+
+      const apiKey = creds?.apiKey || process.env.POLY_API_KEY || "";
+      const secret = creds?.secret || process.env.POLY_API_SECRET || "";
+      const passphrase = creds?.passphrase || process.env.POLY_PASSPHRASE || "";
+
+      // Validate all required credentials are present
+      if (!apiKey || !secret || !passphrase) {
+        console.warn("[WS-User] Missing credentials:", {
+          hasApiKey: !!apiKey,
+          hasSecret: !!secret,
+          hasPassphrase: !!passphrase,
+        });
+        return null;
       }
-      
-      return headers;
+
+      return { apiKey, secret, passphrase };
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       console.error(
-        `[WS-User] Failed to get auth headers. This may indicate an incompatible ClobClient version or missing API key credentials. Original error: ${error.message}`
+        `[WS-User] Failed to extract auth credentials: ${error.message}`,
       );
-      // Surface the failure to consumers so they can handle authentication issues explicitly
-      this.onErrorCb?.(error);
-      return {};
+      return null;
     }
   }
 
@@ -498,49 +568,64 @@ export class WebSocketUserClient {
 
     this.ws.on("open", () => {
       this.clearConnectionTimeout();
+      this.isReconnecting = false;
       this.state = "AUTHENTICATING";
-      console.log("[WS-User] Connection open, authenticating...");
-      
-      // Send subscribe message for user channel
+      console.log(
+        `[WS-User] Connected to ${this.url}, sending auth subscription...`,
+      );
+
+      // Send subscribe message for user channel with auth credentials
       this.sendSubscribe();
     });
 
     this.ws.on("message", (data: WebSocket.Data) => {
       this.lastMessageAt = Date.now();
       this.messagesReceived++;
-      
+
       try {
-        const message = JSON.parse(data.toString());
+        const msgStr = data.toString();
+        // Handle PONG response to our PING keepalive
+        if (msgStr === "PONG") {
+          return;
+        }
+        const message = JSON.parse(msgStr);
         this.handleMessage(message);
-      } catch (err) {
-        console.warn(`[WS-User] Failed to parse message: ${err}`);
+      } catch {
+        // Non-JSON message (like PONG) - ignore
       }
     });
 
     this.ws.on("close", (code: number, reason: Buffer) => {
-      const reasonStr = reason.toString() || "Unknown";
-      console.log(`[WS-User] Connection closed: ${code} - ${reasonStr}`);
-      
+      const reasonStr = reason.toString() || "No reason provided";
+      console.log(
+        `[WS-User] Connection closed: code=${code}, reason="${reasonStr}"`,
+      );
+
       this.ws = null;
-      this.clearHeartbeat();
+      this.clearPing();
+      this.clearStableConnectionTimer();
 
       this.onDisconnectCb?.(code, reasonStr);
 
-      // Don't reconnect if closed intentionally
-      if (code !== 1000 && this.clobClient) {
+      // Don't reconnect if:
+      // - closed intentionally (code 1000)
+      // - auth is disabled
+      // - no CLOB client available
+      if (code !== 1000 && !this.authDisabled && this.clobClient) {
         this.scheduleReconnect();
       } else {
         this.state = "DISCONNECTED";
+        this.reconnectAttempt = 0;
       }
     });
 
-    this.ws.on("error", (err: Error) => {
-      console.error(`[WS-User] WebSocket error: ${err.message}`);
+    this.ws.on("error", (err: Error & { code?: string }) => {
+      // Log detailed error info including any status codes
+      const errorInfo = err.code
+        ? `${err.message} (code: ${err.code})`
+        : err.message;
+      console.error(`[WS-User] WebSocket error: ${errorInfo}`);
       this.onErrorCb?.(err);
-    });
-
-    this.ws.on("pong", () => {
-      // Heartbeat acknowledged
     });
   }
 
@@ -548,20 +633,36 @@ export class WebSocketUserClient {
     // Handle subscription confirmation
     if (message.type === "subscribed") {
       this.state = "CONNECTED";
-      this.reconnectAttempt = 0;
       this.connectTime = Date.now();
-      
+
       console.log("[WS-User] Authenticated and subscribed to user channel");
-      this.startHeartbeat();
+
+      // Start keepalive ping
+      this.startPing();
+
+      // Start stable connection timer to reset backoff
+      this.startStableConnectionTimer();
+
       this.onConnectCb?.();
       return;
     }
 
     // Handle auth errors
     if (message.type === "error") {
-      console.error(`[WS-User] Server error: ${message.message || JSON.stringify(message)}`);
-      if (message.message?.includes("auth") || message.message?.includes("unauthorized")) {
-        this.onErrorCb?.(new Error(`Authentication failed: ${message.message}`));
+      const errorMsg = message.message || JSON.stringify(message);
+      console.error(`[WS-User] Server error: ${errorMsg}`);
+
+      // Check if it's an auth error - disable reconnection to prevent spam
+      if (
+        errorMsg.includes("auth") ||
+        errorMsg.includes("unauthorized") ||
+        errorMsg.includes("invalid")
+      ) {
+        console.warn(
+          "[WS-User] Authentication error detected - disabling reconnection",
+        );
+        this.authDisabled = true;
+        this.onErrorCb?.(new Error(`Authentication failed: ${errorMsg}`));
       }
       return;
     }
@@ -580,22 +681,25 @@ export class WebSocketUserClient {
     const eventType = event.type as UserEventType;
 
     switch (eventType) {
-      case "order":
+      case "order": {
         const orderEvent = event as OrderEvent;
         this.orderStore.updateOrder(orderEvent);
         this.onOrderUpdateCb?.(orderEvent);
         break;
+      }
 
-      case "trade":
+      case "trade": {
         const tradeEvent = event as TradeEvent;
         this.orderStore.recordTrade(tradeEvent);
         this.onTradeCb?.(tradeEvent);
         break;
+      }
 
-      case "balance":
+      case "balance": {
         const balanceEvent = event as BalanceEvent;
         this.onBalanceCb?.(balanceEvent);
         break;
+      }
 
       default:
         // Unknown event type, log for debugging
@@ -607,20 +711,36 @@ export class WebSocketUserClient {
   // Private - Message Sending
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * Send subscribe message for user channel with auth credentials in payload.
+   * This replaces the old approach of sending auth via HTTP headers.
+   */
   private sendSubscribe(): void {
-    if (!this.ws) return;
+    if (!this.ws || !this.authCredentials) {
+      console.error(
+        "[WS-User] Cannot send subscribe: missing WebSocket or credentials",
+      );
+      return;
+    }
 
-    // Subscribe to user channel
+    // Subscribe to user channel with auth credentials in payload
+    // NOTE: This message contains sensitive credentials - NEVER log the message content
     const message = {
-      type: "subscribe",
+      type: "user",
       channel: "user",
+      auth: {
+        apiKey: this.authCredentials.apiKey,
+        secret: this.authCredentials.secret,
+        passphrase: this.authCredentials.passphrase,
+      },
     };
 
     try {
       this.ws.send(JSON.stringify(message));
-      console.log("[WS-User] Sent subscribe to user channel");
+      console.log("[WS-User] Sent subscribe to user channel with auth");
     } catch (err) {
-      console.error(`[WS-User] Failed to send subscribe: ${err}`);
+      // Do not log the message content as it contains sensitive credentials
+      console.error("[WS-User] Failed to send subscribe message");
     }
   }
 
@@ -628,36 +748,70 @@ export class WebSocketUserClient {
   // Private - Timers and Reconnection
   // ═══════════════════════════════════════════════════════════════════════════
 
-  private startHeartbeat(): void {
-    this.clearHeartbeat();
-    this.heartbeatTimer = setInterval(() => {
+  /**
+   * Start sending "PING" text messages at interval for keepalive.
+   * The server should respond with "PONG".
+   */
+  private startPing(): void {
+    this.clearPing();
+    this.pingTimer = setInterval(() => {
       if (this.ws && this.state === "CONNECTED") {
         try {
-          this.ws.ping();
+          this.ws.send("PING");
         } catch {
+          // Send failed, connection likely dead
+          console.warn("[WS-User] Ping send failed, scheduling reconnect");
           this.scheduleReconnect();
         }
       }
-    }, this.heartbeatIntervalMs);
+    }, this.pingIntervalMs);
   }
 
-  private clearHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
+  private clearPing(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+
+  /**
+   * Start timer that resets backoff after connection has been stable.
+   * This prevents perpetual backoff growth from transient disconnects.
+   */
+  private startStableConnectionTimer(): void {
+    this.clearStableConnectionTimer();
+    this.stableConnectionTimer = setTimeout(() => {
+      if (this.state === "CONNECTED") {
+        console.log("[WS-User] Connection stable, resetting backoff counter");
+        this.reconnectAttempt = 0;
+      }
+    }, this.stableConnectionMs);
+  }
+
+  private clearStableConnectionTimer(): void {
+    if (this.stableConnectionTimer) {
+      clearTimeout(this.stableConnectionTimer);
+      this.stableConnectionTimer = null;
     }
   }
 
   private startConnectionTimeout(): void {
+    this.clearConnectionTimeout();
     this.connectionTimer = setTimeout(() => {
-      if (this.state === "CONNECTING" || this.state === "RECONNECTING" || this.state === "AUTHENTICATING") {
-        console.warn("[WS-User] Connection timeout");
+      if (
+        this.state === "CONNECTING" ||
+        this.state === "RECONNECTING" ||
+        this.state === "AUTHENTICATING"
+      ) {
+        console.warn("[WS-User] Connection timeout, scheduling reconnect");
         if (this.ws) {
+          this.ws.removeAllListeners();
           try {
             this.ws.close();
           } catch {
             // Ignore
           }
+          this.ws = null;
         }
         this.scheduleReconnect();
       }
@@ -671,35 +825,58 @@ export class WebSocketUserClient {
     }
   }
 
+  /**
+   * Schedule a reconnection with exponential backoff + jitter.
+   * Single-flight guard ensures only one reconnect loop runs at a time.
+   */
   private scheduleReconnect(): void {
-    if (!this.clobClient) {
+    // Don't reconnect if auth is disabled or no CLOB client
+    if (this.authDisabled) {
+      console.warn("[WS-User] Not reconnecting: auth disabled");
       this.state = "DISCONNECTED";
       return;
     }
 
-    this.clearTimers();
+    if (!this.clobClient) {
+      console.warn("[WS-User] Not reconnecting: no CLOB client");
+      this.state = "DISCONNECTED";
+      return;
+    }
+
+    // Single-flight guard: if already reconnecting, don't start another
+    if (this.isReconnecting && this.reconnectTimer) {
+      console.log("[WS-User] Reconnect already scheduled, skipping duplicate");
+      return;
+    }
+
+    this.clearAllTimers();
+    this.isReconnecting = true;
     this.state = "RECONNECTING";
     this.reconnectAttempt++;
 
-    // Exponential backoff with jitter
+    // Exponential backoff with jitter (30% randomness)
     const baseDelay = Math.min(
       this.reconnectBaseMs * Math.pow(2, this.reconnectAttempt - 1),
-      this.reconnectMaxMs
+      this.reconnectMaxMs,
     );
     const jitter = Math.random() * baseDelay * 0.3;
-    const delay = baseDelay + jitter;
+    const delay = Math.round(baseDelay + jitter);
 
-    console.log(`[WS-User] Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempt})`);
+    console.log(
+      `[WS-User] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempt}, max backoff ${this.reconnectMaxMs}ms)`,
+    );
 
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       if (this.clobClient) {
         this.connect(this.clobClient);
       }
     }, delay);
   }
 
-  private clearTimers(): void {
-    this.clearHeartbeat();
+  private clearAllTimers(): void {
+    this.clearPing();
+    this.clearStableConnectionTimer();
     this.clearConnectionTimeout();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -727,7 +904,9 @@ export function getWebSocketUserClient(): WebSocketUserClient {
 /**
  * Initialize a new global WebSocketUserClient (for testing or reset)
  */
-export function initWebSocketUserClient(options?: WsUserClientOptions): WebSocketUserClient {
+export function initWebSocketUserClient(
+  options?: WsUserClientOptions,
+): WebSocketUserClient {
   if (globalUserWsClient) {
     globalUserWsClient.disconnect();
   }
