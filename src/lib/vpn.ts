@@ -408,16 +408,20 @@ function getVpnInterfaceName(): string | null {
 
   if (vpnType === "openvpn") {
     // OpenVPN typically uses tun0 by default
-    // Try to find the tun interface
+    // Try to find the tun interface by listing all interfaces and filtering
     try {
-      const ifaces = execSync("ip link show | grep -oP 'tun\\d+'", {
+      // Use ip link show without shell pipe - safer approach
+      const output = execSync("ip link show", {
         encoding: "utf8",
-      })
-        .trim()
-        .split("\n")
-        .filter(Boolean);
-      if (ifaces.length > 0) {
-        return ifaces[0];
+      }).trim();
+      // Parse output to find tun interfaces (lines like "123: tun0: <...")
+      const tunMatch = output.match(/\d+:\s+(tun\d+):/);
+      if (tunMatch && tunMatch[1]) {
+        const tunIface = tunMatch[1];
+        // Validate the interface name to prevent injection
+        if (isValidIface(tunIface)) {
+          return tunIface;
+        }
       }
     } catch {
       // Fall back to tun0

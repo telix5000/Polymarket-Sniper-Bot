@@ -7274,10 +7274,20 @@ async function main(): Promise<void> {
           }
 
           // Check step results for auth failures or cloudflare blocks
+          // Use a Set to track already-added failure types to avoid duplicates
+          const addedFailureTypes = new Set<string>();
+
           for (const step of result.steps) {
+            // More specific matching for Cloudflare 403 blocks
+            // Look for patterns like "403", "geo-block", "cloudflare"
+            const reasonLower = step.reason?.toLowerCase() ?? "";
             if (
-              step.reason?.includes("403") ||
-              step.reason?.includes("blocked")
+              !addedFailureTypes.has("CLOUDFLARE_BLOCKED") &&
+              (reasonLower.includes("403 forbidden") ||
+                reasonLower.includes("geo-block") ||
+                reasonLower.includes("cloudflare") ||
+                (reasonLower.includes("blocked") &&
+                  reasonLower.includes("clob")))
             ) {
               keyFailures.push({
                 type: "CLOUDFLARE_BLOCKED",
@@ -7285,15 +7295,23 @@ async function main(): Promise<void> {
                 statusCode: 403,
                 details: step.reason,
               });
+              addedFailureTypes.add("CLOUDFLARE_BLOCKED");
             }
+
+            // More specific matching for auth failures
             if (
-              step.reason?.includes("auth") ||
-              step.reason?.includes("credential")
+              !addedFailureTypes.has("AUTH_FAILED") &&
+              (reasonLower.includes("authentication") ||
+                reasonLower.includes("unauthorized") ||
+                reasonLower.includes("401") ||
+                reasonLower.includes("invalid credential") ||
+                reasonLower.includes("api key"))
             ) {
               keyFailures.push({
                 type: "AUTH_FAILED",
                 details: step.reason,
               });
+              addedFailureTypes.add("AUTH_FAILED");
             }
           }
 

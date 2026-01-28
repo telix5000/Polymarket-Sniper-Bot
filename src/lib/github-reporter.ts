@@ -542,8 +542,12 @@ ${contextStr}
     if (details.botVersion) {
       headerSection += `| **Bot Version** | ${details.botVersion} |\n`;
     }
-    if (details.commitSha) {
-      headerSection += `| **Commit** | \`${details.commitSha.slice(0, 7)}\` |\n`;
+    if (details.commitSha && details.commitSha.length > 0) {
+      const shortSha =
+        details.commitSha.length >= 7
+          ? details.commitSha.slice(0, 7)
+          : details.commitSha;
+      headerSection += `| **Commit** | \`${shortSha}\` |\n`;
     }
     if (details.diagConfig) {
       const cfg = details.diagConfig;
@@ -674,8 +678,13 @@ ${contextStr}
           keyFailuresSection += `- **Status**: ${failure.statusCode}\n`;
         if (failure.marketId)
           keyFailuresSection += `- **Market**: ${failure.marketId}\n`;
-        if (failure.tokenId)
-          keyFailuresSection += `- **Token**: ${failure.tokenId.slice(0, 20)}...\n`;
+        if (failure.tokenId) {
+          const truncated =
+            failure.tokenId.length > 20
+              ? `${failure.tokenId.slice(0, 20)}...`
+              : failure.tokenId;
+          keyFailuresSection += `- **Token**: ${truncated}\n`;
+        }
         if (failure.details)
           keyFailuresSection += `- **Details**: ${failure.details}\n`;
       }
@@ -698,7 +707,11 @@ ${contextStr}
       if (crs.sampleRejected && crs.sampleRejected.length > 0) {
         candidateSection += `\n**Sample Rejected Entries (up to 3):**\n`;
         for (const sample of crs.sampleRejected.slice(0, 3)) {
-          candidateSection += `- Token: \`${sample.tokenId.slice(0, 16)}...\` | Rule: ${sample.rule} | Bid: ${sample.bestBid?.toFixed(2) ?? "N/A"} | Ask: ${sample.bestAsk?.toFixed(2) ?? "N/A"}\n`;
+          const truncatedToken =
+            sample.tokenId.length > 16
+              ? `${sample.tokenId.slice(0, 16)}...`
+              : sample.tokenId;
+          candidateSection += `- Token: \`${truncatedToken}\` | Rule: ${sample.rule} | Bid: ${sample.bestBid?.toFixed(2) ?? "N/A"} | Ask: ${sample.bestAsk?.toFixed(2) ?? "N/A"}\n`;
         }
       }
     }
