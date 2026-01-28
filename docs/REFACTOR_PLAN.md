@@ -231,7 +231,7 @@ src/                              src/
 ├── infra/       ⚠️  Incomplete   │   ├── ev-tracker.ts
 │   └── 6 files                   │   ├── execution-engine.ts  ← NEW
 ├── lib/         🚨 Bloated       │   ├── position-manager.ts  ← NEW
-│   └── 33 files                  │   ├── reserve-manager.ts   ← NEW
+│   └── 30 files                  │   ├── reserve-manager.ts   ← NEW
 ├── models/      ✅ Keep          │   ├── risk.ts
 ├── services/    ✅ Keep          │   ├── smart-sell.ts        ← FROM /lib
 └── start.ts     🚨 God File      │   ├── dynamic-hedge.ts     ← FROM /lib
