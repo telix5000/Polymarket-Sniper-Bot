@@ -24,3 +24,5 @@ export * from "./market";
 export * from "./github-reporter";
 export * from "./latency-monitor";
 export * from "./mempool-monitor";
+export * from "./dashboard";
+export * from "./web-dashboard";

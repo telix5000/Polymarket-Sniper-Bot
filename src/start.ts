@@ -1,6 +1,6 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * POLYMARKET CASINO BOT - Consolidated Churn Engine
+ * POLYMARKET BOT - Trading Engine
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * A deterministic, math-driven trading system that:
@@ -18,6 +18,7 @@
  *   - Telegram notifications
  *   - Auto-redeem settled positions
  *   - Auto-fill POL for gas
+ *   - Web dashboard (DASHBOARD_PORT=3000)
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * THE MATH IS LAW. Every parameter is fixed by the EV equation:
@@ -152,7 +153,7 @@ interface ChurnConfig {
   minBookUpdatesLastX: number;
   activityWindowSeconds: number;
 
-  // EV / Casino Controls
+  // EV Controls
   rollingWindowTrades: number;
   churnCostCentsEstimate: number;
   minEvCents: number;
@@ -272,7 +273,7 @@ function loadConfig(): ChurnConfig {
     minBookUpdatesLastX: 20,          // Book must be updating
     activityWindowSeconds: 300,       // 5min activity window
 
-    // EV / Casino controls - bot stops itself when math says stop
+    // EV controls - bot stops itself when math says stop
     rollingWindowTrades: 200,         // Sample size for stats
     churnCostCentsEstimate: 2,        // 2¢ churn cost
     minEvCents: 0,                    // Pause if EV < 0
@@ -428,7 +429,7 @@ function validateConfig(config: ChurnConfig): ValidationError[] {
 
 function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log("");
-  log("🎰 POLYMARKET CASINO BOT");
+  log("🤖 POLYMARKET BOT");
   log("═".repeat(50));
   log("");
   log("💰 YOUR SETTINGS:");
@@ -3267,7 +3268,7 @@ const POLYMARKET_API = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// POLYMARKET CASINO BOT
+// POLYMARKET BOT
 // ═══════════════════════════════════════════════════════════════════════════
 
 class ChurnEngine {
@@ -3369,7 +3370,7 @@ class ChurnEngine {
   async initialize(): Promise<boolean> {
     console.log("");
     console.log("═".repeat(60));
-    console.log("  🎰 POLYMARKET CASINO BOT");
+    console.log("  🤖 POLYMARKET BOT");
     console.log("═".repeat(60));
     console.log("");
     console.log("  Load wallet. Start bot. Walk away.");
@@ -3410,6 +3411,22 @@ class ChurnEngine {
     const githubReporter = initGitHubReporter({});
     if (githubReporter.isEnabled()) {
       console.log("📋 GitHub error reporting enabled");
+    } else {
+      // Help user understand why it's disabled
+      const hasToken = !!process.env.GITHUB_ERROR_REPORTER_TOKEN;
+      const hasRepo = !!process.env.GITHUB_ERROR_REPORTER_REPO;
+      const explicitlyDisabled = process.env.GITHUB_ERROR_REPORTER_ENABLED === "false";
+      
+      if (explicitlyDisabled) {
+        console.log("📋 GitHub error reporting disabled (GITHUB_ERROR_REPORTER_ENABLED=false)");
+      } else if (hasToken && !hasRepo) {
+        console.log("📋 GitHub error reporting disabled - GITHUB_ERROR_REPORTER_REPO not set");
+        console.log("   ↳ Set GITHUB_ERROR_REPORTER_REPO=owner/repo-name to enable");
+      } else if (!hasToken && hasRepo) {
+        console.log("📋 GitHub error reporting disabled - GITHUB_ERROR_REPORTER_TOKEN not set");
+      } else if (!hasToken && !hasRepo) {
+        // Neither set - user probably doesn't want it, stay quiet
+      }
     }
 
     // Start latency monitoring - CRITICAL for slippage calculation!
@@ -3549,7 +3566,7 @@ class ChurnEngine {
     // Send startup notification
     if (this.config.telegramBotToken) {
       await sendTelegram(
-        "🎰 Casino Bot Started",
+        "🤖 Polymarket Bot Started",
         `Balance: $${usdcBalance.toFixed(2)}\n` +
           `Reserve: $${reserveUsd.toFixed(2)}\n` +
           `Effective: $${effectiveBankroll.toFixed(2)}\n` +
@@ -4595,7 +4612,7 @@ class ChurnEngine {
     }
 
     if (this.config.telegramBotToken) {
-      sendTelegram("🛑 Bot Stopped", "Polymarket Casino Bot has been stopped").catch(() => {});
+      sendTelegram("🛑 Bot Stopped", "Polymarket Bot has been stopped").catch(() => {});
     }
   }
 
