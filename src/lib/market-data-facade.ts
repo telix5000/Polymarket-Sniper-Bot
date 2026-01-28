@@ -513,7 +513,7 @@ export class MarketDataFacade {
         askDepthUsd: askDepth,
         spreadCents: (bestAsk - bestBid) * 100,
         midPriceCents: mid * 100,
-        source: "REST" as BookSource,
+        source: "REST",
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

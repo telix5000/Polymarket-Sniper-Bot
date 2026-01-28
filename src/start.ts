@@ -4363,6 +4363,9 @@ class ChurnEngine {
   private marketDataCooldownManager = new MarketDataCooldownManager();
   // Summary logging interval for market data cooldowns
   private readonly COOLDOWN_SUMMARY_INTERVAL = 100; // Log every 100 cycles
+  // Throttle for dust book REST verification (once per token per 5 minutes)
+  private dustBookRestVerifyThrottle = new Map<string, number>();
+  private readonly DUST_BOOK_VERIFY_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
 
   // Intervals
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
@@ -5425,8 +5428,6 @@ class ChurnEngine {
       eligibleBiases.push(bias);
     }
 
-    const skippedCount = skippedBiasCriteria + skippedCooldown;
-
     if (evAllowed.allowed) {
       if (eligibleBiases.length > 0) {
         // Log when we have active biases - helps diagnose trade detection
@@ -5441,12 +5442,14 @@ class ChurnEngine {
         );
 
         // TASK 3: Ensure WS subscribes to eligible bias tokens for real-time data
-        // This prevents falling back to REST for tokens we're about to trade
+        // Only subscribe to tokens we'll actually attempt entry on (slice(0, 3))
+        // This prevents WS subscription set from growing without bound
+        const biasesToAttempt = eligibleBiases.slice(0, 3);
         try {
           const wsClient = getWebSocketMarketClient();
           if (wsClient.isConnected()) {
             const currentSubs = new Set(wsClient.getSubscriptions());
-            const biasTokensToSubscribe = eligibleBiases
+            const biasTokensToSubscribe = biasesToAttempt
               .map((b) => b.tokenId)
               .filter((id) => !currentSubs.has(id));
             if (biasTokensToSubscribe.length > 0) {
@@ -5472,7 +5475,7 @@ class ChurnEngine {
         // - maxOpenPositionsPerMarket (2) - per-token limit
         // These checks happen atomically in processEntry, preventing over-allocation.
         // Note: Cooldown filtering already done above (eligibleBiases), no duplicate check needed
-        const entryPromises = eligibleBiases.slice(0, 3).map(async (bias) => {
+        const entryPromises = biasesToAttempt.map(async (bias) => {
           // TASK 6: Track candidate in funnel
           this.diagnostics.candidatesSeen++;
 
@@ -6404,13 +6407,17 @@ class ChurnEngine {
           // Use a timeout to prevent blocking the trading loop
           try {
             const mappingPromise = fetchMarketByTokenId(tokenId);
-            const timeoutPromise = new Promise<null>((resolve) =>
-              setTimeout(() => resolve(null), 3000),
-            );
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            const timeoutPromise = new Promise<null>((resolve) => {
+              timeoutId = setTimeout(() => resolve(null), 3000);
+            });
             const marketInfo = await Promise.race([
               mappingPromise,
               timeoutPromise,
             ]);
+            if (timeoutId !== undefined) {
+              clearTimeout(timeoutId);
+            }
             if (marketInfo) {
               const activeStatus =
                 marketInfo.active === false
@@ -6436,9 +6443,16 @@ class ChurnEngine {
             );
           }
 
-          // Perform immediate REST re-fetch to verify this isn't stale cache
-          // Note: This bypasses rate limiting intentionally for diagnostic purposes only
-          if (bookSource !== "REST") {
+          // Perform REST re-fetch to verify this isn't stale cache
+          // Throttled to once per token per 5 minutes to prevent API overload
+          const now = Date.now();
+          const lastVerify = this.dustBookRestVerifyThrottle.get(tokenId) ?? 0;
+          const shouldVerifyRest =
+            bookSource !== "REST" &&
+            now - lastVerify >= this.DUST_BOOK_VERIFY_THROTTLE_MS;
+
+          if (shouldVerifyRest) {
+            this.dustBookRestVerifyThrottle.set(tokenId, now);
             try {
               const restOrderbook = await this.client.getOrderBook(tokenId);
               if (restOrderbook?.bids?.length && restOrderbook?.asks?.length) {
@@ -6483,7 +6497,7 @@ class ChurnEngine {
             }
           }
 
-          // Original source was REST or REST re-fetch failed - trust original result
+          // Original source was REST or REST re-fetch failed/throttled - trust original result
           this.diagnostics.orderbookFetchFailures++;
           return {
             ok: false,
