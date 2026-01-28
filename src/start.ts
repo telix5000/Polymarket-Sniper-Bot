@@ -7231,11 +7231,11 @@ async function main(): Promise<void> {
       console.log("\n💤 Entering idle state (container will not restart)...");
       console.log("   Press Ctrl+C to stop the container manually.");
 
-      // Infinite idle loop - sleep forever to prevent container restart
-
-      while (true) {
-        await new Promise((resolve) => setTimeout(resolve, 60000)); // Sleep for 1 minute
-      }
+      // Keep the process alive indefinitely without a constant-condition loop.
+      // Signal handlers (SIGINT/SIGTERM) above will still terminate the process.
+      await new Promise<never>(() => {
+        // Intentionally never resolve: idle until the process receives a termination signal.
+      });
     } catch (err) {
       console.error("Fatal error in diagnostic workflow:", err);
       engine.stop();
