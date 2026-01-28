@@ -73,6 +73,14 @@ import {
   type OnChainPriceUpdate,
   // Market utilities for hedge token lookup
   getOppositeTokenId,
+  // GitHub error reporting
+  getGitHubReporter,
+  initGitHubReporter,
+  reportError,
+  // Latency monitoring for dynamic slippage
+  LatencyMonitor,
+  initLatencyMonitor,
+  getLatencyMonitor,
 } from "./lib";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -417,7 +425,7 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
     log(`   Liquidation: ⚠️ ${modeDesc}`);
   }
   if (config.copyAnyWhaleBuy) {
-    log(`   Copy any whale buy: ⚠️ AGGRESSIVE MODE (no bias confirmation)`);
+    log(`   Copy any whale buy: ⚡ INSTANT COPY MODE (no bias confirmation)`);
   }
   log("");
   log("📊 THE MATH (applied to ALL positions):");
@@ -431,9 +439,9 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log(`   Following top ${config.leaderboardTopN} wallets`);
   log(`   Min trade size: $${config.onchainMinWhaleTradeUsd} (WHALE_TRADE_USD)`);
   if (config.copyAnyWhaleBuy) {
-    log(`   Mode: AGGRESSIVE - copy ANY whale buy ≥ $${config.onchainMinWhaleTradeUsd}`);
+    log(`   Mode: INSTANT COPY - copy ANY whale buy ≥ $${config.onchainMinWhaleTradeUsd}`);
   } else {
-    log(`   Mode: CONSERVATIVE - need $${config.biasMinNetUsd} flow + ${config.biasMinTrades} trades`);
+    log(`   Mode: CONFIRMED - need $${config.biasMinNetUsd} flow + ${config.biasMinTrades} trades`);
   }
   log("");
   log("🔍 MARKET SCANNER:");
@@ -823,11 +831,13 @@ class BiasAccumulator {
       return Array.from(this.leaderboardWallets);
     }
 
+    // Define targetCount outside try block so it's accessible in catch
+    const targetCount = this.config.leaderboardTopN;
+
     try {
       // Fetch with pagination to get the full requested count
       // API may limit to 50 per page, so we paginate if needed
       const pageSize = 50; // Max per page (API limit)
-      const targetCount = this.config.leaderboardTopN;
       const allEntries: any[] = [];
       
       let offset = 0;
@@ -905,11 +915,29 @@ class BiasAccumulator {
           }
         }
         this.lastLeaderboardFetch = now;
-        console.log(`🐋 Tracking ${this.leaderboardWallets.size} top traders (requested: ${targetCount})`);
+        const trackedCount = this.leaderboardWallets.size;
+        console.log(`🐋 Tracking ${trackedCount} top traders (requested: ${targetCount})`);
+        
+        // Report if we got significantly fewer wallets than requested (potential issue)
+        if (trackedCount < targetCount * 0.95) {
+          reportError(
+            "Leaderboard Wallet Count Mismatch",
+            `Got ${trackedCount} unique wallets instead of requested ${targetCount}. May have duplicates or API limit.`,
+            "info",
+            { trackedCount, requestedCount: targetCount, entriesReturned: allEntries.length }
+          );
+        }
       }
     } catch (err) {
       // Keep existing wallets on error
-      console.warn(`⚠️ Leaderboard fetch failed: ${err instanceof Error ? err.message : err}`);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`⚠️ Leaderboard fetch failed: ${errorMsg}`);
+      reportError(
+        "Leaderboard Fetch Failed",
+        errorMsg,
+        "warning",
+        { requestedCount: targetCount }
+      );
     }
 
     return Array.from(this.leaderboardWallets);
@@ -2675,27 +2703,84 @@ class ExecutionEngine {
     if (!this.client) return { success: false, reason: "NO_CLIENT" };
 
     try {
+      // ═══════════════════════════════════════════════════════════════════════
+      // FAIL-SAFE: Check if trading is safe BEFORE attempting any order
+      // This protects user funds when network conditions are dangerous!
+      // ═══════════════════════════════════════════════════════════════════════
+      const latencyMonitor = getLatencyMonitor();
+      const tradingSafety = latencyMonitor.isTradingSafe();
+      
+      if (!tradingSafety.safe) {
+        console.error(`🚨 TRADING BLOCKED - Network unsafe: ${tradingSafety.reason}`);
+        console.error(`   Trade NOT executed to protect your funds. Waiting for network to stabilize...`);
+        reportError(
+          "Trading Blocked - Network Unsafe",
+          `Trade blocked due to unsafe network conditions: ${tradingSafety.reason}`,
+          "warning",
+          { tokenId, side, sizeUsd, reason: tradingSafety.reason }
+        );
+        return { success: false, reason: `NETWORK_UNSAFE: ${tradingSafety.reason}` };
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // LATENCY-AWARE SLIPPAGE - Critical for high-volume markets!
+      // ═══════════════════════════════════════════════════════════════════════
+      const networkHealth = latencyMonitor.getNetworkHealth();
+      const dynamicSlippagePct = networkHealth.recommendedSlippagePct;
+      
+      // Warn if network is degraded - higher chance of missed fills or bad slippage
+      if (networkHealth.status === "critical") {
+        console.warn(`🔴 CRITICAL LATENCY: ${networkHealth.rpcLatencyMs.toFixed(0)}ms RPC, ${networkHealth.apiLatencyMs.toFixed(0)}ms API`);
+        console.warn(`   Using ${dynamicSlippagePct.toFixed(1)}% slippage buffer - HIGH RISK of slippage loss!`);
+        reportError(
+          "Critical Network Latency",
+          `Attempting trade with critical latency: RPC ${networkHealth.rpcLatencyMs.toFixed(0)}ms, API ${networkHealth.apiLatencyMs.toFixed(0)}ms`,
+          "warning",
+          { rpcLatencyMs: networkHealth.rpcLatencyMs, apiLatencyMs: networkHealth.apiLatencyMs, slippagePct: dynamicSlippagePct }
+        );
+      } else if (networkHealth.status === "degraded") {
+        console.warn(`🟡 High latency: ${networkHealth.rpcLatencyMs.toFixed(0)}ms RPC - using ${dynamicSlippagePct.toFixed(1)}% slippage`);
+      }
+
       const orderBook = await this.client.getOrderBook(tokenId);
       const levels = side === "LONG" ? orderBook?.asks : orderBook?.bids;
       if (!levels?.length) return { success: false, reason: "NO_LIQUIDITY" };
 
-      const price = parseFloat(levels[0].price);
-      const shares = sizeUsd / price;
+      const bestPrice = parseFloat(levels[0].price);
+      
+      // Apply latency-adjusted slippage buffer to price
+      // For BUY: We're willing to pay MORE (price + slippage) to ensure fill
+      // For SELL: We're willing to accept LESS (price - slippage) to ensure fill
+      const slippageMultiplier = dynamicSlippagePct / 100;
+      const price = side === "LONG" 
+        ? bestPrice * (1 + slippageMultiplier)  // BUY: pay up to X% more
+        : bestPrice * (1 - slippageMultiplier); // SELL: accept X% less
+      
+      const shares = sizeUsd / bestPrice; // Use best price for share calculation
 
       const { Side, OrderType } = await import("@polymarket/clob-client");
+      
+      // Measure actual order execution time
+      const execStart = performance.now();
       const order = await this.client.createMarketOrder({
         side: side === "LONG" ? Side.BUY : Side.SELL,
         tokenID: tokenId,
         amount: shares,
-        price,
+        price, // Slippage-adjusted price
       });
 
       const response = await this.client.postOrder(order, OrderType.FOK);
+      const execLatencyMs = performance.now() - execStart;
+      
+      // Log execution timing for analysis
+      if (execLatencyMs > 500) {
+        console.warn(`⏱️ Slow order execution: ${execLatencyMs.toFixed(0)}ms - consider the slippage impact`);
+      }
 
       if (response.success) {
         const position = this.positionManager.openPosition({
           tokenId, marketId, side,
-          entryPriceCents: price * 100,
+          entryPriceCents: bestPrice * 100, // Record actual entry, not slippage-adjusted
           sizeUsd,
           referencePriceCents,
           evSnapshot: evMetrics,
@@ -2705,13 +2790,28 @@ class ExecutionEngine {
         if (oppositeTokenId) {
           this.positionManager.setOppositeToken(position.id, oppositeTokenId);
         }
-        console.log(`📥 ${side} $${sizeUsd.toFixed(2)} @ ${(price * 100).toFixed(1)}¢`);
-        return { success: true, filledUsd: sizeUsd, filledPriceCents: price * 100 };
+        console.log(`📥 ${side} $${sizeUsd.toFixed(2)} @ ${(bestPrice * 100).toFixed(1)}¢ (slippage: ${dynamicSlippagePct.toFixed(1)}%, exec: ${execLatencyMs.toFixed(0)}ms)`);
+        return { success: true, filledUsd: sizeUsd, filledPriceCents: bestPrice * 100 };
       }
 
+      // Report order rejection to GitHub
+      reportError(
+        "Order Rejected",
+        `Entry order rejected for ${tokenId.slice(0, 16)}...`,
+        "warning",
+        { tokenId, side, sizeUsd, priceCents: bestPrice * 100, marketId, slippagePct: dynamicSlippagePct, execLatencyMs }
+      );
       return { success: false, reason: "ORDER_REJECTED" };
     } catch (err) {
-      return { success: false, reason: err instanceof Error ? err.message : "ERROR" };
+      const errorMsg = err instanceof Error ? err.message : "ERROR";
+      // Report execution error to GitHub
+      reportError(
+        "Entry Execution Failed",
+        errorMsg,
+        "error",
+        { tokenId, side, sizeUsd, marketId }
+      );
+      return { success: false, reason: errorMsg };
     }
   }
 
@@ -3079,6 +3179,7 @@ class ChurnEngine {
   private onchainMonitor: OnChainMonitor | null = null;
   private marketScanner: MarketScanner;
   private dynamicReserveManager: DynamicReserveManager;
+  private latencyMonitor: LatencyMonitor;
 
   private client: any = null;
   private wallet: any = null;
@@ -3127,6 +3228,16 @@ class ChurnEngine {
       this.decisionEngine,
       this.logger,
     );
+
+    // Initialize latency monitor for dynamic slippage calculation
+    this.latencyMonitor = initLatencyMonitor({
+      rpcUrl: this.config.rpcUrl,
+      measureIntervalMs: 30000, // Check every 30s
+      degradedThresholdMs: 500,
+      criticalThresholdMs: 2000,
+      baseSlippagePct: 2,
+      maxSlippagePct: 10,
+    });
 
     // Log position closes
     this.positionManager.onTransition((t) => {
@@ -3187,6 +3298,16 @@ class ChurnEngine {
       initTelegram();
       console.log("📱 Telegram alerts enabled");
     }
+
+    // Initialize GitHub Error Reporter
+    const githubReporter = initGitHubReporter({});
+    if (githubReporter.isEnabled()) {
+      console.log("📋 GitHub error reporting enabled");
+    }
+
+    // Start latency monitoring - CRITICAL for slippage calculation!
+    this.latencyMonitor.start();
+    console.log("⏱️ Latency monitoring enabled (dynamic slippage adjustment)");
 
     // Authenticate with CLOB
     const auth = await createClobClient(
@@ -3963,9 +4084,9 @@ class ChurnEngine {
     
     // Show whale copy mode status
     if (this.config.copyAnyWhaleBuy) {
-      console.log(`   🔥 Mode: AGGRESSIVE (copy any whale buy ≥ $${this.config.onchainMinWhaleTradeUsd})`);
+      console.log(`   ⚡ Mode: INSTANT COPY (copy any whale buy ≥ $${this.config.onchainMinWhaleTradeUsd})`);
     } else {
-      console.log(`   🐢 Mode: CONSERVATIVE (need $${this.config.biasMinNetUsd} flow + ${this.config.biasMinTrades} trades)`);
+      console.log(`   🐢 Mode: CONFIRMED (need $${this.config.biasMinNetUsd} flow + ${this.config.biasMinTrades} trades)`);
     }
     
     // Show active signals and scanning status
@@ -3981,6 +4102,18 @@ class ChurnEngine {
     if (this.config.dynamicReservesEnabled) {
       const missedInfo = reserveState.missedCount > 0 ? ` | Missed: ${reserveState.missedCount}` : '';
       console.log(`   🏦 Dynamic Reserve: ${reservePct}% (base: ${(reserveState.baseReserveFraction * 100).toFixed(0)}%)${missedInfo}`);
+    }
+    
+    // Show network health - CRITICAL for understanding slippage risk!
+    const networkHealth = this.latencyMonitor.getNetworkHealth();
+    const networkEmoji = networkHealth.status === "healthy" ? "🟢" : networkHealth.status === "degraded" ? "🟡" : "🔴";
+    console.log(`   ${networkEmoji} Network: ${networkHealth.status.toUpperCase()} | RPC: ${networkHealth.rpcLatencyMs.toFixed(0)}ms | API: ${networkHealth.apiLatencyMs.toFixed(0)}ms | Slippage: ${networkHealth.recommendedSlippagePct.toFixed(1)}%`);
+    
+    // Warn if network is not healthy
+    if (networkHealth.warnings.length > 0 && networkHealth.status !== "healthy") {
+      for (const warning of networkHealth.warnings) {
+        console.log(`   ⚠️ ${warning}`);
+      }
     }
     console.log("");
     
@@ -4253,6 +4386,14 @@ class ChurnEngine {
   stop(): void {
     this.running = false;
     console.log("\n🛑 Stopping...");
+
+    // Stop latency monitoring
+    this.latencyMonitor.stop();
+
+    // Stop on-chain monitor if running
+    if (this.onchainMonitor) {
+      this.onchainMonitor.stop();
+    }
 
     if (this.config.telegramBotToken) {
       sendTelegram("🛑 Bot Stopped", "Polymarket Casino Bot has been stopped").catch(() => {});

@@ -21,3 +21,5 @@ export * from "./error-handling";
 export * from "./smart-sell";
 export * from "./onchain-monitor";
 export * from "./market";
+export * from "./github-reporter";
+export * from "./latency-monitor";
