@@ -86,6 +86,10 @@ import {
   LatencyMonitor,
   initLatencyMonitor,
   getLatencyMonitor,
+  // Web dashboard
+  WebDashboard,
+  initWebDashboard,
+  shouldStartWebDashboard,
 } from "./lib";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3354,6 +3358,7 @@ class ChurnEngine {
   private marketScanner: MarketScanner;
   private dynamicReserveManager: DynamicReserveManager;
   private latencyMonitor: LatencyMonitor;
+  private webDashboard: WebDashboard | null = null;
 
   private client: any = null;
   private wallet: any = null;
@@ -3530,6 +3535,24 @@ class ChurnEngine {
     // Start latency monitoring - CRITICAL for slippage calculation!
     this.latencyMonitor.start();
     console.log("⏱️ Latency monitoring enabled (dynamic slippage adjustment)");
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // WEB DASHBOARD - Glances-style real-time monitoring (accessible via port)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (shouldStartWebDashboard()) {
+      try {
+        this.webDashboard = initWebDashboard();
+        this.webDashboard.start();
+        this.webDashboard.setTradingMode(this.config.liveTradingEnabled);
+        console.log(`🌐 Web dashboard enabled at http://localhost:${this.webDashboard.getPort()}`);
+      } catch (err) {
+        // Log error but don't prevent bot from starting
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.warn(`⚠️ Web dashboard failed to start: ${errMsg}`);
+        console.warn(`   Bot will continue without dashboard functionality`);
+        this.webDashboard = null;
+      }
+    }
 
     // Authenticate with CLOB
     const auth = await createClobClient(
@@ -4179,7 +4202,44 @@ class ChurnEngine {
     ]);
     
     // Use dynamic reserves for effective bankroll calculation
-    const { effectiveBankroll } = this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
+    const { effectiveBankroll, reserveUsd } = this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
+
+    // ─────────────────────────────────────────────────────────────────
+    // UPDATE WEB DASHBOARD (if enabled)
+    // ─────────────────────────────────────────────────────────────────
+    if (this.webDashboard) {
+      this.webDashboard.updateWallet(usdcBalance, polBalance, effectiveBankroll, reserveUsd);
+      
+      // Update position metrics
+      const openPositions = this.positionManager.getOpenPositions();
+      const deployedUsd = openPositions.reduce(
+        (sum, p) => sum + p.entrySizeUsd,
+        0
+      );
+      const deployedPercent = effectiveBankroll > 0 ? (deployedUsd / effectiveBankroll) * 100 : 0;
+      this.webDashboard.updatePositionMetrics(
+        openPositions.length,
+        this.config.maxOpenPositionsTotal,
+        deployedUsd,
+        deployedPercent
+      );
+      
+      // Update trading metrics from EV tracker
+      const evMetrics = this.evTracker.getMetrics();
+      this.webDashboard.updateTradingMetrics(
+        evMetrics.totalTrades,
+        evMetrics.winRate,
+        evMetrics.totalPnlUsd,
+        evMetrics.evCents
+      );
+      
+      // Update system metrics
+      const latencyStats = this.latencyMonitor.getNetworkHealth();
+      // WebSocket is considered connected only if the on-chain monitor is actually running
+      const wsConnected = !!this.onchainMonitor?.isRunning();
+      const apiLatencyMs = Math.max(latencyStats.rpcLatencyMs, latencyStats.apiLatencyMs);
+      this.webDashboard.updateSystemMetrics(apiLatencyMs, wsConnected);
+    }
 
     if (effectiveBankroll <= 0) {
       // No effective bankroll available this cycle; skip trading logic
@@ -4853,6 +4913,11 @@ class ChurnEngine {
     // Stop on-chain monitor if running
     if (this.onchainMonitor) {
       this.onchainMonitor.stop();
+    }
+
+    // Stop web dashboard if running
+    if (this.webDashboard) {
+      this.webDashboard.stop();
     }
 
     if (this.config.telegramBotToken) {
