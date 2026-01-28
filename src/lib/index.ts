@@ -96,7 +96,9 @@ export * from "./onchain-monitor";
 export * from "./market";
 // GitHub reporter is now in /infra (re-export for backward compatibility)
 export * from "../infra/github-reporter";
-// Latency monitor is now in /infra (re-export for backward compatibility)
+// Latency monitor is now in /infra.
+// NOTE: This is a BREAKING CHANGE for any deep imports of `src/lib/latency-monitor`.
+// Consumers should now import from the barrel (`src/lib`) or from `../infra/latency-monitor`.
 export * from "../infra/latency-monitor";
 
 // WebSocket market data layer
