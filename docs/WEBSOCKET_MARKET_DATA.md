@@ -146,14 +146,17 @@ All settings via environment variables (see `.env.example`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `POLY_WS_BASE_URL` | `wss://ws-subscriptions-clob.polymarket.com/ws/` | Market WS endpoint |
-| `POLY_WS_USER_URL` | `wss://ws-subscriptions-clob.polymarket.com/ws/user` | User WS endpoint |
-| `WS_RECONNECT_BASE_MS` | `500` | Initial reconnect delay |
+| `POLY_WS_BASE_URL` | `wss://ws-subscriptions-clob.polymarket.com/ws/` | WebSocket endpoint (SAME for both Market and User channels) |
+| `WS_RECONNECT_BASE_MS` | `1000` | Initial reconnect delay |
 | `WS_RECONNECT_MAX_MS` | `30000` | Max reconnect delay |
+| `WS_STABLE_CONNECTION_MS` | `15000` | Connection stable threshold to reset backoff |
+| `WS_PING_INTERVAL_MS` | `10000` | Keepalive ping interval |
 | `WS_STALE_MS` | `2000` | Data staleness threshold |
 | `REST_FALLBACK_MIN_INTERVAL_MS` | `500` | Min interval between REST calls |
 | `MARKETDATA_MAX_TOKENS` | `500` | Max tracked tokens (LRU eviction) |
 | `MARKETDATA_DEPTH_WINDOW_CENTS` | `5` | Depth calculation window |
+
+**Note:** Both Market and User channels use the same base URL. Channel selection is done via the subscribe message payload, not the URL path.
 
 ## Observability
 

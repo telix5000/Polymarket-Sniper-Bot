@@ -1,18 +1,22 @@
 /**
  * WebSocketMarketClient - CLOB WebSocket client for market data
- * 
+ *
  * Connects to Polymarket's CLOB WebSocket and subscribes to Market Channel
  * for real-time L2 orderbook updates.
- * 
+ *
  * Features:
  * - Subscribe/unsubscribe to multiple tokenIds
  * - Automatic reconnection with exponential backoff + jitter
  * - Updates MarketDataStore on every message
  * - Staleness tracking per tokenId
  * - Health metrics and logging
- * 
+ * - Keepalive via "PING" text messages (not WebSocket ping frames)
+ *
  * Official endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/
- * Market Channel: Subscribe to "market" channel with asset_id (tokenId)
+ * Market Channel: Subscribe via payload {"type":"subscribe","channel":"market","assets_ids":[...]}
+ *
+ * IMPORTANT: Both Market and User channels use the SAME base URL.
+ * Channel selection is done via subscribe payload, NOT URL path.
  */
 
 import WebSocket from "ws";
@@ -24,10 +28,10 @@ import { getMarketDataStore, type OrderbookLevel } from "./market-data-store";
 // ============================================================================
 
 /** WebSocket connection state */
-export type WsConnectionState = 
-  | "DISCONNECTED" 
-  | "CONNECTING" 
-  | "CONNECTED" 
+export type WsConnectionState =
+  | "DISCONNECTED"
+  | "CONNECTING"
+  | "CONNECTED"
   | "RECONNECTING";
 
 /** WebSocket client options */
@@ -35,7 +39,8 @@ export interface WsClientOptions {
   url?: string;
   reconnectBaseMs?: number;
   reconnectMaxMs?: number;
-  heartbeatIntervalMs?: number;
+  stableConnectionMs?: number;
+  pingIntervalMs?: number;
   connectionTimeoutMs?: number;
   onConnect?: () => void;
   onDisconnect?: (code: number, reason: string) => void;
@@ -81,16 +86,27 @@ export class WebSocketMarketClient {
   private state: WsConnectionState = "DISCONNECTED";
   private subscriptions = new Set<string>();
   private pendingSubscriptions = new Set<string>();
-  
-  // Reconnection state
+
+  // Reconnection state - single-flight guard to prevent concurrent reconnect loops
   private reconnectAttempt = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private isReconnecting = false;
+
+  // Keepalive state - sends "PING" text message on interval
+  private pingTimer: NodeJS.Timeout | null = null;
+
+  // Stable connection timer - resets backoff after connection is stable
+  private stableConnectionTimer: NodeJS.Timeout | null = null;
+
+  // Connection timeout
   private connectionTimer: NodeJS.Timeout | null = null;
-  
+
   // L2 orderbook reconstruction
-  private orderbooks = new Map<string, { bids: Map<string, number>; asks: Map<string, number> }>();
-  
+  private orderbooks = new Map<
+    string,
+    { bids: Map<string, number>; asks: Map<string, number> }
+  >();
+
   // Metrics
   private messagesReceived = 0;
   private lastMessageAt = 0;
@@ -100,9 +116,10 @@ export class WebSocketMarketClient {
   private readonly url: string;
   private readonly reconnectBaseMs: number;
   private readonly reconnectMaxMs: number;
-  private readonly heartbeatIntervalMs: number;
+  private readonly stableConnectionMs: number;
+  private readonly pingIntervalMs: number;
   private readonly connectionTimeoutMs: number;
-  
+
   // Callbacks
   private onConnectCb?: () => void;
   private onDisconnectCb?: (code: number, reason: string) => void;
@@ -111,11 +128,17 @@ export class WebSocketMarketClient {
 
   constructor(options?: WsClientOptions) {
     this.url = options?.url ?? POLYMARKET_WS.BASE_URL;
-    this.reconnectBaseMs = options?.reconnectBaseMs ?? POLYMARKET_WS.RECONNECT_BASE_MS;
-    this.reconnectMaxMs = options?.reconnectMaxMs ?? POLYMARKET_WS.RECONNECT_MAX_MS;
-    this.heartbeatIntervalMs = options?.heartbeatIntervalMs ?? POLYMARKET_WS.HEARTBEAT_INTERVAL_MS;
-    this.connectionTimeoutMs = options?.connectionTimeoutMs ?? POLYMARKET_WS.CONNECTION_TIMEOUT_MS;
-    
+    this.reconnectBaseMs =
+      options?.reconnectBaseMs ?? POLYMARKET_WS.RECONNECT_BASE_MS;
+    this.reconnectMaxMs =
+      options?.reconnectMaxMs ?? POLYMARKET_WS.RECONNECT_MAX_MS;
+    this.stableConnectionMs =
+      options?.stableConnectionMs ?? POLYMARKET_WS.STABLE_CONNECTION_MS;
+    this.pingIntervalMs =
+      options?.pingIntervalMs ?? POLYMARKET_WS.PING_INTERVAL_MS;
+    this.connectionTimeoutMs =
+      options?.connectionTimeoutMs ?? POLYMARKET_WS.CONNECTION_TIMEOUT_MS;
+
     this.onConnectCb = options?.onConnect;
     this.onDisconnectCb = options?.onDisconnect;
     this.onErrorCb = options?.onError;
@@ -131,11 +154,20 @@ export class WebSocketMarketClient {
    */
   connect(): void {
     if (this.state === "CONNECTED" || this.state === "CONNECTING") {
+      console.log(`[WS-Market] Already ${this.state}, skipping connect`);
+      return;
+    }
+
+    // Single-flight guard: if we're already in a reconnect loop, skip
+    if (this.isReconnecting && this.reconnectTimer) {
+      console.log("[WS-Market] Reconnect already scheduled, skipping");
       return;
     }
 
     this.state = this.reconnectAttempt > 0 ? "RECONNECTING" : "CONNECTING";
-    console.log(`[WS-Market] ${this.state} to ${this.url}...`);
+    console.log(
+      `[WS-Market] ${this.state} to ${this.url} (attempt ${this.reconnectAttempt + 1})...`,
+    );
 
     try {
       this.ws = new WebSocket(this.url);
@@ -143,20 +175,25 @@ export class WebSocketMarketClient {
       this.startConnectionTimeout();
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      console.error(`[WS-Market] Connection error: ${error.message}`);
+      console.error(`[WS-Market] Connection failed: ${error.message}`);
       this.onErrorCb?.(error);
       this.scheduleReconnect();
     }
   }
 
   /**
-   * Disconnect from WebSocket
+   * Disconnect from WebSocket - performs clean shutdown
    */
   disconnect(): void {
-    this.clearTimers();
+    console.log("[WS-Market] Disconnecting...");
+    this.clearAllTimers();
+    this.isReconnecting = false;
+    this.reconnectAttempt = 0;
     this.state = "DISCONNECTED";
-    
+
     if (this.ws) {
+      // Remove all listeners before closing to prevent callbacks
+      this.ws.removeAllListeners();
       try {
         this.ws.close(1000, "Client disconnect");
       } catch {
@@ -167,7 +204,7 @@ export class WebSocketMarketClient {
 
     // Update store state
     getMarketDataStore().setWsConnected(false);
-    
+
     console.log("[WS-Market] Disconnected");
   }
 
@@ -254,7 +291,8 @@ export class WebSocketMarketClient {
       state: this.state,
       subscriptions: this.subscriptions.size,
       messagesReceived: this.messagesReceived,
-      lastMessageAgeMs: this.lastMessageAt > 0 ? Date.now() - this.lastMessageAt : 0,
+      lastMessageAgeMs:
+        this.lastMessageAt > 0 ? Date.now() - this.lastMessageAt : 0,
       reconnectAttempts: this.reconnectAttempt,
       uptimeMs: this.connectTime > 0 ? Date.now() - this.connectTime : 0,
     };
@@ -269,17 +307,20 @@ export class WebSocketMarketClient {
 
     this.ws.on("open", () => {
       this.clearConnectionTimeout();
+      this.isReconnecting = false;
       this.state = "CONNECTED";
-      this.reconnectAttempt = 0;
       this.connectTime = Date.now();
 
-      console.log("[WS-Market] Connected");
-      
+      console.log(`[WS-Market] Connected to ${this.url}`);
+
       // Update store state
       getMarketDataStore().setWsConnected(true);
 
-      // Start heartbeat
-      this.startHeartbeat();
+      // Start keepalive ping
+      this.startPing();
+
+      // Start stable connection timer to reset backoff
+      this.startStableConnectionTimer();
 
       // Send pending subscriptions
       if (this.pendingSubscriptions.size > 0) {
@@ -296,42 +337,51 @@ export class WebSocketMarketClient {
     this.ws.on("message", (data: WebSocket.Data) => {
       this.lastMessageAt = Date.now();
       this.messagesReceived++;
-      
+
       try {
-        const message = JSON.parse(data.toString());
+        const msgStr = data.toString();
+        // Handle PONG response to our PING keepalive
+        if (msgStr === "PONG") {
+          return;
+        }
+        const message = JSON.parse(msgStr);
         this.handleMessage(message);
       } catch (err) {
-        console.warn(`[WS-Market] Failed to parse message: ${err}`);
+        // Non-JSON message (like PONG) - ignore
       }
     });
 
     this.ws.on("close", (code: number, reason: Buffer) => {
-      const reasonStr = reason.toString() || "Unknown";
-      console.log(`[WS-Market] Connection closed: ${code} - ${reasonStr}`);
-      
+      const reasonStr = reason.toString() || "No reason provided";
+      console.log(
+        `[WS-Market] Connection closed: code=${code}, reason="${reasonStr}"`,
+      );
+
       this.ws = null;
-      this.clearHeartbeat();
-      
+      this.clearPing();
+      this.clearStableConnectionTimer();
+
       // Update store state
       getMarketDataStore().setWsConnected(false);
 
       this.onDisconnectCb?.(code, reasonStr);
 
-      // Don't reconnect if closed intentionally
+      // Don't reconnect if closed intentionally (code 1000)
       if (code !== 1000) {
         this.scheduleReconnect();
       } else {
         this.state = "DISCONNECTED";
+        this.reconnectAttempt = 0;
       }
     });
 
-    this.ws.on("error", (err: Error) => {
-      console.error(`[WS-Market] WebSocket error: ${err.message}`);
+    this.ws.on("error", (err: Error & { code?: string }) => {
+      // Log detailed error info including any status codes
+      const errorInfo = err.code
+        ? `${err.message} (code: ${err.code})`
+        : err.message;
+      console.error(`[WS-Market] WebSocket error: ${errorInfo}`);
       this.onErrorCb?.(err);
-    });
-
-    this.ws.on("pong", () => {
-      // Heartbeat acknowledged
     });
   }
 
@@ -346,14 +396,23 @@ export class WebSocketMarketClient {
       // Single market update
       this.processMarketUpdate(message as MarketChannelMessage);
     } else if (message.type === "subscribed") {
-      console.log(`[WS-Market] Subscribed to ${message.assets_ids?.length || 0} assets`);
+      console.log(
+        `[WS-Market] Subscribed to ${message.assets_ids?.length || 0} assets`,
+      );
     } else if (message.type === "unsubscribed") {
-      console.log(`[WS-Market] Unsubscribed from ${message.assets_ids?.length || 0} assets`);
+      console.log(
+        `[WS-Market] Unsubscribed from ${message.assets_ids?.length || 0} assets`,
+      );
     } else if (message.type === "error") {
-      console.error(`[WS-Market] Server error: ${message.message || JSON.stringify(message)}`);
+      console.error(
+        `[WS-Market] Server error: ${message.message || JSON.stringify(message)}`,
+      );
     }
 
-    this.onMessageCb?.(message.type || message.event_type || "unknown", message);
+    this.onMessageCb?.(
+      message.type || message.event_type || "unknown",
+      message,
+    );
   }
 
   private processMarketUpdate(update: MarketChannelMessage): void {
@@ -366,19 +425,19 @@ export class WebSocketMarketClient {
       // Full orderbook snapshot
       const bids = this.parseOrderbookLevels(update.bids);
       const asks = this.parseOrderbookLevels(update.asks);
-      
+
       if (bids.length > 0 && asks.length > 0) {
         // Initialize/reset orderbook state
         const bidMap = new Map<string, number>();
         const askMap = new Map<string, number>();
-        
+
         for (const level of bids) {
           bidMap.set(level.price.toString(), level.size);
         }
         for (const level of asks) {
           askMap.set(level.price.toString(), level.size);
         }
-        
+
         this.orderbooks.set(tokenId, { bids: bidMap, asks: askMap });
         store.updateFromWs(tokenId, bids, asks);
       }
@@ -397,7 +456,7 @@ export class WebSocketMarketClient {
         const side = change.side;
 
         const map = side === "BUY" ? book.bids : book.asks;
-        
+
         if (size === 0) {
           map.delete(price);
         } else {
@@ -416,7 +475,7 @@ export class WebSocketMarketClient {
         // Orderbook became empty or invalid after applying deltas.
         // Log and drop local state so that a fresh snapshot is required.
         console.warn(
-          `[WS-Market] Orderbook for ${tokenId.slice(0, 12)}... became empty after price_change; clearing local state to force resnapshot`
+          `[WS-Market] Orderbook for ${tokenId.slice(0, 12)}... became empty after price_change; clearing local state to force resnapshot`,
         );
         this.orderbooks.delete(tokenId);
       }
@@ -424,20 +483,25 @@ export class WebSocketMarketClient {
     // Ignore other event types (last_trade_price, tick_size_change) for now
   }
 
-  private parseOrderbookLevels(levels?: Array<{ price: string; size: string }>): OrderbookLevel[] {
+  private parseOrderbookLevels(
+    levels?: Array<{ price: string; size: string }>,
+  ): OrderbookLevel[] {
     if (!levels || !Array.isArray(levels)) return [];
-    
+
     return levels
-      .map(l => ({
+      .map((l) => ({
         price: parseFloat(l.price),
         size: parseFloat(l.size),
       }))
-      .filter(l => !isNaN(l.price) && !isNaN(l.size) && l.size > 0);
+      .filter((l) => !isNaN(l.price) && !isNaN(l.size) && l.size > 0);
   }
 
-  private mapToSortedLevels(map: Map<string, number>, descending: boolean): OrderbookLevel[] {
+  private mapToSortedLevels(
+    map: Map<string, number>,
+    descending: boolean,
+  ): OrderbookLevel[] {
     const levels: OrderbookLevel[] = [];
-    
+
     for (const [priceStr, size] of map.entries()) {
       if (size > 0) {
         levels.push({ price: parseFloat(priceStr), size });
@@ -445,8 +509,8 @@ export class WebSocketMarketClient {
     }
 
     // Sort: bids descending (best first), asks ascending (best first)
-    levels.sort((a, b) => descending ? b.price - a.price : a.price - b.price);
-    
+    levels.sort((a, b) => (descending ? b.price - a.price : a.price - b.price));
+
     return levels;
   }
 
@@ -492,37 +556,66 @@ export class WebSocketMarketClient {
   // Private - Timers and Reconnection
   // ═══════════════════════════════════════════════════════════════════════════
 
-  private startHeartbeat(): void {
-    this.clearHeartbeat();
-    this.heartbeatTimer = setInterval(() => {
+  /**
+   * Start sending "PING" text messages at interval for keepalive.
+   * The server should respond with "PONG".
+   */
+  private startPing(): void {
+    this.clearPing();
+    this.pingTimer = setInterval(() => {
       if (this.ws && this.state === "CONNECTED") {
         try {
-          this.ws.ping();
+          this.ws.send("PING");
         } catch {
-          // Ping failed, connection likely dead
+          // Send failed, connection likely dead
+          console.warn("[WS-Market] Ping send failed, scheduling reconnect");
           this.scheduleReconnect();
         }
       }
-    }, this.heartbeatIntervalMs);
+    }, this.pingIntervalMs);
   }
 
-  private clearHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
+  private clearPing(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+
+  /**
+   * Start timer that resets backoff after connection has been stable.
+   * This prevents perpetual backoff growth from transient disconnects.
+   */
+  private startStableConnectionTimer(): void {
+    this.clearStableConnectionTimer();
+    this.stableConnectionTimer = setTimeout(() => {
+      if (this.state === "CONNECTED") {
+        console.log("[WS-Market] Connection stable, resetting backoff counter");
+        this.reconnectAttempt = 0;
+      }
+    }, this.stableConnectionMs);
+  }
+
+  private clearStableConnectionTimer(): void {
+    if (this.stableConnectionTimer) {
+      clearTimeout(this.stableConnectionTimer);
+      this.stableConnectionTimer = null;
     }
   }
 
   private startConnectionTimeout(): void {
+    this.clearConnectionTimeout();
     this.connectionTimer = setTimeout(() => {
       if (this.state === "CONNECTING" || this.state === "RECONNECTING") {
-        console.warn("[WS-Market] Connection timeout");
+        console.warn("[WS-Market] Connection timeout, scheduling reconnect");
         if (this.ws) {
+          this.ws.removeAllListeners();
           try {
             this.ws.close();
           } catch {
             // Ignore
           }
+          this.ws = null;
         }
         this.scheduleReconnect();
       }
@@ -536,28 +629,45 @@ export class WebSocketMarketClient {
     }
   }
 
+  /**
+   * Schedule a reconnection with exponential backoff + jitter.
+   * Single-flight guard ensures only one reconnect loop runs at a time.
+   */
   private scheduleReconnect(): void {
-    this.clearTimers();
+    // Single-flight guard: if already reconnecting, don't start another
+    if (this.isReconnecting && this.reconnectTimer) {
+      console.log(
+        "[WS-Market] Reconnect already scheduled, skipping duplicate",
+      );
+      return;
+    }
+
+    this.clearAllTimers();
+    this.isReconnecting = true;
     this.state = "RECONNECTING";
     this.reconnectAttempt++;
 
-    // Exponential backoff with jitter
+    // Exponential backoff with jitter (30% randomness)
     const baseDelay = Math.min(
       this.reconnectBaseMs * Math.pow(2, this.reconnectAttempt - 1),
-      this.reconnectMaxMs
+      this.reconnectMaxMs,
     );
-    const jitter = Math.random() * baseDelay * 0.3; // 30% jitter
-    const delay = baseDelay + jitter;
+    const jitter = Math.random() * baseDelay * 0.3;
+    const delay = Math.round(baseDelay + jitter);
 
-    console.log(`[WS-Market] Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempt})`);
+    console.log(
+      `[WS-Market] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempt}, max backoff ${this.reconnectMaxMs}ms)`,
+    );
 
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       this.connect();
     }, delay);
   }
 
-  private clearTimers(): void {
-    this.clearHeartbeat();
+  private clearAllTimers(): void {
+    this.clearPing();
+    this.clearStableConnectionTimer();
     this.clearConnectionTimeout();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -585,7 +695,9 @@ export function getWebSocketMarketClient(): WebSocketMarketClient {
 /**
  * Initialize a new global WebSocketMarketClient (for testing or reset)
  */
-export function initWebSocketMarketClient(options?: WsClientOptions): WebSocketMarketClient {
+export function initWebSocketMarketClient(
+  options?: WsClientOptions,
+): WebSocketMarketClient {
   if (globalWsClient) {
     globalWsClient.disconnect();
   }

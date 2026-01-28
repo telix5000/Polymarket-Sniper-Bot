@@ -129,7 +129,10 @@ describe("EV Math", () => {
 
       const ev = winRate * avgWin - (1 - winRate) * avgLoss - churn;
 
-      assert.ok(ev > 0, `EV at 50% wins should be positive, got ${ev.toFixed(2)}¢`);
+      assert.ok(
+        ev > 0,
+        `EV at 50% wins should be positive, got ${ev.toFixed(2)}¢`,
+      );
     });
 
     it("55% wins should be solidly profitable", () => {
@@ -140,7 +143,10 @@ describe("EV Math", () => {
 
       const ev = winRate * avgWin - (1 - winRate) * avgLoss - churn;
 
-      assert.ok(ev >= 1.5, `EV at 55% wins should be ≥1.5¢, got ${ev.toFixed(2)}¢`);
+      assert.ok(
+        ev >= 1.5,
+        `EV at 55% wins should be ≥1.5¢, got ${ev.toFixed(2)}¢`,
+      );
     });
 
     it("60% wins should be strong", () => {
@@ -152,7 +158,10 @@ describe("EV Math", () => {
       const ev = winRate * avgWin - (1 - winRate) * avgLoss - churn;
 
       // 2.8¢ is solid - the exact math works out to this
-      assert.ok(ev >= 2.5, `EV at 60% wins should be ≥2.5¢, got ${ev.toFixed(2)}¢`);
+      assert.ok(
+        ev >= 2.5,
+        `EV at 60% wins should be ≥2.5¢, got ${ev.toFixed(2)}¢`,
+      );
     });
   });
 
@@ -226,7 +235,11 @@ describe("EV Math", () => {
       }
 
       const allowed = tracker.isTradingAllowed();
-      assert.strictEqual(allowed.allowed, true, "Should allow trading during warmup");
+      assert.strictEqual(
+        allowed.allowed,
+        true,
+        "Should allow trading during warmup",
+      );
     });
 
     it("blocks trading when EV is negative", () => {
@@ -236,8 +249,14 @@ describe("EV Math", () => {
       }
 
       const allowed = tracker.isTradingAllowed();
-      assert.strictEqual(allowed.allowed, false, "Should block trading with negative EV");
-      assert.ok(allowed.reason?.includes("EV") || allowed.reason?.includes("PAUSED"));
+      assert.strictEqual(
+        allowed.allowed,
+        false,
+        "Should block trading with negative EV",
+      );
+      assert.ok(
+        allowed.reason?.includes("EV") || allowed.reason?.includes("PAUSED"),
+      );
     });
   });
 });
@@ -336,7 +355,11 @@ describe("Hedge Logic", () => {
 
       // Price drops to 34¢ (16¢ adverse = hedge trigger)
       const result = positionManager.updatePrice(position.id, 34, null, "LONG");
-      assert.strictEqual(result.action, "HEDGE", "Should trigger hedge at 16¢ adverse");
+      assert.strictEqual(
+        result.action,
+        "HEDGE",
+        "Should trigger hedge at 16¢ adverse",
+      );
     });
 
     it("respects MAX_HEDGE_RATIO limit", () => {
@@ -362,18 +385,32 @@ describe("Hedge Logic", () => {
       // Add first hedge (40%)
       positionManager.recordHedge(
         position.id,
-        { tokenId: "hedge1", sizeUsd: 4, entryPriceCents: 34, entryTime: Date.now() },
+        {
+          tokenId: "hedge1",
+          sizeUsd: 4,
+          entryPriceCents: 34,
+          entryTime: Date.now(),
+        },
         null,
         "LONG",
       );
 
       const afterFirst = positionManager.getPosition(position.id);
-      assert.strictEqual(afterFirst!.totalHedgeRatio, 0.4, "First hedge should be 40%");
+      assert.strictEqual(
+        afterFirst!.totalHedgeRatio,
+        0.4,
+        "First hedge should be 40%",
+      );
 
       // Add second hedge (another 40% but should be clamped)
       positionManager.recordHedge(
         position.id,
-        { tokenId: "hedge2", sizeUsd: 4, entryPriceCents: 32, entryTime: Date.now() },
+        {
+          tokenId: "hedge2",
+          sizeUsd: 4,
+          entryPriceCents: 32,
+          entryTime: Date.now(),
+        },
         null,
         "LONG",
       );
@@ -423,7 +460,10 @@ describe("Reserve & Sizing", () => {
   describe("Effective bankroll calculation", () => {
     it("reserves 25% of balance", () => {
       const balance = 1000;
-      const { effectiveBankroll, reserveUsd } = calculateEffectiveBankroll(balance, config);
+      const { effectiveBankroll, reserveUsd } = calculateEffectiveBankroll(
+        balance,
+        config,
+      );
 
       assert.strictEqual(reserveUsd, 250, "Reserve should be 25% = $250");
       assert.strictEqual(effectiveBankroll, 750, "Effective should be $750");
@@ -431,7 +471,10 @@ describe("Reserve & Sizing", () => {
 
     it("enforces minimum reserve", () => {
       const balance = 200; // 25% would be $50, but min is $100
-      const { effectiveBankroll, reserveUsd } = calculateEffectiveBankroll(balance, config);
+      const { effectiveBankroll, reserveUsd } = calculateEffectiveBankroll(
+        balance,
+        config,
+      );
 
       assert.strictEqual(reserveUsd, 100, "Reserve should be min $100");
       assert.strictEqual(effectiveBankroll, 100, "Effective should be $100");
@@ -439,7 +482,10 @@ describe("Reserve & Sizing", () => {
 
     it("returns zero effective when balance < min reserve", () => {
       const balance = 50;
-      const { effectiveBankroll, reserveUsd } = calculateEffectiveBankroll(balance, config);
+      const { effectiveBankroll, reserveUsd } = calculateEffectiveBankroll(
+        balance,
+        config,
+      );
 
       assert.strictEqual(reserveUsd, 100, "Reserve should be min $100");
       assert.strictEqual(effectiveBankroll, 0, "Effective should be $0");
@@ -458,20 +504,32 @@ describe("Reserve & Sizing", () => {
       const effectiveBankroll = 5000; // 1% would be $50
       const size = calculateTradeSize(effectiveBankroll, config);
 
-      assert.strictEqual(size, config.maxTradeUsd, `Trade size should be capped at $${config.maxTradeUsd}`);
+      assert.strictEqual(
+        size,
+        config.maxTradeUsd,
+        `Trade size should be capped at $${config.maxTradeUsd}`,
+      );
     });
   });
 
   describe("Force Liquidation Config", () => {
     it("forceLiquidation defaults to false", () => {
       const config = createTestConfig();
-      assert.strictEqual(config.forceLiquidation, false, "forceLiquidation should default to false");
+      assert.strictEqual(
+        config.forceLiquidation,
+        false,
+        "forceLiquidation should default to false",
+      );
     });
 
     it("forceLiquidation can be enabled", () => {
       const config = createTestConfig();
       config.forceLiquidation = true;
-      assert.strictEqual(config.forceLiquidation, true, "forceLiquidation can be set to true");
+      assert.strictEqual(
+        config.forceLiquidation,
+        true,
+        "forceLiquidation can be set to true",
+      );
     });
 
     it("zero effective bankroll is valid with force liquidation", () => {
@@ -479,9 +537,16 @@ describe("Reserve & Sizing", () => {
       config.forceLiquidation = true;
       // Balance of $50 with $100 min reserve = $0 effective bankroll
       const balance = 50;
-      const { effectiveBankroll, reserveUsd } = calculateEffectiveBankroll(balance, config);
-      
-      assert.strictEqual(effectiveBankroll, 0, "Effective bankroll should be $0");
+      const { effectiveBankroll, reserveUsd } = calculateEffectiveBankroll(
+        balance,
+        config,
+      );
+
+      assert.strictEqual(
+        effectiveBankroll,
+        0,
+        "Effective bankroll should be $0",
+      );
       assert.strictEqual(reserveUsd, 100, "Reserve should be $100");
       // With forceLiquidation=true, bot should still start in liquidation mode
       // (this is validated in the churn-start.ts logic, not here)
@@ -497,7 +562,11 @@ describe("Config Validation", () => {
   it("validates correct config without errors", () => {
     const config = createTestConfig();
     const errors = validateConfig(config);
-    assert.strictEqual(errors.length, 0, `Should have no errors, got: ${JSON.stringify(errors)}`);
+    assert.strictEqual(
+      errors.length,
+      0,
+      `Should have no errors, got: ${JSON.stringify(errors)}`,
+    );
   });
 
   it("detects missing private key", () => {
@@ -540,67 +609,82 @@ describe("Liquidation Mode", () => {
     it("should activate when balance < reserve but positions exist", () => {
       const config = createTestConfig();
       config.forceLiquidation = true;
-      
-      const balance = 50;  // Below $100 reserve
+
+      const balance = 50; // Below $100 reserve
       const { effectiveBankroll } = calculateEffectiveBankroll(balance, config);
-      const hasPositions = true;  // Simulated positions exist
-      
+      const hasPositions = true; // Simulated positions exist
+
       // Liquidation mode should activate when:
       // 1. effectiveBankroll <= 0
       // 2. forceLiquidation is true
       // 3. positions exist
-      const shouldActivateLiquidation = 
+      const shouldActivateLiquidation =
         effectiveBankroll <= 0 && config.forceLiquidation && hasPositions;
-      
-      assert.strictEqual(shouldActivateLiquidation, true, 
-        "Liquidation mode should activate with low balance and existing positions");
+
+      assert.strictEqual(
+        shouldActivateLiquidation,
+        true,
+        "Liquidation mode should activate with low balance and existing positions",
+      );
     });
 
     it("should NOT activate when balance < reserve and no positions", () => {
       const config = createTestConfig();
       config.forceLiquidation = true;
-      
+
       const balance = 50;
       const { effectiveBankroll } = calculateEffectiveBankroll(balance, config);
-      const hasPositions = false;  // No positions
-      
-      const shouldActivateLiquidation = 
+      const hasPositions = false; // No positions
+
+      const shouldActivateLiquidation =
         effectiveBankroll <= 0 && config.forceLiquidation && hasPositions;
-      
-      assert.strictEqual(shouldActivateLiquidation, false, 
-        "Liquidation mode should NOT activate without positions");
+
+      assert.strictEqual(
+        shouldActivateLiquidation,
+        false,
+        "Liquidation mode should NOT activate without positions",
+      );
     });
 
     it("should NOT activate when forceLiquidation is false", () => {
       const config = createTestConfig();
       config.forceLiquidation = false;
-      
+
       const balance = 50;
       const { effectiveBankroll } = calculateEffectiveBankroll(balance, config);
       const hasPositions = true;
-      
-      const shouldActivateLiquidation = 
+
+      const shouldActivateLiquidation =
         effectiveBankroll <= 0 && config.forceLiquidation && hasPositions;
-      
-      assert.strictEqual(shouldActivateLiquidation, false, 
-        "Liquidation mode should NOT activate when forceLiquidation=false");
+
+      assert.strictEqual(
+        shouldActivateLiquidation,
+        false,
+        "Liquidation mode should NOT activate when forceLiquidation=false",
+      );
     });
   });
 
   describe("Exit conditions", () => {
     it("should exit liquidation mode when effectiveBankroll becomes positive", () => {
       const config = createTestConfig();
-      
+
       // After selling positions, balance is now $200
       const balance = 200;
       const { effectiveBankroll } = calculateEffectiveBankroll(balance, config);
-      
+
       const shouldExitLiquidation = effectiveBankroll > 0;
-      
-      assert.strictEqual(shouldExitLiquidation, true, 
-        "Should exit liquidation mode when balance exceeds reserve");
-      assert.strictEqual(effectiveBankroll, 100, 
-        "Effective bankroll should be $100 (200 - 100 reserve)");
+
+      assert.strictEqual(
+        shouldExitLiquidation,
+        true,
+        "Should exit liquidation mode when balance exceeds reserve",
+      );
+      assert.strictEqual(
+        effectiveBankroll,
+        100,
+        "Effective bankroll should be $100 (200 - 100 reserve)",
+      );
     });
   });
 
@@ -612,38 +696,59 @@ describe("Liquidation Mode", () => {
         { tokenId: "large", value: 100 },
         { tokenId: "medium", value: 50 },
       ];
-      
+
       // Sort by value descending (largest first)
       const sortedPositions = [...positions].sort((a, b) => b.value - a.value);
-      
-      assert.strictEqual(sortedPositions[0].tokenId, "large", 
-        "Largest position should be first");
-      assert.strictEqual(sortedPositions[1].tokenId, "medium", 
-        "Medium position should be second");
-      assert.strictEqual(sortedPositions[2].tokenId, "small", 
-        "Smallest position should be last");
+
+      assert.strictEqual(
+        sortedPositions[0].tokenId,
+        "large",
+        "Largest position should be first",
+      );
+      assert.strictEqual(
+        sortedPositions[1].tokenId,
+        "medium",
+        "Medium position should be second",
+      );
+      assert.strictEqual(
+        sortedPositions[2].tokenId,
+        "small",
+        "Smallest position should be last",
+      );
     });
   });
 
   describe("Liquidation configuration", () => {
     it("liquidationMaxSlippagePct should be configurable", () => {
       const config = createTestConfig();
-      assert.strictEqual(config.liquidationMaxSlippagePct, 10, 
-        "Default liquidation slippage should be 10%");
-      
+      assert.strictEqual(
+        config.liquidationMaxSlippagePct,
+        10,
+        "Default liquidation slippage should be 10%",
+      );
+
       config.liquidationMaxSlippagePct = 15;
-      assert.strictEqual(config.liquidationMaxSlippagePct, 15, 
-        "Liquidation slippage should be configurable");
+      assert.strictEqual(
+        config.liquidationMaxSlippagePct,
+        15,
+        "Liquidation slippage should be configurable",
+      );
     });
 
     it("liquidationPollIntervalMs should be configurable", () => {
       const config = createTestConfig();
-      assert.strictEqual(config.liquidationPollIntervalMs, 1000, 
-        "Default liquidation poll interval should be 1000ms");
-      
+      assert.strictEqual(
+        config.liquidationPollIntervalMs,
+        1000,
+        "Default liquidation poll interval should be 1000ms",
+      );
+
       config.liquidationPollIntervalMs = 2000;
-      assert.strictEqual(config.liquidationPollIntervalMs, 2000, 
-        "Liquidation poll interval should be configurable");
+      assert.strictEqual(
+        config.liquidationPollIntervalMs,
+        2000,
+        "Liquidation poll interval should be configurable",
+      );
     });
   });
 });
@@ -658,7 +763,7 @@ describe("Clause Opus Audit Compliance", () => {
   describe("Clause 2.1 - SHORT Entry Rejection", () => {
     it("rejects SHORT bias entries (LONG-only enforcement)", () => {
       const decisionEngine = new DecisionEngine(config);
-      
+
       const decision = decisionEngine.evaluateEntry({
         tokenId: "test-token",
         bias: "SHORT",
@@ -677,24 +782,37 @@ describe("Clause Opus Audit Compliance", () => {
           lastUpdateTime: Date.now(),
         },
         referencePriceCents: 49,
-        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evMetrics: {
+          totalTrades: 0,
+          winRate: 0,
+          evCents: 0,
+          wins: 0,
+          losses: 0,
+          avgWinCents: 0,
+          avgLossCents: 0,
+          totalPnlUsd: 0,
+        },
         evAllowed: { allowed: true },
         currentPositions: [],
         effectiveBankroll: 1000,
         totalDeployedUsd: 0,
       });
 
-      assert.strictEqual(decision.allowed, false, "SHORT entries should be rejected");
+      assert.strictEqual(
+        decision.allowed,
+        false,
+        "SHORT entries should be rejected",
+      );
       assert.ok(
-        decision.reason?.toLowerCase().includes("short") || 
-        decision.reason?.toLowerCase().includes("long-only"),
-        `Should mention SHORT rejection, got: ${decision.reason}`
+        decision.reason?.toLowerCase().includes("short") ||
+          decision.reason?.toLowerCase().includes("long-only"),
+        `Should mention SHORT rejection, got: ${decision.reason}`,
       );
     });
 
     it("allows LONG bias entries", () => {
       const decisionEngine = new DecisionEngine(config);
-      
+
       const decision = decisionEngine.evaluateEntry({
         tokenId: "test-token",
         bias: "LONG",
@@ -713,20 +831,33 @@ describe("Clause Opus Audit Compliance", () => {
           lastUpdateTime: Date.now(),
         },
         referencePriceCents: 49,
-        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evMetrics: {
+          totalTrades: 0,
+          winRate: 0,
+          evCents: 0,
+          wins: 0,
+          losses: 0,
+          avgWinCents: 0,
+          avgLossCents: 0,
+          totalPnlUsd: 0,
+        },
         evAllowed: { allowed: true },
         currentPositions: [],
         effectiveBankroll: 1000,
         totalDeployedUsd: 0,
       });
 
-      assert.strictEqual(decision.allowed, true, "LONG entries should be allowed");
+      assert.strictEqual(
+        decision.allowed,
+        true,
+        "LONG entries should be allowed",
+      );
       assert.strictEqual(decision.side, "LONG", "Side should be LONG");
     });
 
     it("rejects NONE bias entries", () => {
       const decisionEngine = new DecisionEngine(config);
-      
+
       const decision = decisionEngine.evaluateEntry({
         tokenId: "test-token",
         bias: "NONE",
@@ -745,21 +876,34 @@ describe("Clause Opus Audit Compliance", () => {
           lastUpdateTime: Date.now(),
         },
         referencePriceCents: 49,
-        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evMetrics: {
+          totalTrades: 0,
+          winRate: 0,
+          evCents: 0,
+          wins: 0,
+          losses: 0,
+          avgWinCents: 0,
+          avgLossCents: 0,
+          totalPnlUsd: 0,
+        },
         evAllowed: { allowed: true },
         currentPositions: [],
         effectiveBankroll: 1000,
         totalDeployedUsd: 0,
       });
 
-      assert.strictEqual(decision.allowed, false, "NONE bias entries should be rejected");
+      assert.strictEqual(
+        decision.allowed,
+        false,
+        "NONE bias entries should be rejected",
+      );
     });
   });
 
   describe("Clause 3.3 - Spread Gating Against Churn Budget", () => {
     it("rejects entries when spread exceeds minSpreadCents", () => {
       const decisionEngine = new DecisionEngine(config);
-      
+
       // Spread of 10¢ should exceed the 6¢ limit
       const decision = decisionEngine.evaluateEntry({
         tokenId: "test-token",
@@ -779,23 +923,36 @@ describe("Clause Opus Audit Compliance", () => {
           lastUpdateTime: Date.now(),
         },
         referencePriceCents: 50,
-        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evMetrics: {
+          totalTrades: 0,
+          winRate: 0,
+          evCents: 0,
+          wins: 0,
+          losses: 0,
+          avgWinCents: 0,
+          avgLossCents: 0,
+          totalPnlUsd: 0,
+        },
         evAllowed: { allowed: true },
         currentPositions: [],
         effectiveBankroll: 1000,
         totalDeployedUsd: 0,
       });
 
-      assert.strictEqual(decision.allowed, false, "Entries with spread > minSpreadCents should be rejected");
+      assert.strictEqual(
+        decision.allowed,
+        false,
+        "Entries with spread > minSpreadCents should be rejected",
+      );
       assert.ok(
         decision.reason?.toLowerCase().includes("spread"),
-        `Should mention spread issue, got: ${decision.reason}`
+        `Should mention spread issue, got: ${decision.reason}`,
       );
     });
 
     it("rejects entries when spread exceeds 2x churn budget", () => {
       const decisionEngine = new DecisionEngine(config);
-      
+
       // Spread of 5¢ should exceed 2x churnCostCentsEstimate (2 * 2 = 4)
       // but be within minSpreadCents (6)
       const decision = decisionEngine.evaluateEntry({
@@ -816,23 +973,37 @@ describe("Clause Opus Audit Compliance", () => {
           lastUpdateTime: Date.now(),
         },
         referencePriceCents: 50,
-        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evMetrics: {
+          totalTrades: 0,
+          winRate: 0,
+          evCents: 0,
+          wins: 0,
+          losses: 0,
+          avgWinCents: 0,
+          avgLossCents: 0,
+          totalPnlUsd: 0,
+        },
         evAllowed: { allowed: true },
         currentPositions: [],
         effectiveBankroll: 1000,
         totalDeployedUsd: 0,
       });
 
-      assert.strictEqual(decision.allowed, false, "Entries with spread > 2x churn budget should be rejected");
+      assert.strictEqual(
+        decision.allowed,
+        false,
+        "Entries with spread > 2x churn budget should be rejected",
+      );
       assert.ok(
-        decision.reason?.toLowerCase().includes("spread") || decision.reason?.toLowerCase().includes("churn"),
-        `Should mention spread/churn issue, got: ${decision.reason}`
+        decision.reason?.toLowerCase().includes("spread") ||
+          decision.reason?.toLowerCase().includes("churn"),
+        `Should mention spread/churn issue, got: ${decision.reason}`,
       );
     });
 
     it("allows entries when spread is within acceptable limits", () => {
       const decisionEngine = new DecisionEngine(config);
-      
+
       // Spread of 3¢ should be acceptable (< minSpreadCents and < 2x churn)
       const decision = decisionEngine.evaluateEntry({
         tokenId: "test-token",
@@ -852,14 +1023,27 @@ describe("Clause Opus Audit Compliance", () => {
           lastUpdateTime: Date.now(),
         },
         referencePriceCents: 50,
-        evMetrics: { totalTrades: 0, winRate: 0, evCents: 0, wins: 0, losses: 0, avgWinCents: 0, avgLossCents: 0, totalPnlUsd: 0 },
+        evMetrics: {
+          totalTrades: 0,
+          winRate: 0,
+          evCents: 0,
+          wins: 0,
+          losses: 0,
+          avgWinCents: 0,
+          avgLossCents: 0,
+          totalPnlUsd: 0,
+        },
         evAllowed: { allowed: true },
         currentPositions: [],
         effectiveBankroll: 1000,
         totalDeployedUsd: 0,
       });
 
-      assert.strictEqual(decision.allowed, true, "Entries with acceptable spread should be allowed");
+      assert.strictEqual(
+        decision.allowed,
+        true,
+        "Entries with acceptable spread should be allowed",
+      );
     });
   });
 
@@ -869,20 +1053,20 @@ describe("Clause Opus Audit Compliance", () => {
       assert.strictEqual(
         config.minEntryPriceCents,
         config.maxAdverseCents,
-        "MIN_ENTRY should equal MAX_ADVERSE for loss room"
+        "MIN_ENTRY should equal MAX_ADVERSE for loss room",
       );
 
       // maxEntryPriceCents should leave room for TP
       const expectedMax = 100 - config.tpCents - config.entryBufferCents;
       assert.ok(
         config.maxEntryPriceCents <= expectedMax,
-        `MAX_ENTRY (${config.maxEntryPriceCents}) should be <= ${expectedMax}`
+        `MAX_ENTRY (${config.maxEntryPriceCents}) should be <= ${expectedMax}`,
       );
 
       // Buffer should be at least 2¢ for meaningful protection
       assert.ok(
         config.entryBufferCents >= 2,
-        `Buffer (${config.entryBufferCents}¢) should be at least 2¢`
+        `Buffer (${config.entryBufferCents}¢) should be at least 2¢`,
       );
     });
   });

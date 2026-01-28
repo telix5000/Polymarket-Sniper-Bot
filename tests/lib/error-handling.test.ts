@@ -120,8 +120,14 @@ describe("Error Handling Utilities", () => {
         <body>Sorry, you have been blocked. <span>Cloudflare Ray ID: <strong class="font-semibold">9c429198aa8c2a94</strong></span></body></html>`;
 
       const result = formatErrorForLog(cloudflareHtml);
-      assert.ok(result.includes("Cloudflare block"), "Should mention Cloudflare block");
-      assert.ok(result.includes("403 Forbidden"), "Should mention 403 Forbidden");
+      assert.ok(
+        result.includes("Cloudflare block"),
+        "Should mention Cloudflare block",
+      );
+      assert.ok(
+        result.includes("403 Forbidden"),
+        "Should mention 403 Forbidden",
+      );
       assert.ok(result.includes("9c429198aa8c2a94"), "Should extract Ray ID");
       // Should not include the full HTML
       assert.ok(result.length < 200, "Should be much shorter than HTML");
@@ -167,16 +173,25 @@ describe("Error Handling Utilities", () => {
       assert.ok(!result.includes("key456"), "Should redact POLY_API_KEY");
       assert.ok(!result.includes("mypassword"), "Should redact password");
       assert.ok(!result.includes("sometoken"), "Should redact token");
-      assert.ok(result.includes("[REDACTED]"), "Should show redacted placeholder");
-      assert.ok(result.includes("application/json"), "Should keep non-sensitive data");
+      assert.ok(
+        result.includes("[REDACTED]"),
+        "Should show redacted placeholder",
+      );
+      assert.ok(
+        result.includes("application/json"),
+        "Should keep non-sensitive data",
+      );
     });
 
     it("should redact sensitive data from strings", () => {
-      const errorWithSecrets = 'Authorization: Bearer abc123, api_key=xyz789';
+      const errorWithSecrets = "Authorization: Bearer abc123, api_key=xyz789";
       const result = formatErrorForLog(errorWithSecrets);
       assert.ok(!result.includes("abc123"), "Should redact Bearer token");
       assert.ok(!result.includes("xyz789"), "Should redact api_key");
-      assert.ok(result.includes("[REDACTED]"), "Should show redacted placeholder");
+      assert.ok(
+        result.includes("[REDACTED]"),
+        "Should show redacted placeholder",
+      );
     });
 
     it("should handle circular references gracefully", () => {

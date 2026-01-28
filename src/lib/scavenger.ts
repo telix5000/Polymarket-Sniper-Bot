@@ -134,8 +134,18 @@ export interface ScavengerState {
   scavengerEntryPrices: Map<string, number>;
   // Detection tracking
   volumeSamples: Array<{ timestamp: number; volumeUsd: number }>;
-  orderBookSnapshots: Array<{ timestamp: number; bidDepth: number; askDepth: number; bestBid: number; bestAsk: number }>;
-  targetActivitySamples: Array<{ timestamp: number; activeCount: number; totalCount: number }>;
+  orderBookSnapshots: Array<{
+    timestamp: number;
+    bidDepth: number;
+    askDepth: number;
+    bestBid: number;
+    bestAsk: number;
+  }>;
+  targetActivitySamples: Array<{
+    timestamp: number;
+    activeCount: number;
+    totalCount: number;
+  }>;
   lowLiquidityDetectedAt: number | null;
   highLiquidityDetectedAt: number | null;
 }
@@ -214,7 +224,11 @@ export function updatePriceHistory(
 }
 
 /** Check if price has stalled */
-export function isPriceStalled(state: ScavengerState, tokenId: string, thresholdMs: number): boolean {
+export function isPriceStalled(
+  state: ScavengerState,
+  tokenId: string,
+  thresholdMs: number,
+): boolean {
   const history = state.priceHistory.get(tokenId);
   if (!history || history.length < 2) return false;
 
@@ -234,7 +248,11 @@ export function isOnCooldown(state: ScavengerState, tokenId: string): boolean {
 }
 
 /** Set token cooldown */
-export function setTokenCooldown(state: ScavengerState, tokenId: string, cooldownMs: number): ScavengerState {
+export function setTokenCooldown(
+  state: ScavengerState,
+  tokenId: string,
+  cooldownMs: number,
+): ScavengerState {
   const newCooldowns = new Map(state.tokenCooldowns);
   newCooldowns.set(tokenId, Date.now() + cooldownMs);
   return { ...state, tokenCooldowns: newCooldowns };
@@ -255,12 +273,20 @@ export function cleanExpiredCooldowns(state: ScavengerState): ScavengerState {
 // ============================================================================
 
 /** Check if position is green with sufficient profit */
-export function isGreenPosition(position: Position, minProfitPct: number, minProfitUsd: number): boolean {
+export function isGreenPosition(
+  position: Position,
+  minProfitPct: number,
+  minProfitUsd: number,
+): boolean {
   return position.pnlPct >= minProfitPct && position.pnlUsd >= minProfitUsd;
 }
 
 /** Check if red position has recovered */
-export function hasRedPositionRecovered(position: Position, profitPct: number, minUsd: number): boolean {
+export function hasRedPositionRecovered(
+  position: Position,
+  profitPct: number,
+  minUsd: number,
+): boolean {
   return position.pnlPct >= profitPct && position.pnlUsd >= minUsd;
 }
 
@@ -271,18 +297,32 @@ export function canMicroBuy(
   availableCapitalUsd: number,
   tokenId: string,
 ): { allowed: boolean; reason?: string; maxSizeUsd?: number } {
-  if (!config.microBuy.enabled) return { allowed: false, reason: "Micro-buys disabled" };
-  if (isOnCooldown(state, tokenId)) return { allowed: false, reason: "Token on cooldown" };
+  if (!config.microBuy.enabled)
+    return { allowed: false, reason: "Micro-buys disabled" };
+  if (isOnCooldown(state, tokenId))
+    return { allowed: false, reason: "Token on cooldown" };
   if (state.scavengerPositionCount >= config.risk.maxScavengePositions) {
-    return { allowed: false, reason: `Max positions (${config.risk.maxScavengePositions}) reached` };
+    return {
+      allowed: false,
+      reason: `Max positions (${config.risk.maxScavengePositions}) reached`,
+    };
   }
   if (state.deployedCapitalUsd >= config.risk.maxDeployedCapitalUsd) {
-    return { allowed: false, reason: `Max deployed capital ($${config.risk.maxDeployedCapitalUsd}) reached` };
+    return {
+      allowed: false,
+      reason: `Max deployed capital ($${config.risk.maxDeployedCapitalUsd}) reached`,
+    };
   }
 
-  const remaining = config.risk.maxDeployedCapitalUsd - state.deployedCapitalUsd;
-  const maxSize = Math.min(config.microBuy.maxPositionUsd, availableCapitalUsd * config.microBuy.maxCapitalFraction, remaining);
-  if (maxSize < ORDER.MIN_ORDER_USD) return { allowed: false, reason: "Max size too small" };
+  const remaining =
+    config.risk.maxDeployedCapitalUsd - state.deployedCapitalUsd;
+  const maxSize = Math.min(
+    config.microBuy.maxPositionUsd,
+    availableCapitalUsd * config.microBuy.maxCapitalFraction,
+    remaining,
+  );
+  if (maxSize < ORDER.MIN_ORDER_USD)
+    return { allowed: false, reason: "Max size too small" };
   return { allowed: true, maxSizeUsd: maxSize };
 }
 
@@ -298,34 +338,56 @@ export async function fetchRecentVolume(tokenIds: string[]): Promise<number> {
     const cutoff = Date.now() - 5 * 60 * 1000;
     const results = await Promise.allSettled(
       sample.map(async (id) => {
-        const { data } = await axios.get(`${POLYMARKET_API.DATA}/trades?asset=${id}&limit=50`, { timeout: 3000 });
+        const { data } = await axios.get(
+          `${POLYMARKET_API.DATA}/trades?asset=${id}&limit=50`,
+          { timeout: 3000 },
+        );
         if (!Array.isArray(data)) return 0;
         return data
-          .filter((t: any) => new Date(t.timestamp || t.createdAt).getTime() > cutoff)
-          .reduce((sum: number, t: any) => sum + (Number(t.size) * Number(t.price) || 0), 0);
+          .filter(
+            (t: any) => new Date(t.timestamp || t.createdAt).getTime() > cutoff,
+          )
+          .reduce(
+            (sum: number, t: any) =>
+              sum + (Number(t.size) * Number(t.price) || 0),
+            0,
+          );
       }),
     );
-    return results.reduce((sum, r) => sum + (r.status === "fulfilled" ? r.value : 0), 0);
+    return results.reduce(
+      (sum, r) => sum + (r.status === "fulfilled" ? r.value : 0),
+      0,
+    );
   } catch {
     return 0;
   }
 }
 
 /** Check target activity */
-export async function checkTargetActivity(targets: string[], windowMs: number): Promise<{ activeCount: number; totalCount: number }> {
+export async function checkTargetActivity(
+  targets: string[],
+  windowMs: number,
+): Promise<{ activeCount: number; totalCount: number }> {
   if (targets.length === 0) return { activeCount: 0, totalCount: 0 };
   const cutoff = Date.now() - windowMs;
   const sample = targets.slice(0, 10);
   const results = await Promise.allSettled(
     sample.map(async (addr) => {
-      const { data } = await axios.get(`${POLYMARKET_API.DATA}/trades?user=${addr}&limit=5`, { timeout: 3000 });
+      const { data } = await axios.get(
+        `${POLYMARKET_API.DATA}/trades?user=${addr}&limit=5`,
+        { timeout: 3000 },
+      );
       if (Array.isArray(data) && data.length > 0) {
-        return new Date(data[0].timestamp || data[0].createdAt).getTime() > cutoff;
+        return (
+          new Date(data[0].timestamp || data[0].createdAt).getTime() > cutoff
+        );
       }
       return false;
     }),
   );
-  const active = results.filter((r) => r.status === "fulfilled" && r.value).length;
+  const active = results.filter(
+    (r) => r.status === "fulfilled" && r.value,
+  ).length;
   return { activeCount: active, totalCount: sample.length };
 }
 
@@ -333,26 +395,48 @@ export async function checkTargetActivity(targets: string[], windowMs: number): 
 export async function fetchOrderBookDepth(
   client: { getOrderBook: (id: string) => Promise<any> },
   tokenIds: string[],
-): Promise<{ avgBidDepthUsd: number; avgAskDepthUsd: number; bestBid: number; bestAsk: number }> {
-  if (tokenIds.length === 0) return { avgBidDepthUsd: 0, avgAskDepthUsd: 0, bestBid: 0, bestAsk: 0 };
+): Promise<{
+  avgBidDepthUsd: number;
+  avgAskDepthUsd: number;
+  bestBid: number;
+  bestAsk: number;
+}> {
+  if (tokenIds.length === 0)
+    return { avgBidDepthUsd: 0, avgAskDepthUsd: 0, bestBid: 0, bestAsk: 0 };
   const sample = tokenIds.slice(0, 5);
   const results = await Promise.allSettled(
     sample.map(async (id) => {
       const book = await client.getOrderBook(id);
-      let bidDepth = 0, askDepth = 0, bestBid = 0, bestAsk = 0;
+      let bidDepth = 0,
+        askDepth = 0,
+        bestBid = 0,
+        bestAsk = 0;
       if (book?.bids?.length) {
         bestBid = parseFloat(book.bids[0].price);
-        bidDepth = book.bids.slice(0, 5).reduce((s: number, l: any) => s + parseFloat(l.size) * parseFloat(l.price), 0);
+        bidDepth = book.bids
+          .slice(0, 5)
+          .reduce(
+            (s: number, l: any) => s + parseFloat(l.size) * parseFloat(l.price),
+            0,
+          );
       }
       if (book?.asks?.length) {
         bestAsk = parseFloat(book.asks[0].price);
-        askDepth = book.asks.slice(0, 5).reduce((s: number, l: any) => s + parseFloat(l.size) * parseFloat(l.price), 0);
+        askDepth = book.asks
+          .slice(0, 5)
+          .reduce(
+            (s: number, l: any) => s + parseFloat(l.size) * parseFloat(l.price),
+            0,
+          );
       }
       return { bidDepth, askDepth, bestBid, bestAsk };
     }),
   );
-  const valid = results.filter((r) => r.status === "fulfilled").map((r) => (r as PromiseFulfilledResult<any>).value);
-  if (valid.length === 0) return { avgBidDepthUsd: 0, avgAskDepthUsd: 0, bestBid: 0, bestAsk: 0 };
+  const valid = results
+    .filter((r) => r.status === "fulfilled")
+    .map((r) => (r as PromiseFulfilledResult<any>).value);
+  if (valid.length === 0)
+    return { avgBidDepthUsd: 0, avgAskDepthUsd: 0, bestBid: 0, bestAsk: 0 };
   return {
     avgBidDepthUsd: valid.reduce((s, v) => s + v.bidDepth, 0) / valid.length,
     avgAskDepthUsd: valid.reduce((s, v) => s + v.askDepth, 0) / valid.length,
@@ -366,19 +450,31 @@ export async function fetchOrderBookDepth(
 // ============================================================================
 
 /** Record volume sample */
-export function recordVolumeSample(state: ScavengerState, volumeUsd: number, maxAge: number): ScavengerState {
+export function recordVolumeSample(
+  state: ScavengerState,
+  volumeUsd: number,
+  maxAge: number,
+): ScavengerState {
   const now = Date.now();
   const cutoff = now - maxAge;
   return {
     ...state,
-    volumeSamples: [...state.volumeSamples.filter((s) => s.timestamp > cutoff), { timestamp: now, volumeUsd }].slice(-100),
+    volumeSamples: [
+      ...state.volumeSamples.filter((s) => s.timestamp > cutoff),
+      { timestamp: now, volumeUsd },
+    ].slice(-100),
   };
 }
 
 /** Record order book snapshot */
 export function recordOrderBookSnapshot(
   state: ScavengerState,
-  snapshot: { bidDepthUsd: number; askDepthUsd: number; bestBid: number; bestAsk: number },
+  snapshot: {
+    bidDepthUsd: number;
+    askDepthUsd: number;
+    bestBid: number;
+    bestAsk: number;
+  },
   maxAge: number,
 ): ScavengerState {
   const now = Date.now();
@@ -387,33 +483,61 @@ export function recordOrderBookSnapshot(
     ...state,
     orderBookSnapshots: [
       ...state.orderBookSnapshots.filter((s) => s.timestamp > cutoff),
-      { timestamp: now, bidDepth: snapshot.bidDepthUsd, askDepth: snapshot.askDepthUsd, bestBid: snapshot.bestBid, bestAsk: snapshot.bestAsk },
+      {
+        timestamp: now,
+        bidDepth: snapshot.bidDepthUsd,
+        askDepth: snapshot.askDepthUsd,
+        bestBid: snapshot.bestBid,
+        bestAsk: snapshot.bestAsk,
+      },
     ].slice(-100),
   };
 }
 
 /** Record target activity */
-export function recordTargetActivity(state: ScavengerState, activeCount: number, totalCount: number, maxAge: number): ScavengerState {
+export function recordTargetActivity(
+  state: ScavengerState,
+  activeCount: number,
+  totalCount: number,
+  maxAge: number,
+): ScavengerState {
   const now = Date.now();
   const cutoff = now - maxAge;
   return {
     ...state,
-    targetActivitySamples: [...state.targetActivitySamples.filter((s) => s.timestamp > cutoff), { timestamp: now, activeCount, totalCount }].slice(-100),
+    targetActivitySamples: [
+      ...state.targetActivitySamples.filter((s) => s.timestamp > cutoff),
+      { timestamp: now, activeCount, totalCount },
+    ].slice(-100),
   };
 }
 
 /** Check if order book is stagnant (no meaningful price changes) */
-function isOrderBookStagnant(snapshots: Array<{ timestamp: number; bidDepth: number; askDepth: number; bestBid: number; bestAsk: number }>, thresholdMs: number): boolean {
+function isOrderBookStagnant(
+  snapshots: Array<{
+    timestamp: number;
+    bidDepth: number;
+    askDepth: number;
+    bestBid: number;
+    bestAsk: number;
+  }>,
+  thresholdMs: number,
+): boolean {
   const cutoff = Date.now() - thresholdMs;
   const recent = snapshots.filter((s) => s.timestamp > cutoff);
   if (recent.length < 2) return false;
 
   const first = recent[0];
   const last = recent[recent.length - 1];
-  const bidChange = Math.abs(last.bestBid - first.bestBid) / (first.bestBid || 1);
-  const askChange = Math.abs(last.bestAsk - first.bestAsk) / (first.bestAsk || 1);
+  const bidChange =
+    Math.abs(last.bestBid - first.bestBid) / (first.bestBid || 1);
+  const askChange =
+    Math.abs(last.bestAsk - first.bestAsk) / (first.bestAsk || 1);
 
-  return bidChange < MIN_PRICE_CHANGE_THRESHOLD && askChange < MIN_PRICE_CHANGE_THRESHOLD;
+  return (
+    bidChange < MIN_PRICE_CHANGE_THRESHOLD &&
+    askChange < MIN_PRICE_CHANGE_THRESHOLD
+  );
 }
 
 /** Analyze market conditions */
@@ -421,30 +545,51 @@ export function analyzeMarketConditions(
   state: ScavengerState,
   config: ScavengerConfig,
   logger?: Logger,
-): { shouldSwitch: boolean; newMode: TradingMode; reasons: string[]; newState: ScavengerState } {
+): {
+  shouldSwitch: boolean;
+  newMode: TradingMode;
+  reasons: string[];
+  newState: ScavengerState;
+} {
   const now = Date.now();
   const reasons: string[] = [];
   let lowLiquidityCount = 0;
 
   // Calculate metrics
   const volumeCutoff = now - config.detection.volumeWindowMs;
-  const recentVolume = state.volumeSamples.filter((s) => s.timestamp > volumeCutoff).reduce((sum, s) => sum + s.volumeUsd, 0);
+  const recentVolume = state.volumeSamples
+    .filter((s) => s.timestamp > volumeCutoff)
+    .reduce((sum, s) => sum + s.volumeUsd, 0);
 
   const bookCutoff = now - config.detection.stagnantBookThresholdMs;
-  const recentBooks = state.orderBookSnapshots.filter((s) => s.timestamp > bookCutoff);
-  const avgDepth = recentBooks.length > 0 ? recentBooks.reduce((s, b) => s + b.bidDepth + b.askDepth, 0) / recentBooks.length : 0;
-  const orderBookStagnant = isOrderBookStagnant(state.orderBookSnapshots, config.detection.stagnantBookThresholdMs);
+  const recentBooks = state.orderBookSnapshots.filter(
+    (s) => s.timestamp > bookCutoff,
+  );
+  const avgDepth =
+    recentBooks.length > 0
+      ? recentBooks.reduce((s, b) => s + b.bidDepth + b.askDepth, 0) /
+        recentBooks.length
+      : 0;
+  const orderBookStagnant = isOrderBookStagnant(
+    state.orderBookSnapshots,
+    config.detection.stagnantBookThresholdMs,
+  );
 
-  const latestActivity = state.targetActivitySamples[state.targetActivitySamples.length - 1];
+  const latestActivity =
+    state.targetActivitySamples[state.targetActivitySamples.length - 1];
   const activeTargets = latestActivity?.activeCount ?? 0;
 
   // Check conditions
   if (recentVolume < config.detection.volumeThresholdUsd) {
-    reasons.push(`Low volume: $${recentVolume.toFixed(0)} < $${config.detection.volumeThresholdUsd}`);
+    reasons.push(
+      `Low volume: $${recentVolume.toFixed(0)} < $${config.detection.volumeThresholdUsd}`,
+    );
     lowLiquidityCount++;
   }
   if (avgDepth < config.detection.minOrderBookDepthUsd) {
-    reasons.push(`Thin book: $${avgDepth.toFixed(0)} < $${config.detection.minOrderBookDepthUsd}`);
+    reasons.push(
+      `Thin book: $${avgDepth.toFixed(0)} < $${config.detection.minOrderBookDepthUsd}`,
+    );
     lowLiquidityCount++;
   }
   if (orderBookStagnant) {
@@ -452,7 +597,9 @@ export function analyzeMarketConditions(
     lowLiquidityCount++;
   }
   if (activeTargets < config.detection.minActiveTargets) {
-    reasons.push(`Few targets: ${activeTargets} < ${config.detection.minActiveTargets}`);
+    reasons.push(
+      `Few targets: ${activeTargets} < ${config.detection.minActiveTargets}`,
+    );
     lowLiquidityCount++;
   }
 
@@ -483,7 +630,9 @@ export function analyzeMarketConditions(
 
   if (!inScavenger && isLowLiquidity) {
     // Use newState timestamp for correct duration calculation after first detection
-    const duration = newState.lowLiquidityDetectedAt ? now - newState.lowLiquidityDetectedAt : 0;
+    const duration = newState.lowLiquidityDetectedAt
+      ? now - newState.lowLiquidityDetectedAt
+      : 0;
     if (duration >= config.detection.sustainedConditionMs) {
       shouldSwitch = true;
       newMode = TradingMode.SCAVENGER;
@@ -495,7 +644,9 @@ export function analyzeMarketConditions(
       avgDepth >= config.reversion.depthRecoveryThresholdUsd ||
       activeTargets >= config.reversion.minActiveTargetsForReversion;
     // Use newState timestamp for correct duration calculation after first detection
-    const duration = newState.highLiquidityDetectedAt ? now - newState.highLiquidityDetectedAt : 0;
+    const duration = newState.highLiquidityDetectedAt
+      ? now - newState.highLiquidityDetectedAt
+      : 0;
     if (recovered && duration >= config.reversion.sustainedRecoveryMs) {
       shouldSwitch = true;
       newMode = TradingMode.NORMAL;
@@ -517,11 +668,15 @@ export function analyzeMarketConditions(
 
 /**
  * Execute a sell order
- * 
+ *
  * NOTE: This function is used by processGreenExit() and processRedRecovery()
  * for the scavenger mode. It is a core sell mechanism for this module.
  */
-async function executeSell(client: ClobClient, position: Position, minPrice: number): Promise<OrderResult> {
+async function executeSell(
+  client: ClobClient,
+  position: Position,
+  minPrice: number,
+): Promise<OrderResult> {
   try {
     const book = await client.getOrderBook(position.tokenId);
     if (!book?.bids?.length) return { success: false, reason: "NO_BIDS" };
@@ -541,7 +696,10 @@ async function executeSell(client: ClobClient, position: Position, minPrice: num
       ? { success: true, filledUsd: position.size * bestBid, avgPrice: bestBid }
       : { success: false, reason: "ORDER_FAILED" };
   } catch (err) {
-    return { success: false, reason: err instanceof Error ? err.message : String(err) };
+    return {
+      success: false,
+      reason: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -553,27 +711,68 @@ export async function processGreenExit(
   config: ScavengerConfig,
   logger?: Logger,
 ): Promise<{ result: ScavengerActionResult; newState: ScavengerState }> {
-  if (!isGreenPosition(position, config.exit.minGreenProfitPct, config.exit.minAcceptableProfitUsd)) {
-    return { result: { action: "NONE", reason: "Position not green enough" }, newState: state };
+  if (
+    !isGreenPosition(
+      position,
+      config.exit.minGreenProfitPct,
+      config.exit.minAcceptableProfitUsd,
+    )
+  ) {
+    return {
+      result: { action: "NONE", reason: "Position not green enough" },
+      newState: state,
+    };
   }
-  if (!isPriceStalled(state, position.tokenId, config.exit.stalledPriceThresholdMs)) {
-    return { result: { action: "NONE", reason: "Price still moving" }, newState: state };
+  if (
+    !isPriceStalled(
+      state,
+      position.tokenId,
+      config.exit.stalledPriceThresholdMs,
+    )
+  ) {
+    return {
+      result: { action: "NONE", reason: "Price still moving" },
+      newState: state,
+    };
   }
 
   const costBasis = position.avgPrice * position.size;
-  const minPrice = (costBasis + config.exit.minAcceptableProfitUsd) / position.size;
+  const minPrice =
+    (costBasis + config.exit.minAcceptableProfitUsd) / position.size;
 
-  logger?.info?.(`🦅 [SCAV] Green exit: ${position.outcome} | P&L: ${position.pnlPct.toFixed(1)}%`);
+  logger?.info?.(
+    `🦅 [SCAV] Green exit: ${position.outcome} | P&L: ${position.pnlPct.toFixed(1)}%`,
+  );
 
   const orderResult = await executeSell(client, position, minPrice);
   if (orderResult.success) {
-    logger?.info?.(`✅ [SCAV] Green exit success: $${orderResult.filledUsd?.toFixed(2)}`);
+    logger?.info?.(
+      `✅ [SCAV] Green exit success: $${orderResult.filledUsd?.toFixed(2)}`,
+    );
     return {
-      result: { action: "EXIT_GREEN", tokenId: position.tokenId, outcome: position.outcome, sizeUsd: orderResult.filledUsd, reason: `Green exit (${position.pnlPct.toFixed(1)}%)`, orderResult },
-      newState: setTokenCooldown(state, position.tokenId, config.risk.tokenCooldownMs),
+      result: {
+        action: "EXIT_GREEN",
+        tokenId: position.tokenId,
+        outcome: position.outcome,
+        sizeUsd: orderResult.filledUsd,
+        reason: `Green exit (${position.pnlPct.toFixed(1)}%)`,
+        orderResult,
+      },
+      newState: setTokenCooldown(
+        state,
+        position.tokenId,
+        config.risk.tokenCooldownMs,
+      ),
     };
   }
-  return { result: { action: "NONE", reason: `Green exit failed: ${orderResult.reason}`, orderResult }, newState: state };
+  return {
+    result: {
+      action: "NONE",
+      reason: `Green exit failed: ${orderResult.reason}`,
+      orderResult,
+    },
+    newState: state,
+  };
 }
 
 /** Process red position recovery */
@@ -588,29 +787,67 @@ export async function processRedRecovery(
     if (position.pnlPct < 0) {
       const newMonitored = new Set(state.monitoredRedPositions);
       newMonitored.add(position.tokenId);
-      return { result: { action: "NONE", reason: "Added to monitoring" }, newState: { ...state, monitoredRedPositions: newMonitored } };
+      return {
+        result: { action: "NONE", reason: "Added to monitoring" },
+        newState: { ...state, monitoredRedPositions: newMonitored },
+      };
     }
-    return { result: { action: "NONE", reason: "Position not red" }, newState: state };
+    return {
+      result: { action: "NONE", reason: "Position not red" },
+      newState: state,
+    };
   }
 
-  if (!hasRedPositionRecovered(position, config.redMonitor.smallProfitThresholdPct, config.redMonitor.minRecoveryProfitUsd)) {
-    return { result: { action: "NONE", reason: "Not yet recovered" }, newState: state };
+  if (
+    !hasRedPositionRecovered(
+      position,
+      config.redMonitor.smallProfitThresholdPct,
+      config.redMonitor.minRecoveryProfitUsd,
+    )
+  ) {
+    return {
+      result: { action: "NONE", reason: "Not yet recovered" },
+      newState: state,
+    };
   }
 
-  const minPrice = position.avgPrice * (1 - config.exit.conservativeSlippagePct / 100);
-  logger?.info?.(`🦅 [SCAV] Red recovered: ${position.outcome} | P&L: ${position.pnlPct.toFixed(1)}%`);
+  const minPrice =
+    position.avgPrice * (1 - config.exit.conservativeSlippagePct / 100);
+  logger?.info?.(
+    `🦅 [SCAV] Red recovered: ${position.outcome} | P&L: ${position.pnlPct.toFixed(1)}%`,
+  );
 
   const orderResult = await executeSell(client, position, minPrice);
   if (orderResult.success) {
-    logger?.info?.(`✅ [SCAV] Recovery exit success: $${orderResult.filledUsd?.toFixed(2)}`);
+    logger?.info?.(
+      `✅ [SCAV] Recovery exit success: $${orderResult.filledUsd?.toFixed(2)}`,
+    );
     const newMonitored = new Set(state.monitoredRedPositions);
     newMonitored.delete(position.tokenId);
     return {
-      result: { action: "EXIT_RED_RECOVERY", tokenId: position.tokenId, outcome: position.outcome, sizeUsd: orderResult.filledUsd, reason: `Recovery exit (${position.pnlPct.toFixed(1)}%)`, orderResult },
-      newState: setTokenCooldown({ ...state, monitoredRedPositions: newMonitored }, position.tokenId, config.risk.tokenCooldownMs),
+      result: {
+        action: "EXIT_RED_RECOVERY",
+        tokenId: position.tokenId,
+        outcome: position.outcome,
+        sizeUsd: orderResult.filledUsd,
+        reason: `Recovery exit (${position.pnlPct.toFixed(1)}%)`,
+        orderResult,
+      },
+      newState: setTokenCooldown(
+        { ...state, monitoredRedPositions: newMonitored },
+        position.tokenId,
+        config.risk.tokenCooldownMs,
+      ),
     };
   }
-  return { result: { action: "NONE", reason: `Recovery failed: ${orderResult.reason}`, orderResult }, newState: state };
+  return {
+    result: {
+      action: "NONE",
+      reason: `Recovery failed: ${orderResult.reason}`,
+      orderResult,
+    },
+    newState: state,
+  };
 }
 
 /** Run scavenger cycle */
@@ -627,13 +864,24 @@ export async function runScavengerCycle(
 
   // Update price history
   for (const p of positions) {
-    currentState = updatePriceHistory(currentState, p.tokenId, p.curPrice, config.exit.stalledPriceThresholdMs * 2);
+    currentState = updatePriceHistory(
+      currentState,
+      p.tokenId,
+      p.curPrice,
+      config.exit.stalledPriceThresholdMs * 2,
+    );
   }
 
   // Process green positions
   for (const p of positions) {
     if (p.pnlPct > 0) {
-      const { result, newState } = await processGreenExit(client, p, currentState, config, logger);
+      const { result, newState } = await processGreenExit(
+        client,
+        p,
+        currentState,
+        config,
+        logger,
+      );
       currentState = newState;
       if (result.action !== "NONE") results.push(result);
     }
@@ -641,14 +889,25 @@ export async function runScavengerCycle(
 
   // Process red positions
   for (const p of positions) {
-    const { result, newState } = await processRedRecovery(client, p, currentState, config, logger);
+    const { result, newState } = await processRedRecovery(
+      client,
+      p,
+      currentState,
+      config,
+      logger,
+    );
     currentState = newState;
     if (result.action !== "NONE") results.push(result);
   }
 
   // Update tracking
-  const scavPositions = positions.filter((p) => currentState.scavengerEntryPrices.has(p.tokenId));
-  currentState.deployedCapitalUsd = scavPositions.reduce((s, p) => s + p.value, 0);
+  const scavPositions = positions.filter((p) =>
+    currentState.scavengerEntryPrices.has(p.tokenId),
+  );
+  currentState.deployedCapitalUsd = scavPositions.reduce(
+    (s, p) => s + p.value,
+    0,
+  );
   currentState.scavengerPositionCount = scavPositions.length;
 
   return { results, newState: currentState };
@@ -670,8 +929,13 @@ export function formatModeState(state: ScavengerState): string {
 }
 
 /** Get scavenger summary */
-export function getScavengerSummary(state: ScavengerState, config: ScavengerConfig): string {
-  const cooldowns = Array.from(state.tokenCooldowns.values()).filter((e) => e > Date.now()).length;
+export function getScavengerSummary(
+  state: ScavengerState,
+  config: ScavengerConfig,
+): string {
+  const cooldowns = Array.from(state.tokenCooldowns.values()).filter(
+    (e) => e > Date.now(),
+  ).length;
   return [
     `🦅 Scavenger Mode Active`,
     `   Deployed: $${state.deployedCapitalUsd.toFixed(2)} / $${config.risk.maxDeployedCapitalUsd}`,
@@ -697,42 +961,120 @@ export function loadScavengerConfig(): ScavengerConfig {
   return {
     enabled: envBool("SCAVENGER_ENABLED", DEFAULT_SCAVENGER_CONFIG.enabled),
     detection: {
-      volumeThresholdUsd: envNum("SCAVENGER_VOLUME_THRESHOLD_USD", DEFAULT_SCAVENGER_CONFIG.detection.volumeThresholdUsd),
-      volumeWindowMs: envNum("SCAVENGER_VOLUME_WINDOW_MS", DEFAULT_SCAVENGER_CONFIG.detection.volumeWindowMs),
-      minOrderBookDepthUsd: envNum("SCAVENGER_MIN_ORDERBOOK_DEPTH_USD", DEFAULT_SCAVENGER_CONFIG.detection.minOrderBookDepthUsd),
-      stagnantBookThresholdMs: envNum("SCAVENGER_STAGNANT_BOOK_THRESHOLD_MS", DEFAULT_SCAVENGER_CONFIG.detection.stagnantBookThresholdMs),
-      minActiveTargets: envNum("SCAVENGER_MIN_ACTIVE_TARGETS", DEFAULT_SCAVENGER_CONFIG.detection.minActiveTargets),
-      targetActivityWindowMs: envNum("SCAVENGER_TARGET_ACTIVITY_WINDOW_MS", DEFAULT_SCAVENGER_CONFIG.detection.targetActivityWindowMs),
-      sustainedConditionMs: envNum("SCAVENGER_SUSTAINED_CONDITION_MS", DEFAULT_SCAVENGER_CONFIG.detection.sustainedConditionMs),
+      volumeThresholdUsd: envNum(
+        "SCAVENGER_VOLUME_THRESHOLD_USD",
+        DEFAULT_SCAVENGER_CONFIG.detection.volumeThresholdUsd,
+      ),
+      volumeWindowMs: envNum(
+        "SCAVENGER_VOLUME_WINDOW_MS",
+        DEFAULT_SCAVENGER_CONFIG.detection.volumeWindowMs,
+      ),
+      minOrderBookDepthUsd: envNum(
+        "SCAVENGER_MIN_ORDERBOOK_DEPTH_USD",
+        DEFAULT_SCAVENGER_CONFIG.detection.minOrderBookDepthUsd,
+      ),
+      stagnantBookThresholdMs: envNum(
+        "SCAVENGER_STAGNANT_BOOK_THRESHOLD_MS",
+        DEFAULT_SCAVENGER_CONFIG.detection.stagnantBookThresholdMs,
+      ),
+      minActiveTargets: envNum(
+        "SCAVENGER_MIN_ACTIVE_TARGETS",
+        DEFAULT_SCAVENGER_CONFIG.detection.minActiveTargets,
+      ),
+      targetActivityWindowMs: envNum(
+        "SCAVENGER_TARGET_ACTIVITY_WINDOW_MS",
+        DEFAULT_SCAVENGER_CONFIG.detection.targetActivityWindowMs,
+      ),
+      sustainedConditionMs: envNum(
+        "SCAVENGER_SUSTAINED_CONDITION_MS",
+        DEFAULT_SCAVENGER_CONFIG.detection.sustainedConditionMs,
+      ),
     },
     exit: {
-      stalledPriceThresholdMs: envNum("SCAVENGER_STALLED_PRICE_THRESHOLD_MS", DEFAULT_SCAVENGER_CONFIG.exit.stalledPriceThresholdMs),
-      minGreenProfitPct: envNum("SCAVENGER_MIN_GREEN_PROFIT_PCT", DEFAULT_SCAVENGER_CONFIG.exit.minGreenProfitPct),
-      minAcceptableProfitUsd: envNum("SCAVENGER_MIN_ACCEPTABLE_PROFIT_USD", DEFAULT_SCAVENGER_CONFIG.exit.minAcceptableProfitUsd),
-      conservativeSlippagePct: envNum("SCAVENGER_CONSERVATIVE_SLIPPAGE_PCT", DEFAULT_SCAVENGER_CONFIG.exit.conservativeSlippagePct),
+      stalledPriceThresholdMs: envNum(
+        "SCAVENGER_STALLED_PRICE_THRESHOLD_MS",
+        DEFAULT_SCAVENGER_CONFIG.exit.stalledPriceThresholdMs,
+      ),
+      minGreenProfitPct: envNum(
+        "SCAVENGER_MIN_GREEN_PROFIT_PCT",
+        DEFAULT_SCAVENGER_CONFIG.exit.minGreenProfitPct,
+      ),
+      minAcceptableProfitUsd: envNum(
+        "SCAVENGER_MIN_ACCEPTABLE_PROFIT_USD",
+        DEFAULT_SCAVENGER_CONFIG.exit.minAcceptableProfitUsd,
+      ),
+      conservativeSlippagePct: envNum(
+        "SCAVENGER_CONSERVATIVE_SLIPPAGE_PCT",
+        DEFAULT_SCAVENGER_CONFIG.exit.conservativeSlippagePct,
+      ),
     },
     redMonitor: {
-      smallProfitThresholdPct: envNum("SCAVENGER_SMALL_PROFIT_THRESHOLD_PCT", DEFAULT_SCAVENGER_CONFIG.redMonitor.smallProfitThresholdPct),
-      minRecoveryProfitUsd: envNum("SCAVENGER_MIN_RECOVERY_PROFIT_USD", DEFAULT_SCAVENGER_CONFIG.redMonitor.minRecoveryProfitUsd),
+      smallProfitThresholdPct: envNum(
+        "SCAVENGER_SMALL_PROFIT_THRESHOLD_PCT",
+        DEFAULT_SCAVENGER_CONFIG.redMonitor.smallProfitThresholdPct,
+      ),
+      minRecoveryProfitUsd: envNum(
+        "SCAVENGER_MIN_RECOVERY_PROFIT_USD",
+        DEFAULT_SCAVENGER_CONFIG.redMonitor.minRecoveryProfitUsd,
+      ),
     },
     microBuy: {
-      enabled: envBool("SCAVENGER_MICRO_BUY_ENABLED", DEFAULT_SCAVENGER_CONFIG.microBuy.enabled),
-      minExpectedProfitUsd: envNum("SCAVENGER_MICRO_BUY_MIN_EXPECTED_PROFIT_USD", DEFAULT_SCAVENGER_CONFIG.microBuy.minExpectedProfitUsd),
-      maxCapitalFraction: envNum("SCAVENGER_MICRO_BUY_MAX_CAPITAL_FRACTION", DEFAULT_SCAVENGER_CONFIG.microBuy.maxCapitalFraction),
-      maxPositionUsd: envNum("SCAVENGER_MICRO_BUY_MAX_POSITION_USD", DEFAULT_SCAVENGER_CONFIG.microBuy.maxPositionUsd),
-      minDiscountPct: envNum("SCAVENGER_MICRO_BUY_MIN_DISCOUNT_PCT", DEFAULT_SCAVENGER_CONFIG.microBuy.minDiscountPct),
-      takeProfitPct: envNum("SCAVENGER_MICRO_BUY_TAKE_PROFIT_PCT", DEFAULT_SCAVENGER_CONFIG.microBuy.takeProfitPct),
+      enabled: envBool(
+        "SCAVENGER_MICRO_BUY_ENABLED",
+        DEFAULT_SCAVENGER_CONFIG.microBuy.enabled,
+      ),
+      minExpectedProfitUsd: envNum(
+        "SCAVENGER_MICRO_BUY_MIN_EXPECTED_PROFIT_USD",
+        DEFAULT_SCAVENGER_CONFIG.microBuy.minExpectedProfitUsd,
+      ),
+      maxCapitalFraction: envNum(
+        "SCAVENGER_MICRO_BUY_MAX_CAPITAL_FRACTION",
+        DEFAULT_SCAVENGER_CONFIG.microBuy.maxCapitalFraction,
+      ),
+      maxPositionUsd: envNum(
+        "SCAVENGER_MICRO_BUY_MAX_POSITION_USD",
+        DEFAULT_SCAVENGER_CONFIG.microBuy.maxPositionUsd,
+      ),
+      minDiscountPct: envNum(
+        "SCAVENGER_MICRO_BUY_MIN_DISCOUNT_PCT",
+        DEFAULT_SCAVENGER_CONFIG.microBuy.minDiscountPct,
+      ),
+      takeProfitPct: envNum(
+        "SCAVENGER_MICRO_BUY_TAKE_PROFIT_PCT",
+        DEFAULT_SCAVENGER_CONFIG.microBuy.takeProfitPct,
+      ),
     },
     risk: {
-      maxDeployedCapitalUsd: envNum("SCAVENGER_MAX_DEPLOYED_CAPITAL_USD", DEFAULT_SCAVENGER_CONFIG.risk.maxDeployedCapitalUsd),
-      maxScavengePositions: envNum("SCAVENGER_MAX_POSITIONS", DEFAULT_SCAVENGER_CONFIG.risk.maxScavengePositions),
-      tokenCooldownMs: envNum("SCAVENGER_TOKEN_COOLDOWN_MS", DEFAULT_SCAVENGER_CONFIG.risk.tokenCooldownMs),
+      maxDeployedCapitalUsd: envNum(
+        "SCAVENGER_MAX_DEPLOYED_CAPITAL_USD",
+        DEFAULT_SCAVENGER_CONFIG.risk.maxDeployedCapitalUsd,
+      ),
+      maxScavengePositions: envNum(
+        "SCAVENGER_MAX_POSITIONS",
+        DEFAULT_SCAVENGER_CONFIG.risk.maxScavengePositions,
+      ),
+      tokenCooldownMs: envNum(
+        "SCAVENGER_TOKEN_COOLDOWN_MS",
+        DEFAULT_SCAVENGER_CONFIG.risk.tokenCooldownMs,
+      ),
     },
     reversion: {
-      volumeRecoveryThresholdUsd: envNum("SCAVENGER_VOLUME_RECOVERY_THRESHOLD_USD", DEFAULT_SCAVENGER_CONFIG.reversion.volumeRecoveryThresholdUsd),
-      depthRecoveryThresholdUsd: envNum("SCAVENGER_DEPTH_RECOVERY_THRESHOLD_USD", DEFAULT_SCAVENGER_CONFIG.reversion.depthRecoveryThresholdUsd),
-      minActiveTargetsForReversion: envNum("SCAVENGER_MIN_ACTIVE_TARGETS_REVERSION", DEFAULT_SCAVENGER_CONFIG.reversion.minActiveTargetsForReversion),
-      sustainedRecoveryMs: envNum("SCAVENGER_SUSTAINED_RECOVERY_MS", DEFAULT_SCAVENGER_CONFIG.reversion.sustainedRecoveryMs),
+      volumeRecoveryThresholdUsd: envNum(
+        "SCAVENGER_VOLUME_RECOVERY_THRESHOLD_USD",
+        DEFAULT_SCAVENGER_CONFIG.reversion.volumeRecoveryThresholdUsd,
+      ),
+      depthRecoveryThresholdUsd: envNum(
+        "SCAVENGER_DEPTH_RECOVERY_THRESHOLD_USD",
+        DEFAULT_SCAVENGER_CONFIG.reversion.depthRecoveryThresholdUsd,
+      ),
+      minActiveTargetsForReversion: envNum(
+        "SCAVENGER_MIN_ACTIVE_TARGETS_REVERSION",
+        DEFAULT_SCAVENGER_CONFIG.reversion.minActiveTargetsForReversion,
+      ),
+      sustainedRecoveryMs: envNum(
+        "SCAVENGER_SUSTAINED_RECOVERY_MS",
+        DEFAULT_SCAVENGER_CONFIG.reversion.sustainedRecoveryMs,
+      ),
     },
   };
 }

@@ -35,7 +35,7 @@ const WPOL_ABI = [
 ];
 
 // Constants for swap calculations
-const POL_PRICE_ESTIMATE_USD = 0.40; // Conservative estimate for POL price
+const POL_PRICE_ESTIMATE_USD = 0.4; // Conservative estimate for POL price
 const MIN_SWAP_USD = 5; // Minimum swap amount in USDC
 const AVAILABLE_USDC_BUFFER = 0.9; // Use only 90% of available USDC
 
@@ -63,19 +63,29 @@ export function loadPolReserveConfig(preset: PresetConfig): PolReserveConfig {
   const envEnabled = process.env.POL_RESERVE_ENABLED;
   // NOTE: POL_RESERVE_TARGET is the preferred variable name.
   // MIN_POL_RESERVE is a legacy alias kept for backward compatibility.
-  const envTarget = process.env.POL_RESERVE_TARGET ?? process.env.MIN_POL_RESERVE;
+  const envTarget =
+    process.env.POL_RESERVE_TARGET ?? process.env.MIN_POL_RESERVE;
   const envMin = process.env.POL_RESERVE_MIN;
   const envMaxSwap = process.env.POL_RESERVE_MAX_SWAP_USD;
   const envInterval = process.env.POL_RESERVE_CHECK_INTERVAL_MIN;
   const envSlippage = process.env.POL_RESERVE_SLIPPAGE_PCT;
 
   return {
-    enabled: envEnabled !== undefined ? envEnabled === "true" : preset.polReserve.enabled,
+    enabled:
+      envEnabled !== undefined
+        ? envEnabled === "true"
+        : preset.polReserve.enabled,
     targetPol: envTarget ? parseFloat(envTarget) : preset.polReserve.targetPol,
     minPol: envMin ? parseFloat(envMin) : preset.polReserve.minPol,
-    maxSwapUsd: envMaxSwap ? parseFloat(envMaxSwap) : preset.polReserve.maxSwapUsd,
-    checkIntervalMin: envInterval ? parseFloat(envInterval) : preset.polReserve.checkIntervalMin,
-    slippagePct: envSlippage ? parseFloat(envSlippage) : preset.polReserve.slippagePct,
+    maxSwapUsd: envMaxSwap
+      ? parseFloat(envMaxSwap)
+      : preset.polReserve.maxSwapUsd,
+    checkIntervalMin: envInterval
+      ? parseFloat(envInterval)
+      : preset.polReserve.checkIntervalMin,
+    slippagePct: envSlippage
+      ? parseFloat(envSlippage)
+      : preset.polReserve.slippagePct,
   };
 }
 
@@ -150,14 +160,25 @@ export async function swapUsdcToPol(
     // Create contract instances
     const usdcContract = new Contract(POLYGON.USDC_ADDRESS, ERC20_ABI, wallet);
     const wpolContract = new Contract(WPOL_ADDRESS, WPOL_ABI, wallet);
-    const routerContract = new Contract(QUICKSWAP_ROUTER, QUICKSWAP_ROUTER_ABI, wallet);
+    const routerContract = new Contract(
+      QUICKSWAP_ROUTER,
+      QUICKSWAP_ROUTER_ABI,
+      wallet,
+    );
 
     // Check and set allowance if needed - approve max to avoid repeated approval transactions
-    const currentAllowance = await usdcContract.allowance(address, QUICKSWAP_ROUTER);
+    const currentAllowance = await usdcContract.allowance(
+      address,
+      QUICKSWAP_ROUTER,
+    );
     if (currentAllowance < amountIn) {
       logger?.info?.(`Approving USDC for QuickSwap...`);
-      const maxUint256 = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-      const approveTx = await usdcContract.approve(QUICKSWAP_ROUTER, maxUint256);
+      const maxUint256 =
+        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+      const approveTx = await usdcContract.approve(
+        QUICKSWAP_ROUTER,
+        maxUint256,
+      );
       await approveTx.wait();
       logger?.info?.(`USDC approved`);
     }
@@ -202,7 +223,9 @@ export async function swapUsdcToPol(
     const unwrapTx = await wpolContract.withdraw(wpolReceived);
     await unwrapTx.wait();
 
-    logger?.info?.(`✅ POL Swap complete | ${usdcAmount.toFixed(2)} USDC → ${polReceived.toFixed(2)} POL`);
+    logger?.info?.(
+      `✅ POL Swap complete | ${usdcAmount.toFixed(2)} USDC → ${polReceived.toFixed(2)} POL`,
+    );
 
     return {
       success: true,
@@ -235,7 +258,9 @@ export async function runPolReserve(
     return null;
   }
 
-  logger?.warn?.(`⚠️ POL Low | Current: ${currentPol.toFixed(2)} POL | Target: ${config.targetPol} POL`);
+  logger?.warn?.(
+    `⚠️ POL Low | Current: ${currentPol.toFixed(2)} POL | Target: ${config.targetPol} POL`,
+  );
 
   const { usdcToSwap, reason } = calculateSwapAmount(
     currentPol,
@@ -249,7 +274,9 @@ export async function runPolReserve(
     return null;
   }
 
-  logger?.info?.(`💱 POL Rebalance | Swapping $${usdcToSwap.toFixed(2)} USDC → ~${(usdcToSwap / POL_PRICE_ESTIMATE_USD).toFixed(0)} POL`);
+  logger?.info?.(
+    `💱 POL Rebalance | Swapping $${usdcToSwap.toFixed(2)} USDC → ~${(usdcToSwap / POL_PRICE_ESTIMATE_USD).toFixed(0)} POL`,
+  );
 
   return swapUsdcToPol(wallet, usdcToSwap, config.slippagePct, logger);
 }

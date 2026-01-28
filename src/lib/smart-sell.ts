@@ -371,9 +371,7 @@ export async function smartSell(
 
     // Check for Cloudflare block
     if (isCloudflareBlock(response)) {
-      logger?.error?.(
-        `Sell blocked by Cloudflare (403). Consider using VPN.`,
-      );
+      logger?.error?.(`Sell blocked by Cloudflare (403). Consider using VPN.`);
       return { success: false, reason: "CLOUDFLARE_BLOCKED", analysis };
     }
 
@@ -386,37 +384,42 @@ export async function smartSell(
       // Check the status field and takingAmount/makingAmount to confirm actual fill
       if (orderType === "FOK") {
         const rawStatus = respAny?.status;
-        const status = typeof rawStatus === "string" ? rawStatus.toUpperCase() : "";
+        const status =
+          typeof rawStatus === "string" ? rawStatus.toUpperCase() : "";
         const takingAmount = parseFloat(respAny?.takingAmount || "0");
         const makingAmount = parseFloat(respAny?.makingAmount || "0");
-        
+
         // FOK order should have status "MATCHED" or "FILLED" and non-zero amounts
         // If status is "UNMATCHED", "DELAYED", or amounts are 0, the order didn't fill
         // Note: FOK orders are fill-or-kill, they cannot be "LIVE" (sitting on orderbook)
         const isMatched = status === "MATCHED" || status === "FILLED";
         const hasFilledAmount = takingAmount > 0 || makingAmount > 0;
-        
+
         // Track what info we have from the response
-        const hasStatusInfo = typeof rawStatus === "string" && rawStatus.length > 0;
+        const hasStatusInfo =
+          typeof rawStatus === "string" && rawStatus.length > 0;
         const hasAmountInfo =
-          respAny?.takingAmount !== undefined || respAny?.makingAmount !== undefined;
-        
+          respAny?.takingAmount !== undefined ||
+          respAny?.makingAmount !== undefined;
+
         // If we have status info and it's not matched, fail
         if (hasStatusInfo && !isMatched) {
           logger?.warn?.(`⚠️ FOK order not filled (status: ${status})`);
           return { success: false, reason: "FOK_NOT_FILLED", analysis };
         }
-        
+
         // If we have amount info and it shows no fill, fail
         if (hasAmountInfo && !hasFilledAmount) {
           logger?.warn?.(`⚠️ FOK order not filled (zero amount)`);
           return { success: false, reason: "FOK_NOT_FILLED", analysis };
         }
-        
+
         // If we have neither status nor amount information, we cannot confirm a fill.
         // For FOK orders, treat missing evidence as not filled rather than assuming success.
         if (!hasStatusInfo && !hasAmountInfo) {
-          logger?.warn?.(`⚠️ FOK order response missing fill evidence (no status or amounts)`);
+          logger?.warn?.(
+            `⚠️ FOK order response missing fill evidence (no status or amounts)`,
+          );
           return { success: false, reason: "FOK_NOT_FILLED", analysis };
         }
       }
@@ -437,9 +440,7 @@ export async function smartSell(
         avgPrice: orderPrice,
         // Normalise possible order id fields from API and fall back to first order hash
         orderId:
-          respAny?.orderId ??
-          respAny?.orderID ??
-          respAny?.orderHashes?.[0],
+          respAny?.orderId ?? respAny?.orderID ?? respAny?.orderHashes?.[0],
         analysis,
         actualPrice: orderPrice,
         actualSlippagePct: expectedSlippage,
@@ -456,7 +457,10 @@ export async function smartSell(
 
       // Handle specific error cases - distinguish between balance and allowance issues
       const lowerError = errorMsg.toLowerCase();
-      if (lowerError.includes("not enough allowance") || lowerError.includes("insufficient allowance")) {
+      if (
+        lowerError.includes("not enough allowance") ||
+        lowerError.includes("insufficient allowance")
+      ) {
         return { success: false, reason: "INSUFFICIENT_ALLOWANCE", analysis };
       }
       if (
@@ -499,7 +503,10 @@ export async function smartSell(
     // Check for specific error types and return appropriate reason codes
     // Distinguish between balance and allowance issues for better debugging
     const lowerMsg = cleanMsg.toLowerCase();
-    if (lowerMsg.includes("not enough allowance") || lowerMsg.includes("insufficient allowance")) {
+    if (
+      lowerMsg.includes("not enough allowance") ||
+      lowerMsg.includes("insufficient allowance")
+    ) {
       return { success: false, reason: "INSUFFICIENT_ALLOWANCE" };
     }
     if (

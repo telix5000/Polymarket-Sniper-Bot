@@ -1,9 +1,9 @@
 /**
  * MarketDataStore - Single source of truth for live market data
- * 
+ *
  * This module provides a thread-safe, in-memory store for real-time market data
  * that is updated by WebSocket connections and can fall back to REST when stale.
- * 
+ *
  * Features:
  * - Stores best bid/ask/mid/spread per tokenId
  * - Optional shallow depth tracking
@@ -21,13 +21,13 @@ import { POLYMARKET_WS } from "./constants";
 /** Market data for a single token */
 export interface TokenMarketData {
   tokenId: string;
-  bestBid: number;      // Best bid price (0-1)
-  bestAsk: number;      // Best ask price (0-1)
-  mid: number;          // Mid price (0-1)
-  spreadCents: number;  // Spread in cents
-  bidDepthUsd: number;  // Depth on bid side (within window)
-  askDepthUsd: number;  // Depth on ask side (within window)
-  updatedAt: number;    // Unix timestamp ms
+  bestBid: number; // Best bid price (0-1)
+  bestAsk: number; // Best ask price (0-1)
+  mid: number; // Mid price (0-1)
+  spreadCents: number; // Spread in cents
+  bidDepthUsd: number; // Depth on bid side (within window)
+  askDepthUsd: number; // Depth on ask side (within window)
+  updatedAt: number; // Unix timestamp ms
   source: "WS" | "REST"; // Data source
 }
 
@@ -82,7 +82,8 @@ export class MarketDataStore {
   }) {
     this.maxTokens = options?.maxTokens ?? POLYMARKET_WS.MAX_TOKENS;
     this.staleMs = options?.staleMs ?? POLYMARKET_WS.STALE_MS;
-    this.depthWindowCents = options?.depthWindowCents ?? POLYMARKET_WS.DEPTH_WINDOW_CENTS;
+    this.depthWindowCents =
+      options?.depthWindowCents ?? POLYMARKET_WS.DEPTH_WINDOW_CENTS;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -163,7 +164,11 @@ export class MarketDataStore {
    * Update market data from WebSocket message
    * Handles deduplication - won't update if data hasn't changed
    */
-  updateFromWs(tokenId: string, bids: OrderbookLevel[], asks: OrderbookLevel[]): boolean {
+  updateFromWs(
+    tokenId: string,
+    bids: OrderbookLevel[],
+    asks: OrderbookLevel[],
+  ): boolean {
     if (bids.length === 0 || asks.length === 0) {
       return false;
     }
@@ -173,10 +178,12 @@ export class MarketDataStore {
 
     // Deduplication: check if data has actually changed
     const existing = this.store.get(tokenId);
-    if (existing && 
-        existing.bestBid === bestBid && 
-        existing.bestAsk === bestAsk &&
-        existing.source === "WS") {
+    if (
+      existing &&
+      existing.bestBid === bestBid &&
+      existing.bestAsk === bestAsk &&
+      existing.source === "WS"
+    ) {
       // Data hasn't changed, just update timestamp and LRU access order
       existing.updatedAt = Date.now();
       this.touchToken(tokenId);
@@ -218,7 +225,11 @@ export class MarketDataStore {
   /**
    * Update market data from REST fallback
    */
-  updateFromRest(tokenId: string, bids: OrderbookLevel[], asks: OrderbookLevel[]): boolean {
+  updateFromRest(
+    tokenId: string,
+    bids: OrderbookLevel[],
+    asks: OrderbookLevel[],
+  ): boolean {
     if (bids.length === 0 || asks.length === 0) {
       return false;
     }
@@ -261,7 +272,7 @@ export class MarketDataStore {
    */
   remove(tokenId: string): boolean {
     this.orderbooks.delete(tokenId);
-    this.accessOrder = this.accessOrder.filter(id => id !== tokenId);
+    this.accessOrder = this.accessOrder.filter((id) => id !== tokenId);
     return this.store.delete(tokenId);
   }
 
@@ -341,10 +352,10 @@ export class MarketDataStore {
     const metrics = this.getMetrics();
     console.log(
       `${prefix} Mode: ${metrics.mode} | ` +
-      `Tokens: ${metrics.totalTokens} | ` +
-      `Stale: ${metrics.staleTokens} | ` +
-      `WS updates: ${metrics.wsUpdates} | ` +
-      `REST fallbacks: ${metrics.restFallbacks}`
+        `Tokens: ${metrics.totalTokens} | ` +
+        `Stale: ${metrics.staleTokens} | ` +
+        `WS updates: ${metrics.wsUpdates} | ` +
+        `REST fallbacks: ${metrics.restFallbacks}`,
     );
   }
 
@@ -356,12 +367,12 @@ export class MarketDataStore {
    * Calculate depth within price window
    */
   private calculateDepth(
-    bids: OrderbookLevel[], 
-    asks: OrderbookLevel[], 
-    mid: number
+    bids: OrderbookLevel[],
+    asks: OrderbookLevel[],
+    mid: number,
   ): { bidDepthUsd: number; askDepthUsd: number } {
     const windowPrice = this.depthWindowCents / 100;
-    
+
     let bidDepthUsd = 0;
     let askDepthUsd = 0;
 

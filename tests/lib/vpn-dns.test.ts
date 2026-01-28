@@ -71,7 +71,7 @@ function isValidIp(ip: string): boolean {
  */
 function generateContainerDnsConfig(
   dns: string,
-  interfaceName: string
+  interfaceName: string,
 ): { postUp: string; postDown: string } | null {
   const dnsServers = dns
     .split(",")
@@ -226,7 +226,7 @@ describe("VPN DNS Container Handling", () => {
     it("should filter out invalid DNS and keep valid ones", () => {
       const result = generateContainerDnsConfig(
         "1.1.1.1,invalid,8.8.8.8",
-        "wg0"
+        "wg0",
       );
       assert.ok(result !== null);
       assert.ok(result.postUp.includes("nameserver 1.1.1.1"));

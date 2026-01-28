@@ -1,6 +1,6 @@
 /**
  * V2 Targets - Copy trading address management
- * 
+ *
  * Fetches top traders from Polymarket leaderboard API (v1)
  * These are the wallets we track for copy trading signals
  */
@@ -24,7 +24,9 @@ export async function fetchLeaderboard(limit = 100): Promise<string[]> {
       .filter((t: any) => t.proxyWallet || t.address)
       .map((t: any) => (t.proxyWallet || t.address).toLowerCase());
   } catch (err) {
-    console.warn(`⚠️ Leaderboard fetch failed: ${err instanceof Error ? err.message : err}`);
+    console.warn(
+      `⚠️ Leaderboard fetch failed: ${err instanceof Error ? err.message : err}`,
+    );
     return [];
   }
 }
@@ -34,9 +36,10 @@ export async function fetchLeaderboard(limit = 100): Promise<string[]> {
  * Priority: TARGET_ADDRESSES env > COPY_ADDRESSES env > MONITOR_ADDRESSES env > leaderboard API
  */
 export async function getTargetAddresses(): Promise<string[]> {
-  const env = process.env.TARGET_ADDRESSES ?? 
-              process.env.COPY_ADDRESSES ?? 
-              process.env.MONITOR_ADDRESSES;
+  const env =
+    process.env.TARGET_ADDRESSES ??
+    process.env.COPY_ADDRESSES ??
+    process.env.MONITOR_ADDRESSES;
 
   if (env) {
     const addrs = env

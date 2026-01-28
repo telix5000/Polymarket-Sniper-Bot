@@ -1,14 +1,14 @@
 /**
  * MarketDataFacade - Unified interface for orderbook data
- * 
+ *
  * This is the SINGLE entry point for all market data in the system.
  * It reads from MarketDataStore first, falls back to REST if stale,
  * and handles rate limiting for REST fallback.
- * 
+ *
  * Usage:
  *   const facade = getMarketDataFacade(clobClient);
  *   const state = await facade.getOrderbookState(tokenId);
- * 
+ *
  * All code that previously called client.getOrderBook() should now
  * use this facade instead.
  */
@@ -86,10 +86,10 @@ class RateLimiter {
    */
   tryAcquire(tokenId: string): boolean {
     const now = Date.now();
-    
+
     // Periodic cleanup of old entries to prevent memory growth
     this.maybeCleanup(now);
-    
+
     // Check if already in-flight for this token (prevents thundering herd)
     // Also check for stale locks (timeout-based cleanup)
     const acquireTime = this.inFlight.get(tokenId);
@@ -98,13 +98,15 @@ class RateLimiter {
       if (now - acquireTime > this.lockTimeoutMs) {
         // Auto-release stale lock
         this.inFlight.delete(tokenId);
-        console.warn(`[RateLimiter] Auto-released stale lock for ${tokenId.slice(0, 12)}... (held for ${now - acquireTime}ms)`);
+        console.warn(
+          `[RateLimiter] Auto-released stale lock for ${tokenId.slice(0, 12)}... (held for ${now - acquireTime}ms)`,
+        );
       } else {
         this.hits++;
         return false;
       }
     }
-    
+
     // Global rate limit
     if (now - this.globalLastCall < this.globalMinIntervalMs) {
       this.hits++;
@@ -122,7 +124,7 @@ class RateLimiter {
     this.lastCallTime.set(tokenId, now);
     this.globalLastCall = now;
     this.inFlight.set(tokenId, now);
-    
+
     return true;
   }
 
@@ -147,17 +149,17 @@ class RateLimiter {
     if (now - this.lastCleanupTime < this.cleanupIntervalMs) {
       return;
     }
-    
+
     this.lastCleanupTime = now;
     const cutoff = now - this.cleanupIntervalMs;
-    
+
     // Clean old lastCallTime entries
     for (const [tokenId, time] of this.lastCallTime.entries()) {
       if (time < cutoff) {
         this.lastCallTime.delete(tokenId);
       }
     }
-    
+
     // Clean stale in-flight locks (should already be handled in tryAcquire, but belt-and-suspenders)
     for (const [tokenId, time] of this.inFlight.entries()) {
       if (now - time > this.lockTimeoutMs) {
@@ -185,21 +187,24 @@ export class MarketDataFacade {
   private readonly client: ClobClient;
   private readonly rateLimiter: RateLimiter;
   private readonly staleMs: number;
-  
+
   // Metrics
   private wsHits = 0;
   private restFallbacks = 0;
   private totalResponseTime = 0;
   private totalCalls = 0;
 
-  constructor(client: ClobClient, options?: {
-    staleMs?: number;
-    restMinIntervalMs?: number;
-  }) {
+  constructor(
+    client: ClobClient,
+    options?: {
+      staleMs?: number;
+      restMinIntervalMs?: number;
+    },
+  ) {
     this.client = client;
     this.staleMs = options?.staleMs ?? POLYMARKET_WS.STALE_MS;
     this.rateLimiter = new RateLimiter(
-      options?.restMinIntervalMs ?? POLYMARKET_WS.REST_FALLBACK_MIN_INTERVAL_MS
+      options?.restMinIntervalMs ?? POLYMARKET_WS.REST_FALLBACK_MIN_INTERVAL_MS,
     );
   }
 
@@ -209,19 +214,19 @@ export class MarketDataFacade {
 
   /**
    * Get orderbook state for a token
-   * 
+   *
    * This is the main method that should replace all direct getOrderBook calls.
    * It reads from the WebSocket-updated store first, falls back to REST if stale.
-   * 
+   *
    * @returns OrderbookState or null if unavailable
    */
   async getOrderbookState(tokenId: string): Promise<OrderbookState | null> {
     const startTime = Date.now();
-    
+
     try {
       const store = getMarketDataStore();
       const cached = store.get(tokenId);
-      
+
       // Check if we have fresh data from WebSocket
       if (cached && !store.isStale(tokenId)) {
         this.wsHits++;
@@ -244,7 +249,7 @@ export class MarketDataFacade {
       try {
         const restData = await this.fetchFromRest(tokenId);
         this.recordResponseTime(startTime);
-        
+
         if (restData) {
           this.restFallbacks++;
           return restData;
@@ -262,15 +267,17 @@ export class MarketDataFacade {
       }
     } catch (err) {
       this.recordResponseTime(startTime);
-      console.warn(`[MarketData] Error getting orderbook for ${tokenId.slice(0, 12)}...: ${err}`);
-      
+      console.warn(
+        `[MarketData] Error getting orderbook for ${tokenId.slice(0, 12)}...: ${err}`,
+      );
+
       // Try to return cached data on error
       const store = getMarketDataStore();
       const cached = store.get(tokenId);
       if (cached) {
         return this.toOrderbookState(cached);
       }
-      
+
       return null;
     }
   }
@@ -278,9 +285,11 @@ export class MarketDataFacade {
   /**
    * Get detailed orderbook with full levels
    */
-  async getDetailedOrderbook(tokenId: string): Promise<DetailedOrderbook | null> {
+  async getDetailedOrderbook(
+    tokenId: string,
+  ): Promise<DetailedOrderbook | null> {
     const store = getMarketDataStore();
-    
+
     // First ensure we have fresh data
     const state = await this.getOrderbookState(tokenId);
     if (!state) return null;
@@ -288,7 +297,7 @@ export class MarketDataFacade {
     // Get full orderbook from store
     const orderbook = store.getOrderbook(tokenId);
     const cached = store.get(tokenId);
-    
+
     if (!orderbook || !cached) return null;
 
     return {
@@ -352,10 +361,10 @@ export class MarketDataFacade {
    * Fetches in parallel with REST fallback for stale data
    */
   async getOrderbookStates(
-    tokenIds: string[]
+    tokenIds: string[],
   ): Promise<Map<string, OrderbookState>> {
     const results = new Map<string, OrderbookState>();
-    
+
     const promises = tokenIds.map(async (tokenId) => {
       const state = await this.getOrderbookState(tokenId);
       if (state) {
@@ -375,7 +384,9 @@ export class MarketDataFacade {
     // This method is a no-op in the facade - the caller should use
     // WebSocketMarketClient.subscribe() directly
     // Included here for API completeness
-    console.log(`[MarketData] Ensure subscribed called for ${tokenIds.length} tokens`);
+    console.log(
+      `[MarketData] Ensure subscribed called for ${tokenIds.length} tokens`,
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -391,7 +402,8 @@ export class MarketDataFacade {
       restFallbacks: this.restFallbacks,
       rateLimitHits: this.rateLimiter.getHits(),
       mode: this.getMode(),
-      avgResponseTimeMs: this.totalCalls > 0 ? this.totalResponseTime / this.totalCalls : 0,
+      avgResponseTimeMs:
+        this.totalCalls > 0 ? this.totalResponseTime / this.totalCalls : 0,
     };
   }
 
@@ -400,16 +412,17 @@ export class MarketDataFacade {
    */
   logMetrics(prefix: string = "[MarketDataFacade]"): void {
     const m = this.getMetrics();
-    const hitRate = this.wsHits + this.restFallbacks > 0
-      ? ((this.wsHits / (this.wsHits + this.restFallbacks)) * 100).toFixed(1)
-      : "0";
-    
+    const hitRate =
+      this.wsHits + this.restFallbacks > 0
+        ? ((this.wsHits / (this.wsHits + this.restFallbacks)) * 100).toFixed(1)
+        : "0";
+
     console.log(
       `${prefix} Mode: ${m.mode} | ` +
-      `WS hits: ${m.wsHits} (${hitRate}%) | ` +
-      `REST fallbacks: ${m.restFallbacks} | ` +
-      `Rate limited: ${m.rateLimitHits} | ` +
-      `Avg latency: ${m.avgResponseTimeMs.toFixed(1)}ms`
+        `WS hits: ${m.wsHits} (${hitRate}%) | ` +
+        `REST fallbacks: ${m.restFallbacks} | ` +
+        `Rate limited: ${m.rateLimitHits} | ` +
+        `Avg latency: ${m.avgResponseTimeMs.toFixed(1)}ms`,
     );
   }
 
@@ -438,21 +451,31 @@ export class MarketDataFacade {
   private async fetchFromRest(tokenId: string): Promise<OrderbookState | null> {
     try {
       const orderbook = await this.client.getOrderBook(tokenId);
-      
+
       if (!orderbook?.bids?.length || !orderbook?.asks?.length) {
         return null;
       }
 
       // Parse levels
-      const bids: OrderbookLevel[] = orderbook.bids.map((l: any) => ({
-        price: parseFloat(l.price),
-        size: parseFloat(l.size),
-      })).filter((l: OrderbookLevel) => !isNaN(l.price) && !isNaN(l.size) && l.size > 0);
+      const bids: OrderbookLevel[] = orderbook.bids
+        .map((l: any) => ({
+          price: parseFloat(l.price),
+          size: parseFloat(l.size),
+        }))
+        .filter(
+          (l: OrderbookLevel) =>
+            !isNaN(l.price) && !isNaN(l.size) && l.size > 0,
+        );
 
-      const asks: OrderbookLevel[] = orderbook.asks.map((l: any) => ({
-        price: parseFloat(l.price),
-        size: parseFloat(l.size),
-      })).filter((l: OrderbookLevel) => !isNaN(l.price) && !isNaN(l.size) && l.size > 0);
+      const asks: OrderbookLevel[] = orderbook.asks
+        .map((l: any) => ({
+          price: parseFloat(l.price),
+          size: parseFloat(l.size),
+        }))
+        .filter(
+          (l: OrderbookLevel) =>
+            !isNaN(l.price) && !isNaN(l.size) && l.size > 0,
+        );
 
       if (bids.length === 0 || asks.length === 0) {
         return null;
@@ -466,8 +489,9 @@ export class MarketDataFacade {
       const bestBid = bids[0].price;
       const bestAsk = asks[0].price;
       const mid = (bestBid + bestAsk) / 2;
-      
-      let bidDepth = 0, askDepth = 0;
+
+      let bidDepth = 0,
+        askDepth = 0;
       for (const level of bids.slice(0, 5)) {
         bidDepth += level.size * level.price;
       }
@@ -487,7 +511,9 @@ export class MarketDataFacade {
       const msg = err instanceof Error ? err.message : String(err);
       // Don't log 404s (market closed) as errors
       if (!msg.includes("404") && !msg.includes("No orderbook")) {
-        console.warn(`[MarketData] REST fallback failed for ${tokenId.slice(0, 12)}...: ${msg}`);
+        console.warn(
+          `[MarketData] REST fallback failed for ${tokenId.slice(0, 12)}...: ${msg}`,
+        );
       }
       return null;
     }
@@ -515,7 +541,9 @@ let globalFacade: MarketDataFacade | null = null;
 export function getMarketDataFacade(client?: ClobClient): MarketDataFacade {
   if (!globalFacade) {
     if (!client) {
-      throw new Error("MarketDataFacade requires ClobClient on first initialization");
+      throw new Error(
+        "MarketDataFacade requires ClobClient on first initialization",
+      );
     }
     globalFacade = new MarketDataFacade(client);
   }
@@ -525,10 +553,13 @@ export function getMarketDataFacade(client?: ClobClient): MarketDataFacade {
 /**
  * Initialize a new global MarketDataFacade
  */
-export function initMarketDataFacade(client: ClobClient, options?: {
-  staleMs?: number;
-  restMinIntervalMs?: number;
-}): MarketDataFacade {
+export function initMarketDataFacade(
+  client: ClobClient,
+  options?: {
+    staleMs?: number;
+    restMinIntervalMs?: number;
+  },
+): MarketDataFacade {
   globalFacade = new MarketDataFacade(client, options);
   return globalFacade;
 }

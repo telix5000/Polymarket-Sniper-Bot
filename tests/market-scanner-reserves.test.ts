@@ -241,7 +241,10 @@ describe("Dynamic Reserve Manager", () => {
 
       // With high adaptation rate, reserve should increase from base
       const state = manager.getState();
-      assert.ok(state.hedgesMissed >= 3, `Expected hedgesMissed >= 3, got ${state.hedgesMissed}`);
+      assert.ok(
+        state.hedgesMissed >= 3,
+        `Expected hedgesMissed >= 3, got ${state.hedgesMissed}`,
+      );
     });
   });
 
@@ -395,7 +398,9 @@ describe("Market Scanner", () => {
     const filtered = filterActiveMarkets(markets, defaultConfig);
 
     assert.strictEqual(filtered.length, 2);
-    assert.ok(filtered.every((m) => m.volume24h >= defaultConfig.scanMinVolumeUsd));
+    assert.ok(
+      filtered.every((m) => m.volume24h >= defaultConfig.scanMinVolumeUsd),
+    );
   });
 
   test("should filter by price range", () => {

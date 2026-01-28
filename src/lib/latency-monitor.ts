@@ -116,7 +116,9 @@ export class LatencyMonitor {
       this.measureAll().catch(() => {});
     }, this.config.measureIntervalMs);
 
-    console.log(`⏱️ Latency monitor started (interval: ${this.config.measureIntervalMs / 1000}s)`);
+    console.log(
+      `⏱️ Latency monitor started (interval: ${this.config.measureIntervalMs / 1000}s)`,
+    );
   }
 
   /**
@@ -133,7 +135,10 @@ export class LatencyMonitor {
   /**
    * Measure latency to a specific endpoint
    */
-  async measureLatency(endpoint: string, measureFn: () => Promise<void>): Promise<LatencyMeasurement> {
+  async measureLatency(
+    endpoint: string,
+    measureFn: () => Promise<void>,
+  ): Promise<LatencyMeasurement> {
     const start = performance.now();
     let success = true;
     let error: string | undefined;
@@ -182,7 +187,7 @@ export class LatencyMonitor {
           params: [],
           id: 1,
         },
-        { timeout: 10000 }
+        { timeout: 10000 },
       );
     });
   }
@@ -202,14 +207,19 @@ export class LatencyMonitor {
    */
   async measureDataApi(): Promise<LatencyMeasurement> {
     return this.measureLatency(this.DATA_API_KEY, async () => {
-      await axios.get(`${POLYMARKET_API.DATA}/markets?limit=1`, { timeout: 10000 });
+      await axios.get(`${POLYMARKET_API.DATA}/markets?limit=1`, {
+        timeout: 10000,
+      });
     });
   }
 
   /**
    * Record a measurement and maintain history size
    */
-  private recordMeasurement(endpoint: string, measurement: LatencyMeasurement): void {
+  private recordMeasurement(
+    endpoint: string,
+    measurement: LatencyMeasurement,
+  ): void {
     if (!this.measurements.has(endpoint)) {
       this.measurements.set(endpoint, []);
     }
@@ -290,7 +300,9 @@ export class LatencyMonitor {
     // Check RPC health
     if (rpcStats) {
       if (rpcStats.successRate < 0.9) {
-        warnings.push(`RPC success rate low: ${(rpcStats.successRate * 100).toFixed(0)}%`);
+        warnings.push(
+          `RPC success rate low: ${(rpcStats.successRate * 100).toFixed(0)}%`,
+        );
         setStatus("degraded");
       }
       if (rpcLatency > this.config.criticalThresholdMs) {
@@ -305,7 +317,9 @@ export class LatencyMonitor {
     // Check CLOB API health
     if (clobStats) {
       if (clobStats.successRate < 0.9) {
-        warnings.push(`CLOB API success rate low: ${(clobStats.successRate * 100).toFixed(0)}%`);
+        warnings.push(
+          `CLOB API success rate low: ${(clobStats.successRate * 100).toFixed(0)}%`,
+        );
         setStatus("degraded");
       }
       if (apiLatency > this.config.criticalThresholdMs) {
@@ -319,7 +333,8 @@ export class LatencyMonitor {
 
     // Calculate recommended slippage based on latency
     // Higher latency = more slippage needed to fill orders
-    const recommendedSlippagePct = this.calculateRecommendedSlippage(maxLatency);
+    const recommendedSlippagePct =
+      this.calculateRecommendedSlippage(maxLatency);
 
     // ═══════════════════════════════════════════════════════════════════════
     // FAIL-SAFE: Determine if trading should be BLOCKED to protect funds
@@ -338,7 +353,7 @@ export class LatencyMonitor {
     const rpcSuccessRate = rpcStats?.successRate ?? 1;
     const apiSuccessRate = clobStats?.successRate ?? 1;
     const minSuccessRate = Math.min(rpcSuccessRate, apiSuccessRate);
-    
+
     if (minSuccessRate < this.config.blockTradingSuccessRate) {
       tradingBlocked = true;
       blockReason = `Network unreliable (${(minSuccessRate * 100).toFixed(0)}% success rate < ${(this.config.blockTradingSuccessRate * 100).toFixed(0)}% threshold)`;
@@ -376,14 +391,15 @@ export class LatencyMonitor {
 
   /**
    * Calculate recommended slippage based on current latency
-   * 
+   *
    * Logic:
    * - Base latency (< 200ms): Use base slippage
    * - High latency (200-1000ms): Linear increase
    * - Critical latency (> 1000ms): Approach max slippage
    */
   calculateRecommendedSlippage(latencyMs: number): number {
-    const { baseSlippagePct, maxSlippagePct, criticalThresholdMs } = this.config;
+    const { baseSlippagePct, maxSlippagePct, criticalThresholdMs } =
+      this.config;
 
     if (latencyMs <= 200) {
       return baseSlippagePct;
@@ -403,12 +419,19 @@ export class LatencyMonitor {
    */
   getSummary(): string {
     const health = this.getNetworkHealth();
-    const statusEmoji = health.status === "healthy" ? "🟢" : health.status === "degraded" ? "🟡" : "🔴";
-    
-    return `${statusEmoji} Network: ${health.status.toUpperCase()} | ` +
+    const statusEmoji =
+      health.status === "healthy"
+        ? "🟢"
+        : health.status === "degraded"
+          ? "🟡"
+          : "🔴";
+
+    return (
+      `${statusEmoji} Network: ${health.status.toUpperCase()} | ` +
       `RPC: ${health.rpcLatencyMs.toFixed(0)}ms | ` +
       `API: ${health.apiLatencyMs.toFixed(0)}ms | ` +
-      `Slippage: ${health.recommendedSlippagePct.toFixed(1)}%`;
+      `Slippage: ${health.recommendedSlippagePct.toFixed(1)}%`
+    );
   }
 
   /**
@@ -424,22 +447,30 @@ export class LatencyMonitor {
     console.log("⏱️ LATENCY REPORT");
     console.log("═".repeat(50));
     console.log(`   Status: ${health.status.toUpperCase()}`);
-    console.log(`   Recommended Slippage: ${health.recommendedSlippagePct.toFixed(1)}%`);
+    console.log(
+      `   Recommended Slippage: ${health.recommendedSlippagePct.toFixed(1)}%`,
+    );
     console.log("");
 
     if (rpcStats) {
       console.log(`   RPC (${this.config.rpcUrl.slice(0, 30)}...)`);
-      console.log(`      Avg: ${rpcStats.avgMs.toFixed(0)}ms | P95: ${rpcStats.p95Ms.toFixed(0)}ms | Success: ${(rpcStats.successRate * 100).toFixed(0)}%`);
+      console.log(
+        `      Avg: ${rpcStats.avgMs.toFixed(0)}ms | P95: ${rpcStats.p95Ms.toFixed(0)}ms | Success: ${(rpcStats.successRate * 100).toFixed(0)}%`,
+      );
     }
 
     if (clobStats) {
       console.log(`   CLOB API`);
-      console.log(`      Avg: ${clobStats.avgMs.toFixed(0)}ms | P95: ${clobStats.p95Ms.toFixed(0)}ms | Success: ${(clobStats.successRate * 100).toFixed(0)}%`);
+      console.log(
+        `      Avg: ${clobStats.avgMs.toFixed(0)}ms | P95: ${clobStats.p95Ms.toFixed(0)}ms | Success: ${(clobStats.successRate * 100).toFixed(0)}%`,
+      );
     }
 
     if (dataStats) {
       console.log(`   Data API`);
-      console.log(`      Avg: ${dataStats.avgMs.toFixed(0)}ms | P95: ${dataStats.p95Ms.toFixed(0)}ms | Success: ${(dataStats.successRate * 100).toFixed(0)}%`);
+      console.log(
+        `      Avg: ${dataStats.avgMs.toFixed(0)}ms | P95: ${dataStats.p95Ms.toFixed(0)}ms | Success: ${(dataStats.successRate * 100).toFixed(0)}%`,
+      );
     }
 
     if (health.warnings.length > 0) {
@@ -460,7 +491,7 @@ export class LatencyMonitor {
    */
   async measureTradeExecution<T>(
     operation: string,
-    fn: () => Promise<T>
+    fn: () => Promise<T>,
   ): Promise<{ result: T; latencyMs: number }> {
     const start = performance.now();
     const result = await fn();
@@ -476,7 +507,9 @@ export class LatencyMonitor {
 
     // Warn if trade execution was slow
     if (latencyMs > this.config.degradedThresholdMs) {
-      console.warn(`⚠️ Slow ${operation}: ${latencyMs.toFixed(0)}ms - consider increasing slippage`);
+      console.warn(
+        `⚠️ Slow ${operation}: ${latencyMs.toFixed(0)}ms - consider increasing slippage`,
+      );
     }
 
     return { result, latencyMs };
@@ -502,7 +535,9 @@ export function getLatencyMonitor(): LatencyMonitor {
 /**
  * Initialize the latency monitor with custom config
  */
-export function initLatencyMonitor(config: Partial<LatencyMonitorConfig>): LatencyMonitor {
+export function initLatencyMonitor(
+  config: Partial<LatencyMonitorConfig>,
+): LatencyMonitor {
   globalLatencyMonitor = new LatencyMonitor(config);
   return globalLatencyMonitor;
 }
