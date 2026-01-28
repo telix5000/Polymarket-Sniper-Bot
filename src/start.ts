@@ -6401,26 +6401,43 @@ class ChurnEngine {
           );
 
           // Verify tokenId mapping via Gamma API - helps diagnose wrong tokenId issues
+          // Use a timeout to prevent blocking the trading loop
           try {
-            const marketInfo = await fetchMarketByTokenId(tokenId);
+            const mappingPromise = fetchMarketByTokenId(tokenId);
+            const timeoutPromise = new Promise<null>((resolve) =>
+              setTimeout(() => resolve(null), 3000),
+            );
+            const marketInfo = await Promise.race([
+              mappingPromise,
+              timeoutPromise,
+            ]);
             if (marketInfo) {
+              const activeStatus =
+                marketInfo.active === false
+                  ? "inactive"
+                  : marketInfo.active === true
+                    ? "active"
+                    : "unknown";
               console.log(
-                `🔍 [MAPPING_VERIFY] ${tokenId.slice(0, 12)}... | conditionId=${marketInfo.conditionId.slice(0, 12)}... | marketId=${marketInfo.marketId.slice(0, 12)}... | YES=${marketInfo.yesTokenId.slice(0, 12)}... | NO=${marketInfo.noTokenId.slice(0, 12)}... | active=${marketInfo.active ?? "unknown"}`,
+                `🔍 [MAPPING_VERIFY] ${tokenId.slice(0, 12)}... | conditionId=${marketInfo.conditionId.slice(0, 12)}... | marketId=${marketInfo.marketId.slice(0, 12)}... | YES=${marketInfo.yesTokenId.slice(0, 12)}... | NO=${marketInfo.noTokenId.slice(0, 12)}... | status=${activeStatus}`,
               );
             } else {
               console.log(
-                `⚠️ [MAPPING_VERIFY] ${tokenId.slice(0, 12)}... | No market found for this tokenId (possibly invalid/expired)`,
+                `⚠️ [MAPPING_VERIFY] ${tokenId.slice(0, 12)}... | No market found or timeout (possibly invalid/expired)`,
               );
             }
           } catch (mappingErr) {
             const mappingErrMsg =
-              mappingErr instanceof Error ? mappingErr.message : String(mappingErr);
+              mappingErr instanceof Error
+                ? mappingErr.message
+                : String(mappingErr);
             console.log(
               `⚠️ [MAPPING_VERIFY_FAILED] ${tokenId.slice(0, 12)}... | ${mappingErrMsg}`,
             );
           }
 
           // Perform immediate REST re-fetch to verify this isn't stale cache
+          // Note: This bypasses rate limiting intentionally for diagnostic purposes only
           if (bookSource !== "REST") {
             try {
               const restOrderbook = await this.client.getOrderBook(tokenId);
