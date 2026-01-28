@@ -84,7 +84,8 @@ export * from "./pol-reserve";
 
 // Utilities
 export * from "./ethers-compat";
-export * from "./error-handling";
+// Error handling is now in /infra (re-export for backward compatibility)
+export * from "../infra/error-handling";
 export * from "./smart-sell";
 
 // On-chain monitoring
@@ -92,8 +93,10 @@ export * from "./onchain-monitor";
 
 // Market utilities
 export * from "./market";
-export * from "./github-reporter";
-export * from "./latency-monitor";
+// GitHub reporter is now in /infra (re-export for backward compatibility)
+export * from "../infra/github-reporter";
+// Latency monitor is now in /infra (re-export for backward compatibility)
+export * from "../infra/latency-monitor";
 
 // WebSocket market data layer
 export * from "./market-data-store";

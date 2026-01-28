@@ -22,7 +22,7 @@ import { OrderType, Side } from "@polymarket/clob-client";
 import { SELL, ORDER } from "./constants";
 import type { Position, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
-import { isCloudflareBlock, formatErrorForLog } from "./error-handling";
+import { isCloudflareBlock, formatErrorForLog } from "../infra/error-handling";
 
 // ============================================================================
 // TYPES

@@ -21,7 +21,7 @@ import { OrderType, Side } from "@polymarket/clob-client";
 import { ORDER, BUY, SELL } from "./constants";
 import type { OrderSide, OrderOutcome, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
-import { isCloudflareBlock, formatErrorForLog } from "./error-handling";
+import { isCloudflareBlock, formatErrorForLog } from "../infra/error-handling";
 
 // In-flight tracking to prevent duplicate orders
 const inFlight = new Map<string, number>();
