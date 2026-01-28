@@ -19,7 +19,7 @@
  *    - Detect midprice movement >= ENTRY_BAND_CENTS within SCAN_WINDOW_SECONDS
  *
  * 2) LIQUIDITY PRESENCE
- *    - spread <= MIN_SPREAD_CENTS
+ *    - spread <= MAX_SPREAD_CENTS
  *    - depth >= MIN_DEPTH_USD_AT_EXIT
  *
  * 3) LEADERBOARD ACTIVITY (OPTIONAL BOOST)
@@ -173,8 +173,9 @@ export class MarketScanner {
   // Price history per token for movement detection
   private readonly priceHistory = new Map<string, PriceEntry[]>();
 
-  // Track access order for LRU eviction of price history
-  private readonly priceHistoryAccessOrder: string[] = [];
+  // Track access order for LRU eviction of price history using timestamp-based ordering
+  // Maps tokenId -> last access timestamp for O(1) lookup and update
+  private readonly priceHistoryAccessTime = new Map<string, number>();
 
   // Leaderboard trade history for boost detection
   private readonly leaderboardTrades: LeaderboardTradeEntry[] = [];
@@ -284,7 +285,7 @@ export class MarketScanner {
     // Prune old entries to prevent memory growth
     if (this.leaderboardTrades.length > this.MAX_LEADERBOARD_ENTRIES) {
       const cutoff =
-        Date.now() - this.config.scanLeaderboardWindowSeconds * 1000;
+        timestamp - this.config.scanLeaderboardWindowSeconds * 1000;
       const pruned = this.leaderboardTrades.filter((t) => t.timestamp > cutoff);
       this.leaderboardTrades.length = 0;
       this.leaderboardTrades.push(
@@ -305,7 +306,7 @@ export class MarketScanner {
    */
   clear(): void {
     this.priceHistory.clear();
-    this.priceHistoryAccessOrder.length = 0;
+    this.priceHistoryAccessTime.clear();
     this.leaderboardTrades.length = 0;
     this.recentCandidates.clear();
   }
@@ -348,9 +349,8 @@ export class MarketScanner {
   /**
    * Check if market has sufficient liquidity
    *
-   * Note: We check bid depth because exits are sells. The scanner
-   * doesn't know whether execution will buy or sell, but exits
-   * (taking profit or cutting losses) require selling into bids.
+   * Note: We check both bid and ask depth for proper two-way liquidity.
+   * Entries require buying into asks, exits require selling into bids.
    */
   private hasLiquidity(data: MarketDataInput): boolean {
     // Spread must be tight enough (reject wide spreads)
@@ -358,8 +358,13 @@ export class MarketScanner {
       return false;
     }
 
-    // Must have depth on exit side (bid side for selling)
+    // Must have depth on bid side (for exits - selling)
     if (data.bidDepthUsd < this.config.minDepthUsdAtExit) {
+      return false;
+    }
+
+    // Must have depth on ask side (for entries - buying)
+    if (data.askDepthUsd < this.config.minDepthUsdAtExit) {
       return false;
     }
 
@@ -424,7 +429,6 @@ export class MarketScanner {
     timestamp: number,
   ): void {
     let history = this.priceHistory.get(tokenId);
-    const isNewToken = !history;
 
     if (!history) {
       history = [];
@@ -446,31 +450,43 @@ export class MarketScanner {
       this.priceHistory.set(tokenId, pruned);
     }
 
-    // Update LRU access order for memory protection
-    this.touchToken(tokenId, isNewToken);
+    // Update LRU access time for memory protection (O(1) operation)
+    this.touchToken(tokenId, timestamp);
 
     // LRU eviction: remove least recently used tokens if over limit
     while (this.priceHistory.size > this.MAX_TRACKED_TOKENS) {
-      const lruToken = this.priceHistoryAccessOrder.shift();
+      const lruToken = this.findLruToken();
       if (lruToken) {
         this.priceHistory.delete(lruToken);
+        this.priceHistoryAccessTime.delete(lruToken);
+      } else {
+        break;
       }
     }
   }
 
   /**
-   * Update LRU access order for a token
+   * Update LRU access time for a token (O(1) operation)
    */
-  private touchToken(tokenId: string, isNew: boolean): void {
-    if (!isNew) {
-      // Remove from current position
-      const idx = this.priceHistoryAccessOrder.indexOf(tokenId);
-      if (idx !== -1) {
-        this.priceHistoryAccessOrder.splice(idx, 1);
+  private touchToken(tokenId: string, timestamp: number): void {
+    this.priceHistoryAccessTime.set(tokenId, timestamp);
+  }
+
+  /**
+   * Find the least recently used token (O(n) but only called during eviction)
+   */
+  private findLruToken(): string | null {
+    let oldestTime = Infinity;
+    let oldestToken: string | null = null;
+
+    for (const [tokenId, accessTime] of this.priceHistoryAccessTime) {
+      if (accessTime < oldestTime) {
+        oldestTime = accessTime;
+        oldestToken = tokenId;
       }
     }
-    // Add to end (most recently used)
-    this.priceHistoryAccessOrder.push(tokenId);
+
+    return oldestToken;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

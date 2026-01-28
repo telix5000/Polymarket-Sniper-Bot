@@ -199,6 +199,21 @@ describe("MarketScanner", () => {
       assert.strictEqual(result, null, "Should reject insufficient bid depth");
     });
 
+    test("should reject insufficient ask depth", () => {
+      scanner.evaluate(
+        createMarketData({ tokenId: "ask-depth-test", midPriceCents: 40 }),
+      );
+
+      const data = createMarketData({
+        tokenId: "ask-depth-test",
+        midPriceCents: 50,
+        askDepthUsd: 10, // Below $20 minimum
+      });
+
+      const result = scanner.evaluate(data);
+      assert.strictEqual(result, null, "Should reject insufficient ask depth");
+    });
+
     test("should accept tight spread with good depth", () => {
       scanner.evaluate(
         createMarketData({ tokenId: "liquid-test", midPriceCents: 40 }),
