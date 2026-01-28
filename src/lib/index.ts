@@ -23,4 +23,3 @@ export * from "./onchain-monitor";
 export * from "./market";
 export * from "./github-reporter";
 export * from "./latency-monitor";
-export * from "./mempool-monitor";

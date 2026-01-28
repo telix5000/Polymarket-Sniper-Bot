@@ -2,44 +2,52 @@
  * On-Chain Event Monitor for Polymarket CTF Exchange
  *
  * ═══════════════════════════════════════════════════════════════════════════
+ * ⚠️ IMPORTANT: LIMITED USE CASE - RECONCILIATION ONLY
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * On-chain monitoring should ONLY be used for:
+ * - OrderFilled event backfill
+ * - Settlement verification
+ * - Debugging discrepancies
+ * - Monitoring YOUR OWN position changes
+ *
+ * On-chain monitoring should NOT be used for:
+ * - Primary whale detection (use Data API instead)
+ * - Trade execution triggers (use CLOB signals)
+ * - Front-running (impossible - CLOB is off-chain)
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
  * ARCHITECTURE - Understanding the Data Flow
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │                         DATA SOURCES                                    │
- * ├─────────────────────────────────────────────────────────────────────────┤
- * │  INFURA (WebSocket)     │  READ ONLY - FASTEST                         │
- * │  - Whale trade events   │  See trades the INSTANT they hit blockchain  │
- * │  - Position changes     │  ~2 sec block time vs ~5+ sec API polling    │
- * │  - Real-time signals    │  PRIORITY: On-chain signals > API signals    │
- * ├─────────────────────────────────────────────────────────────────────────┤
- * │  Polymarket API         │  READ ONLY - SLOWER                          │
- * │  - Orderbook depth      │  Polling-based, ~200ms minimum               │
- * │  - Market metadata      │  Used for price discovery, liquidity checks  │
- * │  - Leaderboard          │  Used to identify whale wallets              │
- * ├─────────────────────────────────────────────────────────────────────────┤
- * │  CLOB Client            │  WRITE - ORDER EXECUTION                     │
- * │  - Submit orders        │  ONLY way to trade on Polymarket!            │
- * │  - Cancel orders        │  Uses wallet signing via RPC (Infura)        │
- * │  - Order management     │  Cannot bypass CLOB for trading              │
- * └─────────────────────────────────────────────────────────────────────────┘
+ * POLYMARKET TRADING HAS THREE LAYERS:
  *
- * KEY INSIGHT: Infura gives us READ speed advantage, but we still EXECUTE
- * trades through Polymarket's CLOB. The edge is seeing signals FASTER,
- * then acting on them through the normal trading flow.
+ * 1) DATA API (FAST SIGNAL) - Primary whale detection source
+ *    - /trades endpoint shows WHO traded, DIRECTION, SIZE
+ *    - This is the SOURCE OF TRUTH for whale activity
+ *    - Faster than on-chain because CLOB updates API before settlement
+ *
+ * 2) CLOB (SCALPING & EXECUTION) - Where scalping happens
+ *    - Order book pending LIMIT orders (not blockchain pending txs!)
+ *    - Spread, depth, momentum analysis
+ *    - clobClient for order placement
+ *
+ * 3) ON-CHAIN (SETTLEMENT / TRUTH) - This module
+ *    - Polygon RPC - sees trades AFTER CLOB settlement
+ *    - Used for verification and backfill ONLY
+ *    - NOT faster than Data API for whale detection
  *
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * Features:
- * - Whale trade detection via OrderFilled events (CTF Exchange)
- * - Position monitoring via Transfer events (CTF contract)
- * - Signal priority system (on-chain > API)
- * - All monitoring runs in PARALLEL - never blocks main loop
+ * Features (for appropriate use cases):
+ * - Position monitoring via Transfer events (CTF contract) - USEFUL
+ * - OrderFilled events for reconciliation - USEFUL
+ * - Whale trade detection - DEPRECATED (use Data API polling instead)
  *
  * Usage:
  *   const monitor = new OnChainMonitor(config);
- *   monitor.onWhaleTrade((trade) => biasAccumulator.recordTrade(trade));
- *   monitor.onPositionChange((change) => handlePositionUpdate(change));
+ *   monitor.onPositionChange((change) => handlePositionUpdate(change)); // ✅ GOOD
+ *   // monitor.onWhaleTrade() - DEPRECATED, use BiasAccumulator instead
  *   await monitor.start();
  */
 
@@ -51,7 +59,8 @@ import { POLYGON } from "./constants";
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Signal source priority - on-chain is FASTER and takes precedence
+ * Signal source indicator - for tracking where a signal originated
+ * Note: Data API is the PRIMARY source; on-chain is for reconciliation only
  */
 export type SignalSource = "onchain" | "api";
 
@@ -65,7 +74,7 @@ export interface OnChainTradeEvent {
   timestamp: number;
   txHash: string;
   blockNumber: number;
-  /** On-chain signals are faster and take priority over API */
+  /** Signal source tracking (on-chain is secondary to Data API for whale detection) */
   source: SignalSource;
 }
 
@@ -86,8 +95,8 @@ export interface PositionChangeEvent {
 }
 
 /**
- * Real-time price update from on-chain OrderFilled events
- * This is FASTER than polling Polymarket API for price!
+ * Price update from on-chain OrderFilled events
+ * Used for reconciliation and verification (NOT primary price source)
  */
 export interface OnChainPriceUpdate {
   tokenId: string;

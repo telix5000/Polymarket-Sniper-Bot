@@ -73,10 +73,6 @@ import {
   type OnChainMonitorConfig,
   type PositionChangeEvent,
   type OnChainPriceUpdate,
-  // Mempool monitoring (PENDING trades - faster!)
-  MempoolMonitor,
-  createMempoolMonitorConfig,
-  type PendingTradeSignal,
   // Market utilities for hedge token lookup
   getOppositeTokenId,
   // GitHub error reporting
@@ -253,10 +249,6 @@ interface ChurnConfig {
   onchainMonitorEnabled: boolean;
   onchainMinWhaleTradeUsd: number;
   infuraTier: "core" | "developer" | "team" | "growth";
-
-  // Mempool Monitoring - sees PENDING trades (faster than on-chain!)
-  mempoolMonitorEnabled: boolean;
-  mempoolGasPriceMultiplier: number;  // How much higher gas to use (1.2 = 20% higher)
 }
 
 function loadConfig(): ChurnConfig {
@@ -396,12 +388,6 @@ function loadConfig(): ChurnConfig {
     // Infura tier plan: "core" (free), "developer" ($50/mo), "team" ($225/mo), "growth" (enterprise)
     // Affects rate limiting to avoid hitting API caps
     infuraTier: parseInfuraTierEnv(process.env.INFURA_TIER),
-
-    // Mempool Monitoring - Watch for PENDING whale transactions (FASTER than on-chain!)
-    // Sees trades BEFORE they're confirmed, allowing us to copy at the same price
-    mempoolMonitorEnabled: envBool("MEMPOOL_MONITOR_ENABLED", true),
-    // Gas price multiplier for priority execution (1.2 = 20% higher gas than whale's tx)
-    mempoolGasPriceMultiplier: envNum("MEMPOOL_GAS_MULTIPLIER", 1.2),
   };
 }
 
@@ -3396,7 +3382,6 @@ class ChurnEngine {
   private decisionEngine: DecisionEngine;
   private executionEngine: ExecutionEngine;
   private onchainMonitor: OnChainMonitor | null = null;
-  private mempoolMonitor: MempoolMonitor | null = null;
   private marketScanner: MarketScanner;
   private dynamicReserveManager: DynamicReserveManager;
   private latencyMonitor: LatencyMonitor;
@@ -3423,10 +3408,6 @@ class ChurnEngine {
   // Prevents spamming the same failing token repeatedly
   private failedEntryCooldowns = new Map<string, number>();
   private readonly FAILED_ENTRY_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown for failing tokens
-  
-  // Pending whale signals from mempool - for fast copy trading
-  private pendingWhaleSignals: Map<string, PendingTradeSignal> = new Map();
-  private readonly PENDING_SIGNAL_EXPIRY_MS = 30 * 1000; // 30 seconds
 
   // Intervals
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
@@ -3701,17 +3682,6 @@ class ChurnEngine {
       });
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // MEMPOOL MONITORING - See PENDING trades BEFORE they confirm!
-    // Runs independently of on-chain monitor - can use either or both
-    // ═══════════════════════════════════════════════════════════════════════
-    if (this.config.mempoolMonitorEnabled) {
-      // Fire and forget - don't await, let it run in parallel
-      this.initializeMempoolMonitor().catch((err) => {
-        console.warn(`⚠️ Mempool monitor background init failed: ${err instanceof Error ? err.message : err}`);
-      });
-    }
-
     // Send startup notification
     if (isTelegramEnabled()) {
       await sendTelegram(
@@ -3727,13 +3697,19 @@ class ChurnEngine {
   }
 
   /**
-   * Initialize on-chain monitor for real-time whale detection AND position monitoring
+   * Initialize on-chain monitor for position monitoring and settlement verification
    * Connects to CTF Exchange contract via Infura WebSocket
    * 
-   * RUNS IN PARALLEL - WebSocket events fire independently of main loop
-   * This gives us blockchain-speed detection while API polling continues
+   * ═══════════════════════════════════════════════════════════════════════════
+   * ⚠️ NOTE: On-chain monitor is now LIMITED to:
+   * - Position change monitoring (when our orders fill)
+   * - Settlement verification and reconciliation
    * 
-   * DATA PRIORITY: On-chain signals are FASTER than API and take precedence!
+   * On-chain is NOT used for primary whale detection because:
+   * - Data API is actually faster (CLOB updates API before settlement)
+   * - On-chain sees trades AFTER they've been matched on CLOB
+   * - Use BiasAccumulator with Data API polling for whale detection
+   * ═══════════════════════════════════════════════════════════════════════════
    */
   private async initializeOnChainMonitor(): Promise<void> {
     try {
@@ -3758,12 +3734,16 @@ class ChurnEngine {
       this.onchainMonitor = new OnChainMonitor(monitorConfig);
 
       // ═══════════════════════════════════════════════════════════════════════
-      // WHALE TRADE CALLBACK - On-chain signals take PRIORITY over API!
-      // Deduplication is handled by BiasAccumulator.addTrades()
+      // WHALE TRADE CALLBACK - SECONDARY to Data API (for reconciliation only)
+      // NOTE: On-chain signals are NOT faster than Data API for Polymarket
+      // because CLOB updates the API before settling trades on-chain.
+      // This callback is kept for verification/debugging purposes only.
+      // PRIMARY whale detection should use BiasAccumulator with Data API polling.
       // ═══════════════════════════════════════════════════════════════════════
       this.onchainMonitor.onWhaleTrade((trade) => {
-        // Log ALL whale trades for visibility
-        console.log(`🐋 Whale ${trade.side} detected | $${trade.sizeUsd.toFixed(0)} @ ${(trade.price * 100).toFixed(1)}¢ | Block #${trade.blockNumber}`);
+        // Log whale trades for debugging/reconciliation only
+        // This is SECONDARY - Data API polling is the primary source
+        console.log(`📡 [Reconciliation] On-chain whale ${trade.side} | $${trade.sizeUsd.toFixed(0)} @ ${(trade.price * 100).toFixed(1)}¢ | Block #${trade.blockNumber}`);
         
         // Only record BUY trades for bias (we copy buys, not sells)
         if (trade.side === "BUY") {
@@ -3785,9 +3765,8 @@ class ChurnEngine {
             return;
           }
 
-          // Feed to bias accumulator - this is the speed advantage!
-          // On-chain signals arrive BEFORE Polymarket API reports them
-          // Deduplication prevents double-counting with API data
+          // Feed to bias accumulator as SECONDARY signal
+          // Deduplication prevents double-counting with Data API signals
           this.biasAccumulator.recordTrade({
             tokenId: trade.tokenId,
             wallet: whaleWallet,
@@ -3796,12 +3775,7 @@ class ChurnEngine {
             timestamp: trade.timestamp,
           });
           
-          console.log(`⚡ On-chain → Bias | Block #${trade.blockNumber} | $${trade.sizeUsd.toFixed(0)} BUY | PRIORITY SIGNAL`);
-          
-          // In COPY_ANY_WHALE_BUY mode, log that we should copy this
-          if (this.config.copyAnyWhaleBuy) {
-            console.log(`   🎯 COPY_ANY_WHALE_BUY: Signal ready to copy!`);
-          }
+          console.log(`   ℹ️ On-chain signal recorded (secondary to Data API)`);
         } else {
           console.log(`   ℹ️ SELL trade - not copying (we only copy buys)`);
         }
@@ -3831,93 +3805,12 @@ class ChurnEngine {
       const started = await this.onchainMonitor.start();
       if (started) {
         const stats = this.onchainMonitor.getStats();
-        console.log(`📡 On-chain monitor: Infura ${stats.infuraTier} tier | ${stats.trackedWallets} whales | Position monitoring: ${stats.monitoringOwnPositions ? 'ON' : 'OFF'}`);
-        console.log(`📡 Data priority: ON-CHAIN > API (blockchain-speed edge)`);
+        console.log(`📡 On-chain monitor: Infura ${stats.infuraTier} tier | Position monitoring: ${stats.monitoringOwnPositions ? 'ON' : 'OFF'}`);
+        console.log(`📡 On-chain role: Position verification & reconciliation (NOT primary whale detection)`);
       }
     } catch (err) {
       console.warn(`⚠️ On-chain monitor init failed: ${err instanceof Error ? err.message : err}`);
-      console.warn(`   Falling back to API polling only (still works, just slower)`);
-    }
-  }
-
-  /**
-   * Initialize mempool monitor for PENDING trade detection
-   * This is FASTER than on-chain events - sees trades BEFORE they confirm!
-   * 
-   * NOTE: Runs independently of on-chain monitor - you can use either or both
-   */
-  private async initializeMempoolMonitor(): Promise<void> {
-    if (!this.config.mempoolMonitorEnabled) {
-      return;
-    }
-
-    try {
-      // Detect WebSocket URL from RPC URL
-      let wsUrl = this.config.rpcUrl;
-      if (wsUrl.startsWith("https://")) {
-        wsUrl = wsUrl.replace("https://", "wss://").replace("/v3/", "/ws/v3/");
-      }
-
-      const mempoolConfig = createMempoolMonitorConfig(
-        wsUrl,
-        this.biasAccumulator.getWhaleWallets(),
-        {
-          enabled: true,
-          minTradeSizeUsd: this.config.onchainMinWhaleTradeUsd,
-          gasPriceMultiplier: this.config.mempoolGasPriceMultiplier,
-        }
-      );
-
-      this.mempoolMonitor = new MempoolMonitor(mempoolConfig);
-
-      // ═══════════════════════════════════════════════════════════════════
-      // PENDING BUY → COPY IMMEDIATELY (faster than on-chain!)
-      // ═══════════════════════════════════════════════════════════════════
-      this.mempoolMonitor.onPendingTrade((signal) => {
-        if (signal.side === "BUY") {
-          console.log(`🔮 MEMPOOL: Whale BUY pending | $${signal.estimatedSizeUsd.toFixed(0)} | Token: ${signal.tokenId.slice(0, 12)}...`);
-          console.log(`   ⚡ COPY SIGNAL - Execute with gas > ${(signal.gasPriceGwei * this.config.mempoolGasPriceMultiplier).toFixed(1)} gwei`);
-          
-          // Store the pending signal for the next cycle to act on
-          this.pendingWhaleSignals.set(signal.tokenId, signal);
-          
-          // Feed to bias accumulator immediately
-          this.biasAccumulator.recordTrade({
-            tokenId: signal.tokenId,
-            wallet: signal.whaleWallet,
-            side: "BUY",
-            sizeUsd: signal.estimatedSizeUsd,
-            timestamp: signal.detectedAt,
-          });
-        }
-
-        // ═══════════════════════════════════════════════════════════════════
-        // PENDING SELL → EARLY EXIT WARNING (get out before price drops!)
-        // ═══════════════════════════════════════════════════════════════════
-        if (signal.side === "SELL") {
-          // Check if we hold this token
-          const ourPositions = this.positionManager.getPositionsByToken(signal.tokenId);
-          if (ourPositions.length > 0) {
-            console.log(`🚨 MEMPOOL: Whale SELLING our token! | $${signal.estimatedSizeUsd.toFixed(0)}`);
-            console.log(`   ⚠️ EARLY EXIT SIGNAL - Consider selling before price drops!`);
-            
-            // Mark positions for urgent exit
-            for (const pos of ourPositions) {
-              console.log(`   📍 Position ${pos.id.slice(0, 8)}... | Entry: ${pos.entryPriceCents.toFixed(1)}¢ | Size: $${pos.entrySizeUsd.toFixed(2)}`);
-              // The next cycle will see this and can prioritize exit
-            }
-          }
-        }
-      });
-
-      const started = await this.mempoolMonitor.start();
-      if (started) {
-        console.log(`🔮 Mempool monitor: ACTIVE | Watching for PENDING whale trades`);
-        console.log(`🔮 Speed advantage: See trades BEFORE confirmation → copy at same price!`);
-      }
-    } catch (err) {
-      console.warn(`⚠️ Mempool monitor init failed: ${err instanceof Error ? err.message : err}`);
-      console.warn(`   Note: Not all RPC providers support pending tx subscription`);
+      console.warn(`   Position monitoring disabled, but whale detection via Data API still works`);
     }
   }
 
@@ -4902,12 +4795,6 @@ class ChurnEngine {
       }
     }
 
-    // Determine mempool monitor status  
-    let mempoolStatus = "DISABLED";
-    if (this.config.mempoolMonitorEnabled) {
-      mempoolStatus = this.mempoolMonitor ? "ACTIVE" : "FAILED_TO_START";
-    }
-
     console.log(`📋 [Diagnostic] Sending startup diagnostic to GitHub Issues...`);
     console.log(`   Whale trades detected: ${this.diagnostics.whaleTradesDetected}`);
     console.log(`   Entry attempts: ${this.diagnostics.entryAttempts}`);
@@ -4925,7 +4812,6 @@ class ChurnEngine {
         entryFailureReasons: this.diagnostics.entryFailureReasons.slice(-20), // Last 20 reasons
         orderbookFetchFailures: this.diagnostics.orderbookFetchFailures,
         onchainMonitorStatus: onchainStatus,
-        mempoolMonitorStatus: mempoolStatus,
         rpcLatencyMs: networkHealth.rpcLatencyMs,
         apiLatencyMs: networkHealth.apiLatencyMs,
         balance: usdcBalance,
