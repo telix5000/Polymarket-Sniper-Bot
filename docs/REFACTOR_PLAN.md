@@ -398,7 +398,7 @@ Available for detailed guidance:
 | `start.ts` lines | 7,453 | < 500 |
 | Test count | 341 | 341+ |
 | Build time | Baseline | Same or better |
-| `/lib` file count | 33 | ~20 |
+| `/lib` file count | 30 | ~20 |
 | Duplicate code | 3 areas | 0 |
 
 ---
