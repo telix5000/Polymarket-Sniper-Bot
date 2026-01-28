@@ -452,11 +452,12 @@ function loadConfig(): ChurnConfig {
 
     // Whale Price-Range Filtering - Filter whale trades by price
     // Only whale trades within [WHALE_PRICE_MIN, WHALE_PRICE_MAX] create signals
-    // DEFAULT: 0.25-0.45 (25¢-45¢) - filters out extreme prices by default
+    // DEFAULT: 0.35-0.65 (35¢-65¢) - matches the bot's preferred entry zone
+    // See preferredEntryLowCents (35) and preferredEntryHighCents (65) above
     // Set to empty string to disable filtering (e.g., WHALE_PRICE_MIN= )
     // If min > max, logs a warning and skips filtering
-    whalePriceMin: parseOptionalFloatWithDefault(process.env.WHALE_PRICE_MIN, 0.25),
-    whalePriceMax: parseOptionalFloatWithDefault(process.env.WHALE_PRICE_MAX, 0.45),
+    whalePriceMin: parseOptionalFloatWithDefault(process.env.WHALE_PRICE_MIN, 0.35),
+    whalePriceMax: parseOptionalFloatWithDefault(process.env.WHALE_PRICE_MAX, 0.65),
   };
 }
 
