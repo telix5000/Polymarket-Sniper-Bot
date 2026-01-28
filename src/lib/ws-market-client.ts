@@ -417,7 +417,6 @@ export class WebSocketMarketClient {
         disconnectCount: this.disconnectCount,
         vpnActive: this.lastDisconnectVpnActive,
         vpnType: this.lastDisconnectVpnType,
-        timeSinceLastMessage: lastMsgAge,
       };
       console.log(JSON.stringify(disconnectEvent));
 

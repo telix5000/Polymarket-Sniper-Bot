@@ -882,10 +882,13 @@ export function createSpreadGuardrailDiagnostic(
   whaleTradePrice?: number,
 ): SpreadGuardrailDiagnostic {
   const spread = bestBid !== null ? bestAsk - bestBid : null;
-  const spreadPct = spread !== null ? (spread / bestAsk) * 100 : null;
+  // Avoid division by zero for spreadPct
+  const spreadPct =
+    spread !== null && bestAsk > 0 ? (spread / bestAsk) * 100 : null;
   const marketState = classifyMarketState(bestBid, bestAsk);
 
   // Determine guardrail type
+  // Check EMPTY_BOOK first for explicit identification
   let guardrailType: SpreadGuardrailDiagnostic["guardrailType"] = "OK";
   let thresholdUsed = DIAG_MAX_SPREAD;
 
@@ -893,6 +896,7 @@ export function createSpreadGuardrailDiagnostic(
     guardrailType = "EMPTY_BOOK";
     thresholdUsed = 0.01; // bid threshold
   } else if (bestAsk > DIAG_MAX_BEST_ASK) {
+    // Use strict inequality (>) - trading allowed at exactly 0.95
     guardrailType = "NEARLY_RESOLVED";
     thresholdUsed = DIAG_MAX_BEST_ASK;
   } else if (spread !== null && spread > DIAG_MAX_SPREAD) {
@@ -958,6 +962,13 @@ export function formatSpreadGuardrailDiagnostic(
 /**
  * Check if a book is tradeable for diagnostic mode.
  * Returns detailed diagnostic information for rejected trades.
+ *
+ * Checks in order of specificity:
+ * 1. Empty/fake book (bestBid <= 0.01 AND bestAsk >= 0.99)
+ * 2. Nearly resolved market (bestAsk > 0.95) - uses strict inequality to allow boundary trades
+ * 3. Spread too wide (spread > 0.30)
+ *
+ * Note: classifyMarketState uses >= 0.95 for classification but trading is allowed at exactly 0.95
  */
 export function checkBookTradeable(
   bestBid: number | null,
@@ -979,7 +990,25 @@ export function checkBookTradeable(
     whaleTradePrice,
   );
 
-  // Check if bestAsk is too high (market nearly resolved)
+  // Check 1: Empty or fake book (most specific)
+  if (bestBid !== null && bestBid <= 0.01 && bestAsk >= 0.99) {
+    return {
+      tradeable: false,
+      reason: "BOOK_TOO_WIDE",
+      detail: {
+        bestBid,
+        bestAsk,
+        threshold: 0.01,
+        issue: "empty or fake book - bestBid <= 0.01 and bestAsk >= 0.99",
+        marketStateClassification: diagnostic.marketStateClassification,
+        guardrailDecision: diagnostic.guardrailDecision,
+      },
+      diagnostic,
+    };
+  }
+
+  // Check 2: Market nearly resolved (bestAsk > threshold, strict inequality)
+  // Allows trading at exactly 0.95, rejects 0.951+
   if (bestAsk > DIAG_MAX_BEST_ASK) {
     return {
       tradeable: false,
@@ -996,7 +1025,7 @@ export function checkBookTradeable(
     };
   }
 
-  // Check if spread is too wide (illiquid market)
+  // Check 3: Spread too wide (illiquid market)
   if (bestBid !== null) {
     const spread = bestAsk - bestBid;
     if (spread > DIAG_MAX_SPREAD) {

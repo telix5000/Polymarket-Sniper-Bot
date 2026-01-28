@@ -674,7 +674,6 @@ export class WebSocketUserClient {
         disconnectCount: this.disconnectCount,
         vpnActive: this.lastDisconnectVpnActive,
         vpnType: this.lastDisconnectVpnType,
-        timeSinceLastMessage: lastMsgAge,
       };
       console.log(JSON.stringify(disconnectEvent));
 
