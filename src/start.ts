@@ -5259,6 +5259,12 @@ class ChurnEngine {
                   tokenId,
                   Date.now() + this.NO_MARKET_DATA_COOLDOWN_MS,
                 );
+                // Periodic logging for closed market failures (similar to scan errors)
+                if (this.cycleCount % 50 === 0) {
+                  console.log(
+                    `⚠️ [Scanner] No market data for ${tokenId.slice(0, 12)}... (market may be closed/settled)`,
+                  );
+                }
               }
             } catch (err) {
               const errMsg = err instanceof Error ? err.message : String(err);

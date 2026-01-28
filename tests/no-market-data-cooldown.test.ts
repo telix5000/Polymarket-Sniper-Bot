@@ -5,22 +5,19 @@
  * "No market data" (closed/settled markets). This prevents the bot from
  * repeatedly trying to enter markets that have no orderbook available.
  *
- * Bug: https://github.com/telix5000/Polymarket-Sniper-Bot/issues/X
- * - Bot attempts entries with IDs like 808346101849..., 783012262113...
- * - Immediately fails with "No market data returned for ..."
- * - These are valid token IDs from whale activity on closed/settled markets
- * - Without cooldown, these tokens get retried every cycle creating noise
+ * Related: Fixes "no market data" entry bug where bot repeatedly attempts
+ * to enter closed/settled markets from whale activity signals.
  */
 
 import assert from "node:assert";
-import { describe, it } from "node:test";
+import { describe, test } from "node:test";
 
 describe("No Market Data Cooldown", () => {
   describe("shouldCooldownOnFailure behavior", () => {
     // The shouldCooldownOnFailure function determines if a failure should trigger cooldown
     // It's defined in start.ts and checks for liquidity/bounds/spread/price issues
 
-    it("should understand that NO_MARKET_DATA failures need separate handling", () => {
+    test("should understand that NO_MARKET_DATA failures need separate handling", () => {
       // NO_MARKET_DATA is NOT handled by shouldCooldownOnFailure (which returns false)
       // Instead, it's handled directly in the entry code with a longer cooldown
       // This is by design - closed markets need longer cooldown than liquidity issues
@@ -42,7 +39,7 @@ describe("No Market Data Cooldown", () => {
       );
     });
 
-    it("should not interfere with legitimate entry failures", () => {
+    test("should not interfere with legitimate entry failures", () => {
       // Verify the regular failure reasons are different from NO_MARKET_DATA
       const liquidityFailures = [
         "Insufficient liquidity",
@@ -66,7 +63,7 @@ describe("No Market Data Cooldown", () => {
   });
 
   describe("Token ID format validation", () => {
-    it("should recognize valid Polymarket CLOB token IDs", () => {
+    test("should recognize valid Polymarket CLOB token IDs", () => {
       // Valid CLOB token IDs are 256-bit integers (typically 77+ digits as strings)
       const validTokenIds = [
         "28542071792300007181611447397504994131484152585152031411345975186749097403884",
@@ -92,7 +89,7 @@ describe("No Market Data Cooldown", () => {
       }
     });
 
-    it("should log first 12 characters when displaying token IDs", () => {
+    test("should log first 12 characters when displaying token IDs", () => {
       // The codebase uses .slice(0, 12) to display token IDs
       // This is what creates the "808346101849..." format in logs
       const tokenId = "28542071792300007181611447397504994131484152585152031411345975186749097403884";
@@ -107,7 +104,7 @@ describe("No Market Data Cooldown", () => {
   });
 
   describe("Market data failure scenarios", () => {
-    it("should correctly identify closed market scenarios", () => {
+    test("should correctly identify closed market scenarios", () => {
       // When a market is closed, the CLOB API returns:
       // {"error":"No orderbook exists for the requested token id"}
       // This causes fetchTokenMarketData to return null
@@ -124,7 +121,7 @@ describe("No Market Data Cooldown", () => {
       );
     });
 
-    it("should differentiate closed markets from empty orderbooks", () => {
+    test("should differentiate closed markets from empty orderbooks", () => {
       // Empty orderbook (market open but no liquidity) - bids/asks are empty arrays
       const emptyOrderbook = { bids: [], asks: [] };
 
