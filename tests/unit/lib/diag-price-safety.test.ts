@@ -10,11 +10,11 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert";
 
-// Import actual functions from source
+// Import actual functions from source - no duplication
 import {
   getDiagMaxPrice,
   checkBookTradeable,
-  DIAG_BUY_SLIPPAGE_PCT,
+  calculateDiagLimitPrice,
   DIAG_MAX_SPREAD,
   DIAG_MAX_BEST_ASK,
 } from "../../../src/lib/diag-workflow";
@@ -49,32 +49,6 @@ function restoreEnv() {
       process.env[key] = value;
     }
   }
-}
-
-/**
- * Simulate the diagnostic price formation logic (uses actual constants)
- */
-function calculateDiagLimitPrice(
-  bestAsk: number,
-  signalPrice?: number,
-): { price: number; clamped: boolean } {
-  const slippageMultiplier = 1 + DIAG_BUY_SLIPPAGE_PCT / 100;
-  const diagMaxPrice = getDiagMaxPrice();
-
-  // Calculate candidate prices
-  const askBasedPrice = bestAsk * slippageMultiplier;
-  const signalBasedPrice = signalPrice
-    ? signalPrice * slippageMultiplier
-    : Infinity;
-
-  // Apply DIAG_MAX_PRICE cap
-  const rawChosenPrice = Math.min(askBasedPrice, signalBasedPrice);
-  const chosenLimitPrice = Math.min(rawChosenPrice, diagMaxPrice);
-
-  return {
-    price: chosenLimitPrice,
-    clamped: rawChosenPrice > diagMaxPrice,
-  };
 }
 
 describe("Diagnostic Price Formation Safety", () => {

@@ -32,6 +32,7 @@ import { postOrder } from "./order";
 import type { Logger } from "./types";
 import { getPositions, invalidatePositions } from "./positions";
 import { smartSell } from "./smart-sell";
+import { verifyWritePathBeforeOrder } from "./vpn";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -804,6 +805,37 @@ export function checkBookTradeable(
 }
 
 /**
+ * Calculate the diagnostic limit price with safety caps.
+ * Exported for testing and reuse.
+ *
+ * @param bestAsk - Current best ask price from orderbook
+ * @param signalPrice - Optional signal price
+ * @returns Object with calculated price and whether it was clamped
+ */
+export function calculateDiagLimitPrice(
+  bestAsk: number,
+  signalPrice?: number,
+): { price: number; clamped: boolean } {
+  const slippageMultiplier = 1 + DIAG_BUY_SLIPPAGE_PCT / 100;
+  const diagMaxPrice = getDiagMaxPrice();
+
+  // Calculate candidate prices
+  const askBasedPrice = bestAsk * slippageMultiplier;
+  const signalBasedPrice = signalPrice
+    ? signalPrice * slippageMultiplier
+    : Infinity;
+
+  // Apply DIAG_MAX_PRICE cap
+  const rawChosenPrice = Math.min(askBasedPrice, signalBasedPrice);
+  const chosenLimitPrice = Math.min(rawChosenPrice, diagMaxPrice);
+
+  return {
+    price: chosenLimitPrice,
+    clamped: rawChosenPrice > diagMaxPrice,
+  };
+}
+
+/**
  * Attempt a diagnostic BUY order
  *
  * PRICING FIX:
@@ -1070,6 +1102,39 @@ async function attemptDiagBuy(
         `bestBid=${bestBid?.toFixed(4) ?? "N/A"}, bestAsk=${bestAsk.toFixed(4)}, ` +
         `chosenLimit=${chosenLimitPrice.toFixed(4)}${priceClamped ? " (capped)" : ""} (max=${diagMaxPrice})`,
     );
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 4.5: Pre-order VPN routing verification
+    // Ensure WRITE hosts are not bypassed before submitting order
+    // ═══════════════════════════════════════════════════════════════════════
+    const vpnCheck = verifyWritePathBeforeOrder(
+      tracer.getTraceId(),
+      deps.logger,
+    );
+    if (!vpnCheck.ok) {
+      tracer.trace({
+        step,
+        action: "vpn_write_not_routed",
+        result: "REJECTED",
+        reason: "vpn_write_not_routed",
+        marketId: signal.marketId,
+        tokenId: signal.tokenId,
+        detail: {
+          misroutedHosts: vpnCheck.misroutedHosts,
+          message: "Order blocked: WRITE hosts bypassed VPN",
+        },
+      });
+
+      console.log(
+        `🚫 BUY rejected: vpn_write_not_routed - WRITE hosts ${vpnCheck.misroutedHosts.join(", ")} are bypassed`,
+      );
+
+      return {
+        success: false,
+        reason: "vpn_write_not_routed",
+        detail: { misroutedHosts: vpnCheck.misroutedHosts },
+      };
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // STEP 5: Submit order with bestAsk-based limit price

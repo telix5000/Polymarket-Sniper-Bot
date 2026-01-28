@@ -125,7 +125,7 @@ export class GitHubReporter {
 
   /**
    * Validate repo format (must be "owner/repo" with valid characters)
-   * GitHub naming rules: alphanumeric characters, hyphens, and underscores only
+   * GitHub naming rules: alphanumeric characters, hyphens, underscores, and periods
    */
   private validateRepoFormat(repo: string): boolean {
     if (!repo) return false;
@@ -137,8 +137,8 @@ export class GitHubReporter {
     const [owner, name] = parts;
     if (!owner || !name) return false;
 
-    // GitHub naming: alphanumeric, hyphens, underscores (no periods)
-    const validPattern = /^[a-zA-Z0-9_-]+$/;
+    // GitHub naming: alphanumeric, hyphens, underscores, and periods
+    const validPattern = /^[a-zA-Z0-9._-]+$/;
     return validPattern.test(owner) && validPattern.test(name);
   }
 
