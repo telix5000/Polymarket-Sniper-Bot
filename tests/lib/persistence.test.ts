@@ -317,6 +317,102 @@ describe("MarketCache", () => {
       assert.notStrictEqual(cache1, cache2);
     });
   });
+
+  describe("LRU eviction with conditionIndex cleanup", () => {
+    it("should clean up conditionIndex when market is evicted", () => {
+      // Create a small cache that will trigger eviction
+      const smallCache = initMarketCache({ maxEntries: 4 }); // 2 markets (4 token entries)
+
+      const market1 = {
+        yesTokenId: "yes-1",
+        noTokenId: "no-1",
+        conditionId: "cond-1",
+        marketId: "market-1",
+      };
+
+      const market2 = {
+        yesTokenId: "yes-2",
+        noTokenId: "no-2",
+        conditionId: "cond-2",
+        marketId: "market-2",
+      };
+
+      const market3 = {
+        yesTokenId: "yes-3",
+        noTokenId: "no-3",
+        conditionId: "cond-3",
+        marketId: "market-3",
+      };
+
+      // Cache first two markets (4 entries, at capacity)
+      smallCache.cacheMarket(market1);
+      smallCache.cacheMarket(market2);
+
+      // Verify both are cached
+      assert.ok(smallCache.hasCondition("cond-1"));
+      assert.ok(smallCache.hasCondition("cond-2"));
+
+      // Cache third market - should evict market1's tokens
+      smallCache.cacheMarket(market3);
+
+      // market1 should be evicted, conditionIndex should be cleaned
+      assert.strictEqual(smallCache.hasToken("yes-1"), false);
+      assert.strictEqual(smallCache.hasToken("no-1"), false);
+      assert.strictEqual(smallCache.hasCondition("cond-1"), false);
+
+      // market2 and market3 should still exist
+      assert.ok(smallCache.hasCondition("cond-2"));
+      assert.ok(smallCache.hasCondition("cond-3"));
+    });
+
+    it("should clean up conditionIndex when market is explicitly deleted", () => {
+      const market = {
+        yesTokenId: "yes-del",
+        noTokenId: "no-del",
+        conditionId: "cond-del",
+        marketId: "market-del",
+      };
+
+      cache.cacheMarket(market);
+      assert.ok(cache.hasCondition("cond-del"));
+
+      // Delete one token
+      cache.delete("yes-del");
+
+      // conditionIndex should still have the entry (other token exists)
+      assert.ok(cache.hasToken("no-del"));
+      // But getByConditionId might return null since yes token is gone
+      // Actually, let's check hasCondition which checks yesTokenId
+      // The conditionIndex entry should be cleaned when both are gone
+
+      // Delete the other token
+      cache.delete("no-del");
+
+      // Now conditionIndex should be cleaned
+      assert.strictEqual(cache.hasCondition("cond-del"), false);
+      assert.strictEqual(cache.getByConditionId("cond-del"), null);
+    });
+
+    it("should handle caching the same market multiple times", () => {
+      const market = {
+        yesTokenId: "yes-dup",
+        noTokenId: "no-dup",
+        conditionId: "cond-dup",
+        marketId: "market-dup",
+      };
+
+      cache.cacheMarket(market);
+      cache.cacheMarket(market); // Cache again
+
+      // Should still work correctly
+      assert.deepStrictEqual(cache.getByTokenId("yes-dup"), market);
+      assert.deepStrictEqual(cache.getByConditionId("cond-dup"), market);
+
+      // Metrics should reflect the operations
+      const metrics = cache.getMetrics();
+      assert.ok(metrics.entryCount >= 2); // At least 2 entries for the market
+    });
+  });
 });
 
 // ============================================================================

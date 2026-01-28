@@ -9,6 +9,15 @@
  * - TTL-based expiration (default: 1 hour)
  * - LRU eviction for memory protection
  * - Health checks and metrics
+ *
+ * NOTE: This module provides functions with the same names as lib/market.ts
+ * (clearMarketCache, getMarketCacheStats) but for the new persistence layer.
+ * The old implementations in lib/market.ts are still in use by existing code.
+ * Import from the specific module you need:
+ * - `import { clearMarketCache } from '../lib/market'` - Old cache (in use)
+ * - `import { clearMarketCache } from '../infra/persistence'` - New cache (for migration)
+ *
+ * @see lib/market.ts for the currently active cache implementation
  */
 
 import { BaseStore, type BaseStoreMetrics } from "./base-store";
@@ -174,6 +183,49 @@ export class MarketCache extends BaseStore<string, MarketTokenPair> {
   // ═══════════════════════════════════════════════════════════════════════════
   // Override Base Methods
   // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Delete a market entry and clean up secondary indexes.
+   * Ensures that conditionIndex does not retain stale references when
+   * markets are deleted or evicted from the primary store.
+   */
+  override delete(tokenId: string): boolean {
+    const market = this.get(tokenId);
+
+    // Delete from the primary store first
+    const deleted = super.delete(tokenId);
+
+    if (market) {
+      this.cleanupConditionIndex(market);
+    }
+
+    return deleted;
+  }
+
+  /**
+   * Hook called when an entry is evicted due to LRU capacity limits.
+   * Cleans up the conditionIndex for evicted markets.
+   */
+  protected override onEvict(tokenId: string): void {
+    const entry = this.store.get(tokenId);
+    if (entry?.value) {
+      this.cleanupConditionIndex(entry.value);
+    }
+  }
+
+  /**
+   * Clean up conditionIndex when a market's token is removed.
+   * Only removes the condition entry when neither token is cached.
+   */
+  private cleanupConditionIndex(market: MarketTokenPair): void {
+    const { yesTokenId, noTokenId, conditionId } = market;
+
+    // Only remove the condition index entry when neither token is cached
+    // Note: We check the underlying store directly to avoid TTL side effects
+    if (!this.store.has(yesTokenId) && !this.store.has(noTokenId)) {
+      this.conditionIndex.delete(conditionId);
+    }
+  }
 
   override clear(): void {
     super.clear();

@@ -116,6 +116,10 @@ export abstract class BaseStore<K extends string | number, V>
     while (this.store.size >= this.maxEntries && !this.store.has(key)) {
       const lruKey = this.accessOrder.shift();
       if (lruKey !== undefined) {
+        // Use internal delete to allow subclasses to clean up secondary indices
+        // Note: accessOrder is already updated by shift(), so we call store.delete directly
+        // and let subclasses override onEvict() for custom cleanup
+        this.onEvict(lruKey);
         this.store.delete(lruKey);
         if (this.trackMetrics) this.evictions++;
       }
@@ -262,5 +266,15 @@ export abstract class BaseStore<K extends string | number, V>
     const entry = this.store.get(key);
     if (!entry) return Infinity;
     return Date.now() - entry.createdAt;
+  }
+
+  /**
+   * Hook called before an entry is evicted due to LRU capacity limits.
+   * Subclasses can override this to clean up secondary indices.
+   * Note: The key has already been removed from accessOrder at this point.
+   */
+  protected onEvict(_key: K): void {
+    // Default implementation does nothing.
+    // Subclasses can override to clean up secondary indices.
   }
 }
