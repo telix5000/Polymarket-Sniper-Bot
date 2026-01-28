@@ -264,30 +264,13 @@ export function formatErrorForLog(error: unknown, maxLength = 500): string {
   if (typeof error === "string") {
     errorStr = redactSensitiveInString(error);
   } else {
-    // Try to extract clean error message from CLOB response structures
-    const errorObj = error as any;
-
-    if (errorObj?.response?.data?.error) {
-      // CLOB API error response
-      errorStr = String(errorObj.response.data.error);
-    } else if (errorObj?.data?.error) {
-      // Alternative CLOB error structure
-      errorStr = String(errorObj.data.error);
-    } else if (errorObj?.errorMsg) {
-      // CLOB order response error
-      errorStr = String(errorObj.errorMsg);
-    } else if (errorObj?.message) {
-      // Standard Error.message
-      errorStr = String(errorObj.message);
-    } else {
-      // Fallback to JSON serialization with redaction
-      try {
-        const redacted = redactSensitiveData(error);
-        errorStr = JSON.stringify(redacted);
-      } catch {
-        // Fallback to best-effort string conversion if JSON serialization fails
-        errorStr = redactSensitiveInString(String(error));
-      }
+    // Always redact sensitive data from objects first
+    try {
+      const redacted = redactSensitiveData(error);
+      errorStr = JSON.stringify(redacted);
+    } catch {
+      // Fallback to best-effort string conversion if JSON serialization fails
+      errorStr = redactSensitiveInString(String(error));
     }
 
     errorStr = redactSensitiveInString(errorStr);
