@@ -41,6 +41,10 @@ export const HEDGE_DEFAULTS = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface DynamicHedgeConfig {
+  // Feature toggle
+  /** Whether dynamic hedging is enabled (default: true). Set DYNAMIC_HEDGE_ENABLED=false to disable. */
+  enabled: boolean;
+
   // Base parameters (before adaptation)
   /** Base hedge trigger (cents adverse move) - default: 16 */
   baseTriggerCents: number;
@@ -122,7 +126,16 @@ export interface DynamicHedgeConfig {
   negativeEvHedgeMultiplier: number;
 }
 
+// Helper to read env var for enabled flag (defaults to true)
+const envBoolDefault = (key: string, defaultValue: boolean): boolean => {
+  const value = process.env[key];
+  if (value === undefined) return defaultValue;
+  return value.toLowerCase() !== "false";
+};
+
 export const DEFAULT_DYNAMIC_HEDGE_CONFIG: DynamicHedgeConfig = {
+  enabled: envBoolDefault("DYNAMIC_HEDGE_ENABLED", true), // Enabled by default
+
   baseTriggerCents: 16,
   baseHedgeRatio: 0.4,
   maxHedgeRatio: 0.7,
@@ -336,18 +349,19 @@ export class DynamicHedgePolicy {
     moveCents: number,
     durationMs: number,
   ): void {
-    const velocity = durationMs > 0 ? (moveCents / durationMs) * 1000 : 0; // cents/second
+    const velocity =
+      durationMs <= 0 ? 0 : Math.abs((moveCents / durationMs) * 1000); // cents/second, always non-negative
 
     this.adverseMoves.push({
       tokenId,
       timestamp: Date.now(),
       moveCents,
       durationMs,
-      velocity: Math.abs(velocity),
+      velocity,
     });
 
     // Update velocity EWMA
-    this.velocityEwma.update(Math.abs(velocity));
+    this.velocityEwma.update(velocity);
 
     // Prune old observations
     const windowStart = Date.now() - this.config.velocityWindowMs * 5; // Keep 5x window for history
@@ -476,8 +490,13 @@ export class DynamicHedgePolicy {
       reasons.push(`HIGH_VOL(${volatility.toFixed(2)})`);
     } else if (volatilityRegime === "LOW") {
       // Loosen trigger when calm
-      const looseningFactor =
-        1 - volatility / this.config.lowVolatilityThreshold;
+      const looseningFactor = Math.max(
+        0,
+        Math.min(
+          1,
+          1 - volatility / this.config.lowVolatilityThreshold,
+        ),
+      );
       targetTrigger =
         this.config.baseTriggerCents +
         looseningFactor *
@@ -568,8 +587,13 @@ export class DynamicHedgePolicy {
       const sortedMoves = [...this.adverseMoves]
         .map((m) => Math.abs(m.moveCents))
         .sort((a, b) => a - b);
-      const percentileIndex = Math.floor(
-        sortedMoves.length * this.config.tailRiskPercentile,
+      // Use inclusive percentile index: ceil(n * p) - 1, clamped to [0, n - 1]
+      const percentileIndex = Math.max(
+        0,
+        Math.min(
+          sortedMoves.length - 1,
+          Math.ceil(sortedMoves.length * this.config.tailRiskPercentile) - 1,
+        ),
       );
       const tailRiskMove = sortedMoves[percentileIndex];
 
@@ -629,8 +653,13 @@ export class DynamicHedgePolicy {
     target: number,
     maxChangeFraction: number,
   ): number {
-    const maxDelta = current * maxChangeFraction;
     const delta = target - current;
+    if (delta === 0) {
+      return current;
+    }
+    const baseMaxDelta = Math.abs(current) * maxChangeFraction;
+    const minDelta = 0.01;
+    const maxDelta = Math.max(baseMaxDelta, minDelta);
     const clampedDelta = Math.max(-maxDelta, Math.min(maxDelta, delta));
     return current + clampedDelta;
   }
@@ -641,11 +670,15 @@ export class DynamicHedgePolicy {
 
   /**
    * Get current dynamic hedge parameters
+   * If disabled via config.enabled=false, always returns static base values.
    */
   getParameters(): DynamicHedgeParameters {
     const totalObservations =
       this.adverseMoves.length + this.hedgeOutcomes.length;
+
+    // If disabled, always use static base values
     const usingAdaptedValues =
+      this.config.enabled &&
       totalObservations >= this.config.minObservationsForAdaptation;
 
     return {
@@ -667,7 +700,9 @@ export class DynamicHedgePolicy {
       observationCount: totalObservations,
       usingAdaptedValues,
       lastAdaptationTime: this.lastAdaptationTime,
-      adaptationReason: this.adaptationReason,
+      adaptationReason: this.config.enabled
+        ? this.adaptationReason
+        : "DYNAMIC_HEDGE_DISABLED",
     };
   }
 

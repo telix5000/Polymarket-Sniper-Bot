@@ -35,6 +35,10 @@ export const EV_DEFAULTS = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface DynamicEvConfig {
+  // Feature toggle
+  /** Whether dynamic EV is enabled (default: true). Set DYNAMIC_EV_ENABLED=false to disable. */
+  enabled: boolean;
+
   // Window sizes for rolling calculations
   /** Number of trades for rolling window (default: 200) */
   rollingWindowTrades: number;
@@ -90,7 +94,15 @@ export interface DynamicEvConfig {
   minTradesForPauseDecision: number;
 }
 
+// Helper to read env var for enabled flag (defaults to true)
+const envBoolDefault = (key: string, defaultValue: boolean): boolean => {
+  const value = process.env[key];
+  if (value === undefined) return defaultValue;
+  return value.toLowerCase() !== "false";
+};
+
 export const DEFAULT_DYNAMIC_EV_CONFIG: DynamicEvConfig = {
+  enabled: envBoolDefault("DYNAMIC_EV_ENABLED", true), // Enabled by default
   rollingWindowTrades: 200,
   minTradesForDynamic: 30,
   minNotionalForDynamic: 500,
@@ -214,13 +226,13 @@ class EwmaCalculator {
     this.count++;
     const alpha = this.decay;
 
-    // Update EWMA
+    // Update EWMA mean
     const prevValue = this.value;
+    const delta = observation - prevValue;
     this.value = alpha * observation + (1 - alpha) * prevValue;
 
-    // Update variance using standard EWMA variance formula
-    // Variance = (1 - alpha) * variance + alpha * (observation - new_value)^2
-    const delta = observation - this.value;
+    // Update variance using standard EWMA variance formula with prediction error
+    // Variance = (1 - alpha) * variance + alpha * (observation - prevValue)^2
     this.variance = (1 - alpha) * this.variance + alpha * delta * delta;
   }
 
@@ -308,9 +320,8 @@ export class DynamicEvEngine {
     );
     this.winRateEwma = new EwmaCalculator(
       // Start above break-even (optimistic assumption during warmup)
-      EV_DEFAULTS.BREAK_EVEN_WIN_RATE +
-        this.config.initialWinRateBonusPct +
-        0.03,
+      // Uses only the configurable initialWinRateBonusPct bonus
+      EV_DEFAULTS.BREAK_EVEN_WIN_RATE + this.config.initialWinRateBonusPct,
       this.config.ewmaDecayWinRate,
     );
     this.churnCostEwma = new EwmaCalculator(
@@ -408,10 +419,18 @@ export class DynamicEvEngine {
     const sampleSize = this.trades.length;
     const notionalVolume = this.totalNotional;
 
+    // Estimate win and loss counts from win rate EWMA for stability guardrails.
+    // We require at least a small number of both wins and losses for variance stability.
+    const estimatedWinCount = sampleSize * this.winRateEwma.getValue();
+    const estimatedLossCount = sampleSize - estimatedWinCount;
+    const hasMinWinLossSamples =
+      estimatedWinCount >= 5 && estimatedLossCount >= 5;
+
     // Determine if we should use dynamic values
     const usingDynamicValues =
       sampleSize >= this.config.minTradesForDynamic &&
       notionalVolume >= this.config.minNotionalForDynamic &&
+      hasMinWinLossSamples &&
       this.avgWinEwma.isStable(this.config.maxVarianceMultiplier) &&
       this.avgLossEwma.isStable(this.config.maxVarianceMultiplier);
 
@@ -445,10 +464,14 @@ export class DynamicEvEngine {
     const evCents = pWin * avgWinCents - pLoss * avgLossCents - churnCostCents;
 
     // Calculate break-even win rate: (avg_loss + churn) / (avg_win + avg_loss)
-    const breakEvenWinRate =
-      avgWinCents + avgLossCents > 0
-        ? (avgLossCents + churnCostCents) / (avgWinCents + avgLossCents)
-        : EV_DEFAULTS.BREAK_EVEN_WIN_RATE;
+    const denom = avgWinCents + avgLossCents;
+    let breakEvenWinRate: number = EV_DEFAULTS.BREAK_EVEN_WIN_RATE;
+    if (denom > 0 && Number.isFinite(denom)) {
+      const candidate = (avgLossCents + churnCostCents) / denom;
+      if (Number.isFinite(candidate)) {
+        breakEvenWinRate = candidate;
+      }
+    }
 
     // Calculate confidence based on sample size and variance stability
     const sizeConfidence = Math.min(
@@ -502,6 +525,8 @@ export class DynamicEvEngine {
    *   EV ≤ 0 → pause
    *   0 < EV < threshold → reduce size
    *   EV ≥ threshold → full size
+   *
+   * If disabled via config.enabled=false, always allows full size.
    */
   evaluateEntry(operationalChecks?: {
     spreadCents?: number;
@@ -509,6 +534,17 @@ export class DynamicEvEngine {
     exitDepthUsd?: number;
   }): EntryDecisionResult {
     const metrics = this.getMetrics();
+
+    // If disabled, always allow full size with static EV
+    if (!this.config.enabled) {
+      return {
+        allowed: true,
+        sizeFactor: 1.0,
+        reason: "DYNAMIC_EV_DISABLED",
+        evCents: metrics.evCents,
+        metrics,
+      };
+    }
 
     // Check if paused
     if (this.isPaused()) {
@@ -574,9 +610,18 @@ export class DynamicEvEngine {
     }
 
     // Check profit factor
+    // If avgLossCents is zero and avgWinCents is positive, this indicates no losses yet
+    // which should allow full size trading (better than blocking trades)
     const profitFactor =
-      metrics.avgLossCents > 0 ? metrics.avgWinCents / metrics.avgLossCents : 0;
-    if (profitFactor < this.config.minProfitFactor) {
+      metrics.avgLossCents > 0
+        ? metrics.avgWinCents / metrics.avgLossCents
+        : metrics.avgWinCents > 0
+          ? Infinity
+          : 0;
+    if (
+      Number.isFinite(profitFactor) &&
+      profitFactor < this.config.minProfitFactor
+    ) {
       return {
         allowed: true,
         sizeFactor: this.config.reducedSizeFactor,
@@ -662,6 +707,7 @@ export class DynamicEvEngine {
     const metrics = this.getMetrics();
 
     // Only pause if we have enough data and EV is negative
+    // Use separate condition for avgLossCents > 0 to avoid division by zero
     if (
       metrics.sampleSize >= this.config.minTradesForPauseDecision &&
       (metrics.evCents < 0 ||
