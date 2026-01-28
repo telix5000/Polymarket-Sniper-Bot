@@ -49,15 +49,26 @@ function generateTradeKey(trade: {
   timestamp?: string | number;
   trader?: string;
 }): string {
-  // Use transactionHash as primary dedup if available
+  // Use transactionHash as primary dedup if available, fallback to id
   const txHash = trade.transactionHash || trade.id || "";
   const conditionId = trade.conditionId || "";
-  const outcomeIndex = trade.outcomeIndex ?? (trade.outcome === "NO" ? 1 : 0);
+  
+  // Normalize outcome to outcomeIndex (case-insensitive)
+  let outcomeIndex: number;
+  if (typeof trade.outcomeIndex === "number") {
+    outcomeIndex = trade.outcomeIndex;
+  } else if (trade.outcome) {
+    outcomeIndex = trade.outcome.toUpperCase() === "NO" ? 1 : 0;
+  } else {
+    // Default to 0 (YES) if both are missing
+    outcomeIndex = 0;
+  }
+  
   const side = (trade.side || "BUY").toUpperCase();
   const size = Number(trade.size) || 0;
   
-  // Composite key for robust deduplication
-  return `${txHash}:${conditionId}:${outcomeIndex}:${side}:${size.toFixed(2)}`;
+  // Use higher precision (6 decimals) to avoid collisions with similar-sized trades
+  return `${txHash}:${conditionId}:${outcomeIndex}:${side}:${size.toFixed(6)}`;
 }
 
 // Deduplication set with composite keys
@@ -149,13 +160,18 @@ export async function fetchRecentTrades(
           maxTimestamp = Math.max(maxTimestamp, ts);
 
           // Build normalized trade signal
+          // Normalize outcome to "YES" or "NO" (case-insensitive)
+          let normalizedOutcome: "YES" | "NO" = "YES";
+          if (t.outcomeIndex === 1 || t.outcome?.toUpperCase() === "NO") {
+            normalizedOutcome = "NO";
+          }
+          
           walletTrades.push({
             // tokenId from API (may need resolution if missing)
             tokenId: t.asset || t.tokenId || "",
             conditionId: t.conditionId || "",
             marketId: t.marketId || "",
-            // Normalize outcome to "YES" or "NO"
-            outcome: t.outcome === "NO" || t.outcomeIndex === 1 ? "NO" : "YES",
+            outcome: normalizedOutcome,
             side: t.side?.toUpperCase() === "SELL" ? "SELL" : "BUY",
             // Calculate USD value
             sizeUsd: Number(t.size) * Number(t.price) || 0,

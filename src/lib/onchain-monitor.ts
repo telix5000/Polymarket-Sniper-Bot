@@ -59,7 +59,8 @@ import { POLYGON } from "./constants";
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Signal source priority - on-chain is FASTER and takes precedence
+ * Signal source indicator - for tracking where a signal originated
+ * Note: Data API is the PRIMARY source; on-chain is for reconciliation only
  */
 export type SignalSource = "onchain" | "api";
 
@@ -73,7 +74,7 @@ export interface OnChainTradeEvent {
   timestamp: number;
   txHash: string;
   blockNumber: number;
-  /** On-chain signals are faster and take priority over API */
+  /** Signal source tracking (on-chain is secondary to Data API for whale detection) */
   source: SignalSource;
 }
 
@@ -94,8 +95,8 @@ export interface PositionChangeEvent {
 }
 
 /**
- * Real-time price update from on-chain OrderFilled events
- * This is FASTER than polling Polymarket API for price!
+ * Price update from on-chain OrderFilled events
+ * Used for reconciliation and verification (NOT primary price source)
  */
 export interface OnChainPriceUpdate {
   tokenId: string;

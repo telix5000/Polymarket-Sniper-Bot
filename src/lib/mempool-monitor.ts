@@ -135,13 +135,19 @@ export class MempoolMonitor {
 
   /**
    * Stop monitoring
+   * 
+   * ⚠️ DEPRECATED: Since start() is now a no-op, stop() is also effectively a no-op.
+   * Kept for API compatibility.
    */
   stop(): void {
-    this.running = false;
-    if (this.wsProvider) {
-      this.wsProvider.removeAllListeners();
-      this.wsProvider.destroy();
-      this.wsProvider = null;
+    // Only cleanup if monitor was actually running (which it won't be anymore)
+    if (this.running) {
+      this.running = false;
+      if (this.wsProvider) {
+        this.wsProvider.removeAllListeners();
+        this.wsProvider.destroy();
+        this.wsProvider = null;
+      }
     }
   }
 

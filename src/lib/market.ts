@@ -329,9 +329,22 @@ export async function resolveTokenId(
   conditionId: string,
   outcomeIndex: number,
 ): Promise<string | null> {
-  // Validate outcome index
-  if (outcomeIndex !== 0 && outcomeIndex !== 1) {
-    console.warn(`[Market] Invalid outcomeIndex: ${outcomeIndex} (must be 0 or 1)`);
+  // Validate outcomeIndex is a number
+  if (typeof outcomeIndex !== "number" || isNaN(outcomeIndex)) {
+    console.warn(`[Market] Invalid outcomeIndex type: ${typeof outcomeIndex} (${outcomeIndex})`);
+    return null;
+  }
+  
+  // Normalize to integer and validate range (must be exactly 0 or 1)
+  const normalizedIndex = Math.floor(outcomeIndex);
+  if (normalizedIndex !== 0 && normalizedIndex !== 1) {
+    console.warn(`[Market] Invalid outcomeIndex: ${outcomeIndex} (must be 0 or 1, not ${normalizedIndex})`);
+    return null;
+  }
+
+  // Validate conditionId
+  if (!conditionId || typeof conditionId !== "string" || conditionId.trim() === "") {
+    console.warn(`[Market] Invalid conditionId: ${conditionId}`);
     return null;
   }
 
@@ -344,10 +357,10 @@ export async function resolveTokenId(
 
   // Map outcomeIndex to tokenId
   // outcomeIndex 0 = YES token, outcomeIndex 1 = NO token
-  const tokenId = outcomeIndex === 0 ? market.yesTokenId : market.noTokenId;
+  const tokenId = normalizedIndex === 0 ? market.yesTokenId : market.noTokenId;
   
   if (!tokenId || tokenId.trim() === "") {
-    console.warn(`[Market] Invalid tokenId for condition ${conditionId.slice(0, 16)}... outcome ${outcomeIndex}`);
+    console.warn(`[Market] Invalid tokenId for condition ${conditionId.slice(0, 16)}... outcome ${normalizedIndex}`);
     return null;
   }
 
@@ -384,7 +397,14 @@ export async function batchResolveTokenIds(
   for (const { conditionId, outcomeIndex } of pairs) {
     const key = `${conditionId}:${outcomeIndex}`;
     
-    if (outcomeIndex !== 0 && outcomeIndex !== 1) {
+    // Validate and normalize outcomeIndex
+    if (typeof outcomeIndex !== "number" || isNaN(outcomeIndex)) {
+      results.set(key, null);
+      continue;
+    }
+    
+    const normalizedIndex = Math.floor(outcomeIndex);
+    if (normalizedIndex !== 0 && normalizedIndex !== 1) {
       results.set(key, null);
       continue;
     }
@@ -395,7 +415,7 @@ export async function batchResolveTokenIds(
       continue;
     }
     
-    const tokenId = outcomeIndex === 0 ? market.yesTokenId : market.noTokenId;
+    const tokenId = normalizedIndex === 0 ? market.yesTokenId : market.noTokenId;
     results.set(key, tokenId && tokenId.trim() !== "" ? tokenId : null);
   }
   
