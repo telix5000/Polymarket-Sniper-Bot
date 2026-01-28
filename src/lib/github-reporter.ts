@@ -227,7 +227,7 @@ export class GitHubReporter {
 
   /**
    * Report a startup diagnostic summary
-   * This captures the first 30-60 seconds of operation for debugging
+   * This captures the first 60 seconds of operation for debugging
    */
   async reportStartupDiagnostic(details: {
     whaleWalletsLoaded: number;
@@ -249,10 +249,7 @@ export class GitHubReporter {
       whaleTradeUsd: number;
       scanActiveMarkets: boolean;
     };
-    startupLogs: string[];
   }): Promise<boolean> {
-    const logsPreview = details.startupLogs.slice(-50).join("\n");
-    
     return this.report({
       title: `Startup Diagnostic: ${details.whaleTradesDetected} whale trades, ${details.entrySuccessCount}/${details.entryAttemptsCount} entries`,
       message: `Startup diagnostic after 60 seconds of operation.\n\n` +
@@ -280,7 +277,7 @@ export class GitHubReporter {
         `- Copy any whale buy: ${details.config.copyAnyWhaleBuy}\n` +
         `- Min whale trade: $${details.config.whaleTradeUsd}\n` +
         `- Scan active markets: ${details.config.scanActiveMarkets}`,
-      severity: details.whaleTradesDetected === 0 || details.entrySuccessCount === 0 ? "warning" : "info",
+      severity: details.whaleTradesDetected === 0 && details.entrySuccessCount === 0 ? "warning" : "info",
       context: {
         whaleWalletsLoaded: details.whaleWalletsLoaded,
         marketsScanned: details.marketsScanned,
@@ -292,7 +289,6 @@ export class GitHubReporter {
         mempoolMonitor: details.mempoolMonitorStatus,
         rpcLatencyMs: details.rpcLatencyMs,
         apiLatencyMs: details.apiLatencyMs,
-        recentLogs: logsPreview,
       },
       timestamp: Date.now(),
     });

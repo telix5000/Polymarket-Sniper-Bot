@@ -962,6 +962,7 @@ class BiasAccumulator {
   /**
    * Fetch recent trades for leaderboard wallets - PARALLEL EXECUTION
    * Only tracks BUY trades - we have our own exit math, don't copy sells
+   * Uses rotating batch to cover all wallets over multiple cycles
    */
   async fetchLeaderboardTrades(): Promise<LeaderboardTrade[]> {
     const wallets = await this.refreshLeaderboard();
@@ -973,6 +974,21 @@ class BiasAccumulator {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // ROTATING BATCH: Cover all wallets over multiple cycles
+    // Process BATCH_SIZE wallets per cycle, rotating through the full list
+    // ═══════════════════════════════════════════════════════════════════════════
+    const BATCH_SIZE = 20;
+    const startIdx = (this.fetchCount * BATCH_SIZE) % wallets.length;
+    const endIdx = Math.min(startIdx + BATCH_SIZE, wallets.length);
+    const batchWallets = wallets.slice(startIdx, endIdx);
+    
+    // Log when coverage is limited
+    if (wallets.length > BATCH_SIZE && this.fetchCount % 10 === 0) {
+      const cyclesForFullCoverage = Math.ceil(wallets.length / BATCH_SIZE);
+      console.log(`📊 [API] Rotating batch: wallets ${startIdx + 1}-${endIdx} of ${wallets.length} (full coverage in ${cyclesForFullCoverage} cycles)`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // DIAGNOSTIC: Track API fetch results
     // ═══════════════════════════════════════════════════════════════════════════
     let totalFetches = 0;
@@ -981,12 +997,12 @@ class BiasAccumulator {
     let totalTradesFound = 0;
     let tradesInWindow = 0;
 
-    // Fetch all wallets in parallel for speed
+    // Fetch batch wallets in parallel for speed
     // API can handle concurrent requests, and we want to catch whale movement FAST
-    const fetchPromises = wallets.slice(0, 20).map(async (wallet) => { // Limit to 20 to avoid rate limiting
+    const fetchPromises = batchWallets.map(async (wallet) => {
       totalFetches++;
       try {
-        // Try ACTIVITY endpoint first (like Novus-Tech-LLC does)
+        // Use ACTIVITY endpoint (like Novus-Tech-LLC does)
         const url = `${this.DATA_API}/activity?user=${wallet}&limit=20`;
         const { data } = await axios.get(url, { timeout: 5000 });
 
@@ -1012,9 +1028,18 @@ class BiasAccumulator {
           // Only track BUY trades - we don't copy sells, we have our own exit math
           if (activity.side?.toUpperCase() !== "BUY") continue;
 
-          const timestamp = typeof activity.timestamp === 'number' 
-            ? activity.timestamp * 1000 // Unix timestamp in seconds -> ms
-            : new Date(activity.timestamp).getTime();
+          const rawTimestamp = activity.timestamp;
+          let timestamp: number;
+          if (typeof rawTimestamp === "number") {
+            // If the numeric timestamp is very large, assume it's already in ms
+            timestamp = rawTimestamp > 1e12 ? rawTimestamp : rawTimestamp * 1000;
+          } else if (typeof rawTimestamp === "string" && /^\d+$/.test(rawTimestamp)) {
+            const numericTimestamp = Number(rawTimestamp);
+            timestamp = numericTimestamp > 1e12 ? numericTimestamp : numericTimestamp * 1000;
+          } else {
+            // Fallback for ISO strings or other date representations
+            timestamp = new Date(rawTimestamp).getTime();
+          }
 
           // Only trades within window
           if (timestamp < windowStart) continue;
@@ -1038,11 +1063,9 @@ class BiasAccumulator {
         }
         return trades;
       } catch (err) {
-        // Log first few errors for diagnostics
-        if (totalFetches <= 3) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          console.debug(`[API] Fetch failed for ${wallet.slice(0, 10)}...: ${errMsg}`);
-        }
+        // Log errors for diagnostics (use console.log to ensure visibility in production)
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.log(`[API] Fetch failed for ${wallet.slice(0, 10)}...: ${errMsg}`);
         return [];
       }
     });
@@ -3378,7 +3401,7 @@ class ChurnEngine {
    * Track an entry failure reason with size limit
    */
   private trackFailureReason(reason: string): void {
-    this.trackFailureReason(reason);
+    this.diagnostics.entryFailureReasons.push(reason);
     // Keep only the last MAX_FAILURE_REASONS entries
     if (this.diagnostics.entryFailureReasons.length > this.MAX_FAILURE_REASONS) {
       this.diagnostics.entryFailureReasons.shift();
@@ -4487,9 +4510,9 @@ class ChurnEngine {
     try {
       const orderbook = await this.client.getOrderBook(tokenId);
       if (!orderbook?.bids?.length || !orderbook?.asks?.length) {
-        // Log when orderbook is empty - helps diagnose issues
+        // Log when orderbook is empty - helps diagnose issues (use console.log for production visibility)
         if (this.cycleCount % 100 === 0) {
-          console.debug(`📊 [Orderbook] Token ${tokenId.slice(0, 12)}... has no bids/asks`);
+          console.log(`📊 [Orderbook] Token ${tokenId.slice(0, 12)}... has no bids/asks`);
         }
         this.diagnostics.orderbookFetchFailures++;
         return null;
@@ -4764,7 +4787,6 @@ class ChurnEngine {
           whaleTradeUsd: this.config.onchainMinWhaleTradeUsd,
           scanActiveMarkets: this.config.scanActiveMarkets,
         },
-        startupLogs: [], // Empty - console logs not captured
       });
       console.log(`📋 [Diagnostic] Startup diagnostic sent successfully`);
     } catch (err) {
