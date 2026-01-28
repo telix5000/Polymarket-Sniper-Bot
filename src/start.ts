@@ -147,13 +147,23 @@ function shouldCooldownOnFailure(reason: string | undefined): boolean {
 }
 
 /**
- * Parse an optional float from environment variable
+ * Parse an optional float from environment variable for price values
  * Returns undefined if not set or invalid
+ * Warns if value is outside expected [0,1] range (suggesting user may have used percentage)
  */
 function parseOptionalFloat(value: string | undefined): number | undefined {
   if (value === undefined || value === "") return undefined;
   const parsed = parseFloat(value);
   if (isNaN(parsed)) return undefined;
+  
+  // Warn if value seems like a percentage (outside [0,1] range)
+  if (parsed < 0 || parsed > 1) {
+    console.warn(
+      `⚠️ Price value ${parsed} is outside expected [0,1] range. ` +
+      `Use decimal format (e.g., 0.25 for 25¢, not 25).`
+    );
+  }
+  
   return parsed;
 }
 
@@ -4104,6 +4114,7 @@ class ChurnEngine {
             side: "BUY",
             sizeUsd: trade.sizeUsd,
             timestamp: trade.timestamp,
+            price: trade.price, // Include price for price-range filtering
           });
           
           console.log(`   ℹ️ On-chain signal recorded (secondary to Data API)`);
