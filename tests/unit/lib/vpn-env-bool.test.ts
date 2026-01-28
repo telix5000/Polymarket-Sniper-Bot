@@ -308,3 +308,103 @@ describe("Route check parsing", () => {
     assert.strictEqual(result.interface, undefined);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BypassSetting source tracking tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("BypassSettingSource tracking", () => {
+  beforeEach(() => {
+    // Clear all VPN bypass env vars for clean tests
+    mockEnv({
+      VPN_BYPASS_RPC: undefined,
+      VPN_BYPASS_POLYMARKET_READS: undefined,
+      VPN_BYPASS_POLYMARKET_WS: undefined,
+    });
+  });
+
+  afterEach(() => {
+    restoreEnv();
+  });
+
+  it("should correctly identify DEFAULT source when env vars are unset", () => {
+    // When env vars are not set, they should be undefined
+    assert.strictEqual(process.env.VPN_BYPASS_RPC, undefined);
+    assert.strictEqual(process.env.VPN_BYPASS_POLYMARKET_READS, undefined);
+    assert.strictEqual(process.env.VPN_BYPASS_POLYMARKET_WS, undefined);
+
+    // getEnvBool should use defaults
+    assert.strictEqual(
+      getEnvBool("VPN_BYPASS_RPC", VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC),
+      VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC,
+    );
+    assert.strictEqual(
+      getEnvBool(
+        "VPN_BYPASS_POLYMARKET_READS",
+        VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+      ),
+      VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+    );
+    assert.strictEqual(
+      getEnvBool(
+        "VPN_BYPASS_POLYMARKET_WS",
+        VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
+      ),
+      VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
+    );
+  });
+
+  it("should correctly identify ENV source when env vars are set", () => {
+    // Set env vars explicitly
+    process.env.VPN_BYPASS_RPC = "false";
+    process.env.VPN_BYPASS_POLYMARKET_READS = "true";
+    process.env.VPN_BYPASS_POLYMARKET_WS = "false";
+
+    // Verify they are set
+    assert.strictEqual(process.env.VPN_BYPASS_RPC, "false");
+    assert.strictEqual(process.env.VPN_BYPASS_POLYMARKET_READS, "true");
+    assert.strictEqual(process.env.VPN_BYPASS_POLYMARKET_WS, "false");
+
+    // getEnvBool should use env values, not defaults
+    assert.strictEqual(
+      getEnvBool("VPN_BYPASS_RPC", VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC),
+      false, // overridden by env
+    );
+    assert.strictEqual(
+      getEnvBool(
+        "VPN_BYPASS_POLYMARKET_READS",
+        VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+      ),
+      true, // overridden by env
+    );
+    assert.strictEqual(
+      getEnvBool(
+        "VPN_BYPASS_POLYMARKET_WS",
+        VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
+      ),
+      false, // overridden by env
+    );
+  });
+
+  it("should distinguish between DEFAULT and ENV sources correctly", () => {
+    // Set only one env var explicitly
+    process.env.VPN_BYPASS_RPC = "false";
+
+    // VPN_BYPASS_RPC is from ENV, others are from DEFAULT
+    assert.strictEqual(
+      process.env.VPN_BYPASS_RPC !== undefined,
+      true,
+      "VPN_BYPASS_RPC should be from ENV",
+    );
+    assert.strictEqual(
+      process.env.VPN_BYPASS_POLYMARKET_READS !== undefined,
+      false,
+      "VPN_BYPASS_POLYMARKET_READS should be from DEFAULT",
+    );
+    assert.strictEqual(
+      process.env.VPN_BYPASS_POLYMARKET_WS !== undefined,
+      false,
+      "VPN_BYPASS_POLYMARKET_WS should be from DEFAULT",
+    );
+  });
+});

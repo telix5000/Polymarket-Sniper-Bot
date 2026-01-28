@@ -154,6 +154,19 @@ export interface VpnRoutingPolicyPreEvent {
 }
 
 /**
+ * Source of a bypass setting value
+ */
+export type BypassSettingSource = "DEFAULT" | "ENV";
+
+/**
+ * Bypass setting with source tracking
+ */
+export interface BypassSetting {
+  value: boolean;
+  source: BypassSettingSource;
+}
+
+/**
  * VPN Routing Policy EFFECTIVE event structure
  * Emitted AFTER VPN is up AND bypass routes are applied
  */
@@ -180,6 +193,15 @@ export interface VpnRoutingPolicyEffectiveEvent {
    * Only includes vars that were explicitly set (not defaults).
    */
   envOverrides: Record<string, string>;
+  /**
+   * Effective settings with source tracking (DEFAULT vs ENV).
+   * Shows the actual value used AND where it came from.
+   */
+  effectiveSettings: {
+    VPN_BYPASS_RPC: BypassSetting;
+    VPN_BYPASS_POLYMARKET_READS: BypassSetting;
+    VPN_BYPASS_POLYMARKET_WS: BypassSetting;
+  };
   bypassedHosts: string[];
   writeHosts: string[];
   writeRouteCheck: WriteRouteCheckResult[];
@@ -432,6 +454,255 @@ function getVpnInterfaceName(): string | null {
   return null;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PROACTIVE WRITE HOST VPN ROUTING (CRITICAL FIX FOR WRITE_ROUTE_MISMATCH)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Result of ensuring a single write host is routed through VPN
+ */
+export interface WriteHostRouteResult {
+  hostname: string;
+  ips: string[];
+  routesAdded: number;
+  routesFailed: number;
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Result of ensuring all write hosts are routed through VPN
+ */
+export interface EnsureWriteRoutesResult {
+  attempted: boolean;
+  success: boolean;
+  results: WriteHostRouteResult[];
+  vpnInterface: string | null;
+}
+
+/**
+ * Proactively ensure all WRITE hosts route through VPN interface.
+ *
+ * This function MUST be called AFTER VPN is started to guarantee that
+ * clob.polymarket.com (and any other WRITE hosts) route through the
+ * VPN interface, not through the pre-VPN gateway.
+ *
+ * The problem: When VPN starts with AllowedIPs=0.0.0.0/0, it should route
+ * all traffic through VPN. However, DNS caching or stale routes can cause
+ * specific hosts to continue using the pre-VPN gateway.
+ *
+ * The solution: Explicitly add routes for all resolved IPs of WRITE hosts
+ * through the VPN interface after VPN starts.
+ *
+ * @param logger - Optional logger for diagnostics
+ * @returns Result indicating success/failure and details per host
+ */
+export function ensureWriteHostVpnRoutes(
+  logger?: Logger,
+): EnsureWriteRoutesResult {
+  // Can't ensure routes if VPN isn't active
+  if (!vpnActive) {
+    logger?.info?.("ensureWriteHostVpnRoutes: VPN not active, skipping");
+    return {
+      attempted: false,
+      success: true, // Not a failure - just nothing to do
+      results: [],
+      vpnInterface: null,
+    };
+  }
+
+  const vpnIface = getVpnInterfaceName();
+  if (!vpnIface) {
+    logger?.error?.("ensureWriteHostVpnRoutes: Cannot determine VPN interface");
+    return {
+      attempted: true,
+      success: false,
+      results: [],
+      vpnInterface: null,
+    };
+  }
+
+  if (!isValidIface(vpnIface)) {
+    logger?.error?.(
+      `ensureWriteHostVpnRoutes: Invalid VPN interface name: ${vpnIface}`,
+    );
+    return {
+      attempted: true,
+      success: false,
+      results: [],
+      vpnInterface: vpnIface,
+    };
+  }
+
+  const results: WriteHostRouteResult[] = [];
+  let allSuccess = true;
+
+  // Process each WRITE host
+  for (const hostname of WRITE_HOSTS) {
+    const hostResult = addVpnRoutesForHost(hostname, vpnIface, logger);
+    results.push(hostResult);
+    if (!hostResult.success) {
+      allSuccess = false;
+    }
+  }
+
+  // Emit structured event
+  const eventPayload = {
+    event: "WRITE_HOST_VPN_ROUTES_ENSURED",
+    timestamp: new Date().toISOString(),
+    vpnActive,
+    vpnType,
+    vpnInterface: vpnIface,
+    success: allSuccess,
+    results: results.map((r) => ({
+      hostname: r.hostname,
+      ips: r.ips,
+      routesAdded: r.routesAdded,
+      routesFailed: r.routesFailed,
+      success: r.success,
+    })),
+  };
+  console.log(JSON.stringify(eventPayload));
+
+  if (allSuccess) {
+    logger?.info?.(
+      `ensureWriteHostVpnRoutes: All ${results.length} WRITE hosts route through ${vpnIface}`,
+    );
+  } else {
+    const failedHosts = results.filter((r) => !r.success).map((r) => r.hostname);
+    logger?.error?.(
+      `ensureWriteHostVpnRoutes: Failed to route hosts through VPN: ${failedHosts.join(", ")}`,
+    );
+  }
+
+  return {
+    attempted: true,
+    success: allSuccess,
+    results,
+    vpnInterface: vpnIface,
+  };
+}
+
+/**
+ * Add VPN routes for all resolved IPs of a single hostname.
+ *
+ * @param hostname - The hostname to route through VPN
+ * @param vpnIface - The VPN interface name (e.g., wg0, tun0)
+ * @param logger - Optional logger
+ * @returns Result indicating success and IPs routed
+ */
+function addVpnRoutesForHost(
+  hostname: string,
+  vpnIface: string,
+  logger?: Logger,
+): WriteHostRouteResult {
+  // Validate hostname
+  if (!isValidHostname(hostname)) {
+    logger?.warn?.(`addVpnRoutesForHost: Invalid hostname: ${hostname}`);
+    return {
+      hostname,
+      ips: [],
+      routesAdded: 0,
+      routesFailed: 0,
+      success: false,
+      error: "Invalid hostname format",
+    };
+  }
+
+  // Resolve all IPs for the hostname
+  const ips = resolveAllIpv4ForWriteHost(hostname, logger);
+  if (ips.length === 0) {
+    logger?.warn?.(
+      `addVpnRoutesForHost: No IPs resolved for ${hostname}`,
+    );
+    return {
+      hostname,
+      ips: [],
+      routesAdded: 0,
+      routesFailed: 0,
+      success: false,
+      error: "No IPs resolved",
+    };
+  }
+
+  let routesAdded = 0;
+  let routesFailed = 0;
+
+  for (const ip of ips) {
+    // Validate IP
+    if (!isValidIp(ip)) {
+      logger?.warn?.(
+        `addVpnRoutesForHost: Invalid IP ${ip} for ${hostname}, skipping`,
+      );
+      routesFailed++;
+      continue;
+    }
+
+    try {
+      // Use `ip route replace` to add or update the route
+      // This ensures the route goes through the VPN interface
+      const cmd = `ip route replace ${ip}/32 dev ${vpnIface}`;
+      execSync(cmd, { stdio: "pipe" });
+      routesAdded++;
+      logger?.debug?.(
+        `addVpnRoutesForHost: Added route ${ip} -> ${vpnIface} for ${hostname}`,
+      );
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logger?.warn?.(
+        `addVpnRoutesForHost: Failed to add route for ${ip}: ${errMsg}`,
+      );
+      routesFailed++;
+    }
+  }
+
+  const success = routesAdded > 0 && routesFailed === 0;
+
+  return {
+    hostname,
+    ips,
+    routesAdded,
+    routesFailed,
+    success,
+    error: routesFailed > 0 ? `${routesFailed} routes failed` : undefined,
+  };
+}
+
+/**
+ * Resolve all IPv4 addresses for a WRITE host.
+ * Uses getent ahostsv4 to get all resolved IPs for hosts behind load balancers.
+ */
+function resolveAllIpv4ForWriteHost(
+  hostname: string,
+  logger?: Logger,
+): string[] {
+  if (!isValidHostname(hostname)) {
+    return [];
+  }
+
+  try {
+    // Get all IPv4 addresses using getent ahostsv4
+    const output = execSync(
+      `getent ahostsv4 ${hostname} 2>/dev/null | awk '{print $1}' | sort -u`,
+      { encoding: "utf8" },
+    ).trim();
+
+    if (!output) return [];
+
+    const ips = output.split("\n").filter((ip) => ip && isValidIp(ip));
+    logger?.debug?.(
+      `resolveAllIpv4ForWriteHost: ${hostname} -> ${ips.join(", ")}`,
+    );
+    return ips;
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger?.warn?.(
+      `resolveAllIpv4ForWriteHost: Failed to resolve ${hostname}: ${errMsg}`,
+    );
+    return [];
+  }
+}
+
 /**
  * Emit VPN_ROUTING_POLICY_EFFECTIVE event AFTER VPN is up and bypass routes are applied.
  * This is the FINAL effective routing state.
@@ -510,6 +781,42 @@ export function emitRoutingPolicyEffectiveEvent(
       process.env.VPN_BYPASS_POLYMARKET_WS;
   }
 
+  // Build effective settings with source tracking
+  const effectiveSettings: VpnRoutingPolicyEffectiveEvent["effectiveSettings"] =
+    {
+      VPN_BYPASS_RPC: {
+        value: getEnvBool(
+          "VPN_BYPASS_RPC",
+          VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC,
+          logger,
+        ),
+        source:
+          process.env.VPN_BYPASS_RPC !== undefined ? "ENV" : "DEFAULT",
+      },
+      VPN_BYPASS_POLYMARKET_READS: {
+        value: getEnvBool(
+          "VPN_BYPASS_POLYMARKET_READS",
+          VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+          logger,
+        ),
+        source:
+          process.env.VPN_BYPASS_POLYMARKET_READS !== undefined
+            ? "ENV"
+            : "DEFAULT",
+      },
+      VPN_BYPASS_POLYMARKET_WS: {
+        value: getEnvBool(
+          "VPN_BYPASS_POLYMARKET_WS",
+          VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
+          logger,
+        ),
+        source:
+          process.env.VPN_BYPASS_POLYMARKET_WS !== undefined
+            ? "ENV"
+            : "DEFAULT",
+      },
+    };
+
   const event: VpnRoutingPolicyEffectiveEvent = {
     event: "VPN_ROUTING_POLICY_EFFECTIVE",
     timestamp: new Date().toISOString(),
@@ -526,10 +833,28 @@ export function emitRoutingPolicyEffectiveEvent(
       VPN_BYPASS_POLYMARKET_WS: VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
     },
     envOverrides,
+    effectiveSettings,
     bypassedHosts: getBypassedHosts(),
     writeHosts: [...WRITE_HOSTS],
     writeRouteCheck: writeRouteChecks,
   };
+
+  // Log effective settings with source for clarity
+  console.log("");
+  console.log("═".repeat(60));
+  console.log("  📡 VPN BYPASS SETTINGS (EFFECTIVE)");
+  console.log("═".repeat(60));
+  console.log(
+    `  VPN_BYPASS_RPC: ${effectiveSettings.VPN_BYPASS_RPC.value} [${effectiveSettings.VPN_BYPASS_RPC.source}]`,
+  );
+  console.log(
+    `  VPN_BYPASS_POLYMARKET_READS: ${effectiveSettings.VPN_BYPASS_POLYMARKET_READS.value} [${effectiveSettings.VPN_BYPASS_POLYMARKET_READS.source}]`,
+  );
+  console.log(
+    `  VPN_BYPASS_POLYMARKET_WS: ${effectiveSettings.VPN_BYPASS_POLYMARKET_WS.value} [${effectiveSettings.VPN_BYPASS_POLYMARKET_WS.source}]`,
+  );
+  console.log("═".repeat(60));
+  console.log("");
 
   console.log(JSON.stringify(event));
   logger?.info?.(
