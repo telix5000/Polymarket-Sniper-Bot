@@ -149,9 +149,6 @@ export async function runDiagWorkflow(
   console.log(`  Whale Timeout: ${cfg.whaleTimeoutSec}s`);
   console.log(`  Order Timeout: ${cfg.orderTimeoutSec}s`);
   console.log(`  Force Shares: ${cfg.forceShares}`);
-  console.log(
-    `  Require Tradeable Book: ${cfg.requireTradeableBook ? "YES" : "NO"}`,
-  );
   console.log(`  Bad Book Cooldown: ${cfg.badBookCooldownSec}s`);
   console.log(`  Book Max Ask: ${cfg.bookMaxAsk}`);
   console.log(`  Book Max Spread: ${cfg.bookMaxSpread}`);
@@ -1083,8 +1080,6 @@ export interface CandidateRejectionStats {
     askTooHigh: number;
     spreadTooWide: number;
     emptyBook: number;
-    thinBook: number;
-    spreadPctTooHigh: number;
   };
   // Sample rejected candidates (for reporting)
   sampleRejected: Array<{
@@ -1111,8 +1106,6 @@ export function createEmptyRejectionStats(): CandidateRejectionStats {
       askTooHigh: 0,
       spreadTooWide: 0,
       emptyBook: 0,
-      thinBook: 0,
-      spreadPctTooHigh: 0,
     },
     sampleRejected: [],
   };
@@ -1308,12 +1301,6 @@ function recordRejection(
     case "empty_book":
       globalRejectionStats.byRule.emptyBook++;
       break;
-    case "thin_book":
-      globalRejectionStats.byRule.thinBook++;
-      break;
-    case "spread_pct_too_high":
-      globalRejectionStats.byRule.spreadPctTooHigh++;
-      break;
   }
 
   // Keep sample of first 5 rejected candidates
@@ -1347,7 +1334,6 @@ export function formatRejectionStatsSummary(
   lines.push(`- askTooHigh: ${stats.byRule.askTooHigh}`);
   lines.push(`- spreadTooWide: ${stats.byRule.spreadTooWide}`);
   lines.push(`- emptyBook: ${stats.byRule.emptyBook}`);
-  lines.push(`- thinBook: ${stats.byRule.thinBook}`);
 
   if (stats.sampleRejected.length > 0) {
     lines.push("");
