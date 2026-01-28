@@ -184,7 +184,12 @@ export class BalanceCache {
    * @returns Fresh balances from RPC
    */
   async forceRefresh(): Promise<{ usdc: number; pol: number }> {
-    // Invalidate cache to force fetch
+    // If a fetch is already in progress, wait for it to complete first
+    // then do another fetch to ensure we have truly fresh data
+    if (this.fetchInProgress) {
+      await this.fetchInProgress;
+    }
+    // Now invalidate cache and force a new fetch
     this.cache = null;
     const freshData = await this.fetchBalances();
     return { usdc: freshData.usdc, pol: freshData.pol };
@@ -260,7 +265,7 @@ let globalBalanceCache: BalanceCache | null = null;
 
 /**
  * Initialize the global balance cache singleton.
- * Must be called once at startup before using getGlobalBalanceCache().
+ * Must be called once at startup before using getBalanceCache().
  *
  * @param wallet - Ethers wallet instance
  * @param address - Wallet address
