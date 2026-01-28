@@ -64,13 +64,17 @@ import {
   invalidatePositions,
   smartSell,
   type Position,
-  // On-chain event monitoring (FAST - blockchain speed!)
+  // On-chain event monitoring (confirmed trades)
   OnChainMonitor,
   createOnChainMonitorConfig,
   type OnChainTradeEvent,
   type OnChainMonitorConfig,
   type PositionChangeEvent,
   type OnChainPriceUpdate,
+  // Mempool monitoring (PENDING trades - faster!)
+  MempoolMonitor,
+  createMempoolMonitorConfig,
+  type PendingTradeSignal,
   // Market utilities for hedge token lookup
   getOppositeTokenId,
   // GitHub error reporting
@@ -215,10 +219,14 @@ interface ChurnConfig {
   polReserveCheckIntervalMin: number;
   polReserveSlippagePct: number;
 
-  // On-Chain Monitoring (Infura WebSocket)
+  // On-Chain Monitoring (Infura WebSocket) - sees CONFIRMED trades
   onchainMonitorEnabled: boolean;
   onchainMinWhaleTradeUsd: number;
   infuraTier: "core" | "developer" | "team" | "growth";
+
+  // Mempool Monitoring - sees PENDING trades (faster than on-chain!)
+  mempoolMonitorEnabled: boolean;
+  mempoolGasPriceMultiplier: number;  // How much higher gas to use (1.2 = 20% higher)
 }
 
 function loadConfig(): ChurnConfig {
@@ -356,6 +364,12 @@ function loadConfig(): ChurnConfig {
     // Infura tier plan: "core" (free), "developer" ($50/mo), "team" ($225/mo), "growth" (enterprise)
     // Affects rate limiting to avoid hitting API caps
     infuraTier: parseInfuraTierEnv(process.env.INFURA_TIER),
+
+    // Mempool Monitoring - Watch for PENDING whale transactions (FASTER than on-chain!)
+    // Sees trades BEFORE they're confirmed, allowing us to copy at the same price
+    mempoolMonitorEnabled: envBool("MEMPOOL_MONITOR_ENABLED", true),
+    // Gas price multiplier for priority execution (1.2 = 20% higher gas than whale's tx)
+    mempoolGasPriceMultiplier: envNum("MEMPOOL_GAS_MULTIPLIER", 1.2),
   };
 }
 
@@ -2538,6 +2552,7 @@ interface ExecutionResult {
   filledUsd?: number;
   filledPriceCents?: number;
   reason?: string;
+  pending?: boolean;  // True if order is GTC and waiting for fill
 }
 
 interface TokenMarketData {
@@ -2752,7 +2767,7 @@ class ExecutionEngine {
       // For BUY: We're willing to pay MORE (price + slippage) to ensure fill
       // For SELL: We're willing to accept LESS (price - slippage) to ensure fill
       const slippageMultiplier = dynamicSlippagePct / 100;
-      const price = side === "LONG" 
+      const fokPrice = side === "LONG" 
         ? bestPrice * (1 + slippageMultiplier)  // BUY: pay up to X% more
         : bestPrice * (1 - slippageMultiplier); // SELL: accept X% less
       
@@ -2760,16 +2775,24 @@ class ExecutionEngine {
 
       const { Side, OrderType } = await import("@polymarket/clob-client");
       
+      // ═══════════════════════════════════════════════════════════════════════
+      // COMBO ORDER STRATEGY: Try FOK first, fall back to GTC if needed
+      // FOK = instant fill or nothing (best for racing whale trades)
+      // GTC = post limit order (backup if FOK misses)
+      // ═══════════════════════════════════════════════════════════════════════
+      
       // Measure actual order execution time
       const execStart = performance.now();
-      const order = await this.client.createMarketOrder({
+      
+      // STEP 1: Try FOK (Fill-Or-Kill) first - instant execution
+      const fokOrder = await this.client.createMarketOrder({
         side: side === "LONG" ? Side.BUY : Side.SELL,
         tokenID: tokenId,
         amount: shares,
-        price, // Slippage-adjusted price
+        price: fokPrice, // Slippage-adjusted price
       });
 
-      const response = await this.client.postOrder(order, OrderType.FOK);
+      const fokResponse = await this.client.postOrder(fokOrder, OrderType.FOK);
       const execLatencyMs = performance.now() - execStart;
       
       // Log execution timing for analysis
@@ -2777,27 +2800,57 @@ class ExecutionEngine {
         console.warn(`⏱️ Slow order execution: ${execLatencyMs.toFixed(0)}ms - consider the slippage impact`);
       }
 
-      if (response.success) {
+      if (fokResponse.success) {
         const position = this.positionManager.openPosition({
           tokenId, marketId, side,
-          entryPriceCents: bestPrice * 100, // Record actual entry, not slippage-adjusted
+          entryPriceCents: bestPrice * 100,
           sizeUsd,
           referencePriceCents,
           evSnapshot: evMetrics,
           biasDirection,
         });
-        // Store opposite token for hedging
         if (oppositeTokenId) {
           this.positionManager.setOppositeToken(position.id, oppositeTokenId);
         }
-        console.log(`📥 ${side} $${sizeUsd.toFixed(2)} @ ${(bestPrice * 100).toFixed(1)}¢ (slippage: ${dynamicSlippagePct.toFixed(1)}%, exec: ${execLatencyMs.toFixed(0)}ms)`);
+        console.log(`📥 FOK ${side} $${sizeUsd.toFixed(2)} @ ${(bestPrice * 100).toFixed(1)}¢ (slippage: ${dynamicSlippagePct.toFixed(1)}%, exec: ${execLatencyMs.toFixed(0)}ms)`);
         return { success: true, filledUsd: sizeUsd, filledPriceCents: bestPrice * 100 };
       }
 
-      // Report order rejection to GitHub
+      // STEP 2: FOK failed - try GTC (limit order) as fallback
+      // Use a tighter price for GTC - we're willing to wait for a better fill
+      console.log(`⏳ FOK missed, trying GTC limit order...`);
+      
+      const gtcPrice = side === "LONG"
+        ? bestPrice * (1 + slippageMultiplier * 0.5)  // Tighter slippage for GTC
+        : bestPrice * (1 - slippageMultiplier * 0.5);
+      
+      try {
+        const gtcOrder = await this.client.createOrder({
+          side: side === "LONG" ? Side.BUY : Side.SELL,
+          tokenID: tokenId,
+          size: shares,
+          price: gtcPrice,
+        });
+
+        const gtcResponse = await this.client.postOrder(gtcOrder, OrderType.GTC);
+        
+        if (gtcResponse.success) {
+          // GTC order posted - it will sit on the book until filled
+          console.log(`📋 GTC order posted @ ${(gtcPrice * 100).toFixed(1)}¢ - waiting for fill...`);
+          
+          // Note: For GTC, we don't immediately open a position
+          // The position will be tracked when the order fills (via on-chain monitor)
+          // For now, return success but note it's pending
+          return { success: true, filledUsd: 0, filledPriceCents: gtcPrice * 100, pending: true };
+        }
+      } catch (gtcErr) {
+        console.warn(`⚠️ GTC fallback also failed: ${gtcErr instanceof Error ? gtcErr.message : gtcErr}`);
+      }
+
+      // Both FOK and GTC failed
       reportError(
-        "Order Rejected",
-        `Entry order rejected for ${tokenId.slice(0, 16)}...`,
+        "Order Rejected (FOK + GTC)",
+        `Both FOK and GTC orders rejected for ${tokenId.slice(0, 16)}...`,
         "warning",
         { tokenId, side, sizeUsd, priceCents: bestPrice * 100, marketId, slippagePct: dynamicSlippagePct, execLatencyMs }
       );
@@ -3177,6 +3230,7 @@ class ChurnEngine {
   private decisionEngine: DecisionEngine;
   private executionEngine: ExecutionEngine;
   private onchainMonitor: OnChainMonitor | null = null;
+  private mempoolMonitor: MempoolMonitor | null = null;
   private marketScanner: MarketScanner;
   private dynamicReserveManager: DynamicReserveManager;
   private latencyMonitor: LatencyMonitor;
@@ -3198,6 +3252,10 @@ class ChurnEngine {
   // Maps tokenId to timestamp when it was sold
   private recentlySoldPositions = new Map<string, number>();
   private readonly SOLD_POSITION_COOLDOWN_MS = 30 * 1000; // 30 seconds cooldown
+  
+  // Pending whale signals from mempool - for fast copy trading
+  private pendingWhaleSignals: Map<string, PendingTradeSignal> = new Map();
+  private readonly PENDING_SIGNAL_EXPIRY_MS = 30 * 1000; // 30 seconds
 
   // Intervals
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
@@ -3553,6 +3611,81 @@ class ChurnEngine {
     } catch (err) {
       console.warn(`⚠️ On-chain monitor init failed: ${err instanceof Error ? err.message : err}`);
       console.warn(`   Falling back to API polling only (still works, just slower)`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MEMPOOL MONITOR - See PENDING trades BEFORE they confirm!
+    // This is FASTER than on-chain events - we can copy at the same price
+    // ═══════════════════════════════════════════════════════════════════════
+    if (this.config.mempoolMonitorEnabled) {
+      try {
+        // Detect WebSocket URL from RPC URL
+        let wsUrl = this.config.rpcUrl;
+        if (wsUrl.startsWith("https://")) {
+          wsUrl = wsUrl.replace("https://", "wss://").replace("/v3/", "/ws/v3/");
+        }
+
+        const mempoolConfig = createMempoolMonitorConfig(
+          wsUrl,
+          this.biasAccumulator.getWhaleWallets(),
+          {
+            enabled: true,
+            minTradeSizeUsd: this.config.onchainMinWhaleTradeUsd,
+            gasPriceMultiplier: this.config.mempoolGasPriceMultiplier,
+          }
+        );
+
+        this.mempoolMonitor = new MempoolMonitor(mempoolConfig);
+
+        // ═══════════════════════════════════════════════════════════════════
+        // PENDING BUY → COPY IMMEDIATELY (faster than on-chain!)
+        // ═══════════════════════════════════════════════════════════════════
+        this.mempoolMonitor.onPendingTrade((signal) => {
+          if (signal.side === "BUY") {
+            console.log(`🔮 MEMPOOL: Whale BUY pending | $${signal.estimatedSizeUsd.toFixed(0)} | Token: ${signal.tokenId.slice(0, 12)}...`);
+            console.log(`   ⚡ COPY SIGNAL - Execute with gas > ${(signal.gasPriceGwei * this.config.mempoolGasPriceMultiplier).toFixed(1)} gwei`);
+            
+            // Store the pending signal for the next cycle to act on
+            this.pendingWhaleSignals.set(signal.tokenId, signal);
+            
+            // Feed to bias accumulator immediately
+            this.biasAccumulator.recordTrade({
+              tokenId: signal.tokenId,
+              wallet: signal.whaleWallet,
+              side: "BUY",
+              sizeUsd: signal.estimatedSizeUsd,
+              timestamp: signal.detectedAt,
+            });
+          }
+
+          // ═══════════════════════════════════════════════════════════════════
+          // PENDING SELL → EARLY EXIT WARNING (get out before price drops!)
+          // ═══════════════════════════════════════════════════════════════════
+          if (signal.side === "SELL") {
+            // Check if we hold this token
+            const ourPositions = this.positionManager.getPositionsByToken(signal.tokenId);
+            if (ourPositions.length > 0) {
+              console.log(`🚨 MEMPOOL: Whale SELLING our token! | $${signal.estimatedSizeUsd.toFixed(0)}`);
+              console.log(`   ⚠️ EARLY EXIT SIGNAL - Consider selling before price drops!`);
+              
+              // Mark positions for urgent exit
+              for (const pos of ourPositions) {
+                console.log(`   📍 Position ${pos.id.slice(0, 8)}... | Entry: ${pos.entryPriceCents.toFixed(1)}¢ | Size: $${pos.entrySizeUsd.toFixed(2)}`);
+                // The next cycle will see this and can prioritize exit
+              }
+            }
+          }
+        });
+
+        const started = await this.mempoolMonitor.start();
+        if (started) {
+          console.log(`🔮 Mempool monitor: ACTIVE | Watching for PENDING whale trades`);
+          console.log(`🔮 Speed advantage: See trades BEFORE confirmation → copy at same price!`);
+        }
+      } catch (err) {
+        console.warn(`⚠️ Mempool monitor init failed: ${err instanceof Error ? err.message : err}`);
+        console.warn(`   Note: Not all RPC providers support pending tx subscription`);
+      }
     }
   }
 
