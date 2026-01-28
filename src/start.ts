@@ -3442,10 +3442,18 @@ class ChurnEngine {
     // WEB DASHBOARD - Glances-style real-time monitoring (accessible via port)
     // ═══════════════════════════════════════════════════════════════════════
     if (shouldStartWebDashboard()) {
-      this.webDashboard = initWebDashboard();
-      this.webDashboard.start();
-      this.webDashboard.setTradingMode(this.config.liveTradingEnabled);
-      console.log(`🌐 Web dashboard enabled at http://localhost:${this.webDashboard.getPort()}`);
+      try {
+        this.webDashboard = initWebDashboard();
+        this.webDashboard.start();
+        this.webDashboard.setTradingMode(this.config.liveTradingEnabled);
+        console.log(`🌐 Web dashboard enabled at http://localhost:${this.webDashboard.getPort()}`);
+      } catch (err) {
+        // Log error but don't prevent bot from starting
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.warn(`⚠️ Web dashboard failed to start: ${errMsg}`);
+        console.warn(`   Bot will continue without dashboard functionality`);
+        this.webDashboard = null;
+      }
     }
 
     // Authenticate with CLOB
