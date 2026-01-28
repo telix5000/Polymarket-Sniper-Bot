@@ -35,6 +35,35 @@ export const POLYMARKET_API = {
   STRAPI: "https://strapi-matic.poly.market",
 } as const;
 
+// WebSocket Endpoints and Configuration
+export const POLYMARKET_WS = {
+  // Official CLOB WebSocket endpoints
+  BASE_URL: envStr("POLY_WS_BASE_URL", "wss://ws-subscriptions-clob.polymarket.com/ws/"),
+  USER_URL: envStr("POLY_WS_USER_URL", "wss://ws-subscriptions-clob.polymarket.com/ws/user"),
+  
+  // Reconnection settings (exponential backoff with jitter)
+  RECONNECT_BASE_MS: envNum("WS_RECONNECT_BASE_MS", 500),
+  RECONNECT_MAX_MS: envNum("WS_RECONNECT_MAX_MS", 30000),
+  
+  // Staleness threshold - data older than this triggers REST fallback
+  STALE_MS: envNum("WS_STALE_MS", 2000),
+  
+  // REST fallback rate limiting
+  REST_FALLBACK_MIN_INTERVAL_MS: envNum("REST_FALLBACK_MIN_INTERVAL_MS", 500),
+  
+  // Memory protection - cap tracked tokens
+  MAX_TOKENS: envNum("MARKETDATA_MAX_TOKENS", 500),
+  
+  // Depth window for shallow depth calculation (cents from touch)
+  DEPTH_WINDOW_CENTS: envNum("MARKETDATA_DEPTH_WINDOW_CENTS", 5),
+  
+  // Ping/pong heartbeat interval
+  HEARTBEAT_INTERVAL_MS: envNum("WS_HEARTBEAT_INTERVAL_MS", 30000),
+  
+  // Connection timeout
+  CONNECTION_TIMEOUT_MS: envNum("WS_CONNECTION_TIMEOUT_MS", 10000),
+} as const;
+
 // Polygon Network
 export const POLYGON = {
   CHAIN_ID: 137,

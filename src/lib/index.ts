@@ -23,3 +23,8 @@ export * from "./onchain-monitor";
 export * from "./market";
 export * from "./github-reporter";
 export * from "./latency-monitor";
+// WebSocket market data layer
+export * from "./market-data-store";
+export * from "./ws-market-client";
+export * from "./ws-user-client";
+export * from "./market-data-facade";
