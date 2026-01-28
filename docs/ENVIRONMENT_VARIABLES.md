@@ -108,7 +108,7 @@ WHALE_PRICE_MAX=
 ```
 
 **Notes:**
-- Default range is 0.25-0.45 (25¢-45¢) - active out of the box
+- Default range is 0.35-0.65 (35¢-65¢) - active out of the box
 - Set to empty string (`WHALE_PRICE_MIN=`) to disable a bound
 - If `WHALE_PRICE_MIN > WHALE_PRICE_MAX`, a warning is logged and filtering is disabled
 - Trades without price information pass through the filter

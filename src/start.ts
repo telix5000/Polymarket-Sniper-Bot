@@ -147,27 +147,6 @@ function shouldCooldownOnFailure(reason: string | undefined): boolean {
 }
 
 /**
- * Parse an optional float from environment variable for price values
- * Returns undefined if not set or invalid
- * Warns if value is outside expected [0,1] range (suggesting user may have used percentage)
- */
-function parseOptionalFloat(value: string | undefined): number | undefined {
-  if (value === undefined || value === "") return undefined;
-  const parsed = parseFloat(value);
-  if (isNaN(parsed)) return undefined;
-  
-  // Warn if value seems like a percentage (outside [0,1] range)
-  if (parsed < 0 || parsed > 1) {
-    console.warn(
-      `⚠️ Price value ${parsed} is outside expected [0,1] range. ` +
-      `Use decimal format (e.g., 0.25 for 25¢, not 25).`
-    );
-  }
-  
-  return parsed;
-}
-
-/**
  * Parse an optional float with a default value
  * Returns default if not set, undefined if explicitly set to empty string (to disable)
  * Warns if value is outside expected [0,1] range
@@ -188,6 +167,8 @@ function parseOptionalFloatWithDefault(value: string | undefined, defaultValue: 
       `⚠️ Price value ${parsed} is outside expected [0,1] range. ` +
       `Use decimal format (e.g., 0.25 for 25¢, not 25).`
     );
+    // Fall back to the provided default to avoid using an invalid configuration value
+    return defaultValue;
   }
   
   return parsed;

@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { test, describe, beforeEach, afterEach } from "node:test";
+import { test, describe } from "node:test";
 
 /**
  * Unit tests for Whale Price-Range Filtering
