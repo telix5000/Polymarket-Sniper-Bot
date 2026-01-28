@@ -153,3 +153,95 @@ describe("mapOrderFailureReason", () => {
     );
   });
 });
+
+describe("DiagStep types", () => {
+  test("should include WHALE_HEDGE and SCAN_HEDGE steps", async () => {
+    // Import the type and verify the new step values are valid
+    const { DiagTracer } = await import("../../../src/lib/diag-mode");
+
+    // Create a tracer and trace hedge-related events
+    const tracer = new DiagTracer();
+
+    // These should compile without errors (type-level test)
+    tracer.trace({
+      step: "WHALE_HEDGE",
+      action: "hedge_trigger_evaluated",
+      result: "OK",
+      detail: {
+        entryPriceCents: 50,
+        currentPriceCents: 34,
+        adverseMoveCents: 16,
+        triggerThresholdCents: 16,
+        shouldTrigger: true,
+        side: "LONG",
+      },
+    });
+
+    tracer.trace({
+      step: "SCAN_HEDGE",
+      action: "hard_stop_evaluated",
+      result: "OK",
+      detail: {
+        entryPriceCents: 50,
+        currentPriceCents: 20,
+        adverseMoveCents: 30,
+        hardStopThresholdCents: 30,
+        shouldTrigger: true,
+        side: "LONG",
+      },
+    });
+
+    // Verify trace events are recorded
+    const whaleHedgeEvents = tracer.getStepEvents("WHALE_HEDGE");
+    assert.ok(whaleHedgeEvents.length > 0, "Should have WHALE_HEDGE events");
+    assert.strictEqual(
+      whaleHedgeEvents[0].action,
+      "hedge_trigger_evaluated",
+      "Should have hedge_trigger_evaluated action",
+    );
+
+    const scanHedgeEvents = tracer.getStepEvents("SCAN_HEDGE");
+    assert.ok(scanHedgeEvents.length > 0, "Should have SCAN_HEDGE events");
+    assert.strictEqual(
+      scanHedgeEvents[0].action,
+      "hard_stop_evaluated",
+      "Should have hard_stop_evaluated action",
+    );
+  });
+
+  test("DiagReason should include hedge-specific reasons", async () => {
+    // Import and verify the new DiagReason values are valid
+    const { DiagTracer } = await import("../../../src/lib/diag-mode");
+
+    const tracer = new DiagTracer();
+
+    // These should compile without errors (type-level test)
+    tracer.trace({
+      step: "WHALE_HEDGE",
+      action: "hedge_skipped",
+      result: "SKIPPED",
+      reason: "hedge_not_triggered",
+    });
+
+    tracer.trace({
+      step: "SCAN_HEDGE",
+      action: "hedge_order_failed",
+      result: "REJECTED",
+      reason: "hedge_order_rejected",
+    });
+
+    tracer.trace({
+      step: "WHALE_HEDGE",
+      action: "hard_stop_triggered",
+      result: "OK",
+      reason: "hard_stop_triggered",
+    });
+
+    // Verify events are recorded with correct reasons
+    const events = tracer.getEvents();
+    const reasons = events.map((e) => e.reason).filter(Boolean);
+    assert.ok(reasons.includes("hedge_not_triggered"));
+    assert.ok(reasons.includes("hedge_order_rejected"));
+    assert.ok(reasons.includes("hard_stop_triggered"));
+  });
+});

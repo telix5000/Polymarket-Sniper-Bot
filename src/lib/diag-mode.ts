@@ -1,11 +1,13 @@
 /**
  * Diagnostic Mode (DIAG_MODE) - One-shot workflow for auth/execution verification
  *
- * When DIAG_MODE=true, runs a deterministic 4-step workflow:
+ * When DIAG_MODE=true, runs a deterministic workflow:
  * 1. WHALE_BUY: Wait for first whale signal, attempt BUY of 1 share
  * 2. WHALE_SELL: Attempt SELL of 1 share (same market/outcome)
- * 3. SCAN_BUY: Run market scan once, attempt BUY of 1 share
- * 4. SCAN_SELL: Attempt SELL of 1 share (same market/outcome)
+ * 3. WHALE_HEDGE: If BUY executed, simulate adverse move and verify hedge logic
+ * 4. SCAN_BUY: Run market scan once, attempt BUY of 1 share
+ * 5. SCAN_SELL: Attempt SELL of 1 share (same market/outcome)
+ * 6. SCAN_HEDGE: If BUY executed, simulate adverse move and verify hedge logic
  *
  * Then EXIT (do not resume normal operations).
  * Exit code 0 = workflow completed (even if actions rejected/skipped)
@@ -23,7 +25,13 @@ import { randomUUID } from "crypto";
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** Diagnostic workflow steps */
-export type DiagStep = "WHALE_BUY" | "WHALE_SELL" | "SCAN_BUY" | "SCAN_SELL";
+export type DiagStep =
+  | "WHALE_BUY"
+  | "WHALE_SELL"
+  | "WHALE_HEDGE"
+  | "SCAN_BUY"
+  | "SCAN_SELL"
+  | "SCAN_HEDGE";
 
 /** Result of a diagnostic action */
 export type DiagResult = "OK" | "REJECTED" | "SKIPPED" | "ERROR";
@@ -41,6 +49,12 @@ export type DiagReason =
   | "orderbook_unavailable"
   | "insufficient_liquidity"
   | "price_out_of_range"
+  | "spread_too_wide"
+  | "invalid_orderbook"
+  // Price formation
+  | "price_clamped"
+  | "price_too_high"
+  | "price_too_low"
   // Trading limits
   | "cooldown_active"
   | "risk_limits_blocked"
@@ -48,12 +62,26 @@ export type DiagReason =
   | "no_wallet_credentials"
   | "ws_disconnected"
   | "api_error"
+  | "cloudflare_blocked"
+  | "network_error"
+  | "timeout"
+  | "auth_failed"
+  | "rate_limited"
+  // Balance/allowance
+  | "insufficient_balance"
+  | "insufficient_allowance"
   // Sell-specific
   | "no_position_to_sell"
   | "sell_skipped_no_buy"
   // Timeouts
   | "timeout_waiting_for_whale"
   | "order_timeout"
+  // VPN routing
+  | "vpn_write_not_routed"
+  // Hedge-specific
+  | "hedge_not_triggered"
+  | "hedge_order_rejected"
+  | "hard_stop_triggered"
   // Other
   | "unknown_error";
 

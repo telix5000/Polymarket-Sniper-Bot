@@ -791,3 +791,497 @@ export function checkVpnForTrading(logger?: Logger): string[] {
 
   return warnings;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VPN ROUTING PLAN & VALIDATION (Deliverable G)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Network egress categories
+ */
+export type EgressCategory = "RPC" | "READ_API" | "WRITE_API" | "WEBSOCKET";
+
+/**
+ * Expected route type for a category
+ */
+export type ExpectedRoute = "VPN" | "BYPASS";
+
+/**
+ * Host routing configuration
+ */
+export interface HostRoutingInfo {
+  hostname: string;
+  category: EgressCategory;
+  expectedRoute: ExpectedRoute;
+  resolvedIps: string[];
+  actualInterface?: string;
+  actualGateway?: string;
+  routeMatches: boolean;
+}
+
+/**
+ * Full routing plan
+ */
+export interface RoutingPlan {
+  timestamp: string;
+  vpnActive: boolean;
+  vpnType: "wireguard" | "openvpn" | "none";
+  preVpnGateway: string;
+  preVpnInterface: string;
+  hosts: HostRoutingInfo[];
+  allWritesRouteCorrectly: boolean;
+}
+
+/**
+ * Known hosts and their categories.
+ * CRITICAL: clob.polymarket.com is WRITE_API and must NEVER be bypassed.
+ */
+const KNOWN_HOSTS: Array<{
+  hostname: string;
+  category: EgressCategory;
+  expectedRoute: ExpectedRoute;
+}> = [
+  // READ APIs - default to VPN, but can be explicitly bypassed for speed
+  // Set VPN_BYPASS_POLYMARKET_READS=true to bypass VPN
+  {
+    hostname: "gamma-api.polymarket.com",
+    category: "READ_API",
+    expectedRoute: "VPN",
+  },
+  {
+    hostname: "data-api.polymarket.com",
+    category: "READ_API",
+    expectedRoute: "VPN",
+  },
+
+  // WRITE APIs - MUST go through VPN
+  {
+    hostname: "clob.polymarket.com",
+    category: "WRITE_API",
+    expectedRoute: "VPN",
+  },
+
+  // WebSocket - configurable bypass
+  {
+    hostname: "ws-subscriptions-clob.polymarket.com",
+    category: "WEBSOCKET",
+    expectedRoute: "BYPASS",
+  },
+
+  // RPC - typically bypassed
+  {
+    hostname: "polygon-mainnet.infura.io",
+    category: "RPC",
+    expectedRoute: "BYPASS",
+  },
+];
+
+/**
+ * Resolve all IPv4 addresses for a hostname.
+ * Returns multiple IPs for hosts behind load balancers (like Cloudflare).
+ */
+function resolveAllIpv4(hostname: string, logger?: Logger): string[] {
+  if (!isValidHostname(hostname)) {
+    logger?.warn?.(`Invalid hostname format: ${hostname}`);
+    return [];
+  }
+
+  try {
+    // Get all IPv4 addresses using getent ahostsv4
+    const output = execSync(
+      `getent ahostsv4 ${hostname} 2>/dev/null | awk '{print $1}' | sort -u`,
+      {
+        encoding: "utf8",
+      },
+    ).trim();
+
+    if (!output) return [];
+
+    const ips = output.split("\n").filter((ip) => ip && isValidIp(ip));
+    return ips;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get the interface and gateway used to reach a specific IP.
+ * Uses `ip route get` to determine the actual route.
+ */
+function getRouteForIp(ip: string): { interface?: string; gateway?: string } {
+  if (!isValidIp(ip)) {
+    return {};
+  }
+
+  try {
+    // ip route get <ip> shows the route used to reach that IP
+    const output = execSync(`ip route get ${ip} 2>/dev/null`, {
+      encoding: "utf8",
+    }).trim();
+
+    // Parse output like: "1.2.3.4 via 10.0.0.1 dev eth0 src 192.168.1.2"
+    const viaMatch = output.match(/via\s+(\d+\.\d+\.\d+\.\d+)/);
+    const devMatch = output.match(/dev\s+(\S+)/);
+
+    return {
+      gateway: viaMatch?.[1],
+      interface: devMatch?.[1],
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Check if a route goes through VPN (i.e., NOT through the pre-VPN gateway/interface).
+ */
+function isRouteThroughVpn(route: {
+  interface?: string;
+  gateway?: string;
+}): boolean {
+  if (!preVpnRouting?.gateway || !preVpnRouting?.iface) {
+    // Can't determine - assume VPN if we have an interface
+    return !!route.interface;
+  }
+
+  // If route uses the pre-VPN gateway or interface, it's bypassing VPN
+  const usesBypass =
+    route.gateway === preVpnRouting.gateway ||
+    route.interface === preVpnRouting.iface;
+
+  return !usesBypass;
+}
+
+/**
+ * Generate a routing plan showing all network egress destinations and their routes.
+ * This should be called at startup (after VPN is configured) for diagnostics.
+ *
+ * @param rpcUrl - The RPC URL to include in the plan
+ * @param logger - Optional logger
+ * @returns Routing plan with all hosts and their routes
+ */
+export function generateRoutingPlan(
+  rpcUrl?: string,
+  logger?: Logger,
+): RoutingPlan {
+  const hosts: HostRoutingInfo[] = [];
+
+  // Build host list including custom RPC
+  const hostsToCheck = [...KNOWN_HOSTS];
+
+  // Add custom RPC if provided and not already in list
+  if (rpcUrl) {
+    try {
+      const rpcHostname = new URL(rpcUrl).hostname;
+      if (!hostsToCheck.find((h) => h.hostname === rpcHostname)) {
+        hostsToCheck.push({
+          hostname: rpcHostname,
+          category: "RPC",
+          expectedRoute:
+            process.env.VPN_BYPASS_RPC === "false" ? "VPN" : "BYPASS",
+        });
+      }
+    } catch {
+      // Invalid URL - skip
+    }
+  }
+
+  // Check each host
+  for (const hostConfig of hostsToCheck) {
+    // Adjust expected route based on config
+    let expectedRoute = hostConfig.expectedRoute;
+
+    // WebSocket bypass is configurable (default: BYPASS for latency)
+    // Set VPN_BYPASS_POLYMARKET_WS=false to route WS through VPN
+    if (
+      hostConfig.category === "WEBSOCKET" &&
+      process.env.VPN_BYPASS_POLYMARKET_WS === "false"
+    ) {
+      expectedRoute = "VPN";
+    }
+
+    // READ API bypass is configurable (default: VPN for conservative approach)
+    // Set VPN_BYPASS_POLYMARKET_READS=true to bypass VPN for READ APIs
+    // NOTE: This is intentionally more conservative than WebSocket/RPC defaults
+    if (
+      hostConfig.category === "READ_API" &&
+      process.env.VPN_BYPASS_POLYMARKET_READS === "true"
+    ) {
+      expectedRoute = "BYPASS";
+    }
+
+    // RPC bypass is configurable (default: BYPASS for speed)
+    // Set VPN_BYPASS_RPC=false to route RPC through VPN
+    if (
+      hostConfig.category === "RPC" &&
+      process.env.VPN_BYPASS_RPC === "false"
+    ) {
+      expectedRoute = "VPN";
+    }
+
+    // WRITE_API must ALWAYS go through VPN - never bypassed
+    if (hostConfig.category === "WRITE_API") {
+      expectedRoute = "VPN";
+    }
+
+    const resolvedIps = resolveAllIpv4(hostConfig.hostname, logger);
+    const firstIp = resolvedIps[0];
+    const route = firstIp ? getRouteForIp(firstIp) : {};
+
+    const actuallyThroughVpn =
+      vpnActive && firstIp ? isRouteThroughVpn(route) : false;
+    const routeMatches =
+      !vpnActive ||
+      (expectedRoute === "VPN" && actuallyThroughVpn) ||
+      (expectedRoute === "BYPASS" && !actuallyThroughVpn);
+
+    hosts.push({
+      hostname: hostConfig.hostname,
+      category: hostConfig.category,
+      expectedRoute,
+      resolvedIps,
+      actualInterface: route.interface,
+      actualGateway: route.gateway,
+      routeMatches,
+    });
+  }
+
+  // Check if all WRITE_API hosts route correctly
+  const allWritesRouteCorrectly = hosts
+    .filter((h) => h.category === "WRITE_API")
+    .every((h) => h.routeMatches);
+
+  const plan: RoutingPlan = {
+    timestamp: new Date().toISOString(),
+    vpnActive,
+    vpnType,
+    preVpnGateway: preVpnRouting?.gateway ?? "",
+    preVpnInterface: preVpnRouting?.iface ?? "",
+    hosts,
+    allWritesRouteCorrectly,
+  };
+
+  return plan;
+}
+
+/**
+ * Print the routing plan to console in a human-readable format.
+ * Safe for DIAG mode - does not reveal private IPs.
+ */
+export function printRoutingPlan(plan: RoutingPlan, logger?: Logger): void {
+  console.log("");
+  console.log("═".repeat(70));
+  console.log("  🌐 VPN ROUTING PLAN");
+  console.log("═".repeat(70));
+  console.log(`  Timestamp: ${plan.timestamp}`);
+  console.log(`  VPN Active: ${plan.vpnActive ? "YES" : "NO"}`);
+  console.log(`  VPN Type: ${plan.vpnType}`);
+  console.log("");
+
+  console.log("  HOSTS:");
+  console.log("  " + "-".repeat(66));
+  console.log(
+    "  " +
+      "Hostname".padEnd(40) +
+      "Category".padEnd(12) +
+      "Expected".padEnd(10) +
+      "OK",
+  );
+  console.log("  " + "-".repeat(66));
+
+  for (const host of plan.hosts) {
+    const ok = host.routeMatches ? "✅" : "❌";
+    console.log(
+      "  " +
+        host.hostname.padEnd(40) +
+        host.category.padEnd(12) +
+        host.expectedRoute.padEnd(10) +
+        ok,
+    );
+
+    // Show warning for misrouted WRITE hosts
+    if (!host.routeMatches && host.category === "WRITE_API") {
+      console.log(
+        `     ⚠️  WRITE host not routed through VPN! Orders may be blocked.`,
+      );
+    }
+  }
+
+  console.log("  " + "-".repeat(66));
+  console.log("");
+
+  if (!plan.allWritesRouteCorrectly) {
+    console.log("  ❌ CRITICAL: Not all WRITE hosts route through VPN!");
+    console.log("     Live trading may fail due to Cloudflare geo-blocking.");
+    console.log("");
+  } else if (plan.vpnActive) {
+    console.log("  ✅ All WRITE hosts correctly route through VPN.");
+    console.log("");
+  }
+
+  console.log("═".repeat(70));
+  console.log("");
+
+  // Also emit structured JSON for DIAG
+  const safeEvent = {
+    event: "VPN_ROUTING_PLAN",
+    vpnActive: plan.vpnActive,
+    vpnType: plan.vpnType,
+    allWritesRouteCorrectly: plan.allWritesRouteCorrectly,
+    hostCount: plan.hosts.length,
+    misroutedWriteHosts: plan.hosts
+      .filter((h) => h.category === "WRITE_API" && !h.routeMatches)
+      .map((h) => h.hostname),
+  };
+  console.log(JSON.stringify(safeEvent));
+
+  // Emit GitHub Actions annotation if WRITE hosts are misrouted
+  if (!plan.allWritesRouteCorrectly) {
+    const misrouted = plan.hosts
+      .filter((h) => h.category === "WRITE_API" && !h.routeMatches)
+      .map((h) => h.hostname)
+      .join(", ");
+
+    if (process.env.GITHUB_ACTIONS === "true") {
+      console.log(
+        `::error::VPN routing error: WRITE hosts (${misrouted}) not routed through VPN. Orders may be geo-blocked.`,
+      );
+    }
+
+    logger?.error?.(
+      `VPN routing error: WRITE hosts (${misrouted}) not routed through VPN. Orders may be geo-blocked.`,
+    );
+  }
+}
+
+/**
+ * Validate that all WRITE hosts are routed through VPN.
+ * Returns false if any WRITE host is not properly routed.
+ *
+ * @param rpcUrl - Optional RPC URL to include
+ * @param logger - Optional logger
+ * @returns true if all WRITE hosts route through VPN
+ */
+export function validateWriteRouting(
+  rpcUrl?: string,
+  logger?: Logger,
+): boolean {
+  if (!vpnActive) {
+    logger?.warn?.("VPN not active - cannot validate WRITE routing");
+    return false;
+  }
+
+  const plan = generateRoutingPlan(rpcUrl, logger);
+
+  if (!plan.allWritesRouteCorrectly) {
+    const misrouted = plan.hosts
+      .filter((h) => h.category === "WRITE_API" && !h.routeMatches)
+      .map((h) => h.hostname);
+
+    logger?.error?.(
+      `WRITE hosts not routed through VPN: ${misrouted.join(", ")}. ` +
+        `Live trading may fail due to geo-blocking.`,
+    );
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Add bypass routes for ALL resolved IPs of a hostname.
+ * This handles hosts behind load balancers (like Cloudflare) that may have multiple IPs.
+ *
+ * @param hostname - The hostname to bypass
+ * @param logger - Optional logger
+ * @returns Array of IPs that were routed, or empty array if failed
+ */
+export function addMultiIpBypassRoute(
+  hostname: string,
+  logger?: Logger,
+): string[] {
+  if (!isValidHostname(hostname)) {
+    logger?.warn?.(`Invalid hostname format: ${hostname}`);
+    return [];
+  }
+
+  const effectiveGateway = preVpnRouting?.gateway;
+  const effectiveIface = preVpnRouting?.iface;
+
+  if (!effectiveGateway || !effectiveIface) {
+    logger?.warn?.(
+      `Cannot add bypass for ${hostname}: no pre-VPN routing info available`,
+    );
+    return [];
+  }
+
+  const ips = resolveAllIpv4(hostname, logger);
+  const addedIps: string[] = [];
+
+  for (const ip of ips) {
+    try {
+      // Check if route already exists
+      const existingRoute = execSync(`ip route show ${ip}/32 2>/dev/null`, {
+        encoding: "utf8",
+      }).trim();
+
+      if (existingRoute) {
+        // Route exists - skip
+        addedIps.push(ip);
+        continue;
+      }
+
+      // Add new route
+      execSync(
+        `ip route add ${ip}/32 via ${effectiveGateway} dev ${effectiveIface}`,
+        { stdio: "pipe" },
+      );
+
+      addedIps.push(ip);
+      logger?.debug?.(`Added bypass route: ${ip} via ${effectiveGateway}`);
+    } catch {
+      // Route may already exist or command failed
+      logger?.warn?.(`Failed to add bypass route for ${ip}`);
+    }
+  }
+
+  if (addedIps.length > 0) {
+    logger?.info?.(
+      `Bypass route for ${hostname}: ${addedIps.length} IPs via ${effectiveGateway}`,
+    );
+  }
+
+  return addedIps;
+}
+
+/**
+ * Emit a structured route check event for diagnostics.
+ */
+export function emitRouteCheckEvent(
+  host: string,
+  ip: string,
+  route: { interface?: string; gateway?: string },
+  expected: ExpectedRoute,
+  ok: boolean,
+): void {
+  const event = {
+    step: "VPN_ROUTING",
+    action: "route_check",
+    host,
+    ip,
+    via: route.gateway,
+    dev: route.interface,
+    expected,
+    ok,
+    timestamp: new Date().toISOString(),
+  };
+  console.log(JSON.stringify(event));
+}
+
+/**
+ * Check if the VPN_BYPASS_POLYMARKET_WS flag is enabled.
+ * Default is false (conservative - route WS through VPN).
+ */
+export function isWsBypassEnabled(): boolean {
+  return process.env.VPN_BYPASS_POLYMARKET_WS === "true";
+}
