@@ -96,6 +96,30 @@ export interface DynamicHedgeConfig {
   volatilityEwmaDecay: number;
   /** EWMA decay for velocity - default: 0.15 */
   velocityEwmaDecay: number;
+
+  // Hedge outcome learning
+  /** Max hedge outcomes to store for learning - default: 100 */
+  maxHedgeOutcomesHistory: number;
+  /** Low effectiveness threshold (reduce hedge ratio below this) - default: 0.3 */
+  lowEffectivenessThreshold: number;
+  /** High effectiveness threshold (increase hedge ratio above this) - default: 0.7 */
+  highEffectivenessThreshold: number;
+  /** Recent outcomes window for effectiveness calculation - default: 20 */
+  effectivenessWindowSize: number;
+
+  // Tail risk settings
+  /** Percentile for tail risk calculation - default: 0.9 (90th) */
+  tailRiskPercentile: number;
+  /** Buffer multiplier for max adverse calculation - default: 1.5 */
+  tailRiskBufferMultiplier: number;
+
+  // Velocity tightening
+  /** Max cents to tighten trigger due to velocity - default: 4 */
+  maxVelocityTighteningCents: number;
+
+  // Aggressive hedging when EV is negative
+  /** Multiplier for hedge ratio when EV is negative - default: 1.5 */
+  negativeEvHedgeMultiplier: number;
 }
 
 export const DEFAULT_DYNAMIC_HEDGE_CONFIG: DynamicHedgeConfig = {
@@ -126,6 +150,18 @@ export const DEFAULT_DYNAMIC_HEDGE_CONFIG: DynamicHedgeConfig = {
 
   volatilityEwmaDecay: 0.1,
   velocityEwmaDecay: 0.15,
+
+  maxHedgeOutcomesHistory: 100,
+  lowEffectivenessThreshold: 0.3,
+  highEffectivenessThreshold: 0.7,
+  effectivenessWindowSize: 20,
+
+  tailRiskPercentile: 0.9,
+  tailRiskBufferMultiplier: 1.5,
+
+  maxVelocityTighteningCents: 4,
+
+  negativeEvHedgeMultiplier: 1.5,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -329,8 +365,8 @@ export class DynamicHedgePolicy {
   recordHedgeOutcome(outcome: HedgeOutcome): void {
     this.hedgeOutcomes.push(outcome);
 
-    // Keep last 100 outcomes for analysis
-    if (this.hedgeOutcomes.length > 100) {
+    // Keep configured number of outcomes for analysis
+    while (this.hedgeOutcomes.length > this.config.maxHedgeOutcomesHistory) {
       this.hedgeOutcomes.shift();
     }
 
@@ -458,7 +494,8 @@ export class DynamicHedgePolicy {
         1,
         velocity / (this.config.highVelocityThreshold * 2),
       );
-      targetTrigger = targetTrigger - velocityFactor * 4; // Up to 4¢ tighter
+      targetTrigger =
+        targetTrigger - velocityFactor * this.config.maxVelocityTighteningCents;
       reasons.push(`HIGH_VEL(${velocity.toFixed(2)})`);
     }
 
@@ -488,22 +525,24 @@ export class DynamicHedgePolicy {
       targetHedgeRatio = this.config.baseHedgeRatio;
     }
 
-    // Learn from hedge outcomes
-    const recentOutcomes = this.hedgeOutcomes.slice(-20);
+    // Learn from hedge outcomes using configured window
+    const recentOutcomes = this.hedgeOutcomes.slice(
+      -this.config.effectivenessWindowSize,
+    );
     if (recentOutcomes.length >= 5) {
       const effectiveCount = recentOutcomes.filter(
         (o) => o.wasEffective,
       ).length;
       const effectiveRate = effectiveCount / recentOutcomes.length;
 
-      if (effectiveRate < 0.3) {
+      if (effectiveRate < this.config.lowEffectivenessThreshold) {
         // Hedges not helping - reduce ratio
         targetHedgeRatio = Math.max(
           this.config.minHedgeRatio,
           targetHedgeRatio - 0.1,
         );
         reasons.push(`LOW_EFF(${(effectiveRate * 100).toFixed(0)}%)`);
-      } else if (effectiveRate > 0.7) {
+      } else if (effectiveRate > this.config.highEffectivenessThreshold) {
         // Hedges very effective - can increase ratio
         targetHedgeRatio = Math.min(
           this.config.maxHedgeRatio,
@@ -525,19 +564,26 @@ export class DynamicHedgePolicy {
     // ═══════════════════════════════════════════════════════════════════════
 
     if (this.adverseMoves.length >= 10) {
-      // Calculate 90th percentile of adverse moves
+      // Calculate percentile of adverse moves for tail risk
       const sortedMoves = [...this.adverseMoves]
         .map((m) => Math.abs(m.moveCents))
         .sort((a, b) => a - b);
-      const p90Index = Math.floor(sortedMoves.length * 0.9);
-      const p90Move = sortedMoves[p90Index];
+      const percentileIndex = Math.floor(
+        sortedMoves.length * this.config.tailRiskPercentile,
+      );
+      const tailRiskMove = sortedMoves[percentileIndex];
 
-      // Set max adverse to cover 90th percentile with some buffer
+      // Set max adverse to cover tail risk with configured buffer
       targetMaxAdverse = Math.max(
         this.config.minMaxAdverseCents,
-        Math.min(this.config.maxMaxAdverseCents, p90Move * 1.5),
+        Math.min(
+          this.config.maxMaxAdverseCents,
+          tailRiskMove * this.config.tailRiskBufferMultiplier,
+        ),
       );
-      reasons.push(`TAIL_P90(${p90Move.toFixed(0)})`);
+      reasons.push(
+        `TAIL_P${(this.config.tailRiskPercentile * 100).toFixed(0)}(${tailRiskMove.toFixed(0)})`,
+      );
     } else {
       targetMaxAdverse = this.config.baseMaxAdverseCents;
     }
@@ -661,7 +707,7 @@ export class DynamicHedgePolicy {
       // If EV is negative, consider more aggressive hedging
       const increasedRatio = Math.min(
         params.maxHedgeRatio - currentHedgeRatio,
-        params.hedgeRatio * 1.5,
+        params.hedgeRatio * this.config.negativeEvHedgeMultiplier,
       );
       return {
         shouldHedge: true,

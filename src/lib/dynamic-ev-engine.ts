@@ -78,6 +78,16 @@ export interface DynamicEvConfig {
   pauseSeconds: number;
   /** Min profit factor required (default: 1.25) */
   minProfitFactor: number;
+
+  // Churn tracking
+  /** Churn observation window in milliseconds (default: 3600000 = 1 hour) */
+  churnWindowMs: number;
+
+  // Initial assumptions (used before sufficient data collected)
+  /** Initial win rate assumption above break-even (default: 0.02 = 2%) */
+  initialWinRateBonusPct: number;
+  /** Minimum trades before using win rate for pause decision (default: 10) */
+  minTradesForPauseDecision: number;
 }
 
 export const DEFAULT_DYNAMIC_EV_CONFIG: DynamicEvConfig = {
@@ -97,6 +107,9 @@ export const DEFAULT_DYNAMIC_EV_CONFIG: DynamicEvConfig = {
   minDepthUsdAtExit: 25,
   pauseSeconds: 300,
   minProfitFactor: 1.25,
+  churnWindowMs: 3600000, // 1 hour
+  initialWinRateBonusPct: 0.02, // Start 2% above break-even
+  minTradesForPauseDecision: 10,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -205,9 +218,10 @@ class EwmaCalculator {
     const prevValue = this.value;
     this.value = alpha * observation + (1 - alpha) * prevValue;
 
-    // Update variance using Welford's online algorithm adapted for EWMA
-    const delta = observation - prevValue;
-    this.variance = (1 - alpha) * (this.variance + alpha * delta * delta);
+    // Update variance using standard EWMA variance formula
+    // Variance = (1 - alpha) * variance + alpha * (observation - new_value)^2
+    const delta = observation - this.value;
+    this.variance = (1 - alpha) * this.variance + alpha * delta * delta;
   }
 
   /**
@@ -293,7 +307,10 @@ export class DynamicEvEngine {
       this.config.ewmaDecayAvg,
     );
     this.winRateEwma = new EwmaCalculator(
-      EV_DEFAULTS.BREAK_EVEN_WIN_RATE + 0.05, // Start slightly above break-even
+      // Start above break-even (optimistic assumption during warmup)
+      EV_DEFAULTS.BREAK_EVEN_WIN_RATE +
+        this.config.initialWinRateBonusPct +
+        0.03,
       this.config.ewmaDecayWinRate,
     );
     this.churnCostEwma = new EwmaCalculator(
@@ -345,8 +362,8 @@ export class DynamicEvEngine {
   recordChurn(observation: ChurnObservation): void {
     this.churnObservations.push(observation);
 
-    // Trim to window
-    const windowStart = Date.now() - 3600000; // 1 hour window
+    // Trim to configured window
+    const windowStart = Date.now() - this.config.churnWindowMs;
     this.churnObservations = this.churnObservations.filter(
       (o) => o.timestamp >= windowStart,
     );
@@ -416,9 +433,10 @@ export class DynamicEvEngine {
       churnCostCents = EV_DEFAULTS.CHURN_COST_CENTS;
       // For win rate, use EWMA if we have some data, else assume slightly above break-even
       winRate =
-        sampleSize >= 10
+        sampleSize >= this.config.minTradesForPauseDecision
           ? this.winRateEwma.getValue()
-          : EV_DEFAULTS.BREAK_EVEN_WIN_RATE + 0.02;
+          : EV_DEFAULTS.BREAK_EVEN_WIN_RATE +
+            this.config.initialWinRateBonusPct;
     }
 
     // Calculate EV: p(win) × avg_win - p(loss) × avg_loss - churn_cost
@@ -645,7 +663,7 @@ export class DynamicEvEngine {
 
     // Only pause if we have enough data and EV is negative
     if (
-      metrics.sampleSize >= 10 &&
+      metrics.sampleSize >= this.config.minTradesForPauseDecision &&
       (metrics.evCents < 0 ||
         (metrics.avgLossCents > 0 &&
           metrics.avgWinCents / metrics.avgLossCents <
