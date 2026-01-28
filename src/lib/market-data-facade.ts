@@ -236,7 +236,10 @@ export class MarketDataFacade {
       if (cached && !store.isStale(tokenId)) {
         this.wsHits++;
         this.recordResponseTime(startTime);
-        return this.toOrderbookState(cached, cached.source === "WS" ? "WS" : "REST");
+        return this.toOrderbookState(
+          cached,
+          cached.source === "WS" ? "WS" : "REST",
+        );
       }
 
       // Data is stale or missing - try REST fallback with atomic rate limiter
@@ -439,7 +442,10 @@ export class MarketDataFacade {
   /**
    * Convert TokenMarketData to OrderbookState
    */
-  private toOrderbookState(data: TokenMarketData, source?: BookSource): OrderbookState {
+  private toOrderbookState(
+    data: TokenMarketData,
+    source?: BookSource,
+  ): OrderbookState {
     return {
       bestBidCents: data.bestBid * 100,
       bestAskCents: data.bestAsk * 100,
