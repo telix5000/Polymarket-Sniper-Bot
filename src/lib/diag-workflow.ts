@@ -648,7 +648,23 @@ interface DiagOrderResult {
 }
 
 /**
+ * Default slippage percentage for DIAG mode BUY orders.
+ * This is a small tolerance above bestAsk to increase fill probability.
+ */
+const DIAG_BUY_SLIPPAGE_PCT = 2; // 2% above bestAsk
+
+/**
  * Attempt a diagnostic BUY order
+ *
+ * PRICING FIX (2024):
+ * Previously, limit price was based on signal.price * 1.1, which could fail
+ * if the market moved and bestAsk > signal.price * 1.1 (PRICE_TOO_HIGH error).
+ *
+ * NEW LOGIC:
+ * 1. Fetch orderbook FIRST to get current bestBid/bestAsk
+ * 2. Use bestAsk + small tolerance as chosenLimitPrice for BUY
+ * 3. If orderbook unavailable, reject with "orderbook_unavailable"
+ * 4. Log comprehensive DIAG trace with all pricing details before submission
  */
 async function attemptDiagBuy(
   deps: DiagWorkflowDeps,
@@ -671,16 +687,85 @@ async function attemptDiagBuy(
     outcomeLabel: signal.outcomeLabel,
     detail: {
       forceShares: cfg.forceShares,
-      price: signal.price,
+      signalPrice: signal.price,
     },
   });
 
   console.log(`📈 Attempting BUY of ${cfg.forceShares} share(s)...`);
 
   try {
-    // Calculate USD value for 1 share at current price
-    const price = signal.price ?? 0.5; // Default to 50¢ if no price
-    const sizeUsd = cfg.forceShares * price;
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 1: Fetch orderbook to get current market state
+    // ═══════════════════════════════════════════════════════════════════════
+    const orderbookTimestamp = new Date().toISOString();
+    let orderbook: { asks?: Array<{ price: string; size: string }>; bids?: Array<{ price: string; size: string }> } | null = null;
+
+    try {
+      orderbook = await deps.client.getOrderBook(signal.tokenId);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      tracer.trace({
+        step,
+        action: "orderbook_fetch_failed",
+        result: "REJECTED",
+        reason: "orderbook_unavailable",
+        marketId: signal.marketId,
+        tokenId: signal.tokenId,
+        detail: { error: errMsg },
+      });
+
+      console.log(`🚫 BUY rejected: orderbook_unavailable (${errMsg})`);
+      return {
+        success: false,
+        reason: "orderbook_unavailable",
+        detail: { error: errMsg },
+      };
+    }
+
+    // Check if orderbook has asks for BUY orders
+    if (!orderbook || !orderbook.asks || orderbook.asks.length === 0) {
+      tracer.trace({
+        step,
+        action: "no_asks_available",
+        result: "REJECTED",
+        reason: "orderbook_unavailable",
+        marketId: signal.marketId,
+        tokenId: signal.tokenId,
+        detail: { hasOrderbook: !!orderbook, askCount: orderbook?.asks?.length ?? 0 },
+      });
+
+      console.log(`🚫 BUY rejected: orderbook_unavailable (no asks)`);
+      return {
+        success: false,
+        reason: "orderbook_unavailable",
+        detail: { hasOrderbook: !!orderbook, askCount: 0 },
+      };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 2: Extract best bid/ask from orderbook
+    // ═══════════════════════════════════════════════════════════════════════
+    const bestAsk = parseFloat(orderbook.asks[0].price);
+    const bestBid = orderbook.bids && orderbook.bids.length > 0
+      ? parseFloat(orderbook.bids[0].price)
+      : null;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 3: Compute limit price for BUY
+    // For BUY: Use bestAsk + small tolerance (slippage) as limit
+    // This ensures we can fill at or near the current ask
+    // ═══════════════════════════════════════════════════════════════════════
+    const slippagePct = DIAG_BUY_SLIPPAGE_PCT;
+    const slippageMultiplier = 1 + slippagePct / 100;
+    const chosenLimitPrice = bestAsk * slippageMultiplier;
+
+    // Polymarket CLOB API expects price in decimal format (0.0 to 1.0)
+    // representing probability/price per share
+    const priceUnits = "decimal_0_to_1";
+
+    // Calculate order size: shares * price = USD value
+    // For DIAG mode, we want exactly cfg.forceShares shares
+    const sizeUsd = cfg.forceShares * chosenLimitPrice;
 
     // Validate outcome label - must be "YES" or "NO"
     const outcome: "YES" | "NO" =
@@ -688,6 +773,51 @@ async function attemptDiagBuy(
         ? signal.outcomeLabel
         : "YES";
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 4: DIAG Structured Log - Price formation details BEFORE submission
+    // This log is critical for diagnosing PRICE_TOO_HIGH and similar issues
+    // ═══════════════════════════════════════════════════════════════════════
+    const orderPayload = {
+      side: "BUY",
+      tokenId: signal.tokenId,
+      price: chosenLimitPrice,
+      size: cfg.forceShares,
+    };
+
+    tracer.trace({
+      step,
+      action: "diag_price_formation",
+      result: "OK",
+      marketId: signal.marketId,
+      tokenId: signal.tokenId,
+      outcomeLabel: signal.outcomeLabel,
+      detail: {
+        // Signal context
+        signalPrice: signal.price,
+        // Orderbook state at decision time
+        bestBid,
+        bestAsk,
+        orderbookTimestamp,
+        // Price formation
+        chosenLimitPrice,
+        slippagePct,
+        dynamicAdjustments: "bestAsk + slippage tolerance",
+        priceUnits,
+        // Order payload fields (no secrets)
+        orderPayload,
+      },
+    });
+
+    console.log(
+      `📊 [DIAG] Price formation: signal=${signal.price?.toFixed(4) ?? "N/A"}, ` +
+      `bestBid=${bestBid?.toFixed(4) ?? "N/A"}, bestAsk=${bestAsk.toFixed(4)}, ` +
+      `chosenLimit=${chosenLimitPrice.toFixed(4)} (bestAsk + ${slippagePct}%)`
+    );
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 5: Submit order with bestAsk-based limit price
+    // maxAcceptablePrice is set to chosenLimitPrice to allow fill at that level
+    // ═══════════════════════════════════════════════════════════════════════
     const result = await withTimeout(
       postOrder({
         client: deps.client,
@@ -696,7 +826,7 @@ async function attemptDiagBuy(
         side: "BUY",
         sizeUsd,
         marketId: signal.marketId,
-        maxAcceptablePrice: price * 1.1, // Allow 10% slippage
+        maxAcceptablePrice: chosenLimitPrice,
         logger: deps.logger,
       }),
       cfg.orderTimeoutSec * 1000,
@@ -715,6 +845,7 @@ async function attemptDiagBuy(
           orderId: result.orderId,
           filledUsd: result.filledUsd,
           avgPrice: result.avgPrice,
+          chosenLimitPrice,
         },
       });
 
@@ -731,6 +862,7 @@ async function attemptDiagBuy(
           orderId: result.orderId,
           filledUsd: result.filledUsd,
           avgPrice: result.avgPrice,
+          chosenLimitPrice,
         },
       };
     }
@@ -746,7 +878,11 @@ async function attemptDiagBuy(
       marketId: signal.marketId,
       tokenId: signal.tokenId,
       outcomeLabel: signal.outcomeLabel,
-      detail: { orderReason: result.reason },
+      detail: {
+        orderReason: result.reason,
+        chosenLimitPrice,
+        bestAsk,
+      },
     });
 
     console.log(`🚫 BUY rejected: ${reason}`);
@@ -754,7 +890,7 @@ async function attemptDiagBuy(
     return {
       success: false,
       reason,
-      detail: { orderReason: result.reason },
+      detail: { orderReason: result.reason, chosenLimitPrice, bestAsk },
     };
   } catch (err) {
     const reason = mapErrorToReason(err);
@@ -932,13 +1068,16 @@ function mapOrderFailureReason(reason?: string): DiagReason {
   if (lower.includes("liquidity") || lower.includes("depth")) {
     return "insufficient_liquidity";
   }
+  // Map PRICE_TOO_HIGH and PRICE_TOO_LOW from postOrder
   if (
-    lower.includes("price") &&
-    (lower.includes("range") || lower.includes("protection"))
+    lower.includes("price_too_high") ||
+    lower.includes("price_too_low") ||
+    (lower.includes("price") &&
+      (lower.includes("range") || lower.includes("protection")))
   ) {
     return "price_out_of_range";
   }
-  if (lower.includes("orderbook")) {
+  if (lower.includes("orderbook") || lower.includes("no_asks") || lower.includes("no_bids")) {
     return "orderbook_unavailable";
   }
   if (lower.includes("cooldown")) {
