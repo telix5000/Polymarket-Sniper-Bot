@@ -312,8 +312,9 @@ function loadConfig(): ChurnConfig {
 
     // Aggressive Whale Copy Mode - copy ANY whale buy without waiting for bias
     // When true: sees whale buy → immediately copies (no $300 flow / 3 trade requirement)
-    // When false (default): requires bias confirmation (multiple whale trades in same direction)
-    copyAnyWhaleBuy: envBool("COPY_ANY_WHALE_BUY", false),
+    // When false: requires bias confirmation (multiple whale trades in same direction)
+    // DEFAULT: true - for best copy trading results, copy immediately!
+    copyAnyWhaleBuy: envBool("COPY_ANY_WHALE_BUY", true),
 
     // Market Scanner - Scan for most active/trending markets to trade
     // When enabled, the bot will scan Polymarket for the most active markets
@@ -360,7 +361,8 @@ function loadConfig(): ChurnConfig {
     onchainMonitorEnabled: envBool("ONCHAIN_MONITOR_ENABLED", true),
     // Min trade size to detect as a "whale trade" - supports both env names for convenience
     // WHALE_TRADE_USD is the simpler name, ONCHAIN_MIN_WHALE_TRADE_USD for backward compatibility
-    onchainMinWhaleTradeUsd: envNum("WHALE_TRADE_USD", envNum("ONCHAIN_MIN_WHALE_TRADE_USD", 500)),
+    // DEFAULT: $100 - lower threshold catches more whale activity
+    onchainMinWhaleTradeUsd: envNum("WHALE_TRADE_USD", envNum("ONCHAIN_MIN_WHALE_TRADE_USD", 100)),
     // Infura tier plan: "core" (free), "developer" ($50/mo), "team" ($225/mo), "growth" (enterprise)
     // Affects rate limiting to avoid hitting API caps
     infuraTier: parseInfuraTierEnv(process.env.INFURA_TIER),
