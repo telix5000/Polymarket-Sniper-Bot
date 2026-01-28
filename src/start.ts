@@ -5419,7 +5419,9 @@ class ChurnEngine {
     let skippedCooldown = 0;
 
     for (const bias of activeBiases) {
-      // Step 1: Check staleness FIRST (always applies)
+      // Step 1: Check staleness (defensive check - getActiveBiases() already filters stale
+      // biases in copyAnyWhaleBuy mode at line ~1556, but we check here for consistency
+      // and to handle any edge cases in conservative mode)
       if (bias.isStale) {
         if (DEBUG || this.cycleCount % 100 === 0) {
           console.log(
