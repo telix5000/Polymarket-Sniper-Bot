@@ -7194,7 +7194,7 @@ async function main(): Promise<void> {
         try {
           const durationMs =
             result.endTime.getTime() - result.startTime.getTime();
-          await reporter.reportDiagnosticWorkflow({
+          const reported = await reporter.reportDiagnosticWorkflow({
             traceId: result.traceId,
             durationMs,
             steps: result.steps.map((s) => ({
@@ -7205,7 +7205,13 @@ async function main(): Promise<void> {
               tokenId: s.tokenId,
             })),
           });
-          console.log("📋 Diagnostic results reported to GitHub Issues");
+          if (reported) {
+            console.log("📋 Diagnostic results reported to GitHub Issues");
+          } else {
+            console.log(
+              "📋 Diagnostic results skipped (dedupe/rate-limit/severity)",
+            );
+          }
         } catch (reportErr) {
           console.warn(
             `📋 Failed to report to GitHub: ${reportErr instanceof Error ? reportErr.message : reportErr}`,
@@ -7226,8 +7232,16 @@ async function main(): Promise<void> {
         `\n🔬 Diagnostic workflow completed. Exit code: ${result.exitCode}`,
       );
 
+      // In GitHub Actions, exit immediately so CI remains one-shot
+      if (isGitHubActions()) {
+        console.log(
+          "\n🏁 GitHub Actions detected - exiting after diagnostic workflow.",
+        );
+        process.exit(diagExitCode);
+      }
+
       // Instead of exiting (which causes container restarts), enter idle state
-      // This keeps the container running without restarting
+      // This keeps the container running without restarting (non-CI / container use)
       console.log("\n💤 Entering idle state (container will not restart)...");
       console.log("   Press Ctrl+C to stop the container manually.");
 

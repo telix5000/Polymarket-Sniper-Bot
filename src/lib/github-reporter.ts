@@ -356,6 +356,8 @@ export class GitHubReporter {
       })
       .join("\n");
 
+    // Always use at least "warning" severity for diagnostic reports
+    // to ensure they pass the default minSeverity threshold ("warning")
     return this.report({
       title: `Diagnostic Workflow: ${successCount}/${totalSteps} steps succeeded`,
       message:
@@ -363,7 +365,7 @@ export class GitHubReporter {
         `**Trace ID**: ${details.traceId}\n` +
         `**Duration**: ${(details.durationMs / 1000).toFixed(1)}s\n\n` +
         `## Step Results\n${stepLines}`,
-      severity: successCount === 0 ? "warning" : "info",
+      severity: "warning",
       context: {
         traceId: details.traceId,
         durationMs: details.durationMs,

@@ -12,8 +12,7 @@ import {
  * These tests verify:
  * 1. Reporter initialization and configuration
  * 2. Diagnostic workflow reporting
- * 3. Severity filtering
- * 4. Rate limiting
+ * 3. Singleton management
  */
 
 describe("GitHubReporter", () => {
@@ -190,7 +189,6 @@ describe("GitHubReporter", () => {
     });
 
     test("should create new instance with initGitHubReporter", () => {
-      const reporter1 = getGitHubReporter();
       const reporter2 = initGitHubReporter({
         minSeverity: "error",
       });
