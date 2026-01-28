@@ -4,6 +4,8 @@ import {
   getUsdcAllowance,
   getUsdcBalance,
   getPolBalance,
+  BalanceCache,
+  DEFAULT_BALANCE_REFRESH_INTERVAL_MS,
 } from "../../../src/lib/balance";
 import { POLYGON } from "../../../src/lib/constants";
 
@@ -97,5 +99,45 @@ describe("Constants validation", () => {
 
   it("USDC_DECIMALS is 6", () => {
     assert.strictEqual(POLYGON.USDC_DECIMALS, 6);
+  });
+});
+
+describe("BalanceCache", () => {
+  describe("DEFAULT_BALANCE_REFRESH_INTERVAL_MS", () => {
+    it("should be 10000ms", () => {
+      assert.strictEqual(DEFAULT_BALANCE_REFRESH_INTERVAL_MS, 10000);
+    });
+  });
+
+  describe("isStale", () => {
+    it("should return true when cache is empty", () => {
+      const { wallet } = createMockWallet({ throwError: true });
+      const cache = new BalanceCache(wallet as any, "0xAddress", 100);
+      assert.strictEqual(cache.isStale(), true);
+    });
+  });
+
+  describe("getCacheAgeMs", () => {
+    it("should return Infinity when cache is empty", () => {
+      const { wallet } = createMockWallet({ throwError: true });
+      const cache = new BalanceCache(wallet as any, "0xAddress", 100);
+      assert.strictEqual(cache.getCacheAgeMs(), Infinity);
+    });
+  });
+
+  describe("getCachedBalances", () => {
+    it("should return null when cache is empty", () => {
+      const { wallet } = createMockWallet({ throwError: true });
+      const cache = new BalanceCache(wallet as any, "0xAddress", 100);
+      assert.strictEqual(cache.getCachedBalances(), null);
+    });
+  });
+
+  describe("getRpcFetchCount", () => {
+    it("should start at 0", () => {
+      const { wallet } = createMockWallet({ throwError: true });
+      const cache = new BalanceCache(wallet as any, "0xAddress", 100);
+      assert.strictEqual(cache.getRpcFetchCount(), 0);
+    });
   });
 });

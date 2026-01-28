@@ -44,8 +44,11 @@ import type { ClobClient } from "@polymarket/clob-client";
 // Keep essential lib modules
 import {
   createClobClient,
-  getUsdcBalance,
-  getPolBalance,
+  // Balance cache for RPC throttling
+  BalanceCache,
+  initBalanceCache,
+  getBalanceCache,
+  DEFAULT_BALANCE_REFRESH_INTERVAL_MS,
   initTelegram,
   sendTelegram,
   redeemAllPositions,
@@ -263,6 +266,7 @@ interface ChurnConfig {
   // Polling / Ops
   pollIntervalMs: number;
   positionPollIntervalMs: number;
+  balanceRefreshIntervalMs: number; // Balance cache refresh interval (default: 10000ms)
   logLevel: string;
 
   // Wallet / Reserve Management
@@ -391,6 +395,12 @@ function loadConfig(): ChurnConfig {
     // Polling (fixed - fast polling for accurate position tracking)
     pollIntervalMs: 200, // 200ms = 5 req/sec
     positionPollIntervalMs: 100, // 100ms when holding positions
+    // Balance refresh interval - throttles RPC calls for USDC/POL balance
+    // Default: 10000ms (10s). Set higher to reduce Infura RPC usage.
+    balanceRefreshIntervalMs: envNum(
+      "BALANCE_REFRESH_INTERVAL_MS",
+      DEFAULT_BALANCE_REFRESH_INTERVAL_MS,
+    ),
     logLevel: envStr("LOG_LEVEL", "info"),
 
     // Wallet / Reserve (fixed - survive variance)
@@ -3436,6 +3446,10 @@ class ExecutionEngine {
         tokenId,
         Date.now() + this.config.cooldownSecondsPerToken * 1000,
       );
+      // Force balance refresh after successful trade
+      getBalanceCache()
+        ?.forceRefresh()
+        .catch(() => {});
     }
 
     return result;
@@ -3828,6 +3842,13 @@ class ExecutionEngine {
           if (result.action === "EXIT") exited.push(result.id);
           else hedged.push(result.id);
         }
+      }
+
+      // Force balance refresh if any trades succeeded
+      if (exited.length > 0 || hedged.length > 0) {
+        getBalanceCache()
+          ?.forceRefresh()
+          .catch(() => {});
       }
     }
 
@@ -4329,6 +4350,8 @@ class ChurnEngine {
   private dynamicReserveManager: DynamicReserveManager;
   private latencyMonitor: LatencyMonitor;
   private marketDataFacade: MarketDataFacade | null = null;
+  // Balance cache for RPC throttling - reduces Infura calls
+  private balanceCache: BalanceCache | null = null;
 
   private client: any = null;
   private wallet: any = null;
@@ -4551,6 +4574,15 @@ class ChurnEngine {
     this.executionEngine.setClient(this.client);
 
     // ═══════════════════════════════════════════════════════════════════════
+    // INITIALIZE BALANCE CACHE (RPC throttling to reduce Infura calls)
+    // ═══════════════════════════════════════════════════════════════════════
+    this.balanceCache = initBalanceCache(
+      this.wallet,
+      this.address,
+      this.config.balanceRefreshIntervalMs,
+    );
+
+    // ═══════════════════════════════════════════════════════════════════════
     // INITIALIZE WEBSOCKET MARKET DATA LAYER
     // ═══════════════════════════════════════════════════════════════════════
     // Initialize market data store and facade for real-time orderbook streaming
@@ -4616,9 +4648,9 @@ class ChurnEngine {
     await this.processRedemptions();
     this.lastRedeemTime = Date.now(); // Reset timer after startup redemption
 
-    // Get balances AFTER redemption
-    let usdcBalance = await getUsdcBalance(this.wallet, this.address);
-    const polBalance = await getPolBalance(this.wallet, this.address);
+    // Get balances AFTER redemption (initial fetch via cache)
+    const { usdc: usdcBalance, pol: polBalance } =
+      await this.balanceCache!.getBalances();
     let { effectiveBankroll, reserveUsd } =
       this.executionEngine.getEffectiveBankroll(usdcBalance);
 
@@ -4995,9 +5027,9 @@ class ChurnEngine {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // 2. GET BALANCES
+    // 2. GET BALANCES (via cache to reduce RPC calls)
     // ─────────────────────────────────────────────────────────────────
-    const usdcBalance = await getUsdcBalance(this.wallet, this.address);
+    const { usdc: usdcBalance } = await this.balanceCache!.getBalances();
     const { reserveUsd } =
       this.executionEngine.getEffectiveBankroll(usdcBalance);
 
@@ -5172,6 +5204,9 @@ class ChurnEngine {
             // Invalidate position cache to ensure fresh data on next fetch
             invalidatePositions();
 
+            // Force balance refresh after successful liquidation sale
+            this.balanceCache?.forceRefresh().catch(() => {});
+
             if (isTelegramEnabled()) {
               await sendTelegram(
                 "🔥 Position Liquidated",
@@ -5233,8 +5268,8 @@ class ChurnEngine {
     const now = Date.now();
 
     // ─────────────────────────────────────────────────────────────────
-    // 1. PARALLEL FETCH: Balances + Whale Trades + Positions (when needed)
-    // These are independent operations - run them ALL in parallel for speed!
+    // 1. PARALLEL FETCH: Balances (cached) + Whale Trades + Positions (when needed)
+    // Balance fetches use the cache to reduce RPC calls (only fetches when stale)
     // ─────────────────────────────────────────────────────────────────
     const shouldSyncPositions = this.cycleCount % 10 === 0;
     const shouldScanMarkets =
@@ -5243,11 +5278,8 @@ class ChurnEngine {
 
     // Build parallel tasks array
     const parallelTasks: Promise<any>[] = [
-      // Always fetch balances
-      Promise.all([
-        getUsdcBalance(this.wallet, this.address),
-        getPolBalance(this.wallet, this.address),
-      ]),
+      // Get balances via cache (only fetches from RPC when interval expires)
+      this.balanceCache!.getBalances(),
       // Always poll whale trades (primary detection method)
       this.biasAccumulator.fetchLeaderboardTrades(),
     ];
@@ -5274,8 +5306,11 @@ class ChurnEngine {
     // Execute all in parallel
     const results = await Promise.all(parallelTasks);
 
-    // Unpack results
-    const [usdcBalance, polBalance] = results[0] as [number, number];
+    // Unpack results - balance cache returns { usdc, pol }
+    const { usdc: usdcBalance, pol: polBalance } = results[0] as {
+      usdc: number;
+      pol: number;
+    };
     const newTrades = results[1] as LeaderboardTrade[];
     const allPositions: Position[] = shouldSyncPositions
       ? (results[2] as Position[]) || []
