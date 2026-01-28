@@ -480,6 +480,7 @@ export function emitRoutingPolicyEffectiveEvent(
           check.outgoingInterface = recheckResult.outgoingInterface;
           check.outgoingGateway = recheckResult.outgoingGateway;
           check.routeThroughVpn = recheckResult.routeThroughVpn;
+          check.resolvedIp = recheckResult.resolvedIp;
         } else {
           logger?.error?.(
             `WRITE_ROUTE_AUTO_FIX_FAILED: Could not fix route for ${hostname}. ${fixResult.error}`,
