@@ -108,3 +108,14 @@ export type {
   DynamicHedgeParameters,
   HedgeDecision,
 } from "./dynamic-hedge-policy";
+
+// Execution Engine - order execution for entries and exits (extracted from start.ts)
+export {
+  ExecutionEngine,
+  type ExecutionResult,
+  type TokenMarketData,
+  type ChurnLogger,
+  type ExecutionEngineConfig,
+  type BiasAccumulatorInterface,
+  type PositionManagerInterface,
+} from "./execution-engine";
