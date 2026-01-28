@@ -234,3 +234,77 @@ describe("WRITE_HOSTS protection", () => {
     );
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Route check parsing tests (simulated)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("Route check parsing", () => {
+  /**
+   * Simulate parsing `ip route get` output.
+   * This mirrors the logic in vpn.ts getRouteForIp function.
+   */
+  function parseRouteOutput(output: string): {
+    interface?: string;
+    gateway?: string;
+  } {
+    // Parse output like: "1.2.3.4 via 10.0.0.1 dev eth0 src 192.168.1.2"
+    const viaMatch = output.match(/via\s+(\d+\.\d+\.\d+\.\d+)/);
+    const devMatch = output.match(/dev\s+(\S+)/);
+
+    return {
+      gateway: viaMatch?.[1],
+      interface: devMatch?.[1],
+    };
+  }
+
+  it("should parse standard route output with via and dev", () => {
+    const output = "1.2.3.4 via 10.0.0.1 dev eth0 src 192.168.1.2";
+    const result = parseRouteOutput(output);
+    assert.strictEqual(result.gateway, "10.0.0.1");
+    assert.strictEqual(result.interface, "eth0");
+  });
+
+  it("should parse route output with only dev (no gateway)", () => {
+    const output = "192.168.1.1 dev eth0 src 192.168.1.2";
+    const result = parseRouteOutput(output);
+    assert.strictEqual(result.gateway, undefined);
+    assert.strictEqual(result.interface, "eth0");
+  });
+
+  it("should parse route output with WireGuard interface", () => {
+    const output = "104.26.10.100 via 10.2.0.1 dev wg0 table 51820 src 10.2.0.2";
+    const result = parseRouteOutput(output);
+    assert.strictEqual(result.gateway, "10.2.0.1");
+    assert.strictEqual(result.interface, "wg0");
+  });
+
+  it("should parse route output with tun interface (OpenVPN)", () => {
+    const output = "172.217.0.100 via 10.8.0.1 dev tun0 src 10.8.0.6";
+    const result = parseRouteOutput(output);
+    assert.strictEqual(result.gateway, "10.8.0.1");
+    assert.strictEqual(result.interface, "tun0");
+  });
+
+  it("should handle route output with multiple table entries", () => {
+    const output =
+      "104.26.10.100 via 172.17.0.1 dev eth0 table main src 172.17.0.2 uid 1000";
+    const result = parseRouteOutput(output);
+    assert.strictEqual(result.gateway, "172.17.0.1");
+    assert.strictEqual(result.interface, "eth0");
+  });
+
+  it("should return undefined for empty output", () => {
+    const output = "";
+    const result = parseRouteOutput(output);
+    assert.strictEqual(result.gateway, undefined);
+    assert.strictEqual(result.interface, undefined);
+  });
+
+  it("should return undefined for malformed output", () => {
+    const output = "RTNETLINK answers: Network is unreachable";
+    const result = parseRouteOutput(output);
+    assert.strictEqual(result.gateway, undefined);
+    assert.strictEqual(result.interface, undefined);
+  });
+});
