@@ -3774,6 +3774,10 @@ class ChurnEngine {
     // Connect WebSocket (will auto-reconnect on failure)
     wsMarketClient.connect();
     
+    // TODO: When implementing or updating ChurnEngine.stop(), ensure both
+    //       the market and user WebSocket clients are cleanly disconnected
+    //       and any heartbeat/reconnect timers are stopped to avoid leaks.
+    
     // Initialize User WebSocket for order/fill events (authenticated)
     // Note: User WebSocket is optional - system continues without it but
     // will rely on polling for order status updates
@@ -3783,6 +3787,16 @@ class ChurnEngine {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`📡 User WebSocket connection failed (order tracking degraded): ${msg}`);
       console.log(`   ↳ Order/fill events will fall back to polling-based detection`);
+      
+      // Schedule a delayed retry attempt (30 seconds)
+      setTimeout(() => {
+        console.log(`📡 Retrying User WebSocket connection...`);
+        wsUserClient.connect(this.client).catch((retryErr) => {
+          const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          console.error(`📡 User WebSocket retry failed: ${retryMsg}`);
+          // After retry failure, the built-in reconnection logic will continue attempts
+        });
+      }, 30000);
     });
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -4861,12 +4875,30 @@ class ChurnEngine {
     }
     
     // Subscribe to tokens via WebSocket for real-time updates
+    // Also manage unsubscriptions for tokens no longer needed
     const tokenIds = Array.from(tokensToFetch.keys());
     if (tokenIds.length > 0) {
       try {
         const wsClient = getWebSocketMarketClient();
         if (wsClient.isConnected()) {
-          wsClient.subscribe(tokenIds);
+          // Get currently subscribed tokens
+          const currentSubs = new Set(wsClient.getSubscriptions());
+          const neededTokens = new Set(tokenIds);
+          
+          // Subscribe to new tokens
+          const toSubscribe = tokenIds.filter(id => !currentSubs.has(id));
+          if (toSubscribe.length > 0) {
+            wsClient.subscribe(toSubscribe);
+          }
+          
+          // Unsubscribe from tokens no longer needed (cleanup old subscriptions)
+          const toUnsubscribe = Array.from(currentSubs).filter(id => !neededTokens.has(id));
+          if (toUnsubscribe.length > 0) {
+            wsClient.unsubscribe(toUnsubscribe);
+            if (this.cycleCount % 100 === 0 && toUnsubscribe.length > 0) {
+              console.log(`📡 [WS] Unsubscribed from ${toUnsubscribe.length} tokens no longer tracked`);
+            }
+          }
         }
       } catch (err) {
         // WebSocket not available, will use REST fallback

@@ -177,8 +177,9 @@ export class MarketDataStore {
         existing.bestBid === bestBid && 
         existing.bestAsk === bestAsk &&
         existing.source === "WS") {
-      // Data hasn't changed, just update timestamp
+      // Data hasn't changed, just update timestamp and LRU access order
       existing.updatedAt = Date.now();
+      this.touchToken(tokenId);
       return false;
     }
 

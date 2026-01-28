@@ -410,7 +410,15 @@ export class WebSocketMarketClient {
       const asks = this.mapToSortedLevels(book.asks, false);
 
       if (bids.length > 0 && asks.length > 0) {
+        // Normal incremental update: both sides have liquidity
         store.updateFromWs(tokenId, bids, asks);
+      } else {
+        // Orderbook became empty or invalid after applying deltas.
+        // Log and drop local state so that a fresh snapshot is required.
+        console.warn(
+          `[WS-Market] Orderbook for ${tokenId.slice(0, 12)}... became empty after price_change; clearing local state to force resnapshot`
+        );
+        this.orderbooks.delete(tokenId);
       }
     }
     // Ignore other event types (last_trade_price, tick_size_change) for now

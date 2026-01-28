@@ -479,7 +479,12 @@ export class WebSocketUserClient {
       
       return headers;
     } catch (err) {
-      console.warn(`[WS-User] Failed to get auth headers: ${err}`);
+      const error = err instanceof Error ? err : new Error(String(err));
+      console.error(
+        `[WS-User] Failed to get auth headers. This may indicate an incompatible ClobClient version or missing API key credentials. Original error: ${error.message}`
+      );
+      // Surface the failure to consumers so they can handle authentication issues explicitly
+      this.onErrorCb?.(error);
       return {};
     }
   }

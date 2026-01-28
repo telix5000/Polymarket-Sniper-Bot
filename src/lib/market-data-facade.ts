@@ -66,7 +66,13 @@ class RateLimiter {
   private readonly globalMinIntervalMs: number;
   private hits = 0;
   // Track in-flight requests to prevent thundering herd
-  private inFlight = new Set<string>();
+  // Map tokenId -> acquireTime for timeout-based cleanup
+  private inFlight = new Map<string, number>();
+  // Lock timeout to prevent permanent deadlocks (10 seconds)
+  private readonly lockTimeoutMs = 10000;
+  // Cleanup interval for old entries (1 hour)
+  private readonly cleanupIntervalMs = 60 * 60 * 1000;
+  private lastCleanupTime = Date.now();
 
   constructor(minIntervalMs: number, globalMinIntervalMs: number = 100) {
     this.minIntervalMs = minIntervalMs;
@@ -81,10 +87,22 @@ class RateLimiter {
   tryAcquire(tokenId: string): boolean {
     const now = Date.now();
     
+    // Periodic cleanup of old entries to prevent memory growth
+    this.maybeCleanup(now);
+    
     // Check if already in-flight for this token (prevents thundering herd)
-    if (this.inFlight.has(tokenId)) {
-      this.hits++;
-      return false;
+    // Also check for stale locks (timeout-based cleanup)
+    const acquireTime = this.inFlight.get(tokenId);
+    if (acquireTime !== undefined) {
+      // Check if lock is stale (exceeded timeout)
+      if (now - acquireTime > this.lockTimeoutMs) {
+        // Auto-release stale lock
+        this.inFlight.delete(tokenId);
+        console.warn(`[RateLimiter] Auto-released stale lock for ${tokenId.slice(0, 12)}... (held for ${now - acquireTime}ms)`);
+      } else {
+        this.hits++;
+        return false;
+      }
     }
     
     // Global rate limit
@@ -100,10 +118,10 @@ class RateLimiter {
       return false;
     }
 
-    // Atomically acquire: record timestamps and mark in-flight
+    // Atomically acquire: record timestamps and mark in-flight with acquire time
     this.lastCallTime.set(tokenId, now);
     this.globalLastCall = now;
-    this.inFlight.add(tokenId);
+    this.inFlight.set(tokenId, now);
     
     return true;
   }
@@ -120,6 +138,32 @@ class RateLimiter {
    */
   getHits(): number {
     return this.hits;
+  }
+
+  /**
+   * Periodic cleanup of old entries to prevent memory growth
+   */
+  private maybeCleanup(now: number): void {
+    if (now - this.lastCleanupTime < this.cleanupIntervalMs) {
+      return;
+    }
+    
+    this.lastCleanupTime = now;
+    const cutoff = now - this.cleanupIntervalMs;
+    
+    // Clean old lastCallTime entries
+    for (const [tokenId, time] of this.lastCallTime.entries()) {
+      if (time < cutoff) {
+        this.lastCallTime.delete(tokenId);
+      }
+    }
+    
+    // Clean stale in-flight locks (should already be handled in tryAcquire, but belt-and-suspenders)
+    for (const [tokenId, time] of this.inFlight.entries()) {
+      if (now - time > this.lockTimeoutMs) {
+        this.inFlight.delete(tokenId);
+      }
+    }
   }
 
   /**
