@@ -53,12 +53,14 @@
     "blessed": "npm:neo-blessed@^0.2.0",
     "blessed-contrib": "^4.11.0",
     "dotenv": "^17.2.3",
-    "ethers": "^6.16.0"
+    "ethers": "^6.16.0",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@types/blessed": "^0.1.27",
     "@types/node": "^25.0.10",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
     "eslint": "^9.39.2",

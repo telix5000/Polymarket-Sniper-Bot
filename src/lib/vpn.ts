@@ -716,6 +716,44 @@ export async function setupReadApiBypass(
 export const setupGammaApiBypass = setupReadApiBypass;
 
 /**
+ * Setup WebSocket bypass for CLOB market data streams
+ * 
+ * The CLOB WebSocket (ws-subscriptions-clob.polymarket.com) is read-only
+ * market data and does NOT need VPN protection. Bypassing improves latency
+ * for real-time orderbook updates.
+ * 
+ * NOTE: This bypasses the Market channel (public data). The User channel
+ * uses the same host but requires authentication - still works with bypass
+ * since auth is at the application layer, not IP-based.
+ */
+export async function setupWebSocketBypass(
+  logger?: Logger,
+): Promise<void> {
+  if (!vpnActive) {
+    // No VPN active, no need for bypass
+    return;
+  }
+
+  if (!preVpnRouting?.gateway) {
+    logger?.warn?.(
+      "Cannot setup WebSocket bypass: pre-VPN routing not captured",
+    );
+    return;
+  }
+
+  // CLOB WebSocket host - handles both Market (public) and User (authenticated) channels
+  // Both are read-only subscriptions that don't need geo-blocking protection
+  const wsHost = "ws-subscriptions-clob.polymarket.com";
+
+  const result = addBypassRoute(wsHost, logger);
+  if (result) {
+    logger?.info?.(
+      `WebSocket bypass: ${wsHost} -> ${result.ip} via ${result.gateway}`,
+    );
+  }
+}
+
+/**
  * Check VPN requirements for live trading
  * Returns warnings if VPN is not properly configured
  */
