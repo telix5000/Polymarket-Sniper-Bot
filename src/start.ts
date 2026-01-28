@@ -963,12 +963,33 @@ class BiasAccumulator {
   private priceFilterInvalid = false; // true if min > max
   private priceFilterLoggedOnce = false;
 
+  // Funnel metrics tracking
+  private funnelStats = {
+    tradesIngested: 0,
+    tradesFilteredByPrice: 0,
+    uniqueTokensWithTrades: 0,
+  };
+
   // API endpoints - using data-api v1 for leaderboard (gamma-api leaderboard is deprecated)
   private readonly DATA_API = "https://data-api.polymarket.com";
 
   constructor(config: ChurnConfig) {
     this.config = config;
     this.initPriceRangeFilter();
+  }
+
+  /**
+   * Get funnel statistics for diagnostics
+   */
+  getFunnelStats(): {
+    tradesIngested: number;
+    tradesFilteredByPrice: number;
+    uniqueTokensWithTrades: number;
+  } {
+    return {
+      ...this.funnelStats,
+      uniqueTokensWithTrades: this.trades.size,
+    };
   }
 
   /**
@@ -1397,6 +1418,9 @@ class BiasAccumulator {
     const now = Date.now();
     const windowStart = now - this.config.biasWindowSeconds * 1000;
 
+    // Track ingested trades in funnel
+    this.funnelStats.tradesIngested += trades.length;
+
     // Apply price range filtering
     let filteredCount = 0;
     const filteredTrades = trades.filter((trade) => {
@@ -1406,6 +1430,9 @@ class BiasAccumulator {
       filteredCount++;
       return false;
     });
+
+    // Track filtered trades in funnel
+    this.funnelStats.tradesFilteredByPrice += filteredCount;
 
     // Log filtering summary (once per batch if any filtered)
     if (filteredCount > 0 && this.priceFilterEnabled) {
@@ -4383,6 +4410,19 @@ class ChurnEngine {
     // TASK 6: Add funnel tracking counters
     candidatesSeen: 0, // Total candidates processed
     candidatesRejectedLiquidity: 0, // Rejected due to spread/depth/dust book
+    // Enhanced funnel metrics - track where signals die
+    // Note: Some metrics are cumulative (rejected/skipped), others are per-cycle snapshots
+    funnel: {
+      tradesIngested: 0, // Total trades ingested into BiasAccumulator
+      tradesFilteredByPrice: 0, // Filtered by price range
+      // biasesCreated is NOT tracked here - use biasAccumulator.getFunnelStats().uniqueTokensWithTrades instead
+      biasesRejectedStale: 0, // Rejected: bias is stale (cumulative)
+      biasesRejectedTrades: 0, // Rejected: trades below min (cumulative)
+      biasesRejectedFlow: 0, // Rejected: flow below min (cumulative)
+      biasesSkippedCooldown: 0, // Skipped due to cooldown (cumulative)
+      eligibleSignals: 0, // Passed all checks, eligible for entry (cumulative)
+      entryAttemptsFromBias: 0, // Entry attempts from bias signals (cumulative)
+    },
   };
   private readonly STARTUP_DIAGNOSTIC_DELAY_MS = 60 * 1000; // Send diagnostic after 60 seconds
   private readonly MAX_FAILURE_REASONS = 50;
@@ -5370,46 +5410,52 @@ class ChurnEngine {
     }
 
     // Filter out tokens that don't meet bias criteria or are on cooldown
-    // CRITICAL: Even in copyAnyWhaleBuy mode, enforce BIAS_MIN_NET_USD and BIAS_MIN_TRADES
-    // to prevent low-quality signals from reaching entry attempts
+    // In copyAnyWhaleBuy mode: only check staleness (1 whale buy is enough)
+    // In conservative mode: enforce full BIAS_MIN_NET_USD and BIAS_MIN_TRADES
     const eligibleBiases: TokenBias[] = [];
-    let skippedBiasCriteria = 0;
+    let skippedStale = 0;
+    let skippedTradesBelowMin = 0;
+    let skippedFlowBelowMin = 0;
     let skippedCooldown = 0;
 
     for (const bias of activeBiases) {
-      // Step 1: Check bias criteria FIRST (flow, trades, staleness)
-      // These criteria apply regardless of copyAnyWhaleBuy mode
+      // Step 1: Check staleness FIRST (always applies)
       if (bias.isStale) {
         if (DEBUG || this.cycleCount % 100 === 0) {
           console.log(
             `🚫 [REJECT_BIAS] ${bias.tokenId.slice(0, 12)}... | STALE | last activity: ${Math.round((now - bias.lastActivityTime) / 1000)}s ago`,
           );
         }
-        skippedBiasCriteria++;
+        skippedStale++;
         continue;
       }
 
-      if (bias.tradeCount < this.config.biasMinTrades) {
-        if (DEBUG || this.cycleCount % 100 === 0) {
-          console.log(
-            `🚫 [REJECT_BIAS] ${bias.tokenId.slice(0, 12)}... | TRADES_BELOW_MIN | trades=${bias.tradeCount} < min=${this.config.biasMinTrades}`,
-          );
+      // Step 2: Check bias thresholds (only in conservative mode)
+      // In copyAnyWhaleBuy mode, getActiveBiases() already filtered to 1+ trades
+      // so we skip these additional checks to allow instant copy
+      if (!this.config.copyAnyWhaleBuy) {
+        if (bias.tradeCount < this.config.biasMinTrades) {
+          if (DEBUG || this.cycleCount % 100 === 0) {
+            console.log(
+              `🚫 [REJECT_BIAS] ${bias.tokenId.slice(0, 12)}... | TRADES_BELOW_MIN | trades=${bias.tradeCount} < min=${this.config.biasMinTrades}`,
+            );
+          }
+          skippedTradesBelowMin++;
+          continue;
         }
-        skippedBiasCriteria++;
-        continue;
-      }
 
-      if (Math.abs(bias.netUsd) < this.config.biasMinNetUsd) {
-        if (DEBUG || this.cycleCount % 100 === 0) {
-          console.log(
-            `🚫 [REJECT_BIAS] ${bias.tokenId.slice(0, 12)}... | FLOW_BELOW_MIN | flow=$${bias.netUsd.toFixed(0)} < min=$${this.config.biasMinNetUsd}`,
-          );
+        if (Math.abs(bias.netUsd) < this.config.biasMinNetUsd) {
+          if (DEBUG || this.cycleCount % 100 === 0) {
+            console.log(
+              `🚫 [REJECT_BIAS] ${bias.tokenId.slice(0, 12)}... | FLOW_BELOW_MIN | flow=$${bias.netUsd.toFixed(0)} < min=$${this.config.biasMinNetUsd}`,
+            );
+          }
+          skippedFlowBelowMin++;
+          continue;
         }
-        skippedBiasCriteria++;
-        continue;
       }
 
-      // Step 2: Check cooldowns (only for bias-eligible tokens)
+      // Step 3: Check cooldowns (only for bias-eligible tokens)
       const cooldownExpiry = this.failedEntryCooldowns.get(bias.tokenId);
       if (cooldownExpiry && now < cooldownExpiry) {
         skippedCooldown++;
@@ -5423,6 +5469,17 @@ class ChurnEngine {
       // Passed all checks - this bias is eligible for entry
       eligibleBiases.push(bias);
     }
+
+    // Update funnel diagnostics
+    this.diagnostics.funnel.biasesRejectedStale += skippedStale;
+    this.diagnostics.funnel.biasesRejectedTrades += skippedTradesBelowMin;
+    this.diagnostics.funnel.biasesRejectedFlow += skippedFlowBelowMin;
+    this.diagnostics.funnel.biasesSkippedCooldown += skippedCooldown;
+    this.diagnostics.funnel.eligibleSignals += eligibleBiases.length;
+
+    // Calculate total rejections for summary log
+    const skippedBiasCriteria =
+      skippedStale + skippedTradesBelowMin + skippedFlowBelowMin;
 
     if (evAllowed.allowed) {
       if (eligibleBiases.length > 0) {
@@ -5474,6 +5531,7 @@ class ChurnEngine {
         const entryPromises = biasesToAttempt.map(async (bias) => {
           // TASK 6: Track candidate in funnel
           this.diagnostics.candidatesSeen++;
+          this.diagnostics.funnel.entryAttemptsFromBias++;
 
           this.diagnostics.entryAttempts++;
           debug(
@@ -5977,11 +6035,29 @@ class ChurnEngine {
       `   📊 Diagnostics: API trades detected: ${this.diagnostics.whaleTradesDetected} | Entry attempts: ${this.diagnostics.entryAttempts} (${entrySuccessRate}% success) | OB failures: ${this.diagnostics.orderbookFetchFailures}`,
     );
 
-    // TASK 6: Display funnel counters
+    // TASK 6: Display enhanced funnel counters showing where signals die
+    const biasStats = this.biasAccumulator.getFunnelStats();
+    const funnel = this.diagnostics.funnel;
     console.log(
-      `   🔬 Funnel: Candidates seen: ${this.diagnostics.candidatesSeen} | ` +
-        `Rejected liquidity: ${this.diagnostics.candidatesRejectedLiquidity}`,
+      `   🔬 Funnel: Ingested: ${biasStats.tradesIngested} | ` +
+        `PriceFilter: -${biasStats.tradesFilteredByPrice} | ` +
+        `Tokens: ${biasStats.uniqueTokensWithTrades} | ` +
+        `Eligible: ${funnel.eligibleSignals}`,
     );
+    // Show rejection breakdown if any rejections occurred
+    const totalRejections =
+      funnel.biasesRejectedStale +
+      funnel.biasesRejectedTrades +
+      funnel.biasesRejectedFlow +
+      funnel.biasesSkippedCooldown;
+    if (totalRejections > 0) {
+      console.log(
+        `   📉 Rejections: Stale: ${funnel.biasesRejectedStale} | ` +
+          `Trades<Min: ${funnel.biasesRejectedTrades} | ` +
+          `Flow<Min: ${funnel.biasesRejectedFlow} | ` +
+          `Cooldown: ${funnel.biasesSkippedCooldown}`,
+      );
+    }
 
     // Warn if network is not healthy
     if (
