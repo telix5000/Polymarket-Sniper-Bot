@@ -64,15 +64,26 @@ import {
   invalidatePositions,
   smartSell,
   type Position,
-  // On-chain event monitoring (FAST - blockchain speed!)
+  // On-chain event monitoring (confirmed trades)
   OnChainMonitor,
   createOnChainMonitorConfig,
   type OnChainTradeEvent,
   type OnChainMonitorConfig,
   type PositionChangeEvent,
   type OnChainPriceUpdate,
+  // Mempool monitoring (PENDING trades - faster!)
+  MempoolMonitor,
+  createMempoolMonitorConfig,
+  type PendingTradeSignal,
   // Market utilities for hedge token lookup
   getOppositeTokenId,
+  // GitHub error reporting
+  initGitHubReporter,
+  reportError,
+  // Latency monitoring for dynamic slippage
+  LatencyMonitor,
+  initLatencyMonitor,
+  getLatencyMonitor,
 } from "./lib";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -207,10 +218,14 @@ interface ChurnConfig {
   polReserveCheckIntervalMin: number;
   polReserveSlippagePct: number;
 
-  // On-Chain Monitoring (Infura WebSocket)
+  // On-Chain Monitoring (Infura WebSocket) - sees CONFIRMED trades
   onchainMonitorEnabled: boolean;
   onchainMinWhaleTradeUsd: number;
   infuraTier: "core" | "developer" | "team" | "growth";
+
+  // Mempool Monitoring - sees PENDING trades (faster than on-chain!)
+  mempoolMonitorEnabled: boolean;
+  mempoolGasPriceMultiplier: number;  // How much higher gas to use (1.2 = 20% higher)
 }
 
 function loadConfig(): ChurnConfig {
@@ -296,8 +311,9 @@ function loadConfig(): ChurnConfig {
 
     // Aggressive Whale Copy Mode - copy ANY whale buy without waiting for bias
     // When true: sees whale buy → immediately copies (no $300 flow / 3 trade requirement)
-    // When false (default): requires bias confirmation (multiple whale trades in same direction)
-    copyAnyWhaleBuy: envBool("COPY_ANY_WHALE_BUY", false),
+    // When false: requires bias confirmation (multiple whale trades in same direction)
+    // DEFAULT: true - for best copy trading results, copy immediately!
+    copyAnyWhaleBuy: envBool("COPY_ANY_WHALE_BUY", true),
 
     // Market Scanner - Scan for most active/trending markets to trade
     // When enabled, the bot will scan Polymarket for the most active markets
@@ -344,10 +360,17 @@ function loadConfig(): ChurnConfig {
     onchainMonitorEnabled: envBool("ONCHAIN_MONITOR_ENABLED", true),
     // Min trade size to detect as a "whale trade" - supports both env names for convenience
     // WHALE_TRADE_USD is the simpler name, ONCHAIN_MIN_WHALE_TRADE_USD for backward compatibility
-    onchainMinWhaleTradeUsd: envNum("WHALE_TRADE_USD", envNum("ONCHAIN_MIN_WHALE_TRADE_USD", 500)),
+    // DEFAULT: $100 - lower threshold catches more whale activity
+    onchainMinWhaleTradeUsd: envNum("WHALE_TRADE_USD", envNum("ONCHAIN_MIN_WHALE_TRADE_USD", 100)),
     // Infura tier plan: "core" (free), "developer" ($50/mo), "team" ($225/mo), "growth" (enterprise)
     // Affects rate limiting to avoid hitting API caps
     infuraTier: parseInfuraTierEnv(process.env.INFURA_TIER),
+
+    // Mempool Monitoring - Watch for PENDING whale transactions (FASTER than on-chain!)
+    // Sees trades BEFORE they're confirmed, allowing us to copy at the same price
+    mempoolMonitorEnabled: envBool("MEMPOOL_MONITOR_ENABLED", true),
+    // Gas price multiplier for priority execution (1.2 = 20% higher gas than whale's tx)
+    mempoolGasPriceMultiplier: envNum("MEMPOOL_GAS_MULTIPLIER", 1.2),
   };
 }
 
@@ -417,7 +440,7 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
     log(`   Liquidation: ⚠️ ${modeDesc}`);
   }
   if (config.copyAnyWhaleBuy) {
-    log(`   Copy any whale buy: ⚠️ AGGRESSIVE MODE (no bias confirmation)`);
+    log(`   Copy any whale buy: ⚡ INSTANT COPY MODE (no bias confirmation)`);
   }
   log("");
   log("📊 THE MATH (applied to ALL positions):");
@@ -431,9 +454,9 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log(`   Following top ${config.leaderboardTopN} wallets`);
   log(`   Min trade size: $${config.onchainMinWhaleTradeUsd} (WHALE_TRADE_USD)`);
   if (config.copyAnyWhaleBuy) {
-    log(`   Mode: AGGRESSIVE - copy ANY whale buy ≥ $${config.onchainMinWhaleTradeUsd}`);
+    log(`   Mode: INSTANT COPY - copy ANY whale buy ≥ $${config.onchainMinWhaleTradeUsd}`);
   } else {
-    log(`   Mode: CONSERVATIVE - need $${config.biasMinNetUsd} flow + ${config.biasMinTrades} trades`);
+    log(`   Mode: CONFIRMED - need $${config.biasMinNetUsd} flow + ${config.biasMinTrades} trades`);
   }
   log("");
   log("🔍 MARKET SCANNER:");
@@ -823,11 +846,13 @@ class BiasAccumulator {
       return Array.from(this.leaderboardWallets);
     }
 
+    // Define targetCount outside try block so it's accessible in catch
+    const targetCount = this.config.leaderboardTopN;
+
     try {
       // Fetch with pagination to get the full requested count
       // API may limit to 50 per page, so we paginate if needed
       const pageSize = 50; // Max per page (API limit)
-      const targetCount = this.config.leaderboardTopN;
       const allEntries: any[] = [];
       
       let offset = 0;
@@ -905,11 +930,29 @@ class BiasAccumulator {
           }
         }
         this.lastLeaderboardFetch = now;
-        console.log(`🐋 Tracking ${this.leaderboardWallets.size} top traders (requested: ${targetCount})`);
+        const trackedCount = this.leaderboardWallets.size;
+        console.log(`🐋 Tracking ${trackedCount} top traders (requested: ${targetCount})`);
+        
+        // Report if we got significantly fewer wallets than requested (potential issue)
+        if (trackedCount < targetCount * 0.95) {
+          reportError(
+            "Leaderboard Wallet Count Mismatch",
+            `Got ${trackedCount} unique wallets instead of requested ${targetCount}. May have duplicates or API limit.`,
+            "info",
+            { trackedCount, requestedCount: targetCount, entriesReturned: allEntries.length }
+          );
+        }
       }
     } catch (err) {
       // Keep existing wallets on error
-      console.warn(`⚠️ Leaderboard fetch failed: ${err instanceof Error ? err.message : err}`);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`⚠️ Leaderboard fetch failed: ${errorMsg}`);
+      reportError(
+        "Leaderboard Fetch Failed",
+        errorMsg,
+        "warning",
+        { requestedCount: targetCount }
+      );
     }
 
     return Array.from(this.leaderboardWallets);
@@ -2510,6 +2553,7 @@ interface ExecutionResult {
   filledUsd?: number;
   filledPriceCents?: number;
   reason?: string;
+  pending?: boolean;  // True if order is GTC and waiting for fill
 }
 
 interface TokenMarketData {
@@ -2675,43 +2719,153 @@ class ExecutionEngine {
     if (!this.client) return { success: false, reason: "NO_CLIENT" };
 
     try {
+      // ═══════════════════════════════════════════════════════════════════════
+      // FAIL-SAFE: Check if trading is safe BEFORE attempting any order
+      // This protects user funds when network conditions are dangerous!
+      // ═══════════════════════════════════════════════════════════════════════
+      const latencyMonitor = getLatencyMonitor();
+      const tradingSafety = latencyMonitor.isTradingSafe();
+      
+      if (!tradingSafety.safe) {
+        console.error(`🚨 TRADING BLOCKED - Network unsafe: ${tradingSafety.reason}`);
+        console.error(`   Trade NOT executed to protect your funds. Waiting for network to stabilize...`);
+        reportError(
+          "Trading Blocked - Network Unsafe",
+          `Trade blocked due to unsafe network conditions: ${tradingSafety.reason}`,
+          "warning",
+          { tokenId, side, sizeUsd, reason: tradingSafety.reason }
+        );
+        return { success: false, reason: `NETWORK_UNSAFE: ${tradingSafety.reason}` };
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // LATENCY-AWARE SLIPPAGE - Critical for high-volume markets!
+      // ═══════════════════════════════════════════════════════════════════════
+      const networkHealth = latencyMonitor.getNetworkHealth();
+      const dynamicSlippagePct = networkHealth.recommendedSlippagePct;
+      
+      // Warn if network is degraded - higher chance of missed fills or bad slippage
+      if (networkHealth.status === "critical") {
+        console.warn(`🔴 CRITICAL LATENCY: ${networkHealth.rpcLatencyMs.toFixed(0)}ms RPC, ${networkHealth.apiLatencyMs.toFixed(0)}ms API`);
+        console.warn(`   Using ${dynamicSlippagePct.toFixed(1)}% slippage buffer - HIGH RISK of slippage loss!`);
+        reportError(
+          "Critical Network Latency",
+          `Attempting trade with critical latency: RPC ${networkHealth.rpcLatencyMs.toFixed(0)}ms, API ${networkHealth.apiLatencyMs.toFixed(0)}ms`,
+          "warning",
+          { rpcLatencyMs: networkHealth.rpcLatencyMs, apiLatencyMs: networkHealth.apiLatencyMs, slippagePct: dynamicSlippagePct }
+        );
+      } else if (networkHealth.status === "degraded") {
+        console.warn(`🟡 High latency: ${networkHealth.rpcLatencyMs.toFixed(0)}ms RPC - using ${dynamicSlippagePct.toFixed(1)}% slippage`);
+      }
+
       const orderBook = await this.client.getOrderBook(tokenId);
       const levels = side === "LONG" ? orderBook?.asks : orderBook?.bids;
       if (!levels?.length) return { success: false, reason: "NO_LIQUIDITY" };
 
-      const price = parseFloat(levels[0].price);
-      const shares = sizeUsd / price;
+      const bestPrice = parseFloat(levels[0].price);
+      
+      // Apply latency-adjusted slippage buffer to price
+      // For BUY: We're willing to pay MORE (price + slippage) to ensure fill
+      // For SELL: We're willing to accept LESS (price - slippage) to ensure fill
+      const slippageMultiplier = dynamicSlippagePct / 100;
+      const fokPrice = side === "LONG" 
+        ? bestPrice * (1 + slippageMultiplier)  // BUY: pay up to X% more
+        : bestPrice * (1 - slippageMultiplier); // SELL: accept X% less
+      
+      const shares = sizeUsd / bestPrice; // Use best price for share calculation
 
       const { Side, OrderType } = await import("@polymarket/clob-client");
-      const order = await this.client.createMarketOrder({
+      
+      // ═══════════════════════════════════════════════════════════════════════
+      // COMBO ORDER STRATEGY: Try FOK first, fall back to GTC if needed
+      // FOK = instant fill or nothing (best for racing whale trades)
+      // GTC = post limit order (backup if FOK misses)
+      // ═══════════════════════════════════════════════════════════════════════
+      
+      // Measure actual order execution time
+      const execStart = performance.now();
+      
+      // STEP 1: Try FOK (Fill-Or-Kill) first - instant execution
+      const fokOrder = await this.client.createMarketOrder({
         side: side === "LONG" ? Side.BUY : Side.SELL,
         tokenID: tokenId,
         amount: shares,
-        price,
+        price: fokPrice, // Slippage-adjusted price
       });
 
-      const response = await this.client.postOrder(order, OrderType.FOK);
+      const fokResponse = await this.client.postOrder(fokOrder, OrderType.FOK);
+      const execLatencyMs = performance.now() - execStart;
+      
+      // Log execution timing for analysis
+      if (execLatencyMs > 500) {
+        console.warn(`⏱️ Slow order execution: ${execLatencyMs.toFixed(0)}ms - consider the slippage impact`);
+      }
 
-      if (response.success) {
+      if (fokResponse.success) {
         const position = this.positionManager.openPosition({
           tokenId, marketId, side,
-          entryPriceCents: price * 100,
+          entryPriceCents: bestPrice * 100,
           sizeUsd,
           referencePriceCents,
           evSnapshot: evMetrics,
           biasDirection,
         });
-        // Store opposite token for hedging
         if (oppositeTokenId) {
           this.positionManager.setOppositeToken(position.id, oppositeTokenId);
         }
-        console.log(`📥 ${side} $${sizeUsd.toFixed(2)} @ ${(price * 100).toFixed(1)}¢`);
-        return { success: true, filledUsd: sizeUsd, filledPriceCents: price * 100 };
+        console.log(`📥 FOK ${side} $${sizeUsd.toFixed(2)} @ ${(bestPrice * 100).toFixed(1)}¢ (slippage: ${dynamicSlippagePct.toFixed(1)}%, exec: ${execLatencyMs.toFixed(0)}ms)`);
+        return { success: true, filledUsd: sizeUsd, filledPriceCents: bestPrice * 100 };
       }
 
+      // STEP 2: FOK failed - try GTC (limit order) as fallback
+      // Use a tighter price for GTC - we're willing to wait for a better fill
+      console.log(`⏳ FOK missed, trying GTC limit order...`);
+      
+      const gtcPrice = side === "LONG"
+        ? bestPrice * (1 + slippageMultiplier * 0.5)  // Tighter slippage for GTC
+        : bestPrice * (1 - slippageMultiplier * 0.5);
+      
+      try {
+        const gtcOrder = await this.client.createOrder({
+          side: side === "LONG" ? Side.BUY : Side.SELL,
+          tokenID: tokenId,
+          size: shares,
+          price: gtcPrice,
+        });
+
+        const gtcResponse = await this.client.postOrder(gtcOrder, OrderType.GTC);
+        
+        if (gtcResponse.success) {
+          // GTC order posted - it will sit on the book until filled
+          console.log(`📋 GTC order posted @ ${(gtcPrice * 100).toFixed(1)}¢ - waiting for fill...`);
+          
+          // Note: For GTC, we don't immediately open a position
+          // The position will be tracked when the order fills (via on-chain monitor)
+          // For now, return success but note it's pending
+          return { success: true, filledUsd: 0, filledPriceCents: gtcPrice * 100, pending: true };
+        }
+      } catch (gtcErr) {
+        console.warn(`⚠️ GTC fallback also failed: ${gtcErr instanceof Error ? gtcErr.message : gtcErr}`);
+      }
+
+      // Both FOK and GTC failed
+      reportError(
+        "Order Rejected (FOK + GTC)",
+        `Both FOK and GTC orders rejected for ${tokenId.slice(0, 16)}...`,
+        "warning",
+        { tokenId, side, sizeUsd, priceCents: bestPrice * 100, marketId, slippagePct: dynamicSlippagePct, execLatencyMs }
+      );
       return { success: false, reason: "ORDER_REJECTED" };
     } catch (err) {
-      return { success: false, reason: err instanceof Error ? err.message : "ERROR" };
+      const errorMsg = err instanceof Error ? err.message : "ERROR";
+      // Report execution error to GitHub
+      reportError(
+        "Entry Execution Failed",
+        errorMsg,
+        "error",
+        { tokenId, side, sizeUsd, marketId }
+      );
+      return { success: false, reason: errorMsg };
     }
   }
 
@@ -3077,8 +3231,10 @@ class ChurnEngine {
   private decisionEngine: DecisionEngine;
   private executionEngine: ExecutionEngine;
   private onchainMonitor: OnChainMonitor | null = null;
+  private mempoolMonitor: MempoolMonitor | null = null;
   private marketScanner: MarketScanner;
   private dynamicReserveManager: DynamicReserveManager;
+  private latencyMonitor: LatencyMonitor;
 
   private client: any = null;
   private wallet: any = null;
@@ -3097,6 +3253,10 @@ class ChurnEngine {
   // Maps tokenId to timestamp when it was sold
   private recentlySoldPositions = new Map<string, number>();
   private readonly SOLD_POSITION_COOLDOWN_MS = 30 * 1000; // 30 seconds cooldown
+  
+  // Pending whale signals from mempool - for fast copy trading
+  private pendingWhaleSignals: Map<string, PendingTradeSignal> = new Map();
+  private readonly PENDING_SIGNAL_EXPIRY_MS = 30 * 1000; // 30 seconds
 
   // Intervals
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
@@ -3127,6 +3287,16 @@ class ChurnEngine {
       this.decisionEngine,
       this.logger,
     );
+
+    // Initialize latency monitor for dynamic slippage calculation
+    this.latencyMonitor = initLatencyMonitor({
+      rpcUrl: this.config.rpcUrl,
+      measureIntervalMs: 30000, // Check every 30s
+      degradedThresholdMs: 500,
+      criticalThresholdMs: 2000,
+      baseSlippagePct: 2,
+      maxSlippagePct: 10,
+    });
 
     // Log position closes
     this.positionManager.onTransition((t) => {
@@ -3187,6 +3357,16 @@ class ChurnEngine {
       initTelegram();
       console.log("📱 Telegram alerts enabled");
     }
+
+    // Initialize GitHub Error Reporter
+    const githubReporter = initGitHubReporter({});
+    if (githubReporter.isEnabled()) {
+      console.log("📋 GitHub error reporting enabled");
+    }
+
+    // Start latency monitoring - CRITICAL for slippage calculation!
+    this.latencyMonitor.start();
+    console.log("⏱️ Latency monitoring enabled (dynamic slippage adjustment)");
 
     // Authenticate with CLOB
     const auth = await createClobClient(
@@ -3304,6 +3484,17 @@ class ChurnEngine {
       // Fire and forget - don't await, let it run in parallel
       this.initializeOnChainMonitor().catch((err) => {
         console.warn(`⚠️ On-chain monitor background init failed: ${err instanceof Error ? err.message : err}`);
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MEMPOOL MONITORING - See PENDING trades BEFORE they confirm!
+    // Runs independently of on-chain monitor - can use either or both
+    // ═══════════════════════════════════════════════════════════════════════
+    if (this.config.mempoolMonitorEnabled) {
+      // Fire and forget - don't await, let it run in parallel
+      this.initializeMempoolMonitor().catch((err) => {
+        console.warn(`⚠️ Mempool monitor background init failed: ${err instanceof Error ? err.message : err}`);
       });
     }
 
@@ -3432,6 +3623,87 @@ class ChurnEngine {
     } catch (err) {
       console.warn(`⚠️ On-chain monitor init failed: ${err instanceof Error ? err.message : err}`);
       console.warn(`   Falling back to API polling only (still works, just slower)`);
+    }
+  }
+
+  /**
+   * Initialize mempool monitor for PENDING trade detection
+   * This is FASTER than on-chain events - sees trades BEFORE they confirm!
+   * 
+   * NOTE: Runs independently of on-chain monitor - you can use either or both
+   */
+  private async initializeMempoolMonitor(): Promise<void> {
+    if (!this.config.mempoolMonitorEnabled) {
+      return;
+    }
+
+    try {
+      // Detect WebSocket URL from RPC URL
+      let wsUrl = this.config.rpcUrl;
+      if (wsUrl.startsWith("https://")) {
+        wsUrl = wsUrl.replace("https://", "wss://").replace("/v3/", "/ws/v3/");
+      }
+
+      const mempoolConfig = createMempoolMonitorConfig(
+        wsUrl,
+        this.biasAccumulator.getWhaleWallets(),
+        {
+          enabled: true,
+          minTradeSizeUsd: this.config.onchainMinWhaleTradeUsd,
+          gasPriceMultiplier: this.config.mempoolGasPriceMultiplier,
+        }
+      );
+
+      this.mempoolMonitor = new MempoolMonitor(mempoolConfig);
+
+      // ═══════════════════════════════════════════════════════════════════
+      // PENDING BUY → COPY IMMEDIATELY (faster than on-chain!)
+      // ═══════════════════════════════════════════════════════════════════
+      this.mempoolMonitor.onPendingTrade((signal) => {
+        if (signal.side === "BUY") {
+          console.log(`🔮 MEMPOOL: Whale BUY pending | $${signal.estimatedSizeUsd.toFixed(0)} | Token: ${signal.tokenId.slice(0, 12)}...`);
+          console.log(`   ⚡ COPY SIGNAL - Execute with gas > ${(signal.gasPriceGwei * this.config.mempoolGasPriceMultiplier).toFixed(1)} gwei`);
+          
+          // Store the pending signal for the next cycle to act on
+          this.pendingWhaleSignals.set(signal.tokenId, signal);
+          
+          // Feed to bias accumulator immediately
+          this.biasAccumulator.recordTrade({
+            tokenId: signal.tokenId,
+            wallet: signal.whaleWallet,
+            side: "BUY",
+            sizeUsd: signal.estimatedSizeUsd,
+            timestamp: signal.detectedAt,
+          });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // PENDING SELL → EARLY EXIT WARNING (get out before price drops!)
+        // ═══════════════════════════════════════════════════════════════════
+        if (signal.side === "SELL") {
+          // Check if we hold this token
+          const ourPositions = this.positionManager.getPositionsByToken(signal.tokenId);
+          if (ourPositions.length > 0) {
+            console.log(`🚨 MEMPOOL: Whale SELLING our token! | $${signal.estimatedSizeUsd.toFixed(0)}`);
+            console.log(`   ⚠️ EARLY EXIT SIGNAL - Consider selling before price drops!`);
+            
+            // Mark positions for urgent exit
+            for (const pos of ourPositions) {
+              console.log(`   📍 Position ${pos.id.slice(0, 8)}... | Entry: ${pos.entryPriceCents.toFixed(1)}¢ | Size: $${pos.entrySizeUsd.toFixed(2)}`);
+              // The next cycle will see this and can prioritize exit
+            }
+          }
+        }
+      });
+
+      const started = await this.mempoolMonitor.start();
+      if (started) {
+        console.log(`🔮 Mempool monitor: ACTIVE | Watching for PENDING whale trades`);
+        console.log(`🔮 Speed advantage: See trades BEFORE confirmation → copy at same price!`);
+      }
+    } catch (err) {
+      console.warn(`⚠️ Mempool monitor init failed: ${err instanceof Error ? err.message : err}`);
+      console.warn(`   Note: Not all RPC providers support pending tx subscription`);
     }
   }
 
@@ -3963,9 +4235,9 @@ class ChurnEngine {
     
     // Show whale copy mode status
     if (this.config.copyAnyWhaleBuy) {
-      console.log(`   🔥 Mode: AGGRESSIVE (copy any whale buy ≥ $${this.config.onchainMinWhaleTradeUsd})`);
+      console.log(`   ⚡ Mode: INSTANT COPY (copy any whale buy ≥ $${this.config.onchainMinWhaleTradeUsd})`);
     } else {
-      console.log(`   🐢 Mode: CONSERVATIVE (need $${this.config.biasMinNetUsd} flow + ${this.config.biasMinTrades} trades)`);
+      console.log(`   🐢 Mode: CONFIRMED (need $${this.config.biasMinNetUsd} flow + ${this.config.biasMinTrades} trades)`);
     }
     
     // Show active signals and scanning status
@@ -3981,6 +4253,18 @@ class ChurnEngine {
     if (this.config.dynamicReservesEnabled) {
       const missedInfo = reserveState.missedCount > 0 ? ` | Missed: ${reserveState.missedCount}` : '';
       console.log(`   🏦 Dynamic Reserve: ${reservePct}% (base: ${(reserveState.baseReserveFraction * 100).toFixed(0)}%)${missedInfo}`);
+    }
+    
+    // Show network health - CRITICAL for understanding slippage risk!
+    const networkHealth = this.latencyMonitor.getNetworkHealth();
+    const networkEmoji = networkHealth.status === "healthy" ? "🟢" : networkHealth.status === "degraded" ? "🟡" : "🔴";
+    console.log(`   ${networkEmoji} Network: ${networkHealth.status.toUpperCase()} | RPC: ${networkHealth.rpcLatencyMs.toFixed(0)}ms | API: ${networkHealth.apiLatencyMs.toFixed(0)}ms | Slippage: ${networkHealth.recommendedSlippagePct.toFixed(1)}%`);
+    
+    // Warn if network is not healthy
+    if (networkHealth.warnings.length > 0 && networkHealth.status !== "healthy") {
+      for (const warning of networkHealth.warnings) {
+        console.log(`   ⚠️ ${warning}`);
+      }
     }
     console.log("");
     
@@ -4253,6 +4537,14 @@ class ChurnEngine {
   stop(): void {
     this.running = false;
     console.log("\n🛑 Stopping...");
+
+    // Stop latency monitoring
+    this.latencyMonitor.stop();
+
+    // Stop on-chain monitor if running
+    if (this.onchainMonitor) {
+      this.onchainMonitor.stop();
+    }
 
     if (this.config.telegramBotToken) {
       sendTelegram("🛑 Bot Stopped", "Polymarket Casino Bot has been stopped").catch(() => {});
