@@ -425,7 +425,7 @@ describe("postOrder", () => {
       assert.strictEqual(result.reason, "MARKET_CLOSED");
     });
 
-    it("returns NO_FILLS when order execution fails", async () => {
+    it("returns error message when order execution fails", async () => {
       const client = createMockClient({
         postOrderSuccess: false,
         postOrderErrorMsg: "Insufficient liquidity",
@@ -440,7 +440,7 @@ describe("postOrder", () => {
       });
 
       assert.strictEqual(result.success, false);
-      assert.strictEqual(result.reason, "NO_FILLS");
+      assert.strictEqual(result.reason, "Insufficient liquidity");
     });
   });
 
