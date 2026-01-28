@@ -4,7 +4,7 @@ import {
   GitHubReporter,
   initGitHubReporter,
   getGitHubReporter,
-} from "../../../src/lib/github-reporter";
+} from "../../../src/infra/github-reporter";
 
 /**
  * Unit tests for GitHub Error Reporter

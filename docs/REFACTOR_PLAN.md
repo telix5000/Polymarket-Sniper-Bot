@@ -20,24 +20,29 @@ A prioritized refactor backlog with risk assessment and incremental action plan.
 
 ### Audit Highlights
 
-| Metric | Current | Target |
-|--------|---------|--------|
-| `start.ts` lines | 7,453 | < 500 |
-| `/lib` files | 30 | ~20 |
-| Duplicate logic | 3+ areas | 0 |
-| Test coverage | 341 tests | Maintain/expand |
+| Metric | Before | Current | Target |
+|--------|--------|---------|--------|
+| `start.ts` lines | 7,453 | 7,602 | < 500 |
+| `/lib` files | 30 | 25 | ~20 |
+| `/core` files | 5 | 9 | ~12 |
+| `/infra` files | 6 | 9 | ~9 |
+| Duplicate logic | 3+ areas | 3+ areas | 0 |
+| Test coverage | 341 tests | 373 tests | Maintain/expand |
 
 ### Cleanup Completed
 
 - ✅ Removed unused `scavenger.ts` module (1,080 lines)
 - ✅ Removed non-existent dashboard references from docs
+- ✅ **Moved trading logic to /core**: `smart-sell.ts`, `dynamic-ev-engine.ts`, `dynamic-hedge-policy.ts`
+- ✅ **Moved infrastructure to /infra**: `error-handling.ts`, `latency-monitor.ts`, `github-reporter.ts`
+- ✅ Updated all imports and re-exports for backward compatibility
 
-### Key Issues
+### Key Issues (Remaining)
 
 1. **God File**: `start.ts` contains 10 classes and the main loop
 2. **Duplicate Logic**: Decision engine, EV tracking exist in multiple places
-3. **Misplaced Modules**: Trading logic in `/lib`, infrastructure in `/lib`
-4. **Facade Overload**: `/lib/index.ts` re-exports everything, defeating module boundaries
+3. ~~**Misplaced Modules**~~: ✅ Fixed - Trading logic now in `/core`, infrastructure in `/infra`
+4. **Facade Overload**: `/lib/index.ts` re-exports everything, but now from proper locations
 
 ---
 
@@ -57,7 +62,7 @@ A prioritized refactor backlog with risk assessment and incremental action plan.
 ---
 
 ### `/src/core` - Trading Logic ✅
-**Status: Clean but incomplete**
+**Status: Expanded with trading modules**
 
 | File | Lines | Responsibility |
 |------|-------|----------------|
@@ -65,6 +70,9 @@ A prioritized refactor backlog with risk assessment and incremental action plan.
 | `ev-tracker.ts` | 348 | EV metrics & PnL tracking |
 | `strategy.ts` | 122 | Strategy interface definitions |
 | `risk.ts` | 119 | Position sizing & risk checks |
+| `smart-sell.ts` | 705 | **MOVED from /lib** - Exit logic |
+| `dynamic-ev-engine.ts` | 851 | **MOVED from /lib** - EV calculations |
+| `dynamic-hedge-policy.ts` | 861 | **MOVED from /lib** - Risk management |
 | `index.ts` | 59 | Re-exports |
 
 **Issue**: Good design, but `start.ts` duplicates `DecisionEngine` and `EvTracker` classes.
@@ -72,14 +80,15 @@ A prioritized refactor backlog with risk assessment and incremental action plan.
 ---
 
 ### `/src/infra` - Infrastructure ✅
-**Status: Clean but incomplete**
+**Status: Expanded with utility modules**
 
 | Folder/File | Responsibility |
 |-------------|----------------|
 | `logging/index.ts` | Logger utilities |
 | `persistence/` | Store abstractions (base-store, position-store, market-cache) |
-
-**Issue**: Some infrastructure (latency-monitor, error-handling, github-reporter) is in `/lib`.
+| `error-handling.ts` | **MOVED from /lib** - Error classification & handling |
+| `latency-monitor.ts` | **MOVED from /lib** - Network latency monitoring |
+| `github-reporter.ts` | **MOVED from /lib** - GitHub issue reporting |
 
 ---
 
@@ -112,28 +121,17 @@ A prioritized refactor backlog with risk assessment and incremental action plan.
 
 ---
 
-### `/src/lib` - Utilities (Catch-All) ⚠️
-**Status: Bloated, needs reorganization**
+### `/src/lib` - Utilities (Trimmed) ✅
+**Status: Reorganized - reduced from ~30 to 25 files**
 
-| Category | Files | Issue |
-|----------|-------|-------|
-| Trading Logic | smart-sell, order, dynamic-*, market-* | Should be in `/core` |
-| Infrastructure | latency-monitor, github-reporter, error-handling | Should be in `/infra` |
+| Category | Files | Status |
+|----------|-------|--------|
+| ~~Trading Logic~~ | ~~smart-sell, dynamic-*~~ | **MOVED to /core** ✅ |
+| ~~Infrastructure~~ | ~~latency-monitor, github-reporter, error-handling~~ | **MOVED to /infra** ✅ |
 | Utilities | auth, balance, telegram, vpn, ethers-compat | Appropriate location |
-| Re-exports | index.ts (117 lines) | Too broad |
-
-**Files by Size (top 10)**:
-| File | Lines | Notes |
-|------|-------|-------|
-| `diag-workflow.ts` | 2,837 | Diagnostic workflows - keep separate |
-| `vpn.ts` | 1,751 | VPN support - specialized |
-| `onchain-monitor.ts` | 1,038 | On-chain monitoring |
-| `ws-user-client.ts` | 1,008 | WebSocket client |
-| `dynamic-hedge-policy.ts` | 861 | Risk management → move to `/core` |
-| `dynamic-ev-engine.ts` | 851 | EV calculations → move to `/core` |
-| `ws-market-client.ts` | 829 | WebSocket client |
-| `github-reporter.ts` | 825 | Reporting → move to `/infra` |
-| `smart-sell.ts` | 705 | Exit logic → move to `/core` |
+| WebSocket | ws-market-client, ws-user-client | Appropriate location |
+| Market Data | market-data-store, market-data-facade | Appropriate location |
+| Re-exports | index.ts | Updated to re-export from new locations |
 
 ---
 
@@ -195,17 +193,17 @@ A prioritized refactor backlog with risk assessment and incremental action plan.
 | Consolidate `DecisionEngine` | Use existing `/core/decision-engine.ts` | High | Remove duplication |
 | Consolidate `EvTracker` | Use existing `/core/ev-tracker.ts` | Medium | Remove duplication |
 
-### Priority 2: High (Near-term)
+### Priority 2: High (Near-term) ✅ COMPLETED
 **Goal**: Reorganize `/lib` for clarity
 
-| Target | Action | Risk | Benefit |
-|--------|--------|------|---------|
-| Move `smart-sell.ts` | Relocate to `/core` | Low | Clear ownership |
-| Move `dynamic-hedge-policy.ts` | Relocate to `/core` | Low | Clear ownership |
-| Move `dynamic-ev-engine.ts` | Relocate to `/core` | Low | Clear ownership |
-| Move `latency-monitor.ts` | Relocate to `/infra` | Low | Clear ownership |
-| Move `github-reporter.ts` | Relocate to `/infra` | Low | Clear ownership |
-| Move `error-handling.ts` | Relocate to `/infra` | Low | Clear ownership |
+| Target | Action | Risk | Status |
+|--------|--------|------|--------|
+| Move `smart-sell.ts` | Relocate to `/core` | Low | ✅ DONE |
+| Move `dynamic-hedge-policy.ts` | Relocate to `/core` | Low | ✅ DONE |
+| Move `dynamic-ev-engine.ts` | Relocate to `/core` | Low | ✅ DONE |
+| Move `latency-monitor.ts` | Relocate to `/infra` | Low | ✅ DONE |
+| Move `github-reporter.ts` | Relocate to `/infra` | Low | ✅ DONE |
+| Move `error-handling.ts` | Relocate to `/infra` | Low | ✅ DONE |
 
 ### Priority 3: Medium (Future)
 **Goal**: Clean up remaining structure
@@ -223,18 +221,18 @@ A prioritized refactor backlog with risk assessment and incremental action plan.
 ### Current vs Proposed
 
 ```
-CURRENT:                          PROPOSED:
+CURRENT (after Phase 2):          PROPOSED (after Phase 1):
 src/                              src/
-├── config/      ✅ Keep          ├── config/      (unchanged)
-├── core/        ⚠️  Underused    ├── core/        (expanded)
-│   └── 5 files                   │   ├── decision-engine.ts
-├── infra/       ⚠️  Incomplete   │   ├── ev-tracker.ts
-│   └── 6 files                   │   ├── execution-engine.ts  ← NEW
-├── lib/         🚨 Bloated       │   ├── position-manager.ts  ← NEW
-│   └── 30 files                  │   ├── reserve-manager.ts   ← NEW
-├── models/      ✅ Keep          │   ├── risk.ts
-├── services/    ✅ Keep          │   ├── smart-sell.ts        ← FROM /lib
-└── start.ts     🚨 God File      │   ├── dynamic-hedge.ts     ← FROM /lib
+├── config/      ✅ Clean         ├── config/      (unchanged)
+├── core/        ✅ Expanded      ├── core/        (further expanded)
+│   └── 9 files                   │   ├── decision-engine.ts
+├── infra/       ✅ Expanded      │   ├── ev-tracker.ts
+│   └── 9 files                   │   ├── execution-engine.ts  ← FROM start.ts
+├── lib/         ✅ Trimmed       │   ├── position-manager.ts  ← FROM start.ts
+│   └── 25 files                  │   ├── reserve-manager.ts   ← FROM start.ts
+├── models/      ✅ Clean         │   ├── risk.ts
+├── services/    ✅ Clean         │   ├── smart-sell.ts        ✅ DONE
+└── start.ts     🚨 God File      │   ├── dynamic-hedge.ts     ✅ DONE
                                   │   ├── dynamic-ev.ts        ← FROM /lib
                                   │   └── strategy.ts
                                   ├── infra/       (expanded)

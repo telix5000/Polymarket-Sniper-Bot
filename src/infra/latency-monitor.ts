@@ -12,7 +12,7 @@
  */
 
 import axios from "axios";
-import { POLYMARKET_API } from "./constants";
+import { POLYMARKET_API } from "../lib/constants";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES

@@ -57,3 +57,54 @@ export {
   createTradeResult,
   EvTracker,
 } from "./ev-tracker";
+
+// Smart sell - intelligent sell order execution (moved from /lib)
+export {
+  analyzeLiquidity,
+  calculateOptimalSlippage,
+  determineOrderType,
+  smartSell,
+  checkSellProfitability,
+  getSellRecommendation,
+} from "./smart-sell";
+
+export type {
+  OrderBookLevel,
+  LiquidityAnalysis,
+  SmartSellConfig,
+  SmartSellResult,
+} from "./smart-sell";
+
+// Dynamic EV Engine - adaptive expected value calculation (moved from /lib)
+export {
+  EV_DEFAULTS,
+  DEFAULT_DYNAMIC_EV_CONFIG,
+  DynamicEvEngine,
+  createDynamicEvEngine,
+} from "./dynamic-ev-engine";
+
+export type {
+  DynamicEvConfig,
+  TradeOutcome,
+  ChurnObservation,
+  DynamicEvMetrics,
+  EntryDecisionResult,
+  OperationalCheck,
+} from "./dynamic-ev-engine";
+
+// Dynamic Hedge Policy - adaptive hedge parameter management (moved from /lib)
+export {
+  HEDGE_DEFAULTS,
+  DEFAULT_DYNAMIC_HEDGE_CONFIG,
+  DynamicHedgePolicy,
+  createDynamicHedgePolicy,
+} from "./dynamic-hedge-policy";
+
+export type {
+  DynamicHedgeConfig,
+  PriceObservation,
+  AdverseMoveObservation,
+  HedgeOutcome,
+  DynamicHedgeParameters,
+  HedgeDecision,
+} from "./dynamic-hedge-policy";

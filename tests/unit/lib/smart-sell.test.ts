@@ -5,7 +5,7 @@ import {
   calculateOptimalSlippage,
   determineOrderType,
   type OrderBookLevel,
-} from "../../../src/lib/smart-sell";
+} from "../../../src/core/smart-sell";
 import { SELL } from "../../../src/lib/constants";
 import type { Position } from "../../../src/lib/types";
 

@@ -84,16 +84,22 @@ export * from "./pol-reserve";
 
 // Utilities
 export * from "./ethers-compat";
-export * from "./error-handling";
-export * from "./smart-sell";
+// Error handling is now in /infra (re-export for backward compatibility)
+export * from "../infra/error-handling";
+// Smart sell is now in /core (re-export for backward compatibility)
+export * from "../core/smart-sell";
 
 // On-chain monitoring
 export * from "./onchain-monitor";
 
 // Market utilities
 export * from "./market";
-export * from "./github-reporter";
-export * from "./latency-monitor";
+// GitHub reporter is now in /infra (re-export for backward compatibility)
+export * from "../infra/github-reporter";
+// Latency monitor is now in /infra.
+// NOTE: This is a BREAKING CHANGE for any deep imports of `src/lib/latency-monitor`.
+// Consumers should now import from the barrel (`src/lib`) or from `../infra/latency-monitor`.
+export * from "../infra/latency-monitor";
 
 // WebSocket market data layer
 export * from "./market-data-store";
@@ -104,9 +110,9 @@ export * from "./market-data-facade";
 // Market scanner (simplified discovery)
 export * from "./market-scanner";
 
-// Dynamic EV and hedging
-export * from "./dynamic-ev-engine";
-export * from "./dynamic-hedge-policy";
+// Dynamic EV and hedging (now in /core, re-export for backward compatibility)
+export * from "../core/dynamic-ev-engine";
+export * from "../core/dynamic-hedge-policy";
 
 // Diagnostic mode
 export * from "./diag-mode";

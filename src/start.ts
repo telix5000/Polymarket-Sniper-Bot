@@ -7394,7 +7394,7 @@ async function main(): Promise<void> {
 
       // Write diagnostic trace to JSONL file for artifact upload
       const { writeDiagWorkflowTrace, getDiagTracePath } =
-        await import("./lib/github-reporter");
+        await import("./infra/github-reporter");
       writeDiagWorkflowTrace({
         traceId: result.traceId,
         startTime: result.startTime,

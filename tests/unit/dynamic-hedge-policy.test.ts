@@ -13,7 +13,7 @@ import {
   HEDGE_DEFAULTS,
   type HedgeOutcome,
   type DynamicHedgeConfig,
-} from "../../src/lib/dynamic-hedge-policy";
+} from "../../src/core/dynamic-hedge-policy";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS

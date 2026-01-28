@@ -15,7 +15,7 @@ import {
   ghWarningAnnotation,
   emitCloudflareBlockEvent,
   mapErrorToDiagReason,
-} from "../../../src/lib/error-handling";
+} from "../../../src/infra/error-handling";
 
 describe("Error Handling Utilities", () => {
   describe("isCloudflareBlock", () => {
