@@ -28,9 +28,9 @@
     "format": "prettier --write .",
     "postinstall": "patch-package",
     "redeem": "ts-node scripts/redeem.ts",
-    "test": "bash -c 'node --test -r ts-node/register/transpile-only tests/unit/**/*.test.ts tests/integration/**/*.test.ts 2>/dev/null || node --test -r ts-node/register/transpile-only tests/unit/**/*.test.ts'",
+    "test": "bash -c 'if compgen -G \"tests/integration/**/*.test.ts\" > /dev/null; then node --test -r ts-node/register/transpile-only tests/unit/**/*.test.ts tests/integration/**/*.test.ts; else node --test -r ts-node/register/transpile-only tests/unit/**/*.test.ts; fi'",
     "test:unit": "bash -c 'node --test -r ts-node/register/transpile-only tests/unit/**/*.test.ts'",
-    "test:integration": "bash -c 'node --test -r ts-node/register/transpile-only tests/integration/**/*.test.ts'",
+    "test:integration": "bash -c 'if compgen -G \"tests/integration/**/*.test.ts\" > /dev/null; then node --test -r ts-node/register/transpile-only tests/integration/**/*.test.ts; else echo \"No integration tests found in tests/integration/\"; fi'",
     "typecheck": "tsc --noEmit",
     "print-targets": "ts-node scripts/printTargets.ts",
     "test-sell": "ts-node scripts/test-sell.ts"
