@@ -1024,12 +1024,12 @@ class BiasAccumulator {
           const tokenId = activity.asset || activity.tokenId;
           if (!tokenId) continue;
 
-          const sizeUsd = activity.usdcSize || (Number(activity.size) * Number(activity.price)) || 0;
+          const sizeUsd = activity.usdcSize ?? (Number(activity.size) * Number(activity.price) || 0);
           if (sizeUsd <= 0) continue;
 
           trades.push({
             tokenId,
-            marketId: activity.conditionId || activity.marketId,
+            marketId: activity.conditionId ?? activity.marketId,
             wallet: wallet,
             side: "BUY", // Only BUY trades
             sizeUsd,
@@ -3365,14 +3365,25 @@ class ChurnEngine {
     whaleTradesDetected: 0,
     entryAttempts: 0,
     entrySuccesses: 0,
-    entryFailureReasons: [] as string[],
+    entryFailureReasons: [] as string[], // Keep last 50 only
     orderbookFetchFailures: 0,
     marketDataFetchAttempts: 0,
     marketDataFetchSuccesses: 0,
-    startupLogs: [] as string[],
     startupReportSent: false,
   };
   private readonly STARTUP_DIAGNOSTIC_DELAY_MS = 60 * 1000; // Send diagnostic after 60 seconds
+  private readonly MAX_FAILURE_REASONS = 50;
+
+  /**
+   * Track an entry failure reason with size limit
+   */
+  private trackFailureReason(reason: string): void {
+    this.trackFailureReason(reason);
+    // Keep only the last MAX_FAILURE_REASONS entries
+    if (this.diagnostics.entryFailureReasons.length > this.MAX_FAILURE_REASONS) {
+      this.diagnostics.entryFailureReasons.shift();
+    }
+  }
 
   constructor() {
     this.config = loadConfig();
@@ -4212,9 +4223,7 @@ class ChurnEngine {
     if (evAllowed.allowed) {
       if (activeBiases.length > 0) {
         // Log when we have active biases - helps diagnose trade detection
-        if (this.cycleCount % 10 === 0 || activeBiases.length > 0) {
-          console.log(`🐋 [Bias] ${activeBiases.length} active whale signals detected`);
-        }
+        console.log(`🐋 [Bias] ${activeBiases.length} active whale signals detected`);
         
         // Execute whale-signal entries in parallel to avoid missing opportunities
         // when multiple whale signals arrive simultaneously.
@@ -4236,7 +4245,7 @@ class ChurnEngine {
                 this.diagnostics.entrySuccesses++;
                 console.log(`✅ [Entry] SUCCESS: Copied whale trade on ${bias.tokenId.slice(0, 12)}...`);
               } else {
-                this.diagnostics.entryFailureReasons.push(result.reason || "unknown");
+                this.trackFailureReason(result.reason || "unknown");
                 console.log(`❌ [Entry] FAILED: ${bias.tokenId.slice(0, 12)}... - ${result.reason}`);
               }
               // Track missed opportunities - check for actual reason strings from processEntry
@@ -4246,11 +4255,11 @@ class ChurnEngine {
               return result;
             } else {
               console.log(`⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}...`);
-              this.diagnostics.entryFailureReasons.push("NO_MARKET_DATA");
+              this.trackFailureReason("NO_MARKET_DATA");
             }
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
-            this.diagnostics.entryFailureReasons.push(`ERROR: ${errMsg}`);
+            this.trackFailureReason(`ERROR: ${errMsg}`);
             console.warn(`⚠️ Entry failed for ${bias.tokenId.slice(0, 8)}...: ${errMsg}`);
           }
           return null;
@@ -4283,7 +4292,7 @@ class ChurnEngine {
                 this.diagnostics.entrySuccesses++;
                 console.log(`✅ [Scanner] SUCCESS: Entered scanned market ${tokenId.slice(0, 12)}...`);
               } else {
-                this.diagnostics.entryFailureReasons.push(`SCAN: ${result.reason || "unknown"}`);
+                this.trackFailureReason(`SCAN: ${result.reason || "unknown"}`);
                 // Only log scan failures periodically to avoid spam
                 if (this.cycleCount % 20 === 0) {
                   console.log(`❌ [Scanner] FAILED: ${tokenId.slice(0, 12)}... - ${result.reason}`);
@@ -4295,11 +4304,11 @@ class ChurnEngine {
               }
               return result;
             } else {
-              this.diagnostics.entryFailureReasons.push("SCAN: NO_MARKET_DATA");
+              this.trackFailureReason("SCAN: NO_MARKET_DATA");
             }
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
-            this.diagnostics.entryFailureReasons.push(`SCAN_ERROR: ${errMsg}`);
+            this.trackFailureReason(`SCAN_ERROR: ${errMsg}`);
             // Only log scan errors periodically
             if (this.cycleCount % 50 === 0) {
               console.warn(`⚠️ [Scanner] Error for ${tokenId.slice(0, 8)}...: ${errMsg}`);
@@ -4755,7 +4764,7 @@ class ChurnEngine {
           whaleTradeUsd: this.config.onchainMinWhaleTradeUsd,
           scanActiveMarkets: this.config.scanActiveMarkets,
         },
-        startupLogs: this.diagnostics.startupLogs,
+        startupLogs: [], // Empty - console logs not captured
       });
       console.log(`📋 [Diagnostic] Startup diagnostic sent successfully`);
     } catch (err) {
