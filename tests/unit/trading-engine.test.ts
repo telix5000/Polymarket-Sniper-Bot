@@ -23,7 +23,7 @@ import {
   createTradeResult,
   PositionManager,
   DecisionEngine,
-} from "../src/start";
+} from "../../src/start";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TEST CONFIG

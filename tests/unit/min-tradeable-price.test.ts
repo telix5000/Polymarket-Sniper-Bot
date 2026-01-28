@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { test, describe } from "node:test";
-import { ORDER } from "../src/lib/constants";
+import { ORDER } from "../../src/lib/constants";
 
 // Use the constant from our lib/constants.ts
 const ABSOLUTE_MIN_TRADEABLE_PRICE = ORDER.MIN_TRADEABLE_PRICE;

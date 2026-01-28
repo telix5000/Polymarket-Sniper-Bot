@@ -7,7 +7,7 @@ import {
   type AnalyzablePosition,
   type NewPositionOpportunity,
   type ProfitabilityOptimizerConfig,
-} from "../src/profitability-optimizer";
+} from "../../src/profitability-optimizer";
 
 // === HELPER FUNCTIONS ===
 

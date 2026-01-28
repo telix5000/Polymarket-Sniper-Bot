@@ -16,13 +16,13 @@ import {
   initMarketDataFacade,
   getMarketDataFacade,
   isMarketDataFacadeInitialized,
-} from "../../src/lib/market-data-facade";
+} from "../../../src/lib/market-data-facade";
 
 import {
   MarketDataStore,
   initMarketDataStore,
   getMarketDataStore,
-} from "../../src/lib/market-data-store";
+} from "../../../src/lib/market-data-store";
 
 // ============================================================================
 // Mock ClobClient

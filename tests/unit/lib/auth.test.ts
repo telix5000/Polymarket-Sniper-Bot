@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it, beforeEach, afterEach } from "node:test";
-import { getAuthDiagnostics } from "../../src/lib/auth";
+import { getAuthDiagnostics } from "../../../src/lib/auth";
 
 describe("getAuthDiagnostics", () => {
   // Store original env vars

@@ -4,8 +4,8 @@ import {
   getUsdcAllowance,
   getUsdcBalance,
   getPolBalance,
-} from "../../src/lib/balance";
-import { POLYGON } from "../../src/lib/constants";
+} from "../../../src/lib/balance";
+import { POLYGON } from "../../../src/lib/constants";
 
 // Mock wallet provider
 function createMockWallet(

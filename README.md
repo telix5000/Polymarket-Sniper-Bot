@@ -20,6 +20,44 @@ DASHBOARD_PORT=3000 npm start
 # Then open http://localhost:3000 in your browser
 ```
 
+## Development
+
+```bash
+# Type checking
+npm run typecheck
+
+# Linting
+npm run lint
+
+# Run all tests
+npm test
+
+# Run unit tests only
+npm run test:unit
+
+# Run integration tests only
+npm run test:integration
+```
+
+### Project Structure
+
+```
+├── src/                  # Source code
+│   ├── config/          # Configuration
+│   ├── core/            # Core trading logic
+│   ├── infra/           # Infrastructure
+│   ├── lib/             # Libraries
+│   ├── models/          # Data models
+│   ├── services/        # Services
+│   └── start.ts         # Entry point
+├── tests/
+│   ├── unit/            # Unit tests
+│   │   └── lib/         # Library unit tests
+│   └── integration/     # Integration tests
+├── docs/                # Documentation
+└── scripts/             # Utility scripts
+```
+
 ## Web Dashboard
 
 The bot includes a Glances-style web dashboard accessible via port. It shows real-time updates:
