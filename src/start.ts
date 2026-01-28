@@ -2667,9 +2667,23 @@ class ExecutionEngine {
       return { success: false, reason: "NO_BANKROLL" };
     }
 
-    // For scanner-originated entries, use LONG as default bias since we only scan for
-    // active markets with prices in the 20-80¢ range (good entry territory)
-    const effectiveBias: BiasDirection = skipBiasCheck ? "LONG" : bias.direction;
+    // Determine effective bias direction:
+    // 1. skipBiasCheck (scanner entries): use LONG
+    // 2. copyAnyWhaleBuy mode: treat any non-stale token with 1+ whale buy as LONG
+    // 3. Otherwise: use the computed bias direction (requires 3+ trades, $300 flow)
+    let effectiveBias: BiasDirection;
+    if (skipBiasCheck) {
+      // Scanner-originated entries: use LONG since we only scan for active markets
+      // with prices in the 20-80¢ range (good entry territory)
+      effectiveBias = "LONG";
+    } else if (this.config.copyAnyWhaleBuy && bias.tradeCount >= 1 && !bias.isStale) {
+      // COPY_ANY_WHALE_BUY mode: any single non-stale whale buy is enough
+      // Override direction to LONG (we only track buys)
+      effectiveBias = "LONG";
+    } else {
+      // Conservative mode: use computed bias direction
+      effectiveBias = bias.direction;
+    }
 
     // Evaluate entry
     const decision = this.decisionEngine.evaluateEntry({
