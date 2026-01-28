@@ -23,7 +23,7 @@ A prioritized refactor backlog with risk assessment and incremental action plan.
 | Metric | Current | Target |
 |--------|---------|--------|
 | `start.ts` lines | 7,453 | < 500 |
-| `/lib` files | 33 | ~20 |
+| `/lib` files | 30 | ~20 |
 | Duplicate logic | 3+ areas | 0 |
 | Test coverage | 341 tests | Maintain/expand |
 
