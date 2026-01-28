@@ -119,3 +119,9 @@ export {
   type BiasAccumulatorInterface,
   type PositionManagerInterface,
 } from "./execution-engine";
+
+// Position Manager - position lifecycle tracking (extracted from start.ts)
+export {
+  PositionManager,
+  type PositionManagerConfig,
+} from "./position-manager";
