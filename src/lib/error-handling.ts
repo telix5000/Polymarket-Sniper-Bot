@@ -362,7 +362,7 @@ export function parseError(error: unknown): ParsedError {
   // Timeout errors
   if (
     lowerErrorStr.includes("timeout") ||
-    lowerErrorStr.includes("etimedout") ||
+    errorStr.includes("ETIMEDOUT") ||
     lowerErrorStr.includes("timed out")
   ) {
     return {
@@ -375,8 +375,8 @@ export function parseError(error: unknown): ParsedError {
 
   // Network errors
   if (
-    lowerErrorStr.includes("econnrefused") ||
-    lowerErrorStr.includes("enotfound") ||
+    errorStr.includes("ECONNREFUSED") ||
+    errorStr.includes("ENOTFOUND") ||
     lowerErrorStr.includes("network error") ||
     lowerErrorStr.includes("fetch failed")
   ) {

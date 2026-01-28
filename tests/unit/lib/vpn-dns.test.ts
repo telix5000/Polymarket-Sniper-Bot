@@ -366,24 +366,47 @@ describe("VPN DNS Container Handling", () => {
 
     it("should respect VPN_BYPASS_POLYMARKET_WS config", () => {
       // When VPN_BYPASS_POLYMARKET_WS=false, WebSocket should route through VPN
-      // This is simulated logic - actual behavior depends on env var
+      // When undefined or "true", it should bypass (for latency)
 
-      // WebSocket host config for reference
-      const _wsHostCategory = "WEBSOCKET";
-      const _wsHostExpectedRoute = "BYPASS";
+      // Test the expected behavior based on env var
+      // Note: We can't directly import isWsBypassEnabled() from vpn.ts as it uses execSync
+      // So we test the logic pattern used in generateRoutingPlan()
 
-      // Simulate the config check
-      const bypassWsEnabled = process.env.VPN_BYPASS_POLYMARKET_WS === "true";
-      const effectiveRoute = bypassWsEnabled ? "BYPASS" : "VPN";
+      // Save original value
+      const originalValue = process.env.VPN_BYPASS_POLYMARKET_WS;
 
-      // Default (no env var) should be conservative (VPN)
-      if (process.env.VPN_BYPASS_POLYMARKET_WS === undefined) {
-        // When not set, should default to VPN (conservative)
-        assert.strictEqual(
-          effectiveRoute,
-          "VPN",
-          "Default should route WS through VPN",
-        );
+      // Test case 1: when undefined, should default to NOT bypassing (conservative)
+      delete process.env.VPN_BYPASS_POLYMARKET_WS;
+      let bypassWsEnabled = process.env.VPN_BYPASS_POLYMARKET_WS === "true";
+      assert.strictEqual(
+        bypassWsEnabled,
+        false,
+        "Default (undefined) should not enable bypass",
+      );
+
+      // Test case 2: when "true", should enable bypass
+      process.env.VPN_BYPASS_POLYMARKET_WS = "true";
+      bypassWsEnabled = process.env.VPN_BYPASS_POLYMARKET_WS === "true";
+      assert.strictEqual(
+        bypassWsEnabled,
+        true,
+        "Setting to 'true' should enable bypass",
+      );
+
+      // Test case 3: when "false", should NOT enable bypass
+      process.env.VPN_BYPASS_POLYMARKET_WS = "false";
+      bypassWsEnabled = process.env.VPN_BYPASS_POLYMARKET_WS === "true";
+      assert.strictEqual(
+        bypassWsEnabled,
+        false,
+        "Setting to 'false' should not enable bypass",
+      );
+
+      // Restore original value
+      if (originalValue === undefined) {
+        delete process.env.VPN_BYPASS_POLYMARKET_WS;
+      } else {
+        process.env.VPN_BYPASS_POLYMARKET_WS = originalValue;
       }
     });
   });

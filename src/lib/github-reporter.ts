@@ -17,6 +17,8 @@
  */
 
 import axios from "axios";
+import * as fs from "fs";
+import * as path from "path";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -207,7 +209,6 @@ export class GitHubReporter {
     }
 
     try {
-      const fs = require("fs");
       const summaryContent = this.formatStepSummary(report);
       fs.appendFileSync(summaryPath, summaryContent + "\n\n");
       console.log(`📋 [GitHub] Wrote report to step summary`);
@@ -598,8 +599,6 @@ export function writeDiagTraceEvent(
   outputDir?: string,
 ): void {
   try {
-    const fs = require("fs");
-    const path = require("path");
     const dir = outputDir ?? process.cwd();
     const filePath = path.join(dir, DIAG_TRACE_FILENAME);
 
@@ -621,7 +620,6 @@ export function writeDiagTraceEvent(
  * Get the path to the diagnostic trace file
  */
 export function getDiagTracePath(outputDir?: string): string {
-  const path = require("path");
   const dir = outputDir ?? process.cwd();
   return path.join(dir, DIAG_TRACE_FILENAME);
 }

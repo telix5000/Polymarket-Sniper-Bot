@@ -17,8 +17,10 @@ import {
 describe("Price Safety Module", () => {
   describe("clampPrice", () => {
     it("should clamp prices above MAX_PRICE to MAX_PRICE", () => {
+      // 1.0 should be clamped to MAX_PRICE (0.99)
       assert.strictEqual(clampPrice(1.0), MAX_PRICE);
       assert.strictEqual(clampPrice(1.5), MAX_PRICE);
+      // 0.999 is greater than MAX_PRICE (0.99), so it should also be clamped
       assert.strictEqual(clampPrice(0.999), MAX_PRICE);
     });
 

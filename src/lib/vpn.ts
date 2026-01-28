@@ -990,7 +990,8 @@ export function generateRoutingPlan(
     // Adjust expected route based on config
     let expectedRoute = hostConfig.expectedRoute;
 
-    // WebSocket bypass is configurable
+    // WebSocket bypass is configurable (default: BYPASS for latency)
+    // Set VPN_BYPASS_POLYMARKET_WS=false to route WS through VPN
     if (
       hostConfig.category === "WEBSOCKET" &&
       process.env.VPN_BYPASS_POLYMARKET_WS === "false"
@@ -998,7 +999,9 @@ export function generateRoutingPlan(
       expectedRoute = "VPN";
     }
 
-    // READ API bypass is configurable
+    // READ API bypass is configurable (default: VPN for conservative approach)
+    // Set VPN_BYPASS_POLYMARKET_READS=true to bypass VPN for READ APIs
+    // NOTE: This is intentionally more conservative than WebSocket/RPC defaults
     if (
       hostConfig.category === "READ_API" &&
       process.env.VPN_BYPASS_POLYMARKET_READS !== "true"
@@ -1006,7 +1009,8 @@ export function generateRoutingPlan(
       expectedRoute = "VPN";
     }
 
-    // RPC bypass is configurable
+    // RPC bypass is configurable (default: BYPASS for speed)
+    // Set VPN_BYPASS_RPC=false to route RPC through VPN
     if (
       hostConfig.category === "RPC" &&
       process.env.VPN_BYPASS_RPC === "false"
