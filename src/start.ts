@@ -3063,7 +3063,7 @@ interface CooldownEntry {
 
 interface CooldownStats {
   cooldownHits: number; // Total times a token was blocked by cooldown
-  uniqueTokensCooledDown: number; // Unique tokens currently in cooldown
+  totalTokensCooledDown: number; // Total unique tokens that have ever been cooled down (cumulative)
   resolvedLaterCount: number; // Tokens that succeeded after being in cooldown
 }
 
@@ -3079,7 +3079,7 @@ class MarketDataCooldownManager {
   private cooldowns = new Map<string, CooldownEntry>();
   private stats: CooldownStats = {
     cooldownHits: 0,
-    uniqueTokensCooledDown: 0,
+    totalTokensCooledDown: 0,
     resolvedLaterCount: 0,
   };
 
@@ -3103,16 +3103,23 @@ class MarketDataCooldownManager {
   /**
    * Record a failure and apply exponential backoff
    * Only applies long cooldown for NO_ORDERBOOK/NOT_FOUND
+   * Transient errors (RATE_LIMIT, NETWORK_ERROR, PARSE_ERROR) use short cooldown
+   * but don't reset existing strikes from long-cooldown failures
    */
   recordFailure(tokenId: string, reason: MarketDataFailureReason): number {
     const now = Date.now();
     const existing = this.cooldowns.get(tokenId);
 
     // For transient errors (RATE_LIMIT, NETWORK_ERROR, PARSE_ERROR), use short 30s cooldown
+    // Preserve existing strikes only if they came from long-cooldown failures (strikes > 1)
     if (!shouldApplyLongCooldown(reason)) {
       const shortCooldownMs = 30 * 1000; // 30 seconds
+      // If we have strikes > 1, it means previous long-cooldown failures occurred - preserve them
+      // Otherwise, keep strikes at 1 (no accumulation for transient errors)
+      const preservedStrikes =
+        existing && existing.strikes > 1 ? existing.strikes : 1;
       this.cooldowns.set(tokenId, {
-        strikes: 1,
+        strikes: preservedStrikes,
         nextEligibleTime: now + shortCooldownMs,
         lastReason: reason,
       });
@@ -3120,7 +3127,14 @@ class MarketDataCooldownManager {
     }
 
     // For NO_ORDERBOOK/NOT_FOUND, apply exponential backoff
-    const strikes = existing ? existing.strikes + 1 : 1;
+    // Increment strikes only if:
+    // 1. strikes > 1 (we have accumulated long-cooldown failures), OR
+    // 2. The previous failure was a long-cooldown type (meaning we're at strike 1 from that)
+    // This ensures transient-only tokens start fresh when they first get a long-cooldown failure
+    const shouldIncrement =
+      existing &&
+      (existing.strikes > 1 || shouldApplyLongCooldown(existing.lastReason));
+    const strikes = shouldIncrement ? existing.strikes + 1 : 1;
     const backoffIndex = Math.min(
       strikes - 1,
       MarketDataCooldownManager.BACKOFF_SCHEDULE_MS.length - 1,
@@ -3136,7 +3150,7 @@ class MarketDataCooldownManager {
     });
 
     if (wasNew) {
-      this.stats.uniqueTokensCooledDown++;
+      this.stats.totalTokensCooledDown++;
     }
 
     return cooldownMs;
@@ -3155,9 +3169,7 @@ class MarketDataCooldownManager {
   /**
    * Get cooldown info for a token (for logging)
    */
-  getCooldownInfo(
-    tokenId: string,
-  ): {
+  getCooldownInfo(tokenId: string): {
     strikes: number;
     nextEligibleTime: number;
     lastReason: MarketDataFailureReason;
@@ -5303,6 +5315,7 @@ class ChurnEngine {
         // - maxDeployedFractionTotal (30%) - max exposure cap
         // - maxOpenPositionsPerMarket (2) - per-token limit
         // These checks happen atomically in processEntry, preventing over-allocation.
+        // Note: Cooldown filtering already done above (eligibleBiases), no duplicate check needed
         const entryPromises = eligibleBiases.slice(0, 3).map(async (bias) => {
           this.diagnostics.entryAttempts++;
           debug(
@@ -5310,17 +5323,6 @@ class ChurnEngine {
           );
           try {
             this.diagnostics.marketDataFetchAttempts++;
-
-            // Check market data cooldown first
-            if (this.marketDataCooldownManager.isOnCooldown(bias.tokenId)) {
-              const info = this.marketDataCooldownManager.getCooldownInfo(
-                bias.tokenId,
-              );
-              debug(
-                `Token ${bias.tokenId.slice(0, 12)}... on market data cooldown (strike ${info?.strikes}, reason: ${info?.lastReason})`,
-              );
-              return null;
-            }
 
             const fetchResult = await this.fetchTokenMarketDataWithReason(
               bias.tokenId,
@@ -5443,6 +5445,7 @@ class ChurnEngine {
         }
 
         // Try top scanned markets (limit to avoid rate limiting)
+        // Note: Cooldown filtering already done above (eligibleScanned), no duplicate check needed
         const scannedEntryPromises = eligibleScanned
           .slice(0, 2)
           .map(async (tokenId) => {
@@ -5452,11 +5455,6 @@ class ChurnEngine {
               const existingPositions =
                 this.positionManager.getPositionsByToken(tokenId);
               if (existingPositions.length > 0) return null;
-
-              // Check market data cooldown
-              if (this.marketDataCooldownManager.isOnCooldown(tokenId)) {
-                return null;
-              }
 
               this.diagnostics.marketDataFetchAttempts++;
               const fetchResult =
@@ -6110,31 +6108,40 @@ class ChurnEngine {
         orderbook = await this.client.getOrderBook(tokenId);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
+        const errorMsgLower = errorMsg.toLowerCase();
         this.diagnostics.orderbookFetchFailures++;
 
-        // Classify the error
+        // Classify the error (case-insensitive, check most specific first)
+        // NO_ORDERBOOK: specific Polymarket error for closed/settled markets
+        if (errorMsgLower.includes("no orderbook")) {
+          return { ok: false, reason: "NO_ORDERBOOK", detail: errorMsg };
+        }
+        // NOT_FOUND: 404 or generic "not found" errors
         if (
-          errorMsg.includes("404") ||
-          errorMsg.includes("No orderbook") ||
-          errorMsg.includes("not found")
+          errorMsgLower.includes("404") ||
+          errorMsgLower.includes("not found")
         ) {
           return { ok: false, reason: "NOT_FOUND", detail: errorMsg };
         }
+        // RATE_LIMIT: rate limiting errors
         if (
-          errorMsg.includes("rate") ||
-          errorMsg.includes("429") ||
-          errorMsg.includes("Too many")
+          errorMsgLower.includes("rate") ||
+          errorMsgLower.includes("429") ||
+          errorMsgLower.includes("too many")
         ) {
           return { ok: false, reason: "RATE_LIMIT", detail: errorMsg };
         }
+        // NETWORK_ERROR: connection/network failures
         if (
-          errorMsg.includes("timeout") ||
-          errorMsg.includes("ECONNRESET") ||
-          errorMsg.includes("network") ||
-          errorMsg.includes("ENOTFOUND")
+          errorMsgLower.includes("timeout") ||
+          errorMsgLower.includes("econnreset") ||
+          errorMsgLower.includes("network") ||
+          errorMsgLower.includes("enotfound") ||
+          errorMsgLower.includes("socket")
         ) {
           return { ok: false, reason: "NETWORK_ERROR", detail: errorMsg };
         }
+        // Default to NETWORK_ERROR for unknown errors
         return { ok: false, reason: "NETWORK_ERROR", detail: errorMsg };
       }
 

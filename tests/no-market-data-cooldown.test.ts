@@ -37,7 +37,7 @@ interface CooldownEntry {
 
 interface CooldownStats {
   cooldownHits: number;
-  uniqueTokensCooledDown: number;
+  totalTokensCooledDown: number;
   resolvedLaterCount: number;
 }
 
@@ -52,7 +52,7 @@ class MarketDataCooldownManager {
   private cooldowns = new Map<string, CooldownEntry>();
   private stats: CooldownStats = {
     cooldownHits: 0,
-    uniqueTokensCooledDown: 0,
+    totalTokensCooledDown: 0,
     resolvedLaterCount: 0,
   };
 
@@ -73,17 +73,25 @@ class MarketDataCooldownManager {
     const now = Date.now();
     const existing = this.cooldowns.get(tokenId);
 
+    // For transient errors, use short cooldown
+    // Preserve existing strikes only if they came from long-cooldown failures (strikes > 1)
     if (!shouldApplyLongCooldown(reason)) {
       const shortCooldownMs = 30 * 1000;
+      const preservedStrikes =
+        existing && existing.strikes > 1 ? existing.strikes : 1;
       this.cooldowns.set(tokenId, {
-        strikes: 1,
+        strikes: preservedStrikes,
         nextEligibleTime: now + shortCooldownMs,
         lastReason: reason,
       });
       return shortCooldownMs;
     }
 
-    const strikes = existing ? existing.strikes + 1 : 1;
+    // For long-cooldown failures, increment only if previous strikes accumulated
+    const shouldIncrement =
+      existing &&
+      (existing.strikes > 1 || shouldApplyLongCooldown(existing.lastReason));
+    const strikes = shouldIncrement ? existing.strikes + 1 : 1;
     const backoffIndex = Math.min(
       strikes - 1,
       MarketDataCooldownManager.BACKOFF_SCHEDULE_MS.length - 1,
@@ -99,7 +107,7 @@ class MarketDataCooldownManager {
     });
 
     if (wasNew) {
-      this.stats.uniqueTokensCooledDown++;
+      this.stats.totalTokensCooledDown++;
     }
 
     return cooldownMs;
@@ -280,13 +288,67 @@ describe("No Market Data Cooldown", () => {
       );
     });
 
+    test("should preserve strikes when alternating between long-cooldown and transient failures", () => {
+      const tokenId = "test-token-7";
+
+      // Build up 2 strikes with long-cooldown failures
+      manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 1);
+
+      manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 2);
+
+      // Now get a transient error - should use short cooldown but preserve strikes
+      const transientCooldown = manager.recordFailure(tokenId, "RATE_LIMIT");
+      assert.strictEqual(
+        transientCooldown,
+        30 * 1000,
+        "Transient should use short cooldown",
+      );
+      assert.strictEqual(
+        manager.getCooldownInfo(tokenId)?.strikes,
+        2,
+        "Strikes should be preserved after transient error",
+      );
+
+      // Next long-cooldown failure should continue from strike 3
+      const cooldown3 = manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      assert.strictEqual(
+        cooldown3,
+        2 * 60 * 60 * 1000,
+        "Should be at strike 3 (2h)",
+      );
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 3);
+    });
+
+    test("should reset strikes when transient failure follows another transient failure", () => {
+      const tokenId = "test-token-8";
+
+      // Start with transient error
+      manager.recordFailure(tokenId, "RATE_LIMIT");
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 1);
+
+      // Another transient error - strikes stay at 1 (no accumulation for transient)
+      manager.recordFailure(tokenId, "NETWORK_ERROR");
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 1);
+
+      // Long-cooldown failure starts fresh
+      const longCooldown = manager.recordFailure(tokenId, "NO_ORDERBOOK");
+      assert.strictEqual(
+        longCooldown,
+        10 * 60 * 1000,
+        "Should start fresh at 10m",
+      );
+      assert.strictEqual(manager.getCooldownInfo(tokenId)?.strikes, 1);
+    });
+
     test("should track stats correctly", () => {
       const manager = new MarketDataCooldownManager();
 
       // Initial stats
       let stats = manager.getStats();
       assert.strictEqual(stats.cooldownHits, 0);
-      assert.strictEqual(stats.uniqueTokensCooledDown, 0);
+      assert.strictEqual(stats.totalTokensCooledDown, 0);
       assert.strictEqual(stats.resolvedLaterCount, 0);
 
       // Add some failures
@@ -296,7 +358,7 @@ describe("No Market Data Cooldown", () => {
 
       stats = manager.getStats();
       assert.strictEqual(
-        stats.uniqueTokensCooledDown,
+        stats.totalTokensCooledDown,
         2,
         "Should track 2 unique tokens",
       );
