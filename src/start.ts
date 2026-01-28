@@ -85,6 +85,15 @@ import {
   getLatencyMonitor,
   // Telegram
   isTelegramEnabled,
+  // WebSocket market data layer
+  initMarketDataFacade,
+  getMarketDataFacade,
+  initMarketDataStore,
+  getWebSocketMarketClient,
+  initWebSocketMarketClient,
+  getWebSocketUserClient,
+  setupWebSocketBypass,
+  type MarketDataFacade,
 } from "./lib";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3542,6 +3551,7 @@ class ChurnEngine {
   private marketScanner: MarketScanner;
   private dynamicReserveManager: DynamicReserveManager;
   private latencyMonitor: LatencyMonitor;
+  private marketDataFacade: MarketDataFacade | null = null;
 
   private client: any = null;
   private wallet: any = null;
@@ -3736,6 +3746,39 @@ class ChurnEngine {
     this.wallet = auth.wallet;
     this.address = auth.address!;
     this.executionEngine.setClient(this.client);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // INITIALIZE WEBSOCKET MARKET DATA LAYER
+    // ═══════════════════════════════════════════════════════════════════════
+    // Initialize market data store and facade for real-time orderbook streaming
+    initMarketDataStore();
+    this.marketDataFacade = initMarketDataFacade(this.client);
+    
+    // Setup WebSocket bypass (before VPN changes default routes)
+    // WebSocket traffic is read-only and doesn't need VPN protection
+    await setupWebSocketBypass(this.logger);
+    
+    // Initialize WebSocket client for market data streaming
+    const wsMarketClient = initWebSocketMarketClient({
+      onConnect: () => {
+        console.log("📡 CLOB WebSocket connected (real-time orderbook streaming)");
+      },
+      onDisconnect: (code, reason) => {
+        console.log(`📡 CLOB WebSocket disconnected: ${code} - ${reason}`);
+      },
+      onError: (err) => {
+        console.warn(`📡 CLOB WebSocket error: ${err.message}`);
+      },
+    });
+    
+    // Connect WebSocket (will auto-reconnect on failure)
+    wsMarketClient.connect();
+    
+    // Initialize User WebSocket for order/fill events (authenticated)
+    const wsUserClient = getWebSocketUserClient();
+    wsUserClient.connect(this.client).catch((err) => {
+      console.warn(`📡 User WebSocket connection failed: ${err.message}`);
+    });
 
     // ═══════════════════════════════════════════════════════════════════════
     // STARTUP REDEMPTION - Collect any settled positions first
@@ -4687,11 +4730,19 @@ class ChurnEngine {
   }
 
   /**
-   * Get current price for a token - straight API call, no cache
-   * API allows 150 req/sec, we can afford to be direct
+   * Get current price for a token - via MarketDataFacade (WS preferred, REST fallback)
    */
   private async getCurrentPrice(tokenId: string): Promise<number | null> {
     try {
+      // Use facade if available, otherwise fallback to direct API call
+      if (this.marketDataFacade) {
+        const state = await this.marketDataFacade.getOrderbookState(tokenId);
+        if (!state) return null;
+        // Best bid = what we'd get if we sold right now
+        return state.bestBidCents;
+      }
+      
+      // Fallback to direct API call (during initialization)
       const orderbook = await this.client.getOrderBook(tokenId);
       if (!orderbook?.bids?.length) return null;
       
@@ -4703,13 +4754,26 @@ class ChurnEngine {
   }
 
   /**
-   * Get orderbook state for a token - straight API call
+   * Get orderbook state for a token - via MarketDataFacade (WS preferred, REST fallback)
    */
   private async getOrderbookState(tokenId: string): Promise<OrderbookState | null> {
     try {
+      // Use facade if available (WS data with REST fallback)
+      if (this.marketDataFacade) {
+        const state = await this.marketDataFacade.getOrderbookState(tokenId);
+        if (!state) {
+          // Log when orderbook is empty - helps diagnose issues
+          if (this.cycleCount % 100 === 0) {
+            console.log(`📊 [Orderbook] Token ${tokenId.slice(0, 12)}... has no bids/asks`);
+          }
+          this.diagnostics.orderbookFetchFailures++;
+        }
+        return state;
+      }
+      
+      // Fallback to direct API call (during initialization)
       const orderbook = await this.client.getOrderBook(tokenId);
       if (!orderbook?.bids?.length || !orderbook?.asks?.length) {
-        // Log when orderbook is empty - helps diagnose issues (use console.log for production visibility)
         if (this.cycleCount % 100 === 0) {
           console.log(`📊 [Orderbook] Token ${tokenId.slice(0, 12)}... has no bids/asks`);
         }
@@ -4749,7 +4813,7 @@ class ChurnEngine {
   }
 
   /**
-   * Build market data for positions - direct API calls
+   * Build market data for positions - via MarketDataFacade (WS preferred, REST fallback)
    * 
    * PROACTIVE MONITORING: Fetches BOTH the position's token AND the opposite
    * token's orderbook. This gives us real-time hedge signal data without
@@ -4791,7 +4855,20 @@ class ChurnEngine {
       }
     }
     
-    // Fetch all unique tokens in parallel - API can handle it
+    // Subscribe to tokens via WebSocket for real-time updates
+    const tokenIds = Array.from(tokensToFetch.keys());
+    if (tokenIds.length > 0) {
+      try {
+        const wsClient = getWebSocketMarketClient();
+        if (wsClient.isConnected()) {
+          wsClient.subscribe(tokenIds);
+        }
+      } catch {
+        // WebSocket not available, will use REST fallback
+      }
+    }
+    
+    // Fetch all unique tokens in parallel - uses facade (WS data with REST fallback)
     const fetchPromises = Array.from(tokensToFetch.values()).map(async (task) => {
       const orderbook = await this.getOrderbookState(task.tokenId);
       return { ...task, orderbook };
