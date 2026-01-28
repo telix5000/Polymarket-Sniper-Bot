@@ -5,7 +5,7 @@
  * Strategies make decisions about when and how to trade based on market signals.
  */
 
-import type { Position, TradeSignal, OrderResult } from "../models";
+import type { Position, TradeSignal } from "../models";
 
 /**
  * Decision made by a strategy about whether to enter a position
