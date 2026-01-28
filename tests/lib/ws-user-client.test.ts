@@ -404,6 +404,9 @@ describe("WebSocketUserClient URL Configuration", () => {
   it("should NOT have USER_URL constant (use getUserWsUrl instead)", () => {
     // USER_URL was removed - use getUserWsUrl() instead
     assert.strictEqual((POLYMARKET_WS as any).USER_URL, undefined);
+    // Verify replacement functions exist
+    assert.strictEqual(typeof getUserWsUrl, "function");
+    assert.strictEqual(typeof getMarketWsUrl, "function");
   });
 
   it("should use user URL for new user clients by default", () => {

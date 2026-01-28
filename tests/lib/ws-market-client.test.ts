@@ -171,6 +171,9 @@ describe("WebSocket URL Configuration", () => {
   it("should NOT have USER_URL constant (removed)", () => {
     // USER_URL was removed - use getUserWsUrl() instead
     assert.strictEqual((POLYMARKET_WS as any).USER_URL, undefined);
+    // Verify replacement functions exist
+    assert.strictEqual(typeof getMarketWsUrl, "function");
+    assert.strictEqual(typeof getUserWsUrl, "function");
   });
 
   it("should use correct market URL for new clients", () => {

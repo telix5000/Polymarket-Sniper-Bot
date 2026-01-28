@@ -538,31 +538,40 @@ export class WebSocketUserClient {
       // Try to get credentials from CLOB client's internal state
       const creds = (clobClient as any).creds;
 
-      // IMPORTANT: CLOB client uses "key" not "apiKey" for the API key field
-      // The derived credentials from createOrDeriveApiKey() return { key, secret, passphrase }
+      // IMPORTANT: CLOB client uses "key" not "apiKey" for the API key field.
+      // The derived credentials from createOrDeriveApiKey() return { key, secret, passphrase }.
+      // We also check "apiKey" as a defensive fallback in case the CLOB client API changes
+      // or for backward compatibility with older versions.
       const apiKey =
         creds?.key || creds?.apiKey || process.env.POLY_API_KEY || "";
       const secret = creds?.secret || process.env.POLY_API_SECRET || "";
       const passphrase = creds?.passphrase || process.env.POLY_PASSPHRASE || "";
 
-      // Debug log BEFORE validation to diagnose credential mapping issues
-      console.log("[WS-User] Credential mapping check:", {
-        hasCredsObject: !!creds,
-        hasKey: !!creds?.key,
-        hasApiKey: !!creds?.apiKey,
-        hasSecret: !!creds?.secret,
-        hasPassphrase: !!creds?.passphrase,
-        mappedApiKey: !!apiKey,
-        mappedSecret: !!secret,
-        mappedPassphrase: !!passphrase,
-      });
+      // Debug logging for credential mapping - only log when DEBUG is enabled
+      // or when credentials are missing (to help diagnose issues)
+      const hasApiKey = !!apiKey;
+      const hasSecret = !!secret;
+      const hasPassphrase = !!passphrase;
+
+      if (process.env.DEBUG || !hasApiKey || !hasSecret || !hasPassphrase) {
+        console.log("[WS-User] Credential mapping check:", {
+          hasCredsObject: !!creds,
+          hasKey: !!creds?.key,
+          hasApiKey: !!creds?.apiKey,
+          hasSecret: !!creds?.secret,
+          hasPassphrase: !!creds?.passphrase,
+          mappedApiKey: hasApiKey,
+          mappedSecret: hasSecret,
+          mappedPassphrase: hasPassphrase,
+        });
+      }
 
       // Validate all required credentials are present
-      if (!apiKey || !secret || !passphrase) {
+      if (!hasApiKey || !hasSecret || !hasPassphrase) {
         console.warn("[WS-User] Missing credentials after mapping:", {
-          hasApiKey: !!apiKey,
-          hasSecret: !!secret,
-          hasPassphrase: !!passphrase,
+          hasApiKey,
+          hasSecret,
+          hasPassphrase,
         });
         return null;
       }
@@ -739,7 +748,10 @@ export class WebSocketUserClient {
   /**
    * Send subscribe message for user channel with auth credentials in payload.
    * Per Polymarket docs: {"type": "user", "markets": [...], "auth": {...}}
-   * The "markets" field is optional - if omitted, receives updates for all markets.
+   *
+   * The "markets" field can contain condition IDs to filter which markets to receive
+   * updates for. An empty array means receive updates for all user's active markets.
+   * Per the official Python quickstart, an empty array is the standard approach.
    */
   private sendSubscribe(): void {
     if (!this.ws || !this.authCredentials) {
@@ -751,10 +763,11 @@ export class WebSocketUserClient {
 
     // Subscribe to user channel with auth credentials in payload
     // NOTE: This message contains sensitive credentials - NEVER log the message content
-    // Format per docs: {"type": "user", "markets": [], "auth": {...}}
+    // Format per Polymarket Python quickstart: {"type": "user", "markets": [], "auth": {...}}
+    // Empty markets array = receive updates for all user's active markets
     const message = {
       type: "user",
-      markets: [], // Empty array = all markets; can filter by condition IDs if needed
+      markets: [] as string[], // Can be populated with condition IDs to filter
       auth: {
         apiKey: this.authCredentials.apiKey,
         secret: this.authCredentials.secret,
