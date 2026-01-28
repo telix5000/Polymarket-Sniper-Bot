@@ -37,7 +37,7 @@ export interface GitHubReporterConfig {
   token: string;
   repo: string;
   enabled: boolean;
-  /** Minimum severity to report (default: "error") */
+  /** Minimum severity to report (default: "warning") */
   minSeverity: ErrorSeverity;
   /** Rate limit: max reports per hour (default: 10) */
   maxReportsPerHour: number;
