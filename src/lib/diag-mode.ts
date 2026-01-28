@@ -132,6 +132,8 @@ export interface DiagModeConfig {
   bookMaxAsk: number;
   /** Maximum spread for book sanity check (default: 0.20) */
   bookMaxSpread: number;
+  /** Maximum candidate attempts before giving up (default: 5) */
+  maxCandidateAttempts: number;
 }
 
 /**
@@ -428,6 +430,12 @@ export function parseDiagModeConfig(): DiagModeConfig {
   const bookMaxAsk = parseFloat(process.env.DIAG_BOOK_MAX_ASK ?? "0.95");
   const bookMaxSpread = parseFloat(process.env.DIAG_BOOK_MAX_SPREAD ?? "0.20");
 
+  // Max candidate attempts configuration
+  const maxCandidateAttempts = parseInt(
+    process.env.DIAG_MAX_CANDIDATE_ATTEMPTS ?? "5",
+    10,
+  );
+
   return {
     enabled,
     whaleTimeoutSec: isNaN(whaleTimeoutSec) ? 60 : whaleTimeoutSec,
@@ -436,6 +444,10 @@ export function parseDiagModeConfig(): DiagModeConfig {
     badBookCooldownSec: isNaN(badBookCooldownSec) ? 600 : badBookCooldownSec,
     bookMaxAsk: isNaN(bookMaxAsk) ? 0.95 : bookMaxAsk,
     bookMaxSpread: isNaN(bookMaxSpread) ? 0.2 : bookMaxSpread,
+    maxCandidateAttempts:
+      isNaN(maxCandidateAttempts) || maxCandidateAttempts < 1
+        ? 5
+        : maxCandidateAttempts,
   };
 }
 

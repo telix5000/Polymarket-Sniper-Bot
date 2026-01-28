@@ -433,7 +433,11 @@ describe("checkBookTradeable", () => {
     // Trading is allowed at exactly 0.95 (strict inequality > is used, not >=)
     const result = checkBookTradeable(0.9, 0.95);
 
-    assert.strictEqual(result.tradeable, true, "bestAsk=0.95 should be tradeable");
+    assert.strictEqual(
+      result.tradeable,
+      true,
+      "bestAsk=0.95 should be tradeable",
+    );
     assert.ok(result.diagnostic, "Should include diagnostic");
     assert.strictEqual(result.diagnostic?.guardrailType, "OK");
   });

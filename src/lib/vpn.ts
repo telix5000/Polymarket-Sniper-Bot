@@ -48,6 +48,66 @@ import { existsSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import type { Logger } from "./types";
 
+// ═══════════════════════════════════════════════════════════════════════════
+// VPN BYPASS DEFAULT VALUES (CRITICAL - AUTHORITATIVE)
+// ═══════════════════════════════════════════════════════════════════════════
+// These defaults are applied when env vars are UNSET.
+// The only thing guaranteed by env vars is whether VPN is enabled.
+
+/**
+ * Default VPN bypass settings when environment variables are not explicitly set.
+ *
+ * IMPORTANT: These are the AUTHORITATIVE defaults per the VPN routing strategy:
+ * - VPN_BYPASS_RPC = true: RPC traffic bypasses VPN for speed
+ * - VPN_BYPASS_POLYMARKET_READS = false: API reads route through VPN for safety
+ * - VPN_BYPASS_POLYMARKET_WS = true: WebSocket bypasses VPN for latency
+ */
+export const VPN_BYPASS_DEFAULTS = {
+  VPN_BYPASS_RPC: true,
+  VPN_BYPASS_POLYMARKET_READS: false,
+  VPN_BYPASS_POLYMARKET_WS: true,
+} as const;
+
+/**
+ * Get a boolean environment variable with a default value.
+ *
+ * This helper is critical for VPN bypass configuration where env vars
+ * may not be set and we need to apply safe defaults.
+ *
+ * @param name - Environment variable name
+ * @param defaultValue - Value to return if env var is unset or empty
+ * @param logger - Optional logger for warnings about invalid values
+ * @returns The resolved boolean value
+ */
+export function getEnvBool(
+  name: string,
+  defaultValue: boolean,
+  logger?: Logger,
+): boolean {
+  const value = process.env[name];
+
+  // If undefined or empty string, return the default
+  if (value === undefined || value === "") {
+    return defaultValue;
+  }
+
+  // Check for explicit true/false (case-insensitive)
+  const normalized = value.toLowerCase().trim();
+  if (normalized === "true" || normalized === "1" || normalized === "yes") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no") {
+    return false;
+  }
+
+  // Invalid value - log warning and return default
+  const warningMsg = `Invalid boolean value for ${name}: "${value}". Expected "true" or "false". Using default: ${defaultValue}`;
+  console.warn(`⚠️ ${warningMsg}`);
+  logger?.warn?.(warningMsg);
+
+  return defaultValue;
+}
+
 // Track VPN status globally
 let vpnActive = false;
 let vpnType: "wireguard" | "openvpn" | "none" = "none";
@@ -106,11 +166,20 @@ export interface VpnRoutingPolicyEffectiveEvent {
     gateway: string | null;
     iface: string | null;
   };
-  envConfig: {
-    VPN_BYPASS_RPC: string;
-    VPN_BYPASS_POLYMARKET_READS: string;
-    VPN_BYPASS_POLYMARKET_WS: string;
+  /**
+   * The defaults that were applied when env vars were unset.
+   * Shows what values are being used by default (not from env).
+   */
+  defaultsApplied: {
+    VPN_BYPASS_RPC: boolean;
+    VPN_BYPASS_POLYMARKET_READS: boolean;
+    VPN_BYPASS_POLYMARKET_WS: boolean;
   };
+  /**
+   * Explicit env var overrides that were set.
+   * Only includes vars that were explicitly set (not defaults).
+   */
+  envOverrides: Record<string, string>;
   bypassedHosts: string[];
   writeHosts: string[];
   writeRouteCheck: WriteRouteCheckResult[];
@@ -227,6 +296,143 @@ export function checkWriteHostRoute(
 }
 
 /**
+ * Result of attempting to auto-fix a write route mismatch
+ */
+interface WriteRouteAutoFixResult {
+  attempted: boolean;
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Attempt to automatically fix a write route mismatch by adding a specific
+ * route for the write host IP through the VPN interface.
+ *
+ * This is a defensive measure to ensure writes go through VPN even if the
+ * default route isn't correctly set.
+ *
+ * @param check - The write route check result with mismatch=true
+ * @param logger - Optional logger
+ * @returns Result indicating whether fix was attempted and succeeded
+ */
+function attemptWriteRouteAutoFix(
+  check: WriteRouteCheckResult,
+  logger?: Logger,
+): WriteRouteAutoFixResult {
+  // Can't fix if we don't have the IP or VPN isn't active
+  if (!check.resolvedIp || !vpnActive) {
+    return {
+      attempted: false,
+      success: false,
+      error: "Missing IP or VPN not active",
+    };
+  }
+
+  // Validate IP to prevent injection
+  if (!isValidIp(check.resolvedIp)) {
+    return { attempted: false, success: false, error: "Invalid IP format" };
+  }
+
+  // Determine VPN interface name
+  const vpnIface = getVpnInterfaceName();
+  if (!vpnIface) {
+    return {
+      attempted: false,
+      success: false,
+      error: "Cannot determine VPN interface name",
+    };
+  }
+
+  // Validate interface name
+  if (!isValidIface(vpnIface)) {
+    return {
+      attempted: false,
+      success: false,
+      error: "Invalid VPN interface name",
+    };
+  }
+
+  try {
+    // Add a specific route for this IP through the VPN interface
+    // Using `ip route replace` to handle case where route already exists
+    const cmd = `ip route replace ${check.resolvedIp}/32 dev ${vpnIface}`;
+    execSync(cmd, { stdio: "pipe" });
+
+    const fixEvent = {
+      event: "WRITE_ROUTE_AUTO_FIX_OK",
+      timestamp: new Date().toISOString(),
+      hostname: check.hostname,
+      ip: check.resolvedIp,
+      vpnInterface: vpnIface,
+      command: cmd,
+    };
+    console.log(JSON.stringify(fixEvent));
+    logger?.info?.(
+      `WRITE_ROUTE_AUTO_FIX: Added route for ${check.hostname} (${check.resolvedIp}) via ${vpnIface}`,
+    );
+
+    return { attempted: true, success: true };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+
+    const failEvent = {
+      event: "WRITE_ROUTE_AUTO_FIX_FAILED",
+      timestamp: new Date().toISOString(),
+      hostname: check.hostname,
+      ip: check.resolvedIp,
+      vpnInterface: vpnIface,
+      error: errMsg,
+    };
+    console.error(JSON.stringify(failEvent));
+    logger?.error?.(
+      `WRITE_ROUTE_AUTO_FIX_FAILED: Could not add route for ${check.hostname}: ${errMsg}`,
+    );
+
+    return { attempted: true, success: false, error: errMsg };
+  }
+}
+
+/**
+ * Get the VPN interface name based on vpnType and configuration.
+ * Returns null if VPN is not active or interface cannot be determined.
+ */
+function getVpnInterfaceName(): string | null {
+  if (!vpnActive) {
+    return null;
+  }
+
+  if (vpnType === "wireguard") {
+    // WireGuard interface name from env or default
+    return process.env.WIREGUARD_INTERFACE_NAME ?? "wg0";
+  }
+
+  if (vpnType === "openvpn") {
+    // OpenVPN typically uses tun0 by default
+    // Try to find the tun interface by listing all interfaces and filtering
+    try {
+      // Use ip link show without shell pipe - safer approach
+      const output = execSync("ip link show", {
+        encoding: "utf8",
+      }).trim();
+      // Parse output to find tun interfaces (lines like "123: tun0: <...")
+      const tunMatch = output.match(/\d+:\s+(tun\d+):/);
+      if (tunMatch && tunMatch[1]) {
+        const tunIface = tunMatch[1];
+        // Validate the interface name to prevent injection
+        if (isValidIface(tunIface)) {
+          return tunIface;
+        }
+      }
+    } catch {
+      // Fall back to tun0
+    }
+    return "tun0";
+  }
+
+  return null;
+}
+
+/**
  * Emit VPN_ROUTING_POLICY_EFFECTIVE event AFTER VPN is up and bypass routes are applied.
  * This is the FINAL effective routing state.
  */
@@ -241,6 +447,9 @@ export function emitRoutingPolicyEffectiveEvent(
 
     // Emit warning and WRITE_ROUTE_MISMATCH event if misrouted
     if (check.mismatch) {
+      // Attempt auto-fix for write route mismatch
+      const fixResult = attemptWriteRouteAutoFix(check, logger);
+
       const mismatchEvent = {
         event: "WRITE_ROUTE_MISMATCH",
         timestamp: new Date().toISOString(),
@@ -251,6 +460,8 @@ export function emitRoutingPolicyEffectiveEvent(
         vpnActive,
         preVpnGateway: preVpnRouting?.gateway ?? null,
         preVpnIface: preVpnRouting?.iface ?? null,
+        autoFixAttempted: fixResult.attempted,
+        autoFixSuccess: fixResult.success,
         message: `WRITE host ${hostname} is NOT routed through VPN but vpnActive=true`,
       };
       console.warn(JSON.stringify(mismatchEvent));
@@ -258,12 +469,45 @@ export function emitRoutingPolicyEffectiveEvent(
         `WRITE_ROUTE_MISMATCH: ${hostname} (${check.resolvedIp}) routes via ${check.outgoingInterface}/${check.outgoingGateway} but VPN is active`,
       );
 
+      if (fixResult.attempted) {
+        if (fixResult.success) {
+          logger?.info?.(
+            `WRITE_ROUTE_AUTO_FIX_OK: Successfully added route for ${hostname} via VPN`,
+          );
+          // Re-check the route after fix
+          const recheckResult = checkWriteHostRoute(hostname, logger);
+          check.mismatch = recheckResult.mismatch;
+          check.outgoingInterface = recheckResult.outgoingInterface;
+          check.outgoingGateway = recheckResult.outgoingGateway;
+          check.routeThroughVpn = recheckResult.routeThroughVpn;
+          check.resolvedIp = recheckResult.resolvedIp;
+        } else {
+          logger?.error?.(
+            `WRITE_ROUTE_AUTO_FIX_FAILED: Could not fix route for ${hostname}. ${fixResult.error}`,
+          );
+        }
+      }
+
       if (process.env.GITHUB_ACTIONS === "true") {
         console.log(
           `::warning::WRITE_ROUTE_MISMATCH: ${hostname} not routed through VPN despite vpnActive=true`,
         );
       }
     }
+  }
+
+  // Determine which env vars are explicitly set vs using defaults
+  const envOverrides: Record<string, string> = {};
+  if (process.env.VPN_BYPASS_RPC !== undefined) {
+    envOverrides.VPN_BYPASS_RPC = process.env.VPN_BYPASS_RPC;
+  }
+  if (process.env.VPN_BYPASS_POLYMARKET_READS !== undefined) {
+    envOverrides.VPN_BYPASS_POLYMARKET_READS =
+      process.env.VPN_BYPASS_POLYMARKET_READS;
+  }
+  if (process.env.VPN_BYPASS_POLYMARKET_WS !== undefined) {
+    envOverrides.VPN_BYPASS_POLYMARKET_WS =
+      process.env.VPN_BYPASS_POLYMARKET_WS;
   }
 
   const event: VpnRoutingPolicyEffectiveEvent = {
@@ -275,12 +519,13 @@ export function emitRoutingPolicyEffectiveEvent(
       gateway: preVpnRouting?.gateway ?? null,
       iface: preVpnRouting?.iface ?? null,
     },
-    envConfig: {
-      VPN_BYPASS_RPC: process.env.VPN_BYPASS_RPC ?? "true",
+    defaultsApplied: {
+      VPN_BYPASS_RPC: VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC,
       VPN_BYPASS_POLYMARKET_READS:
-        process.env.VPN_BYPASS_POLYMARKET_READS ?? "false",
-      VPN_BYPASS_POLYMARKET_WS: process.env.VPN_BYPASS_POLYMARKET_WS ?? "true",
+        VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+      VPN_BYPASS_POLYMARKET_WS: VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
     },
+    envOverrides,
     bypassedHosts: getBypassedHosts(),
     writeHosts: [...WRITE_HOSTS],
     writeRouteCheck: writeRouteChecks,
@@ -876,13 +1121,19 @@ function addBypassRoute(
 
 /**
  * Setup RPC bypass for VPN (route RPC traffic outside VPN for speed)
- * Enabled by default. Set VPN_BYPASS_RPC=false to route RPC through VPN.
+ * Default: true (bypass enabled). Set VPN_BYPASS_RPC=false to route RPC through VPN.
  */
 export async function setupRpcBypass(
   rpcUrl: string,
   logger?: Logger,
 ): Promise<void> {
-  if (process.env.VPN_BYPASS_RPC === "false") {
+  const bypassRpc = getEnvBool(
+    "VPN_BYPASS_RPC",
+    VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC,
+    logger,
+  );
+
+  if (!bypassRpc) {
     logger?.info?.("RPC VPN bypass disabled - RPC routes through VPN");
     return;
   }
@@ -919,15 +1170,19 @@ export async function setupRpcBypass(
  * Write operations require VPN protection to avoid geo-blocking, and
  * IP-level routing cannot differentiate between reads and writes.
  *
- * APEX v3.0 CRITICAL FIX: Disabled by default to prevent geo-blocking.
+ * Default: false (bypass disabled for safety).
  * Set VPN_BYPASS_POLYMARKET_READS=true to enable bypass.
  */
 export async function setupPolymarketReadBypass(
   logger?: Logger,
 ): Promise<void> {
-  // APEX v3.0 FIX: Changed default to false (disabled)
-  // Check if bypass is explicitly enabled
-  if (process.env.VPN_BYPASS_POLYMARKET_READS !== "true") {
+  const bypassReads = getEnvBool(
+    "VPN_BYPASS_POLYMARKET_READS",
+    VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+    logger,
+  );
+
+  if (!bypassReads) {
     logger?.info?.(
       "Polymarket read bypass disabled (default) - all traffic through VPN",
     );
@@ -1010,11 +1265,25 @@ export const setupGammaApiBypass = setupReadApiBypass;
  * market data and does NOT need VPN protection. Bypassing improves latency
  * for real-time orderbook updates.
  *
+ * Default: true (bypass enabled for latency).
+ * Set VPN_BYPASS_POLYMARKET_WS=false to route WebSocket through VPN.
+ *
  * NOTE: This bypasses the Market channel (public data). The User channel
  * uses the same host but requires authentication - still works with bypass
  * since auth is at the application layer, not IP-based.
  */
 export async function setupWebSocketBypass(logger?: Logger): Promise<void> {
+  const bypassWs = getEnvBool(
+    "VPN_BYPASS_POLYMARKET_WS",
+    VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
+    logger,
+  );
+
+  if (!bypassWs) {
+    logger?.info?.("WebSocket VPN bypass disabled - WS routes through VPN");
+    return;
+  }
+
   if (!vpnActive) {
     // No VPN active, no need for bypass
     return;
@@ -1139,6 +1408,20 @@ export function isHostBypassed(hostname: string): boolean {
  * This is a diagnostic self-check that shows the routing configuration.
  */
 export function emitRoutingPolicyLog(rpcUrl?: string, logger?: Logger): void {
+  // Determine which env vars are explicitly set vs using defaults
+  const envOverrides: Record<string, string> = {};
+  if (process.env.VPN_BYPASS_RPC !== undefined) {
+    envOverrides.VPN_BYPASS_RPC = process.env.VPN_BYPASS_RPC;
+  }
+  if (process.env.VPN_BYPASS_POLYMARKET_READS !== undefined) {
+    envOverrides.VPN_BYPASS_POLYMARKET_READS =
+      process.env.VPN_BYPASS_POLYMARKET_READS;
+  }
+  if (process.env.VPN_BYPASS_POLYMARKET_WS !== undefined) {
+    envOverrides.VPN_BYPASS_POLYMARKET_WS =
+      process.env.VPN_BYPASS_POLYMARKET_WS;
+  }
+
   const policyEvent = {
     event: "VPN_ROUTING_POLICY",
     timestamp: new Date().toISOString(),
@@ -1151,12 +1434,13 @@ export function emitRoutingPolicyLog(rpcUrl?: string, logger?: Logger): void {
     writeHosts: [...WRITE_HOSTS],
     readOnlyHosts: [...READ_ONLY_HOSTS],
     bypassedHosts: [...bypassedHosts],
-    envConfig: {
-      VPN_BYPASS_RPC: process.env.VPN_BYPASS_RPC ?? "true",
+    defaultsApplied: {
+      VPN_BYPASS_RPC: VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC,
       VPN_BYPASS_POLYMARKET_READS:
-        process.env.VPN_BYPASS_POLYMARKET_READS ?? "false",
-      VPN_BYPASS_POLYMARKET_WS: process.env.VPN_BYPASS_POLYMARKET_WS ?? "true",
+        VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+      VPN_BYPASS_POLYMARKET_WS: VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
     },
+    envOverrides,
   };
 
   console.log(JSON.stringify(policyEvent));
@@ -1411,6 +1695,23 @@ export function generateRoutingPlan(
 ): RoutingPlan {
   const hosts: HostRoutingInfo[] = [];
 
+  // Get effective bypass settings using getEnvBool
+  const bypassRpc = getEnvBool(
+    "VPN_BYPASS_RPC",
+    VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC,
+    logger,
+  );
+  const bypassReads = getEnvBool(
+    "VPN_BYPASS_POLYMARKET_READS",
+    VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+    logger,
+  );
+  const bypassWs = getEnvBool(
+    "VPN_BYPASS_POLYMARKET_WS",
+    VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
+    logger,
+  );
+
   // Build host list including custom RPC
   const hostsToCheck = [...KNOWN_HOSTS];
 
@@ -1422,8 +1723,7 @@ export function generateRoutingPlan(
         hostsToCheck.push({
           hostname: rpcHostname,
           category: "RPC",
-          expectedRoute:
-            process.env.VPN_BYPASS_RPC === "false" ? "VPN" : "BYPASS",
+          expectedRoute: bypassRpc ? "BYPASS" : "VPN",
         });
       }
     } catch {
@@ -1438,30 +1738,21 @@ export function generateRoutingPlan(
 
     // WebSocket bypass is configurable (default: BYPASS for latency)
     // Set VPN_BYPASS_POLYMARKET_WS=false to route WS through VPN
-    if (
-      hostConfig.category === "WEBSOCKET" &&
-      process.env.VPN_BYPASS_POLYMARKET_WS === "false"
-    ) {
-      expectedRoute = "VPN";
+    if (hostConfig.category === "WEBSOCKET") {
+      expectedRoute = bypassWs ? "BYPASS" : "VPN";
     }
 
     // READ API bypass is configurable (default: VPN for conservative approach)
     // Set VPN_BYPASS_POLYMARKET_READS=true to bypass VPN for READ APIs
     // NOTE: This is intentionally more conservative than WebSocket/RPC defaults
-    if (
-      hostConfig.category === "READ_API" &&
-      process.env.VPN_BYPASS_POLYMARKET_READS === "true"
-    ) {
-      expectedRoute = "BYPASS";
+    if (hostConfig.category === "READ_API") {
+      expectedRoute = bypassReads ? "BYPASS" : "VPN";
     }
 
     // RPC bypass is configurable (default: BYPASS for speed)
     // Set VPN_BYPASS_RPC=false to route RPC through VPN
-    if (
-      hostConfig.category === "RPC" &&
-      process.env.VPN_BYPASS_RPC === "false"
-    ) {
-      expectedRoute = "VPN";
+    if (hostConfig.category === "RPC") {
+      expectedRoute = bypassRpc ? "BYPASS" : "VPN";
     }
 
     // WRITE_API must ALWAYS go through VPN - never bypassed

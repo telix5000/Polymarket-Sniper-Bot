@@ -152,6 +152,7 @@ export async function runDiagWorkflow(
   console.log(`  Bad Book Cooldown: ${cfg.badBookCooldownSec}s`);
   console.log(`  Book Max Ask: ${cfg.bookMaxAsk}`);
   console.log(`  Book Max Spread: ${cfg.bookMaxSpread}`);
+  console.log(`  Max Candidate Attempts: ${cfg.maxCandidateAttempts}`);
   console.log(`  GitHub Actions: ${isGitHubActions() ? "YES" : "NO"}`);
   console.log("═".repeat(60));
   console.log("");
