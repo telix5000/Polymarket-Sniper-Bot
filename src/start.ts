@@ -72,8 +72,9 @@ import {
   type OnChainMonitorConfig,
   type PositionChangeEvent,
   type OnChainPriceUpdate,
-  // Market utilities for hedge token lookup
+  // Market utilities for hedge token lookup and mapping verification
   getOppositeTokenId,
+  fetchMarketByTokenId,
   // GitHub error reporting
   initGitHubReporter,
   reportError,
@@ -2603,6 +2604,8 @@ interface OrderbookState {
   askDepthUsd: number;
   spreadCents: number;
   midPriceCents: number;
+  /** Source of the orderbook data (WS = WebSocket, REST = REST API, STALE_CACHE = stale cached data) */
+  source?: "WS" | "REST" | "STALE_CACHE";
 }
 
 interface MarketActivity {
@@ -4360,6 +4363,9 @@ class ChurnEngine {
   private marketDataCooldownManager = new MarketDataCooldownManager();
   // Summary logging interval for market data cooldowns
   private readonly COOLDOWN_SUMMARY_INTERVAL = 100; // Log every 100 cycles
+  // Throttle for dust book REST verification (once per token per 5 minutes)
+  private dustBookRestVerifyThrottle = new Map<string, number>();
+  private readonly DUST_BOOK_VERIFY_THROTTLE_MS = 5 * 60 * 1000; // 5 minutes
 
   // Intervals
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
@@ -5367,27 +5373,98 @@ class ChurnEngine {
       }
     }
 
-    // Filter out tokens that are on cooldown (failed recently due to price/liquidity or market data issues)
-    const eligibleBiases = activeBiases.filter((bias) => {
-      // Check price/liquidity cooldown
-      const cooldownExpiry = this.failedEntryCooldowns.get(bias.tokenId);
-      if (cooldownExpiry && now < cooldownExpiry) return false;
-      // Check market data cooldown
-      if (this.marketDataCooldownManager.isOnCooldown(bias.tokenId))
-        return false;
-      return true;
-    });
+    // Filter out tokens that don't meet bias criteria or are on cooldown
+    // CRITICAL: Even in copyAnyWhaleBuy mode, enforce BIAS_MIN_NET_USD and BIAS_MIN_TRADES
+    // to prevent low-quality signals from reaching entry attempts
+    const eligibleBiases: TokenBias[] = [];
+    let skippedBiasCriteria = 0;
+    let skippedCooldown = 0;
 
-    const skippedCount = activeBiases.length - eligibleBiases.length;
+    for (const bias of activeBiases) {
+      // Step 1: Check bias criteria FIRST (flow, trades, staleness)
+      // These criteria apply regardless of copyAnyWhaleBuy mode
+      if (bias.isStale) {
+        if (DEBUG || this.cycleCount % 100 === 0) {
+          console.log(
+            `🚫 [REJECT_BIAS] ${bias.tokenId.slice(0, 12)}... | STALE | last activity: ${Math.round((now - bias.lastActivityTime) / 1000)}s ago`,
+          );
+        }
+        skippedBiasCriteria++;
+        continue;
+      }
+
+      if (bias.tradeCount < this.config.biasMinTrades) {
+        if (DEBUG || this.cycleCount % 100 === 0) {
+          console.log(
+            `🚫 [REJECT_BIAS] ${bias.tokenId.slice(0, 12)}... | TRADES_BELOW_MIN | trades=${bias.tradeCount} < min=${this.config.biasMinTrades}`,
+          );
+        }
+        skippedBiasCriteria++;
+        continue;
+      }
+
+      if (Math.abs(bias.netUsd) < this.config.biasMinNetUsd) {
+        if (DEBUG || this.cycleCount % 100 === 0) {
+          console.log(
+            `🚫 [REJECT_BIAS] ${bias.tokenId.slice(0, 12)}... | FLOW_BELOW_MIN | flow=$${bias.netUsd.toFixed(0)} < min=$${this.config.biasMinNetUsd}`,
+          );
+        }
+        skippedBiasCriteria++;
+        continue;
+      }
+
+      // Step 2: Check cooldowns (only for bias-eligible tokens)
+      const cooldownExpiry = this.failedEntryCooldowns.get(bias.tokenId);
+      if (cooldownExpiry && now < cooldownExpiry) {
+        skippedCooldown++;
+        continue;
+      }
+      if (this.marketDataCooldownManager.isOnCooldown(bias.tokenId)) {
+        skippedCooldown++;
+        continue;
+      }
+
+      // Passed all checks - this bias is eligible for entry
+      eligibleBiases.push(bias);
+    }
 
     if (evAllowed.allowed) {
       if (eligibleBiases.length > 0) {
         // Log when we have active biases - helps diagnose trade detection
         const cooldownMsg =
-          skippedCount > 0 ? ` (${skippedCount} on cooldown)` : "";
+          skippedCooldown > 0 ? ` (${skippedCooldown} on cooldown)` : "";
+        const biasRejectMsg =
+          skippedBiasCriteria > 0
+            ? ` (${skippedBiasCriteria} rejected by bias criteria)`
+            : "";
         console.log(
-          `🐋 [Bias] ${eligibleBiases.length} eligible whale signals${cooldownMsg}`,
+          `🐋 [Bias] ${eligibleBiases.length} eligible whale signals${cooldownMsg}${biasRejectMsg}`,
         );
+
+        // TASK 3: Ensure WS subscribes to eligible bias tokens for real-time data
+        // Only subscribe to tokens we'll actually attempt entry on (slice(0, 3))
+        // This prevents WS subscription set from growing without bound
+        const biasesToAttempt = eligibleBiases.slice(0, 3);
+        try {
+          const wsClient = getWebSocketMarketClient();
+          if (wsClient.isConnected()) {
+            const currentSubs = new Set(wsClient.getSubscriptions());
+            const biasTokensToSubscribe = biasesToAttempt
+              .map((b) => b.tokenId)
+              .filter((id) => !currentSubs.has(id));
+            if (biasTokensToSubscribe.length > 0) {
+              wsClient.subscribe(biasTokensToSubscribe);
+              debug(
+                `📡 [WS] Subscribed to ${biasTokensToSubscribe.length} whale signal tokens`,
+              );
+            }
+          }
+        } catch (wsErr) {
+          // WS subscription failed - will use REST fallback in fetchTokenMarketDataWithReason
+          debug(
+            `📡 [WS] Bias token subscription failed: ${wsErr instanceof Error ? wsErr.message : String(wsErr)}`,
+          );
+        }
 
         // Execute whale-signal entries in parallel to avoid missing opportunities
         // when multiple whale signals arrive simultaneously.
@@ -5398,7 +5475,7 @@ class ChurnEngine {
         // - maxOpenPositionsPerMarket (2) - per-token limit
         // These checks happen atomically in processEntry, preventing over-allocation.
         // Note: Cooldown filtering already done above (eligibleBiases), no duplicate check needed
-        const entryPromises = eligibleBiases.slice(0, 3).map(async (bias) => {
+        const entryPromises = biasesToAttempt.map(async (bias) => {
           // TASK 6: Track candidate in funnel
           this.diagnostics.candidatesSeen++;
 
@@ -5530,10 +5607,16 @@ class ChurnEngine {
 
         await Promise.all(entryPromises);
       } else if (activeBiases.length > 0 && eligibleBiases.length === 0) {
-        // All biases are on cooldown - only log occasionally
+        // All biases are filtered out - only log occasionally
         if (this.cycleCount % 30 === 0) {
+          const reasonDetail =
+            skippedBiasCriteria > 0 && skippedCooldown > 0
+              ? `${skippedBiasCriteria} rejected by bias criteria, ${skippedCooldown} on cooldown`
+              : skippedBiasCriteria > 0
+                ? `${skippedBiasCriteria} rejected by bias criteria`
+                : `${skippedCooldown} on cooldown`;
           console.log(
-            `⏳ [Bias] ${activeBiases.length} whale signals on cooldown (price/liquidity or market-data issues)`,
+            `⏳ [Bias] ${activeBiases.length} whale signals filtered (${reasonDetail})`,
           );
         }
       } else if (
@@ -5554,6 +5637,28 @@ class ChurnEngine {
         if (this.cycleCount % 50 === 0 && eligibleScanned.length > 0) {
           console.log(
             `🔍 No active whale signals - scanning ${eligibleScanned.length} active markets for opportunities...`,
+          );
+        }
+
+        // TASK 3: Ensure WS subscribes to scanned tokens for real-time data
+        try {
+          const wsClient = getWebSocketMarketClient();
+          if (wsClient.isConnected()) {
+            const currentSubs = new Set(wsClient.getSubscriptions());
+            const scannedToSubscribe = eligibleScanned
+              .slice(0, 2)
+              .filter((id) => !currentSubs.has(id));
+            if (scannedToSubscribe.length > 0) {
+              wsClient.subscribe(scannedToSubscribe);
+              debug(
+                `📡 [WS] Subscribed to ${scannedToSubscribe.length} scanned tokens`,
+              );
+            }
+          }
+        } catch (wsErr) {
+          // WS subscription failed - will use REST fallback
+          debug(
+            `📡 [WS] Scanned token subscription failed: ${wsErr instanceof Error ? wsErr.message : String(wsErr)}`,
           );
         }
 
@@ -6202,6 +6307,66 @@ class ChurnEngine {
   }
 
   /**
+   * Helper to process a valid REST orderbook into FetchMarketDataResult
+   * Used when recovering from stale cache dust books via REST verification
+   */
+  private processValidOrderbook(
+    tokenId: string,
+    bestBidCents: number,
+    bestAskCents: number,
+    orderbook: { bids: { price: string; size: string }[]; asks: { price: string; size: string }[] },
+  ): FetchMarketDataResult {
+    const bestBid = bestBidCents / 100;
+    const bestAsk = bestAskCents / 100;
+    const spreadCents = (bestAsk - bestBid) * 100;
+
+    // Check spread
+    if (spreadCents > this.config.minSpreadCents) {
+      this.diagnostics.orderbookFetchFailures++;
+      return {
+        ok: false,
+        reason: "INVALID_LIQUIDITY",
+        detail: `Spread ${spreadCents.toFixed(1)}¢ > max ${this.config.minSpreadCents}¢`,
+      };
+    }
+
+    // Sum up depth
+    let bidDepth = 0,
+      askDepth = 0;
+    for (const level of orderbook.bids.slice(0, 5)) {
+      bidDepth += parseFloat(level.size) * parseFloat(level.price);
+    }
+    for (const level of orderbook.asks.slice(0, 5)) {
+      askDepth += parseFloat(level.size) * parseFloat(level.price);
+    }
+
+    const activity: MarketActivity = {
+      tradesInWindow: 15,
+      bookUpdatesInWindow: 25,
+      lastTradeTime: Date.now(),
+      lastUpdateTime: Date.now(),
+    };
+
+    return {
+      ok: true,
+      data: {
+        tokenId,
+        orderbook: {
+          bestBidCents,
+          bestAskCents,
+          bidDepthUsd: bidDepth,
+          askDepthUsd: askDepth,
+          spreadCents,
+          midPriceCents: (bestBidCents + bestAskCents) / 2,
+          source: "REST",
+        },
+        activity,
+        referencePriceCents: (bestBidCents + bestAskCents) / 2,
+      },
+    };
+  }
+
+  /**
    * Fetch market data for a single token - DIRECT API CALL
    * No caching! Stale prices caused exit failures before.
    * Returns structured result with typed failure reasons.
@@ -6224,14 +6389,120 @@ class ChurnEngine {
           };
         }
 
-        // TASK 3: Add orderbook sanity gates for facade path too
+        // Log book source for debugging
+        const bookSource = state.source || "UNKNOWN";
+        debug(
+          `[BookSource] ${tokenId.slice(0, 12)}... | source: ${bookSource} | bid=${state.bestBidCents.toFixed(1)}¢ ask=${state.bestAskCents.toFixed(1)}¢`,
+        );
+
         // Check for dust book (1¢/99¢ spreads)
+        // If dust book detected from WS/cache, perform immediate REST re-fetch to verify
         if (state.bestBidCents <= 2 && state.bestAskCents >= 98) {
+          // Log the dust book detection with source
+          console.log(
+            `⚠️ [DUST_BOOK] ${tokenId.slice(0, 12)}... | source: ${bookSource} | bid=${state.bestBidCents.toFixed(1)}¢ ask=${state.bestAskCents.toFixed(1)}¢ | attempting REST re-fetch...`,
+          );
+
+          // Verify tokenId mapping via Gamma API - helps diagnose wrong tokenId issues
+          // Use a timeout to prevent blocking the trading loop
+          try {
+            const mappingPromise = fetchMarketByTokenId(tokenId);
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            const timeoutPromise = new Promise<null>((resolve) => {
+              timeoutId = setTimeout(() => resolve(null), 3000);
+            });
+            const marketInfo = await Promise.race([
+              mappingPromise,
+              timeoutPromise,
+            ]);
+            if (timeoutId !== undefined) {
+              clearTimeout(timeoutId);
+            }
+            if (marketInfo) {
+              const activeStatus =
+                marketInfo.active === false
+                  ? "inactive"
+                  : marketInfo.active === true
+                    ? "active"
+                    : "unknown";
+              console.log(
+                `🔍 [MAPPING_VERIFY] ${tokenId.slice(0, 12)}... | conditionId=${marketInfo.conditionId.slice(0, 12)}... | marketId=${marketInfo.marketId.slice(0, 12)}... | YES=${marketInfo.yesTokenId.slice(0, 12)}... | NO=${marketInfo.noTokenId.slice(0, 12)}... | status=${activeStatus}`,
+              );
+            } else {
+              console.log(
+                `⚠️ [MAPPING_VERIFY] ${tokenId.slice(0, 12)}... | No market found or timeout (possibly invalid/expired)`,
+              );
+            }
+          } catch (mappingErr) {
+            const mappingErrMsg =
+              mappingErr instanceof Error
+                ? mappingErr.message
+                : String(mappingErr);
+            console.log(
+              `⚠️ [MAPPING_VERIFY_FAILED] ${tokenId.slice(0, 12)}... | ${mappingErrMsg}`,
+            );
+          }
+
+          // Perform REST re-fetch to verify this isn't stale cache
+          // Throttled to once per token per 5 minutes to prevent API overload
+          const now = Date.now();
+          const lastVerify = this.dustBookRestVerifyThrottle.get(tokenId) ?? 0;
+          const shouldVerifyRest =
+            bookSource !== "REST" &&
+            now - lastVerify >= this.DUST_BOOK_VERIFY_THROTTLE_MS;
+
+          if (shouldVerifyRest) {
+            this.dustBookRestVerifyThrottle.set(tokenId, now);
+            try {
+              const restOrderbook = await this.client.getOrderBook(tokenId);
+              if (restOrderbook?.bids?.length && restOrderbook?.asks?.length) {
+                const restBid = parseFloat(restOrderbook.bids[0].price) * 100;
+                const restAsk = parseFloat(restOrderbook.asks[0].price) * 100;
+
+                console.log(
+                  `📡 [REST_VERIFY] ${tokenId.slice(0, 12)}... | REST result: bid=${restBid.toFixed(1)}¢ ask=${restAsk.toFixed(1)}¢`,
+                );
+
+                // Check if REST also shows dust book
+                if (restBid <= 2 && restAsk >= 98) {
+                  console.log(
+                    `❌ [DUST_BOOK_CONFIRMED] ${tokenId.slice(0, 12)}... | REST confirms dust book`,
+                  );
+                  this.diagnostics.orderbookFetchFailures++;
+                  return {
+                    ok: false,
+                    reason: "DUST_BOOK",
+                    detail: `Dust book (confirmed by REST): bid=${restBid.toFixed(1)}¢, ask=${restAsk.toFixed(1)}¢`,
+                  };
+                } else {
+                  // REST shows valid book - use REST data instead
+                  console.log(
+                    `✅ [BOOK_RECOVERED] ${tokenId.slice(0, 12)}... | REST shows valid book, cache was stale`,
+                  );
+                  // Continue with REST data
+                  return this.processValidOrderbook(
+                    tokenId,
+                    restBid,
+                    restAsk,
+                    restOrderbook,
+                  );
+                }
+              }
+            } catch (restErr) {
+              const restErrMsg =
+                restErr instanceof Error ? restErr.message : String(restErr);
+              console.log(
+                `⚠️ [REST_VERIFY_FAILED] ${tokenId.slice(0, 12)}... | ${restErrMsg}`,
+              );
+            }
+          }
+
+          // Original source was REST or REST re-fetch failed/throttled - trust original result
           this.diagnostics.orderbookFetchFailures++;
           return {
             ok: false,
             reason: "DUST_BOOK",
-            detail: `Dust book: bid=${state.bestBidCents}¢, ask=${state.bestAskCents}¢`,
+            detail: `Dust book: bid=${state.bestBidCents.toFixed(1)}¢, ask=${state.bestAskCents.toFixed(1)}¢ (source: ${bookSource})`,
           };
         }
 
@@ -6246,7 +6517,7 @@ class ChurnEngine {
           return {
             ok: false,
             reason: "INVALID_PRICES",
-            detail: `Invalid prices: bid=${state.bestBidCents}¢, ask=${state.bestAskCents}¢`,
+            detail: `Invalid prices: bid=${state.bestBidCents}¢, ask=${state.bestAskCents}¢ (source: ${bookSource})`,
           };
         }
 
@@ -6256,7 +6527,7 @@ class ChurnEngine {
           return {
             ok: false,
             reason: "INVALID_LIQUIDITY",
-            detail: `Spread ${state.spreadCents.toFixed(1)}¢ > max ${this.config.minSpreadCents}¢`,
+            detail: `Spread ${state.spreadCents.toFixed(1)}¢ > max ${this.config.minSpreadCents}¢ (source: ${bookSource})`,
           };
         }
 
@@ -6405,6 +6676,7 @@ class ChurnEngine {
             askDepthUsd: askDepth,
             spreadCents: (bestAsk - bestBid) * 100,
             midPriceCents: ((bestBid + bestAsk) / 2) * 100,
+            source: "REST",
           },
           activity,
           referencePriceCents: ((bestBid + bestAsk) / 2) * 100,

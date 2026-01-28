@@ -3,13 +3,19 @@
  *
  * Core trading logic including strategy interface and risk management.
  * This module is the "brain" of the trading bot.
+ *
+ * Available exports:
+ * - Strategy interface and types (strategy.ts)
+ * - Risk management utilities (risk.ts)
+ * - Decision engine for trade evaluation (decision-engine.ts)
+ * - EV tracker for performance monitoring (ev-tracker.ts)
  */
 
 // Strategy interface and types
 export {
   type Strategy,
-  type EntryDecision,
-  type ExitDecision,
+  type EntryDecision as StrategyEntryDecision,
+  type ExitDecision as StrategyExitDecision,
   type MarketContext,
   type EvStrategyConfig,
 } from "./strategy";
@@ -23,3 +29,31 @@ export {
   calculateDeployedCapital,
   checkDeploymentLimits,
 } from "./risk";
+
+// Decision engine types and class
+export {
+  type OrderbookState,
+  type MarketActivity,
+  type BiasDirection,
+  type PositionState,
+  type ExitReason,
+  type HedgeLeg,
+  type StateTransition,
+  type ManagedPosition,
+  type EvMetrics,
+  type EntryDecision,
+  type ExitDecision,
+  type DecisionEngineConfig,
+  DecisionEngine,
+} from "./decision-engine";
+
+// EV tracker types and class
+export {
+  type TradeResult,
+  type EvTrackerConfig,
+  DEFAULT_EV_TRACKER_CONFIG,
+  calculatePnlCents,
+  calculatePnlUsd,
+  createTradeResult,
+  EvTracker,
+} from "./ev-tracker";
