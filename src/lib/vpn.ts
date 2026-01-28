@@ -841,16 +841,17 @@ const KNOWN_HOSTS: Array<{
   category: EgressCategory;
   expectedRoute: ExpectedRoute;
 }> = [
-  // READ APIs - can be bypassed for speed
+  // READ APIs - default to VPN, but can be explicitly bypassed for speed
+  // Set VPN_BYPASS_POLYMARKET_READS=true to bypass VPN
   {
     hostname: "gamma-api.polymarket.com",
     category: "READ_API",
-    expectedRoute: "BYPASS",
+    expectedRoute: "VPN",
   },
   {
     hostname: "data-api.polymarket.com",
     category: "READ_API",
-    expectedRoute: "BYPASS",
+    expectedRoute: "VPN",
   },
 
   // WRITE APIs - MUST go through VPN
@@ -1004,9 +1005,9 @@ export function generateRoutingPlan(
     // NOTE: This is intentionally more conservative than WebSocket/RPC defaults
     if (
       hostConfig.category === "READ_API" &&
-      process.env.VPN_BYPASS_POLYMARKET_READS !== "true"
+      process.env.VPN_BYPASS_POLYMARKET_READS === "true"
     ) {
-      expectedRoute = "VPN";
+      expectedRoute = "BYPASS";
     }
 
     // RPC bypass is configurable (default: BYPASS for speed)

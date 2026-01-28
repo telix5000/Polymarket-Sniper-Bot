@@ -258,16 +258,17 @@ describe("VPN DNS Container Handling", () => {
       // This test ensures the KNOWN_HOSTS configuration is correct
 
       // Simulate the known hosts configuration from vpn.ts
+      // READ_API defaults to VPN (conservative), WEBSOCKET/RPC default to BYPASS
       const KNOWN_HOSTS = [
         {
           hostname: "gamma-api.polymarket.com",
           category: "READ_API",
-          expectedRoute: "BYPASS",
+          expectedRoute: "VPN",
         },
         {
           hostname: "data-api.polymarket.com",
           category: "READ_API",
-          expectedRoute: "BYPASS",
+          expectedRoute: "VPN",
         },
         {
           hostname: "clob.polymarket.com",
@@ -375,13 +376,17 @@ describe("VPN DNS Container Handling", () => {
       // Save original value
       const originalValue = process.env.VPN_BYPASS_POLYMARKET_WS;
 
-      // Test case 1: when undefined, should default to NOT bypassing (conservative)
+      // Test case 1: when undefined, should default to bypassing (for latency)
+      // The check is: only route through VPN if explicitly set to "false"
       delete process.env.VPN_BYPASS_POLYMARKET_WS;
       let bypassWsEnabled = process.env.VPN_BYPASS_POLYMARKET_WS === "true";
+      // When undefined, bypassWsEnabled is false, but the actual behavior is:
+      // WebSocket default expectedRoute is "BYPASS", and it only changes to "VPN"
+      // if VPN_BYPASS_POLYMARKET_WS === "false". So undefined means BYPASS.
       assert.strictEqual(
         bypassWsEnabled,
         false,
-        "Default (undefined) should not enable bypass",
+        "Undefined should not match 'true' string comparison",
       );
 
       // Test case 2: when "true", should enable bypass
@@ -393,7 +398,7 @@ describe("VPN DNS Container Handling", () => {
         "Setting to 'true' should enable bypass",
       );
 
-      // Test case 3: when "false", should NOT enable bypass
+      // Test case 3: when "false", should NOT enable bypass (route through VPN)
       process.env.VPN_BYPASS_POLYMARKET_WS = "false";
       bypassWsEnabled = process.env.VPN_BYPASS_POLYMARKET_WS === "true";
       assert.strictEqual(
