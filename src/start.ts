@@ -4137,8 +4137,8 @@ class ChurnEngine {
       
       // Update system metrics
       const latencyStats = this.latencyMonitor.getNetworkHealth();
-      // WebSocket is considered connected if the on-chain monitor was initialized
-      const wsConnected = this.onchainMonitor !== null;
+      // WebSocket is considered connected only if the on-chain monitor is actually running
+      const wsConnected = !!this.onchainMonitor?.isRunning();
       const apiLatencyMs = Math.max(latencyStats.rpcLatencyMs, latencyStats.apiLatencyMs);
       this.webDashboard.updateSystemMetrics(apiLatencyMs, wsConnected);
     }
