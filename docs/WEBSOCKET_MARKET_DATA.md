@@ -78,9 +78,10 @@ Manages WebSocket connection to CLOB Market channel.
 **Features:**
 - Subscribe/unsubscribe to multiple tokenIds
 - L2 orderbook reconstruction (snapshots + deltas)
-- Exponential backoff reconnection (500ms base, 30s max, 30% jitter)
-- Heartbeat ping/pong (30s interval)
+- Exponential backoff reconnection (1s base, 30s max, 30% jitter)
+- Heartbeat ping/pong (25s interval, 10s timeout for dead socket detection)
 - Connection timeout handling (10s)
+- Automatic subscription restoration after reconnect
 
 **Message Types Handled:**
 - `book` - Full L2 snapshot, rebuilds orderbook
@@ -150,7 +151,8 @@ All settings via environment variables (see `.env.example`):
 | `WS_RECONNECT_BASE_MS` | `1000` | Initial reconnect delay |
 | `WS_RECONNECT_MAX_MS` | `30000` | Max reconnect delay |
 | `WS_STABLE_CONNECTION_MS` | `15000` | Connection stable threshold to reset backoff |
-| `WS_PING_INTERVAL_MS` | `10000` | Keepalive ping interval |
+| `WS_PING_INTERVAL_MS` | `25000` | Keepalive ping interval (sends "PING" text message) |
+| `WS_PONG_TIMEOUT_MS` | `10000` | Time to wait for PONG response before assuming dead socket |
 | `WS_STALE_MS` | `2000` | Data staleness threshold |
 | `REST_FALLBACK_MIN_INTERVAL_MS` | `500` | Min interval between REST calls |
 | `MARKETDATA_MAX_TOKENS` | `500` | Max tracked tokens (LRU eviction) |
