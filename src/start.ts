@@ -1080,11 +1080,11 @@ class BiasAccumulator {
     const newTrades = results.flat();
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // DIAGNOSTIC: Log API fetch results periodically
+    // DIAGNOSTIC: Log API fetch results - show first 5, then every 10th, or when trades found
     // ═══════════════════════════════════════════════════════════════════════════
-    if (this.fetchCount % 10 === 0 || newTrades.length > 0) {
+    if (this.fetchCount < 5 || this.fetchCount % 10 === 0 || newTrades.length > 0) {
       console.log(
-        `📊 [API Poll] Fetched ${totalFetches} wallets | ` +
+        `📊 [API Poll #${this.fetchCount}] Fetched ${totalFetches} wallets | ` +
         `Success: ${successfulFetches} | Empty: ${emptyResponses} | ` +
         `Trades found: ${totalTradesFound} | In window: ${tradesInWindow} | New BUYs: ${newTrades.length}`
       );
@@ -4194,12 +4194,50 @@ class ChurnEngine {
     const now = Date.now();
 
     // ─────────────────────────────────────────────────────────────────
-    // 1. GET BALANCES (parallel fetch)
+    // 1. PARALLEL FETCH: Balances + Whale Trades + Positions (when needed)
+    // These are independent operations - run them ALL in parallel for speed!
     // ─────────────────────────────────────────────────────────────────
-    const [usdcBalance, polBalance] = await Promise.all([
-      getUsdcBalance(this.wallet, this.address),
-      getPolBalance(this.wallet, this.address),
-    ]);
+    const shouldSyncPositions = this.cycleCount % 10 === 0;
+    const shouldScanMarkets = this.config.scanActiveMarkets && 
+      (now - this.lastScanTime >= this.config.scanIntervalSeconds * 1000);
+
+    // Build parallel tasks array
+    const parallelTasks: Promise<any>[] = [
+      // Always fetch balances
+      Promise.all([
+        getUsdcBalance(this.wallet, this.address),
+        getPolBalance(this.wallet, this.address),
+      ]),
+      // Always poll whale trades (primary detection method)
+      this.biasAccumulator.fetchLeaderboardTrades(),
+    ];
+
+    // Conditionally add position sync
+    if (shouldSyncPositions) {
+      parallelTasks.push(getPositions(this.address, true).catch(() => []));
+    }
+
+    // Conditionally add market scan
+    if (shouldScanMarkets) {
+      const scanPromise = this.marketScanner
+        .scanActiveMarkets()
+        .then(() => {
+          // Only advance lastScanTime if the scan completes successfully
+          this.lastScanTime = now;
+        })
+        .catch(() => {
+          // Preserve existing behavior: swallow scan errors so they don't break the cycle
+        });
+      parallelTasks.push(scanPromise);
+    }
+
+    // Execute all in parallel
+    const results = await Promise.all(parallelTasks);
+
+    // Unpack results
+    const [usdcBalance, polBalance] = results[0] as [number, number];
+    const newTrades = results[1] as LeaderboardTrade[];
+    const allPositions: Position[] = shouldSyncPositions ? (results[2] as Position[] || []) : [];
     
     // Use dynamic reserves for effective bankroll calculation
     const { effectiveBankroll, reserveUsd } = this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
@@ -4246,33 +4284,30 @@ class ChurnEngine {
       return; // No money to trade
     }
 
+    // Log whale trade detections
+    if (newTrades.length > 0) {
+      console.log(`🐋 [API] Detected ${newTrades.length} new whale trade(s)!`);
+      this.diagnostics.whaleTradesDetected += newTrades.length;
+    }
+
     // ─────────────────────────────────────────────────────────────────
-    // 2. MONITOR ALL POSITIONS - Apply math to ALL positions, not just bot-opened ones
+    // 2. SYNC EXTERNAL POSITIONS (if we fetched them this cycle)
     // ─────────────────────────────────────────────────────────────────
-    // This includes positions from before the bot started, manual trades, etc.
-    // The bot will apply TP, stop loss, hedging, and time stops to everything.
-    
-    // First, sync any on-chain positions not yet tracked by the position manager
-    // Only sync every 10 cycles to reduce API load
-    let allPositions: Position[] = [];
-    if (this.cycleCount % 10 === 0) {
-      try {
-        allPositions = await getPositions(this.address, true);
-        
-        // Register any untracked positions with the position manager
-        // so they get the same exit logic applied
-        for (const pos of allPositions) {
-          const existingPositions = this.positionManager.getPositionsByToken(pos.tokenId);
-          if (existingPositions.length === 0) {
-            // This is an external position - register it for monitoring (async)
-            await this.positionManager.registerExternalPosition(pos);
-          }
-        }
-      } catch {
-        // Continue with managed positions only if fetch fails
+    if (shouldSyncPositions && allPositions.length > 0) {
+      // Register any untracked positions with the position manager
+      // Run registrations in parallel too
+      const registrationPromises = allPositions
+        .filter(pos => this.positionManager.getPositionsByToken(pos.tokenId).length === 0)
+        .map(pos => this.positionManager.registerExternalPosition(pos).catch(() => {}));
+      
+      if (registrationPromises.length > 0) {
+        await Promise.all(registrationPromises);
       }
     }
     
+    // ─────────────────────────────────────────────────────────────────
+    // 3. PROCESS EXITS FOR OPEN POSITIONS
+    // ─────────────────────────────────────────────────────────────────
     const openPositions = this.positionManager.getOpenPositions();
     
     if (openPositions.length > 0) {
@@ -4291,26 +4326,10 @@ class ChurnEngine {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // 3. POLL WHALE TRADES VIA API (EVERY CYCLE - like Novus-Tech-LLC)
-    // This is the PRIMARY trade detection method - on-chain is backup
-    // ─────────────────────────────────────────────────────────────────
-    // Poll EVERY cycle for faster detection (not every 3rd cycle)
-    const newTrades = await this.biasAccumulator.fetchLeaderboardTrades();
-    if (newTrades.length > 0) {
-      console.log(`🐋 [API] Detected ${newTrades.length} new whale trade(s)!`);
-      this.diagnostics.whaleTradesDetected += newTrades.length;
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    // 4. SCAN ACTIVE MARKETS FOR OPPORTUNITIES
+    // 4. GET SCANNED OPPORTUNITIES (already fetched in parallel above)
     // ─────────────────────────────────────────────────────────────────
     let scannedOpportunities: string[] = [];
     if (this.config.scanActiveMarkets) {
-      const scanInterval = this.config.scanIntervalSeconds * 1000;
-      if (now - this.lastScanTime >= scanInterval) {
-        await this.marketScanner.scanActiveMarkets();
-        this.lastScanTime = now;
-      }
       scannedOpportunities = this.marketScanner.getActiveTokenIds();
     }
 

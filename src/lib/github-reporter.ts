@@ -37,7 +37,7 @@ export interface GitHubReporterConfig {
   token: string;
   repo: string;
   enabled: boolean;
-  /** Minimum severity to report (default: "error") */
+  /** Minimum severity to report (default: "warning") */
   minSeverity: ErrorSeverity;
   /** Rate limit: max reports per hour (default: 10) */
   maxReportsPerHour: number;
@@ -94,10 +94,16 @@ export class GitHubReporter {
       token,
       repo,
       enabled: config.enabled ?? (hasRequiredConfig && !explicitlyDisabled),
-      minSeverity: config.minSeverity ?? "error",
+      // Changed default from "error" to "warning" so startup diagnostics get reported
+      minSeverity: config.minSeverity ?? "warning",
       maxReportsPerHour: config.maxReportsPerHour ?? 10,
       dedupeWindowMs: config.dedupeWindowMs ?? 60 * 60 * 1000, // 1 hour
     };
+    
+    // Log initialization details for debugging
+    if (hasRequiredConfig && !explicitlyDisabled) {
+      console.log(`📋 [GitHub] Initialized with repo: ${repo}, minSeverity: ${this.config.minSeverity}`);
+    }
   }
 
   /**
@@ -117,6 +123,8 @@ export class GitHubReporter {
 
     // Check severity threshold
     if (SEVERITY_LEVELS[report.severity] < SEVERITY_LEVELS[this.config.minSeverity]) {
+      // Log when severity blocks reporting (helps debug why reports aren't sent)
+      console.log(`📋 [GitHub] Skipping report (severity ${report.severity} < min ${this.config.minSeverity}): ${report.title.slice(0, 50)}...`);
       return false;
     }
 
@@ -136,10 +144,12 @@ export class GitHubReporter {
     const dedupeKey = this.getDedupeKey(report);
     const lastReported = this.recentReports.get(dedupeKey);
     if (lastReported && now - lastReported < this.config.dedupeWindowMs) {
+      console.log(`📋 [GitHub] Skipping duplicate report: ${report.title.slice(0, 50)}...`);
       return false; // Skip duplicate
     }
 
     try {
+      console.log(`📋 [GitHub] Creating issue: ${report.title}`);
       await this.createIssue(report);
       this.reportCount++;
       this.recentReports.set(dedupeKey, now);
