@@ -167,6 +167,32 @@ function parseOptionalFloat(value: string | undefined): number | undefined {
   return parsed;
 }
 
+/**
+ * Parse an optional float with a default value
+ * Returns default if not set, undefined if explicitly set to empty string (to disable)
+ * Warns if value is outside expected [0,1] range
+ */
+function parseOptionalFloatWithDefault(value: string | undefined, defaultValue: number): number | undefined {
+  // If env var is not set at all, use default
+  if (value === undefined) return defaultValue;
+  
+  // If env var is explicitly set to empty string, disable (return undefined)
+  if (value === "") return undefined;
+  
+  const parsed = parseFloat(value);
+  if (isNaN(parsed)) return defaultValue;
+  
+  // Warn if value seems like a percentage (outside [0,1] range)
+  if (parsed < 0 || parsed > 1) {
+    console.warn(
+      `⚠️ Price value ${parsed} is outside expected [0,1] range. ` +
+      `Use decimal format (e.g., 0.25 for 25¢, not 25).`
+    );
+  }
+  
+  return parsed;
+}
+
 interface ChurnConfig {
   // ═══════════════════════════════════════════════════════════════════════════
   // USER CONFIGURABLE (the ONLY thing you should change)
@@ -425,11 +451,12 @@ function loadConfig(): ChurnConfig {
     infuraTier: parseInfuraTierEnv(process.env.INFURA_TIER),
 
     // Whale Price-Range Filtering - Filter whale trades by price
-    // When set, only whale trades within [WHALE_PRICE_MIN, WHALE_PRICE_MAX] create signals
-    // If only one is set, acts as a one-sided filter (e.g., only min = "at least 25¢")
+    // Only whale trades within [WHALE_PRICE_MIN, WHALE_PRICE_MAX] create signals
+    // DEFAULT: 0.25-0.45 (25¢-45¢) - filters out extreme prices by default
+    // Set to empty string to disable filtering (e.g., WHALE_PRICE_MIN= )
     // If min > max, logs a warning and skips filtering
-    whalePriceMin: parseOptionalFloat(process.env.WHALE_PRICE_MIN),
-    whalePriceMax: parseOptionalFloat(process.env.WHALE_PRICE_MAX),
+    whalePriceMin: parseOptionalFloatWithDefault(process.env.WHALE_PRICE_MIN, 0.25),
+    whalePriceMax: parseOptionalFloatWithDefault(process.env.WHALE_PRICE_MAX, 0.45),
   };
 }
 
