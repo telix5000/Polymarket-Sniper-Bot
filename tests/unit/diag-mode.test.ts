@@ -3,7 +3,6 @@ import { test, describe } from "node:test";
 import {
   DiagTracer,
   DiagStep,
-  DiagResult,
   DiagReason,
   parseDiagModeConfig,
   isDiagModeEnabled,
@@ -13,8 +12,6 @@ import {
   DiagTimeoutError,
   mapErrorToReason,
   sanitizeDetail,
-  ghGroup,
-  ghEndGroup,
 } from "../../src/lib/diag-mode";
 
 /**
@@ -332,10 +329,7 @@ describe("mapErrorToReason", () => {
       mapErrorToReason(new Error("API request failed")),
       "api_error",
     );
-    assert.strictEqual(
-      mapErrorToReason(new Error("fetch error")),
-      "api_error",
-    );
+    assert.strictEqual(mapErrorToReason(new Error("fetch error")), "api_error");
   });
 
   test("should return unknown_error for unrecognized errors", () => {
@@ -454,7 +448,12 @@ describe("GitHub Actions Integration", () => {
 
 describe("DiagStep and DiagResult Types", () => {
   test("should have correct step values", () => {
-    const steps: DiagStep[] = ["WHALE_BUY", "WHALE_SELL", "SCAN_BUY", "SCAN_SELL"];
+    const steps: DiagStep[] = [
+      "WHALE_BUY",
+      "WHALE_SELL",
+      "SCAN_BUY",
+      "SCAN_SELL",
+    ];
 
     assert.strictEqual(steps.length, 4);
     assert.ok(steps.includes("WHALE_BUY"));
