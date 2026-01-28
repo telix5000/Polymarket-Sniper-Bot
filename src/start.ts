@@ -1076,11 +1076,11 @@ class BiasAccumulator {
     const newTrades = results.flat();
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // DIAGNOSTIC: Log API fetch results periodically
+    // DIAGNOSTIC: Log API fetch results - show first 5, then every 10th, or when trades found
     // ═══════════════════════════════════════════════════════════════════════════
-    if (this.fetchCount % 10 === 0 || newTrades.length > 0) {
+    if (this.fetchCount < 5 || this.fetchCount % 10 === 0 || newTrades.length > 0) {
       console.log(
-        `📊 [API Poll] Fetched ${totalFetches} wallets | ` +
+        `📊 [API Poll #${this.fetchCount}] Fetched ${totalFetches} wallets | ` +
         `Success: ${successfulFetches} | Empty: ${emptyResponses} | ` +
         `Trades found: ${totalTradesFound} | In window: ${tradesInWindow} | New BUYs: ${newTrades.length}`
       );
