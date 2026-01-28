@@ -4196,8 +4196,16 @@ class ChurnEngine {
 
     // Conditionally add market scan
     if (shouldScanMarkets) {
-      parallelTasks.push(this.marketScanner.scanActiveMarkets().catch(() => {}));
-      this.lastScanTime = now;
+      const scanPromise = this.marketScanner
+        .scanActiveMarkets()
+        .then(() => {
+          // Only advance lastScanTime if the scan completes successfully
+          this.lastScanTime = now;
+        })
+        .catch(() => {
+          // Preserve existing behavior: swallow scan errors so they don't break the cycle
+        });
+      parallelTasks.push(scanPromise);
     }
 
     // Execute all in parallel

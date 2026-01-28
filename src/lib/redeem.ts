@@ -327,7 +327,7 @@ export async function redeemAllPositions(
   for (const pos of positions) {
     const valueStr = pos.value > 0 ? `~$${pos.value.toFixed(2)}` : '$0 (losing position)';
     console.log(`🎁 [Redeem]    ${pos.outcome}: ${valueStr}`);
-    logger?.info?.(`   ${pos.outcome}: ~$${pos.value.toFixed(2)}`);
+    logger?.info?.(`   ${pos.outcome}: ${valueStr}`);
     if (pos.question) {
       const questionPreview =
         pos.question.length > 60
