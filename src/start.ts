@@ -7156,17 +7156,21 @@ async function main(): Promise<void> {
     const diagConfig = parseDiagModeConfig();
     const engine = new ChurnEngine();
 
-    // Handle shutdown
+    // Track whether diagnostic workflow completed successfully
+    let diagWorkflowCompleted = false;
+    let diagExitCode = 0;
+
+    // Handle shutdown - use exit code 0 if workflow completed, 1 if interrupted
     process.on("SIGINT", () => {
       console.log("\nReceived SIGINT, shutting down...");
       engine.stop();
-      process.exit(1);
+      process.exit(diagWorkflowCompleted ? diagExitCode : 1);
     });
 
     process.on("SIGTERM", () => {
       console.log("\nReceived SIGTERM, shutting down...");
       engine.stop();
-      process.exit(1);
+      process.exit(diagWorkflowCompleted ? diagExitCode : 1);
     });
 
     // Initialize engine (but don't run normal loop)
@@ -7183,11 +7187,69 @@ async function main(): Promise<void> {
       // Stop engine
       engine.stop();
 
-      // Exit with workflow exit code
+      // Report diagnostic results to GitHub Issues if configured
+      const reporter = getGitHubReporter();
+      if (reporter.isEnabled()) {
+        console.log("\n📋 Reporting diagnostic results to GitHub Issues...");
+        try {
+          const durationMs =
+            result.endTime.getTime() - result.startTime.getTime();
+          const reported = await reporter.reportDiagnosticWorkflow({
+            traceId: result.traceId,
+            durationMs,
+            steps: result.steps.map((s) => ({
+              step: s.step,
+              result: s.result,
+              reason: s.reason,
+              marketId: s.marketId,
+              tokenId: s.tokenId,
+            })),
+          });
+          if (reported) {
+            console.log("📋 Diagnostic results reported to GitHub Issues");
+          } else {
+            console.log(
+              "📋 Diagnostic results skipped (dedupe/rate-limit/severity)",
+            );
+          }
+        } catch (reportErr) {
+          console.warn(
+            `📋 Failed to report to GitHub: ${reportErr instanceof Error ? reportErr.message : reportErr}`,
+          );
+        }
+      } else {
+        console.log(
+          "\n📋 GitHub reporter not enabled - skipping issue creation",
+        );
+      }
+
+      // Mark workflow as completed with its exit code
+      diagWorkflowCompleted = true;
+      diagExitCode = result.exitCode;
+
+      // Log workflow completion
       console.log(
         `\n🔬 Diagnostic workflow completed. Exit code: ${result.exitCode}`,
       );
-      process.exit(result.exitCode);
+
+      // In GitHub Actions, exit immediately so CI remains one-shot
+      if (isGitHubActions()) {
+        console.log(
+          "\n🏁 GitHub Actions detected - exiting after diagnostic workflow.",
+        );
+        process.exit(diagExitCode);
+      }
+
+      // Instead of exiting (which causes container restarts), enter idle state
+      // This keeps the container running without restarting (non-CI / container use)
+      console.log("\n💤 Entering idle state (container will not restart)...");
+      console.log("   Press Ctrl+C to stop the container manually.");
+
+      // Keep the process alive indefinitely without a constant-condition loop.
+      // Signal handlers (SIGINT/SIGTERM) above will still terminate the process.
+      await new Promise<never>(() => {
+        // Intentionally never resolve: idle until the process receives a termination signal.
+      });
     } catch (err) {
       console.error("Fatal error in diagnostic workflow:", err);
       engine.stop();
