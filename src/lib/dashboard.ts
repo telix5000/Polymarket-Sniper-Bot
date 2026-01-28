@@ -9,7 +9,7 @@
  * Usage:
  *   - Runs in the terminal with real-time updates
  *   - Press 'q' or Ctrl+C to exit
- *   - Enable with DASHBOARD_ENABLED=true (default: true)
+ *   - Enable with DASHBOARD_ENABLED=true (default: false - disabled by default to maintain backward compatibility)
  *
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -289,7 +289,7 @@ export class Dashboard {
 
     this.screen.key(["escape", "q", "C-c"], () => {
       this.stop();
-      process.exit(0);
+      process.kill(process.pid, "SIGINT");
     });
 
     this.screen.key(["r"], () => {

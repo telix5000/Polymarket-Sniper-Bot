@@ -50,7 +50,7 @@
   "dependencies": {
     "@polymarket/clob-client": "4.22.8",
     "axios": "^1.13.2",
-    "blessed": "^0.1.81",
+    "blessed": "npm:neo-blessed@^0.2.0",
     "blessed-contrib": "^4.11.0",
     "dotenv": "^17.2.3",
     "ethers": "^6.16.0"

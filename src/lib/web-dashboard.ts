@@ -115,8 +115,30 @@ export class WebDashboard {
   private logs: string[] = [];
 
   constructor(config: Partial<WebDashboardConfig> = {}) {
+    // Validate and parse port from environment
+    const envPortRaw = process.env.DASHBOARD_PORT;
+    let envPort: number | undefined;
+
+    if (envPortRaw !== undefined && envPortRaw !== "") {
+      const parsedPort = parseInt(envPortRaw, 10);
+
+      if (
+        !Number.isInteger(parsedPort) ||
+        parsedPort < 1 ||
+        parsedPort > 65535
+      ) {
+        throw new Error(
+          `Invalid DASHBOARD_PORT value "${envPortRaw}". Expected an integer between 1 and 65535.`,
+        );
+      }
+
+      envPort = parsedPort;
+    }
+
+    const defaultPort = envPort ?? 3000;
+
     this.config = {
-      port: config.port ?? parseInt(process.env.DASHBOARD_PORT || "3000", 10),
+      port: config.port ?? defaultPort,
       enabled: config.enabled ?? true,
     };
     this.startTime = Date.now();
@@ -145,8 +167,24 @@ export class WebDashboard {
     }
 
     this.server = http.createServer((req, res) => {
-      // CORS headers for API access
-      res.setHeader("Access-Control-Allow-Origin", "*");
+      // CORS headers - restrict to localhost by default for security
+      // The dashboard displays sensitive trading information
+      const originHeader = req.headers.origin;
+      const allowedOriginsEnv = process.env.DASHBOARD_ALLOWED_ORIGINS;
+      const allowedOrigins = allowedOriginsEnv
+        ? allowedOriginsEnv
+            .split(",")
+            .map((o) => o.trim())
+            .filter((o) => o.length > 0)
+        : [`http://localhost:${this.config.port}`];
+
+      let corsOrigin = "null";
+      if (originHeader && allowedOrigins.includes(originHeader)) {
+        corsOrigin = originHeader;
+      }
+
+      res.setHeader("Access-Control-Allow-Origin", corsOrigin);
+      res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
@@ -158,33 +196,50 @@ export class WebDashboard {
 
       const url = req.url || "/";
 
-      if (url === "/api/data") {
-        // JSON API endpoint for programmatic access
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(this.getApiData()));
-      } else if (url === "/api/metrics") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(this.metrics));
-      } else if (url === "/api/positions") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(this.positions));
-      } else if (url === "/api/trades") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(this.recentTrades));
-      } else if (url === "/api/whales") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(this.whaleActivity));
-      } else {
-        // Main dashboard HTML page
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(this.generateHtml());
+      try {
+        if (url === "/api/data") {
+          // JSON API endpoint for programmatic access
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(this.getApiData()));
+        } else if (url === "/api/metrics") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(this.metrics));
+        } else if (url === "/api/positions") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(this.positions));
+        } else if (url === "/api/trades") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(this.recentTrades));
+        } else if (url === "/api/whales") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(this.whaleActivity));
+        } else {
+          // Main dashboard HTML page
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end(this.generateHtml());
+        }
+      } catch (err) {
+        // Handle JSON serialization errors or other unexpected errors
+        console.error(
+          `❌ Dashboard request error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Internal server error" }));
       }
     });
 
-    this.server.listen(this.config.port, "0.0.0.0", () => {
+    // Bind to 0.0.0.0 to allow Docker port forwarding, but CORS restricts actual access
+    // For local-only access, set DASHBOARD_BIND_ADDRESS=127.0.0.1
+    const bindAddress = process.env.DASHBOARD_BIND_ADDRESS || "0.0.0.0";
+    this.server.listen(this.config.port, bindAddress, () => {
       console.log(
         `🌐 Web dashboard started at http://localhost:${this.config.port}`,
       );
+      if (bindAddress === "0.0.0.0") {
+        console.log(
+          `   ⚠️ Dashboard is accessible from all interfaces. Set DASHBOARD_BIND_ADDRESS=127.0.0.1 for local-only access.`,
+        );
+      }
     });
 
     this.server.on("error", (err: NodeJS.ErrnoException) => {
@@ -203,8 +258,15 @@ export class WebDashboard {
    */
   stop(): void {
     if (this.server) {
-      this.server.close();
+      const server = this.server;
       this.server = null;
+      server.close((err?: Error) => {
+        if (err) {
+          console.error(
+            `❌ Error while shutting down dashboard server: ${err.message}`,
+          );
+        }
+      });
     }
   }
 
@@ -486,8 +548,30 @@ export class WebDashboard {
   </div>
 
   <script>
-    // Auto-refresh every 2 seconds
-    setTimeout(() => location.reload(), 2000);
+    // Auto-refresh every 2 seconds without full page reload
+    (function () {
+      async function refreshDashboard() {
+        try {
+          const response = await fetch(window.location.href, { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error("Failed to refresh dashboard: " + response.status);
+          }
+          const html = await response.text();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, "text/html");
+          const newBody = doc.body;
+          if (newBody) {
+            document.body.innerHTML = newBody.innerHTML;
+          }
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setTimeout(refreshDashboard, 2000);
+        }
+      }
+
+      setTimeout(refreshDashboard, 2000);
+    })();
   </script>
 </body>
 </html>`;
@@ -643,5 +727,12 @@ export function shouldStartWebDashboard(): boolean {
  * Get configured dashboard port (default: 3000)
  */
 export function getDashboardPort(): number {
-  return parseInt(process.env.DASHBOARD_PORT || "3000", 10);
+  const rawPort = process.env.DASHBOARD_PORT || "3000";
+  const parsedPort = parseInt(rawPort, 10);
+
+  if (Number.isNaN(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+    return 3000;
+  }
+
+  return parsedPort;
 }
