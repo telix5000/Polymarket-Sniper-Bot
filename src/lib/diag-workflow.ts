@@ -27,6 +27,7 @@ import {
   mapErrorToReason,
   parseDiagModeConfig,
   isGitHubActions,
+  BookSanityRule,
 } from "./diag-mode";
 import { postOrder } from "./order";
 import type { Logger } from "./types";
@@ -137,6 +138,9 @@ export async function runDiagWorkflow(
   const ctx: DiagContext = {};
   const steps: DiagStepResult[] = [];
 
+  // Reset rejection stats at start of workflow
+  resetRejectionStats();
+
   console.log("");
   console.log("═".repeat(60));
   console.log("  🔬 DIAGNOSTIC MODE");
@@ -145,6 +149,12 @@ export async function runDiagWorkflow(
   console.log(`  Whale Timeout: ${cfg.whaleTimeoutSec}s`);
   console.log(`  Order Timeout: ${cfg.orderTimeoutSec}s`);
   console.log(`  Force Shares: ${cfg.forceShares}`);
+  console.log(
+    `  Require Tradeable Book: ${cfg.requireTradeableBook ? "YES" : "NO"}`,
+  );
+  console.log(`  Bad Book Cooldown: ${cfg.badBookCooldownSec}s`);
+  console.log(`  Book Max Ask: ${cfg.bookMaxAsk}`);
+  console.log(`  Book Max Spread: ${cfg.bookMaxSpread}`);
   console.log(`  GitHub Actions: ${isGitHubActions() ? "YES" : "NO"}`);
   console.log("═".repeat(60));
   console.log("");
@@ -202,6 +212,7 @@ export async function runDiagWorkflow(
   // ─────────────────────────────────────────────────────────────────────────
   const endTime = new Date();
   const durationMs = endTime.getTime() - startTime.getTime();
+  const stats = getRejectionStats();
 
   console.log("");
   console.log("═".repeat(60));
@@ -222,6 +233,34 @@ export async function runDiagWorkflow(
             : "❌";
     const reasonStr = step.reason ? ` (${step.reason})` : "";
     console.log(`  ${icon} ${step.step}: ${step.result}${reasonStr}`);
+  }
+
+  console.log("");
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // CANDIDATE REJECTION SUMMARY
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log("  📋 CANDIDATE REJECTION SUMMARY");
+  console.log(`     Total Candidates: ${stats.totalCandidates}`);
+  console.log(`     Skipped (Bad Book): ${stats.skippedBadBook}`);
+  console.log(`     Skipped (Cooldown): ${stats.skippedCooldown}`);
+  console.log(`     Rejected (Execution): ${stats.rejectedAtExecution}`);
+  console.log(`     Executed: ${stats.executed}`);
+  if (stats.skippedBadBook > 0) {
+    console.log("");
+    console.log("     By Rule:");
+    console.log(`       - askTooHigh: ${stats.byRule.askTooHigh}`);
+    console.log(`       - spreadTooWide: ${stats.byRule.spreadTooWide}`);
+    console.log(`       - emptyBook: ${stats.byRule.emptyBook}`);
+    if (stats.sampleRejected.length > 0) {
+      console.log("");
+      console.log("     Sample Rejected:");
+      for (const sample of stats.sampleRejected) {
+        console.log(
+          `       - ${sample.tokenId} (${sample.rule}): bid=${sample.bestBid?.toFixed(2) ?? "N/A"}, ask=${sample.bestAsk?.toFixed(2) ?? "N/A"}`,
+        );
+      }
+    }
   }
 
   console.log("");
@@ -299,6 +338,9 @@ async function runWhaleBuyStep(
       };
     }
 
+    // Track this candidate
+    globalRejectionStats.totalCandidates++;
+
     tracer.trace({
       step,
       action: "signal_received",
@@ -311,10 +353,133 @@ async function runWhaleBuyStep(
 
     console.log(`🐋 Whale signal received: ${signal.tokenId?.slice(0, 16)}...`);
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // BOOK SANITY PRE-FILTER: Check if this candidate is in cooldown
+    // ─────────────────────────────────────────────────────────────────────────
+    if (isInCooldown(signal.tokenId)) {
+      globalRejectionStats.skippedCooldown++;
+
+      tracer.trace({
+        step,
+        action: "candidate_in_cooldown",
+        result: "SKIPPED",
+        reason: "candidate_cooldown",
+        marketId: signal.marketId,
+        tokenId: signal.tokenId,
+        detail: { message: "Candidate in cooldown due to previous bad book" },
+      });
+
+      console.log(`⏭️ SKIPPED: Candidate in cooldown (previously bad book)`);
+
+      ghEndGroup();
+      return {
+        step,
+        result: "SKIPPED",
+        reason: "candidate_cooldown",
+        marketId: signal.marketId,
+        tokenId: signal.tokenId,
+        detail: { message: "Candidate in cooldown due to previous bad book" },
+        traceEvents: tracer.getStepEvents(step),
+      };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // BOOK SANITY PRE-FILTER: Fetch orderbook and check book health
+    // ─────────────────────────────────────────────────────────────────────────
+    let orderbook: OrderbookData | null = null;
+    try {
+      orderbook = await deps.client.getOrderBook(signal.tokenId);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`⚠️ Could not fetch orderbook for pre-filter: ${errMsg}`);
+    }
+
+    if (orderbook?.asks?.length && orderbook?.bids?.length) {
+      const bestAsk = parseFloat(orderbook.asks[0].price);
+      const bestBid = parseFloat(orderbook.bids[0].price);
+
+      const sanityResult = performBookSanityCheck(
+        bestBid,
+        bestAsk,
+        cfg,
+        signal.price,
+      );
+
+      // Log candidate evaluation
+      logCandidateEvaluation(
+        "whale",
+        signal.tokenId,
+        signal.marketId,
+        signal.price,
+        bestBid,
+        bestAsk,
+        sanityResult,
+        sanityResult.passed ? null : "candidate",
+      );
+
+      if (!sanityResult.passed) {
+        // Add to cooldown
+        addToCooldown(signal.tokenId, cfg.badBookCooldownSec);
+
+        // Record rejection stats
+        recordRejection(
+          signal.tokenId,
+          signal.marketId,
+          sanityResult.rule!,
+          bestBid,
+          bestAsk,
+          sanityResult.detail.spread,
+        );
+
+        tracer.trace({
+          step,
+          action: "book_sanity_failed",
+          result: "SKIPPED",
+          reason: "skipped_bad_book",
+          marketId: signal.marketId,
+          tokenId: signal.tokenId,
+          detail: {
+            rule: sanityResult.rule,
+            bestBid,
+            bestAsk,
+            spread: sanityResult.detail.spread,
+            signalPrice: signal.price,
+            cooldownSec: cfg.badBookCooldownSec,
+          },
+        });
+
+        console.log(
+          `⏭️ SKIPPED_BAD_BOOK: ${sanityResult.rule} (bid=${bestBid?.toFixed(2)}, ask=${bestAsk.toFixed(2)}, spread=${sanityResult.detail.spread?.toFixed(2) ?? "N/A"})`,
+        );
+        console.log(
+          `   Added to cooldown for ${cfg.badBookCooldownSec}s to prevent reselection`,
+        );
+
+        ghEndGroup();
+        return {
+          step,
+          result: "SKIPPED",
+          reason: "skipped_bad_book",
+          marketId: signal.marketId,
+          tokenId: signal.tokenId,
+          detail: {
+            rule: sanityResult.rule,
+            bestBid,
+            bestAsk,
+            spread: sanityResult.detail.spread,
+            signalPrice: signal.price,
+          },
+          traceEvents: tracer.getStepEvents(step),
+        };
+      }
+    }
+
     // Attempt BUY order
     const buyResult = await attemptDiagBuy(deps, cfg, tracer, step, signal);
 
     if (buyResult.success) {
+      globalRejectionStats.executed++;
+
       // Capture entry price for hedge verification
       const detail = buyResult.detail as
         | {
@@ -348,6 +513,9 @@ async function runWhaleBuyStep(
         traceEvents: tracer.getStepEvents(step),
       };
     }
+
+    // Track rejection at execution stage
+    globalRejectionStats.rejectedAtExecution++;
 
     ghEndGroup();
     return {
@@ -534,6 +702,9 @@ async function runScanBuyStep(
       };
     }
 
+    // Track this candidate
+    globalRejectionStats.totalCandidates++;
+
     tracer.trace({
       step,
       action: "candidate_found",
@@ -546,10 +717,133 @@ async function runScanBuyStep(
 
     console.log(`📊 Scan candidate: ${scanResult.tokenId?.slice(0, 16)}...`);
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // BOOK SANITY PRE-FILTER: Check if this candidate is in cooldown
+    // ─────────────────────────────────────────────────────────────────────────
+    if (isInCooldown(scanResult.tokenId)) {
+      globalRejectionStats.skippedCooldown++;
+
+      tracer.trace({
+        step,
+        action: "candidate_in_cooldown",
+        result: "SKIPPED",
+        reason: "candidate_cooldown",
+        marketId: scanResult.marketId,
+        tokenId: scanResult.tokenId,
+        detail: { message: "Candidate in cooldown due to previous bad book" },
+      });
+
+      console.log(`⏭️ SKIPPED: Candidate in cooldown (previously bad book)`);
+
+      ghEndGroup();
+      return {
+        step,
+        result: "SKIPPED",
+        reason: "candidate_cooldown",
+        marketId: scanResult.marketId,
+        tokenId: scanResult.tokenId,
+        detail: { message: "Candidate in cooldown due to previous bad book" },
+        traceEvents: tracer.getStepEvents(step),
+      };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // BOOK SANITY PRE-FILTER: Fetch orderbook and check book health
+    // ─────────────────────────────────────────────────────────────────────────
+    let orderbook: OrderbookData | null = null;
+    try {
+      orderbook = await deps.client.getOrderBook(scanResult.tokenId);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`⚠️ Could not fetch orderbook for pre-filter: ${errMsg}`);
+    }
+
+    if (orderbook?.asks?.length && orderbook?.bids?.length) {
+      const bestAsk = parseFloat(orderbook.asks[0].price);
+      const bestBid = parseFloat(orderbook.bids[0].price);
+
+      const sanityResult = performBookSanityCheck(
+        bestBid,
+        bestAsk,
+        cfg,
+        scanResult.price,
+      );
+
+      // Log candidate evaluation
+      logCandidateEvaluation(
+        "scan",
+        scanResult.tokenId,
+        scanResult.marketId,
+        scanResult.price,
+        bestBid,
+        bestAsk,
+        sanityResult,
+        sanityResult.passed ? null : "candidate",
+      );
+
+      if (!sanityResult.passed) {
+        // Add to cooldown
+        addToCooldown(scanResult.tokenId, cfg.badBookCooldownSec);
+
+        // Record rejection stats
+        recordRejection(
+          scanResult.tokenId,
+          scanResult.marketId,
+          sanityResult.rule!,
+          bestBid,
+          bestAsk,
+          sanityResult.detail.spread,
+        );
+
+        tracer.trace({
+          step,
+          action: "book_sanity_failed",
+          result: "SKIPPED",
+          reason: "skipped_bad_book",
+          marketId: scanResult.marketId,
+          tokenId: scanResult.tokenId,
+          detail: {
+            rule: sanityResult.rule,
+            bestBid,
+            bestAsk,
+            spread: sanityResult.detail.spread,
+            signalPrice: scanResult.price,
+            cooldownSec: cfg.badBookCooldownSec,
+          },
+        });
+
+        console.log(
+          `⏭️ SKIPPED_BAD_BOOK: ${sanityResult.rule} (bid=${bestBid?.toFixed(2)}, ask=${bestAsk.toFixed(2)}, spread=${sanityResult.detail.spread?.toFixed(2) ?? "N/A"})`,
+        );
+        console.log(
+          `   Added to cooldown for ${cfg.badBookCooldownSec}s to prevent reselection`,
+        );
+
+        ghEndGroup();
+        return {
+          step,
+          result: "SKIPPED",
+          reason: "skipped_bad_book",
+          marketId: scanResult.marketId,
+          tokenId: scanResult.tokenId,
+          detail: {
+            rule: sanityResult.rule,
+            bestBid,
+            bestAsk,
+            spread: sanityResult.detail.spread,
+            signalPrice: scanResult.price,
+          },
+          traceEvents: tracer.getStepEvents(step),
+        };
+      }
+    }
+
     // Attempt BUY order
     const buyResult = await attemptDiagBuy(deps, cfg, tracer, step, scanResult);
 
     if (buyResult.success) {
+      globalRejectionStats.executed++;
+
       // Capture entry price for hedge verification
       const detail = buyResult.detail as
         | {
@@ -583,6 +877,9 @@ async function runScanBuyStep(
         traceEvents: tracer.getStepEvents(step),
       };
     }
+
+    // Track rejection at execution stage
+    globalRejectionStats.rejectedAtExecution++;
 
     ghEndGroup();
     return {
@@ -761,6 +1058,309 @@ export const DIAG_MAX_SPREAD = 0.3;
  * Threshold for "too high" bestAsk - indicates market is nearly resolved.
  */
 export const DIAG_MAX_BEST_ASK = 0.95;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOOK SANITY PRE-FILTER & COOLDOWN TRACKING
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Cooldown map: tokenId -> timestamp when cooldown expires
+ * Used to prevent repeatedly selecting untradeable markets
+ */
+const badBookCooldownMap = new Map<string, number>();
+
+/**
+ * Rejection statistics by rule type for diagnostics summary
+ */
+export interface CandidateRejectionStats {
+  totalCandidates: number;
+  skippedBadBook: number;
+  skippedCooldown: number;
+  rejectedAtExecution: number;
+  executed: number;
+  // Breakdown by rule
+  byRule: {
+    askTooHigh: number;
+    spreadTooWide: number;
+    emptyBook: number;
+    thinBook: number;
+    spreadPctTooHigh: number;
+  };
+  // Sample rejected candidates (for reporting)
+  sampleRejected: Array<{
+    tokenId: string;
+    marketId?: string;
+    rule: BookSanityRule;
+    bestBid?: number;
+    bestAsk?: number;
+    spread?: number;
+  }>;
+}
+
+/**
+ * Create empty rejection stats
+ */
+export function createEmptyRejectionStats(): CandidateRejectionStats {
+  return {
+    totalCandidates: 0,
+    skippedBadBook: 0,
+    skippedCooldown: 0,
+    rejectedAtExecution: 0,
+    executed: 0,
+    byRule: {
+      askTooHigh: 0,
+      spreadTooWide: 0,
+      emptyBook: 0,
+      thinBook: 0,
+      spreadPctTooHigh: 0,
+    },
+    sampleRejected: [],
+  };
+}
+
+/**
+ * Global rejection stats for diagnostic summary
+ */
+let globalRejectionStats = createEmptyRejectionStats();
+
+/**
+ * Get the current rejection stats
+ */
+export function getRejectionStats(): CandidateRejectionStats {
+  return { ...globalRejectionStats };
+}
+
+/**
+ * Reset rejection stats (call at start of diagnostic workflow)
+ */
+export function resetRejectionStats(): void {
+  globalRejectionStats = createEmptyRejectionStats();
+}
+
+/**
+ * Check if a token is in cooldown period
+ */
+export function isInCooldown(tokenId: string): boolean {
+  const expiresAt = badBookCooldownMap.get(tokenId);
+  if (!expiresAt) return false;
+
+  if (Date.now() >= expiresAt) {
+    // Cooldown expired, remove from map
+    badBookCooldownMap.delete(tokenId);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Add a token to cooldown
+ */
+export function addToCooldown(tokenId: string, cooldownSec: number): void {
+  const expiresAt = Date.now() + cooldownSec * 1000;
+  badBookCooldownMap.set(tokenId, expiresAt);
+}
+
+/**
+ * Clear all bad book cooldowns (for testing)
+ */
+export function clearBadBookCooldowns(): void {
+  badBookCooldownMap.clear();
+}
+
+/**
+ * Book sanity pre-filter result
+ */
+export interface BookSanityResult {
+  passed: boolean;
+  rule?: BookSanityRule;
+  detail: {
+    signalPrice?: number;
+    bestBid?: number;
+    bestAsk?: number;
+    spread?: number;
+    spreadPct?: number;
+    thresholds: {
+      maxAsk: number;
+      maxSpread: number;
+    };
+  };
+}
+
+/**
+ * Perform book sanity pre-filter BEFORE attempting any buy.
+ * This is called at candidate stage to reject untradeable markets early.
+ *
+ * @param bestBid - Best bid price (0-1 scale)
+ * @param bestAsk - Best ask price (0-1 scale)
+ * @param cfg - Diagnostic config with thresholds
+ * @param signalPrice - Optional signal price for logging
+ * @returns BookSanityResult indicating if candidate passes
+ */
+export function performBookSanityCheck(
+  bestBid: number | null,
+  bestAsk: number,
+  cfg: { bookMaxAsk: number; bookMaxSpread: number },
+  signalPrice?: number,
+): BookSanityResult {
+  const spread = bestBid !== null ? bestAsk - bestBid : null;
+  const spreadPct =
+    spread !== null && bestAsk > 0 ? (spread / bestAsk) * 100 : null;
+
+  const detail = {
+    signalPrice,
+    bestBid: bestBid ?? undefined,
+    bestAsk,
+    spread: spread ?? undefined,
+    spreadPct: spreadPct ?? undefined,
+    thresholds: {
+      maxAsk: cfg.bookMaxAsk,
+      maxSpread: cfg.bookMaxSpread,
+    },
+  };
+
+  // Rule 1: Empty or fake book (most specific)
+  if (bestBid !== null && bestBid <= 0.01 && bestAsk >= 0.99) {
+    return {
+      passed: false,
+      rule: "empty_book",
+      detail,
+    };
+  }
+
+  // Rule 2: bestAsk >= BOOK_MAX_ASK (market nearly resolved)
+  if (bestAsk >= cfg.bookMaxAsk) {
+    return {
+      passed: false,
+      rule: "ask_too_high",
+      detail,
+    };
+  }
+
+  // Rule 3: spread >= BOOK_MAX_SPREAD
+  if (spread !== null && spread >= cfg.bookMaxSpread) {
+    return {
+      passed: false,
+      rule: "spread_too_wide",
+      detail,
+    };
+  }
+
+  return { passed: true, detail };
+}
+
+/**
+ * Log candidate evaluation for diagnostics
+ */
+export function logCandidateEvaluation(
+  source: "whale" | "scan",
+  tokenId: string,
+  marketId: string | undefined,
+  signalPrice: number | undefined,
+  bestBid: number | undefined,
+  bestAsk: number | undefined,
+  sanityResult: BookSanityResult,
+  rejectedStage: "candidate" | "execution" | null,
+): void {
+  const event = {
+    event: "DIAG_CANDIDATE_EVAL",
+    timestamp: new Date().toISOString(),
+    source,
+    tokenIdPrefix: tokenId.slice(0, 16) + "...",
+    marketId,
+    signalPrice,
+    book: {
+      bestBid,
+      bestAsk,
+      spread: sanityResult.detail.spread,
+      spreadPct: sanityResult.detail.spreadPct?.toFixed(1),
+    },
+    sanityCheck: {
+      passed: sanityResult.passed,
+      rule: sanityResult.rule,
+      thresholds: sanityResult.detail.thresholds,
+    },
+    rejectedStage,
+  };
+  console.log(JSON.stringify(event));
+}
+
+/**
+ * Record a rejection in the stats
+ */
+function recordRejection(
+  tokenId: string,
+  marketId: string | undefined,
+  rule: BookSanityRule,
+  bestBid: number | undefined,
+  bestAsk: number | undefined,
+  spread: number | undefined,
+): void {
+  globalRejectionStats.skippedBadBook++;
+
+  // Update rule-specific counter
+  switch (rule) {
+    case "ask_too_high":
+      globalRejectionStats.byRule.askTooHigh++;
+      break;
+    case "spread_too_wide":
+      globalRejectionStats.byRule.spreadTooWide++;
+      break;
+    case "empty_book":
+      globalRejectionStats.byRule.emptyBook++;
+      break;
+    case "thin_book":
+      globalRejectionStats.byRule.thinBook++;
+      break;
+    case "spread_pct_too_high":
+      globalRejectionStats.byRule.spreadPctTooHigh++;
+      break;
+  }
+
+  // Keep sample of first 5 rejected candidates
+  if (globalRejectionStats.sampleRejected.length < 5) {
+    globalRejectionStats.sampleRejected.push({
+      tokenId: tokenId.slice(0, 16) + "...",
+      marketId,
+      rule,
+      bestBid,
+      bestAsk,
+      spread,
+    });
+  }
+}
+
+/**
+ * Format rejection stats summary for GitHub issue / logging
+ */
+export function formatRejectionStatsSummary(
+  stats: CandidateRejectionStats,
+): string {
+  const lines: string[] = [];
+  lines.push("## Guardrail Summary");
+  lines.push(`- **Total Candidates**: ${stats.totalCandidates}`);
+  lines.push(`- **Skipped (Bad Book)**: ${stats.skippedBadBook}`);
+  lines.push(`- **Skipped (Cooldown)**: ${stats.skippedCooldown}`);
+  lines.push(`- **Rejected (Execution)**: ${stats.rejectedAtExecution}`);
+  lines.push(`- **Executed**: ${stats.executed}`);
+  lines.push("");
+  lines.push("### Rejection Breakdown");
+  lines.push(`- askTooHigh: ${stats.byRule.askTooHigh}`);
+  lines.push(`- spreadTooWide: ${stats.byRule.spreadTooWide}`);
+  lines.push(`- emptyBook: ${stats.byRule.emptyBook}`);
+  lines.push(`- thinBook: ${stats.byRule.thinBook}`);
+
+  if (stats.sampleRejected.length > 0) {
+    lines.push("");
+    lines.push("### Sample Rejected Candidates");
+    for (const sample of stats.sampleRejected) {
+      lines.push(
+        `- ${sample.tokenId} (${sample.rule}): bid=${sample.bestBid?.toFixed(2) ?? "N/A"}, ask=${sample.bestAsk?.toFixed(2) ?? "N/A"}`,
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
 
 /**
  * Market state classification for guardrail decisions.
