@@ -15,13 +15,21 @@ import { POLYGON, ERC20_ABI } from "./constants";
 // RAW BALANCE FETCHES (direct RPC calls)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** Result type for balance fetches that distinguishes success from errors */
+export interface BalanceFetchResult {
+  value: number;
+  success: boolean;
+  error?: string;
+}
+
 /**
  * Get USDC balance for a specific address (direct RPC call)
+ * Returns result object with success flag to distinguish 0 balance from errors
  */
-export async function getUsdcBalance(
+export async function getUsdcBalanceWithStatus(
   wallet: Wallet,
   address: string,
-): Promise<number> {
+): Promise<BalanceFetchResult> {
   try {
     const contract = new Contract(
       POLYGON.USDC_ADDRESS,
@@ -29,25 +37,64 @@ export async function getUsdcBalance(
       wallet.provider,
     );
     const balance = await contract.balanceOf(address);
-    return Number(balance) / 10 ** POLYGON.USDC_DECIMALS;
-  } catch {
-    return 0;
+    return {
+      value: Number(balance) / 10 ** POLYGON.USDC_DECIMALS,
+      success: true,
+    };
+  } catch (err) {
+    return {
+      value: 0,
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    };
+  }
+}
+
+/**
+ * Get USDC balance for a specific address (direct RPC call)
+ * @deprecated Use getUsdcBalanceWithStatus for error-aware balance fetching
+ */
+export async function getUsdcBalance(
+  wallet: Wallet,
+  address: string,
+): Promise<number> {
+  const result = await getUsdcBalanceWithStatus(wallet, address);
+  return result.value;
+}
+
+/**
+ * Get POL (native token) balance for a specific address (direct RPC call)
+ * Returns result object with success flag to distinguish 0 balance from errors
+ */
+export async function getPolBalanceWithStatus(
+  wallet: Wallet,
+  address: string,
+): Promise<BalanceFetchResult> {
+  try {
+    const balance = await wallet.provider?.getBalance(address);
+    return {
+      value: balance ? Number(balance) / 1e18 : 0,
+      success: true,
+    };
+  } catch (err) {
+    return {
+      value: 0,
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+    };
   }
 }
 
 /**
  * Get POL (native token) balance for a specific address (direct RPC call)
+ * @deprecated Use getPolBalanceWithStatus for error-aware balance fetching
  */
 export async function getPolBalance(
   wallet: Wallet,
   address: string,
 ): Promise<number> {
-  try {
-    const balance = await wallet.provider?.getBalance(address);
-    return balance ? Number(balance) / 1e18 : 0;
-  } catch {
-    return 0;
-  }
+  const result = await getPolBalanceWithStatus(wallet, address);
+  return result.value;
 }
 
 /**
@@ -86,6 +133,10 @@ interface CachedBalances {
   usdc: number;
   pol: number;
   lastFetchTime: number;
+  /** Whether the last fetch was successful (both USDC and POL) */
+  lastFetchSuccess: boolean;
+  /** Error message if last fetch failed */
+  lastFetchError?: string;
 }
 
 /**
@@ -227,33 +278,80 @@ export class BalanceCache {
 
   /**
    * Actually perform the RPC fetch (parallel USDC + POL)
+   * Handles errors gracefully by preserving previous cache values on failure
    */
   private async doFetchBalances(): Promise<CachedBalances> {
     const startTime = Date.now();
     this.rpcFetchCount++;
 
-    // Fetch both balances in parallel
-    const [usdc, pol] = await Promise.all([
-      getUsdcBalance(this.wallet, this.address),
-      getPolBalance(this.wallet, this.address),
+    // Fetch both balances in parallel with error status
+    const [usdcResult, polResult] = await Promise.all([
+      getUsdcBalanceWithStatus(this.wallet, this.address),
+      getPolBalanceWithStatus(this.wallet, this.address),
     ]);
 
     const fetchTime = Date.now() - startTime;
     const now = Date.now();
 
+    // Check if both fetches succeeded
+    const fetchSuccess = usdcResult.success && polResult.success;
+    const errors: string[] = [];
+    if (!usdcResult.success) errors.push(`USDC: ${usdcResult.error}`);
+    if (!polResult.success) errors.push(`POL: ${polResult.error}`);
+
+    // If fetch failed and we have a previous cache, preserve those values
+    // This prevents treating network errors as "zero balance"
+    if (!fetchSuccess && this.cache) {
+      console.warn(
+        `⚠️ [RPC] Balance fetch #${this.rpcFetchCount} failed (${errors.join(", ")}), using previous cached values`,
+      );
+      // Update timestamp to prevent immediate retry, but keep old values
+      this.cache = {
+        usdc: this.cache.usdc,
+        pol: this.cache.pol,
+        lastFetchTime: now,
+        lastFetchSuccess: false,
+        lastFetchError: errors.join("; "),
+      };
+      return this.cache;
+    }
+
     // Log the RPC fetch for visibility
-    console.log(
-      `💰 [RPC] Balance fetch #${this.rpcFetchCount}: $${usdc.toFixed(2)} USDC, ${pol.toFixed(4)} POL (${fetchTime}ms)`,
-    );
+    if (fetchSuccess) {
+      console.log(
+        `💰 [RPC] Balance fetch #${this.rpcFetchCount}: $${usdcResult.value.toFixed(2)} USDC, ${polResult.value.toFixed(4)} POL (${fetchTime}ms)`,
+      );
+    } else {
+      // First fetch (no cache) but it failed - log warning and use zeros
+      console.warn(
+        `⚠️ [RPC] Balance fetch #${this.rpcFetchCount} failed (${errors.join(", ")}), no previous cache available`,
+      );
+    }
 
     // Update cache
     this.cache = {
-      usdc,
-      pol,
+      usdc: usdcResult.value,
+      pol: polResult.value,
       lastFetchTime: now,
+      lastFetchSuccess: fetchSuccess,
+      lastFetchError: fetchSuccess ? undefined : errors.join("; "),
     };
 
     return this.cache;
+  }
+
+  /**
+   * Check if the last fetch was successful
+   */
+  wasLastFetchSuccessful(): boolean {
+    return this.cache?.lastFetchSuccess ?? false;
+  }
+
+  /**
+   * Get the error from the last fetch attempt (if any)
+   */
+  getLastFetchError(): string | undefined {
+    return this.cache?.lastFetchError;
   }
 }
 

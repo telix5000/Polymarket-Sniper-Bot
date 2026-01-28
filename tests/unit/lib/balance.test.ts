@@ -4,6 +4,8 @@ import {
   getUsdcAllowance,
   getUsdcBalance,
   getPolBalance,
+  getUsdcBalanceWithStatus,
+  getPolBalanceWithStatus,
   BalanceCache,
   DEFAULT_BALANCE_REFRESH_INTERVAL_MS,
 } from "../../../src/lib/balance";
@@ -139,5 +141,41 @@ describe("BalanceCache", () => {
       const cache = new BalanceCache(wallet as any, "0xAddress", 100);
       assert.strictEqual(cache.getRpcFetchCount(), 0);
     });
+  });
+
+  describe("wasLastFetchSuccessful", () => {
+    it("should return false when cache is empty", () => {
+      const { wallet } = createMockWallet({ throwError: true });
+      const cache = new BalanceCache(wallet as any, "0xAddress", 100);
+      assert.strictEqual(cache.wasLastFetchSuccessful(), false);
+    });
+  });
+
+  describe("getLastFetchError", () => {
+    it("should return undefined when cache is empty", () => {
+      const { wallet } = createMockWallet({ throwError: true });
+      const cache = new BalanceCache(wallet as any, "0xAddress", 100);
+      assert.strictEqual(cache.getLastFetchError(), undefined);
+    });
+  });
+});
+
+describe("getUsdcBalanceWithStatus", () => {
+  it("returns success: false on error", async () => {
+    const { wallet } = createMockWallet({ throwError: true });
+    const result = await getUsdcBalanceWithStatus(wallet as any, "0xAddress");
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.value, 0);
+    assert.ok(result.error);
+  });
+});
+
+describe("getPolBalanceWithStatus", () => {
+  it("returns success: false on error", async () => {
+    const { wallet } = createMockWallet({ throwError: true });
+    const result = await getPolBalanceWithStatus(wallet as any, "0xAddress");
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.value, 0);
+    assert.ok(result.error);
   });
 });
