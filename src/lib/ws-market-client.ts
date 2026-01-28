@@ -46,13 +46,22 @@ export interface WsClientOptions {
   onMessage?: (type: string, data: any) => void;
 }
 
-/** Initial subscription message format (per Polymarket docs) */
+/**
+ * Initial subscription message format.
+ * Per Polymarket Python quickstart `on_open()`:
+ *   ws.send(json.dumps({"assets_ids": self.data, "type": MARKET_CHANNEL}))
+ */
 interface SubscribeMessage {
   type: "market";
   assets_ids: string[];
 }
 
-/** Additional subscription/unsubscription message format */
+/**
+ * Additional subscription/unsubscription message format.
+ * Per Polymarket Python quickstart `subscribe_to_tokens_ids()` and `unsubscribe_to_tokens_ids()`:
+ *   ws.send(json.dumps({"assets_ids": assets_ids, "operation": "subscribe"}))
+ *   ws.send(json.dumps({"assets_ids": assets_ids, "operation": "unsubscribe"}))
+ */
 interface SubscriptionOperationMessage {
   operation: "subscribe" | "unsubscribe";
   assets_ids: string[];
@@ -524,14 +533,17 @@ export class WebSocketMarketClient {
 
   /**
    * Send initial subscribe or additional subscription.
-   * Per Polymarket docs:
-   * - Initial: {"type": "market", "assets_ids": [...]}
-   * - Additional: {"operation": "subscribe", "assets_ids": [...]}
+   * Per Polymarket Python quickstart (https://docs.polymarket.com/quickstart/websocket/WSS-Quickstart):
+   *
+   * - Initial (on_open): {"type": "market", "assets_ids": [...]}
+   * - Additional (subscribe_to_tokens_ids): {"operation": "subscribe", "assets_ids": [...]}
+   *
+   * The API supports both formats - initial uses "type" field, subsequent uses "operation" field.
    */
   private sendSubscribe(tokenIds: string[], isInitial = false): void {
     if (!this.ws || this.state !== "CONNECTED") return;
 
-    // Use initial format on first connect, operation format for additions
+    // Use initial format on first connect (type: "market"), operation format for additions
     const message: SubscribeMessage | SubscriptionOperationMessage = isInitial
       ? { type: "market", assets_ids: tokenIds }
       : { operation: "subscribe", assets_ids: tokenIds };
