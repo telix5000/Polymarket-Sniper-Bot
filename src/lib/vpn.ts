@@ -586,6 +586,46 @@ export function ensureWriteHostVpnRoutes(
 }
 
 /**
+ * Detect if WireGuard has set up a custom routing table.
+ * wg-quick typically uses table 51820 when AllowedIPs includes 0.0.0.0/0.
+ *
+ * @param logger - Optional logger
+ * @returns The routing table number if found, null otherwise
+ */
+function detectWireGuardRoutingTable(logger?: Logger): string | null {
+  try {
+    // Check if table 51820 exists (standard wg-quick table)
+    const output = execSync("ip route show table 51820 2>/dev/null || true", {
+      encoding: "utf8",
+    }).trim();
+
+    if (output && output.length > 0) {
+      logger?.debug?.("detectWireGuardRoutingTable: Found WG table 51820");
+      return "51820";
+    }
+
+    // Also check for any wg-related routing rules
+    const rulesOutput = execSync("ip rule show 2>/dev/null || true", {
+      encoding: "utf8",
+    }).trim();
+
+    // Look for rules that reference a table other than main/local
+    const tableMatch = rulesOutput.match(/lookup\s+(\d{4,})/);
+    if (tableMatch && tableMatch[1]) {
+      logger?.debug?.(
+        `detectWireGuardRoutingTable: Found routing table ${tableMatch[1]} from ip rule`,
+      );
+      return tableMatch[1];
+    }
+  } catch {
+    // Ignore errors - table detection is best-effort
+  }
+
+  logger?.debug?.("detectWireGuardRoutingTable: No WG routing table found");
+  return null;
+}
+
+/**
  * Add VPN routes for all resolved IPs of a single hostname.
  *
  * @param hostname - The hostname to route through VPN
@@ -628,6 +668,9 @@ function addVpnRoutesForHost(
   let routesAdded = 0;
   let routesFailed = 0;
 
+  // Detect WireGuard routing table (wg-quick typically uses table 51820)
+  const wgTable = detectWireGuardRoutingTable(logger);
+
   for (const ip of ips) {
     // Validate IP
     if (!isValidIp(ip)) {
@@ -639,14 +682,54 @@ function addVpnRoutesForHost(
     }
 
     try {
-      // Use `ip route replace` to add or update the route
-      // This ensures the route goes through the VPN interface
-      const cmd = `ip route replace ${ip}/32 dev ${vpnIface}`;
-      execSync(cmd, { stdio: "pipe" });
-      routesAdded++;
-      logger?.debug?.(
-        `addVpnRoutesForHost: Added route ${ip} -> ${vpnIface} for ${hostname}`,
-      );
+      // Strategy: Add route to main table with high priority metric
+      // This ensures our route takes precedence over any default routes
+      // Using metric 0 (highest priority) to beat any other routes to this IP
+
+      // First, delete any existing route to this IP that might conflict
+      try {
+        execSync(`ip route del ${ip}/32 2>/dev/null || true`, { stdio: "pipe" });
+      } catch {
+        // Ignore - route might not exist
+      }
+
+      // Add route through VPN interface in main table
+      // We use "replace" to update if exists, and specify metric 0 for priority
+      const mainTableCmd = `ip route replace ${ip}/32 dev ${vpnIface} metric 0`;
+      execSync(mainTableCmd, { stdio: "pipe" });
+
+      // If WireGuard table exists, also add route there to ensure coverage
+      if (wgTable) {
+        try {
+          const wgTableCmd = `ip route replace ${ip}/32 dev ${vpnIface} table ${wgTable}`;
+          execSync(wgTableCmd, { stdio: "pipe" });
+          logger?.debug?.(
+            `addVpnRoutesForHost: Added route ${ip} -> ${vpnIface} to WG table ${wgTable}`,
+          );
+        } catch {
+          // WG table route is best-effort, don't fail if it doesn't work
+        }
+      }
+
+      // Verify the route actually works by checking with ip route get
+      const verifyCmd = `ip route get ${ip} 2>/dev/null`;
+      const verifyOutput = execSync(verifyCmd, { encoding: "utf8" }).trim();
+      const devMatch = verifyOutput.match(/dev\s+(\S+)/);
+      const actualDev = devMatch?.[1];
+
+      if (actualDev === vpnIface) {
+        routesAdded++;
+        logger?.debug?.(
+          `addVpnRoutesForHost: Verified route ${ip} -> ${vpnIface} for ${hostname}`,
+        );
+      } else {
+        // Route was added but verification shows wrong interface
+        // This can happen with policy routing - log warning but count as partial success
+        logger?.warn?.(
+          `addVpnRoutesForHost: Route added for ${ip} but verification shows dev=${actualDev} (expected ${vpnIface})`,
+        );
+        routesAdded++; // Count as added since we did add the route
+      }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       logger?.warn?.(
