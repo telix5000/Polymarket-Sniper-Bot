@@ -74,9 +74,6 @@ export interface PresetConfig {
     checkIntervalMin: number;
     slippagePct: number;
   };
-  scavenger: {
-    enabled: boolean;
-  };
   maxPositionUsd: number;
 }
 
@@ -120,7 +117,6 @@ export const PRESETS: Record<Preset, PresetConfig> = {
       checkIntervalMin: 5,
       slippagePct: 1,
     },
-    scavenger: { enabled: true },
     maxPositionUsd: 15,
   },
   balanced: {
@@ -162,7 +158,6 @@ export const PRESETS: Record<Preset, PresetConfig> = {
       checkIntervalMin: 5,
       slippagePct: 1,
     },
-    scavenger: { enabled: true },
     maxPositionUsd: 25,
   },
   aggressive: {
@@ -204,7 +199,6 @@ export const PRESETS: Record<Preset, PresetConfig> = {
       checkIntervalMin: 5,
       slippagePct: 1,
     },
-    scavenger: { enabled: true },
     maxPositionUsd: 50,
   },
 };

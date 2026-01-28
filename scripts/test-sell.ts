@@ -30,7 +30,7 @@ const EXECUTE_WARNING_DELAY_MS = 3000; // 3 second countdown before executing
 const ORDER_TYPE = OrderType.FOK; // Fill-or-Kill: ensures order fills completely or not at all
 
 /**
- * Test sell execution (mirrors scavenger.ts executeSell logic)
+ * Test sell execution using Fill-or-Kill order logic
  */
 async function testSellOrder(
   client: ClobClient,

@@ -83,7 +83,6 @@ export * from "./vpn";
 export * from "./pol-reserve";
 
 // Utilities
-export * from "./scavenger";
 export * from "./ethers-compat";
 export * from "./error-handling";
 export * from "./smart-sell";
