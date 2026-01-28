@@ -416,7 +416,7 @@ export class WebSocketUserClient {
     const creds = await this.extractAuthCredentials(clobClient);
     if (!creds) {
       console.warn(
-        "[WS-User] ⚠️ Missing API credentials (apiKey/secret/passphrase) - User WebSocket DISABLED",
+        "[WS-User] ⚠️ Missing auth credentials - User WebSocket DISABLED",
       );
       console.warn(
         "[WS-User] Order tracking will rely on REST API polling instead",
@@ -778,7 +778,7 @@ export class WebSocketUserClient {
     try {
       this.ws.send(JSON.stringify(message));
       console.log("[WS-User] Sent subscribe to user channel with auth");
-    } catch (err) {
+    } catch {
       // Do not log the message content as it contains sensitive credentials
       console.error("[WS-User] Failed to send subscribe message");
     }

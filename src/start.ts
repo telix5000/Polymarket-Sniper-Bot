@@ -68,10 +68,6 @@ import {
   // On-chain event monitoring (confirmed trades)
   OnChainMonitor,
   createOnChainMonitorConfig,
-  type OnChainTradeEvent,
-  type OnChainMonitorConfig,
-  type PositionChangeEvent,
-  type OnChainPriceUpdate,
   // Market utilities for hedge token lookup and mapping verification
   getOppositeTokenId,
   fetchMarketByTokenId,
