@@ -28,3 +28,5 @@ export * from "./market-data-store";
 export * from "./ws-market-client";
 export * from "./ws-user-client";
 export * from "./market-data-facade";
+// Market scanner (simplified discovery)
+export * from "./market-scanner";
