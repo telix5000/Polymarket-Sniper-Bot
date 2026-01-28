@@ -4,17 +4,19 @@ import { postOrder, clearCooldowns } from "../../src/lib/order";
 import { ORDER } from "../../src/lib/constants";
 
 // Mock ClobClient
-function createMockClient(options: {
-  orderBook?: {
-    asks: Array<{ price: string; size: string }>;
-    bids: Array<{ price: string; size: string }>;
-  } | null;
-  postOrderSuccess?: boolean;
-  postOrderErrorMsg?: string;
-  getOrderBookError?: Error | null;
-  getMarketError?: Error | null;
-  createMarketOrderFn?: (args: any) => any;
-} = {}) {
+function createMockClient(
+  options: {
+    orderBook?: {
+      asks: Array<{ price: string; size: string }>;
+      bids: Array<{ price: string; size: string }>;
+    } | null;
+    postOrderSuccess?: boolean;
+    postOrderErrorMsg?: string;
+    getOrderBookError?: Error | null;
+    getMarketError?: Error | null;
+    createMarketOrderFn?: (args: any) => any;
+  } = {},
+) {
   const mockOrderBook = options.orderBook ?? {
     asks: [{ price: "0.50", size: "100" }],
     bids: [{ price: "0.48", size: "100" }],
@@ -29,10 +31,12 @@ function createMockClient(options: {
       if (options.getOrderBookError) throw options.getOrderBookError;
       return mockOrderBook;
     }),
-    createMarketOrder: options.createMarketOrderFn ?? mock.fn(async (args: any) => ({
-      ...args,
-      signature: "test-signature",
-    })),
+    createMarketOrder:
+      options.createMarketOrderFn ??
+      mock.fn(async (args: any) => ({
+        ...args,
+        signature: "test-signature",
+      })),
     postOrder: mock.fn(async () => ({
       success: options.postOrderSuccess ?? true,
       errorMsg: options.postOrderErrorMsg ?? "",

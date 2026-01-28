@@ -99,7 +99,7 @@ function cleanAddress(addr: string | undefined): string | null {
 /**
  * Fetch redeemable positions from Polymarket API
  * These are positions in resolved markets that can be claimed
- * 
+ *
  * NOTE: Uses EOA address directly - the API handles proxy wallet lookup internally
  * (Same approach as positions.ts getPositions)
  */
@@ -108,21 +108,29 @@ export async function fetchRedeemablePositions(
   logger?: Logger,
 ): Promise<RedeemablePosition[]> {
   try {
-    console.log(`🎁 [Redeem] Fetching redeemable positions for ${address.slice(0, 10)}...`);
+    console.log(
+      `🎁 [Redeem] Fetching redeemable positions for ${address.slice(0, 10)}...`,
+    );
 
     // Use EOA address directly - API handles proxy wallet lookup internally
     // Use sizeThreshold=0 to include ALL positions (even $0 value losers that need clearing)
     const url = `${POLYMARKET_API.DATA}/positions?user=${address}&redeemable=true&sizeThreshold=0&limit=500`;
-    console.log(`🎁 [Redeem] Querying: ${url.replace(address, address.slice(0, 10) + '...')}`);
-    
+    console.log(
+      `🎁 [Redeem] Querying: ${url.replace(address, address.slice(0, 10) + "...")}`,
+    );
+
     const posRes = await axios.get(url, { timeout: 15000 });
 
     if (!posRes.data || !Array.isArray(posRes.data)) {
-      console.log(`🎁 [Redeem] API returned invalid data: ${typeof posRes.data}`);
+      console.log(
+        `🎁 [Redeem] API returned invalid data: ${typeof posRes.data}`,
+      );
       return [];
     }
 
-    console.log(`🎁 [Redeem] API returned ${posRes.data.length} redeemable position(s)`);
+    console.log(
+      `🎁 [Redeem] API returned ${posRes.data.length} redeemable position(s)`,
+    );
 
     if (posRes.data.length === 0) {
       return [];
@@ -130,7 +138,9 @@ export async function fetchRedeemablePositions(
 
     // Log raw data for debugging
     for (const pos of posRes.data.slice(0, 3)) {
-      console.log(`🎁 [Redeem]   - conditionId: ${pos.conditionId?.slice(0, 16)}... size: ${pos.size} value: ${pos.value || 0}`);
+      console.log(
+        `🎁 [Redeem]   - conditionId: ${pos.conditionId?.slice(0, 16)}... size: ${pos.size} value: ${pos.value || 0}`,
+      );
     }
     if (posRes.data.length > 3) {
       console.log(`🎁 [Redeem]   ... and ${posRes.data.length - 3} more`);
@@ -148,8 +158,9 @@ export async function fetchRedeemablePositions(
       const existing = conditionMap.get(pos.conditionId);
       const size = Number(pos.size) || 0;
       // Value might be 0 for losing positions - that's OK, we still need to redeem them!
-      const value = Number(pos.value) || Number(pos.size) * Number(pos.curPrice || 0) || 0;
-      
+      const value =
+        Number(pos.value) || Number(pos.size) * Number(pos.curPrice || 0) || 0;
+
       if (existing) {
         // Aggregate positions in same market
         existing.size += size;
@@ -168,13 +179,17 @@ export async function fetchRedeemablePositions(
 
     const redeemable = Array.from(conditionMap.values());
 
-    console.log(`🎁 [Redeem] Grouped into ${redeemable.length} unique market(s) to redeem`);
+    console.log(
+      `🎁 [Redeem] Grouped into ${redeemable.length} unique market(s) to redeem`,
+    );
     logger?.info?.(`📦 Found ${redeemable.length} redeemable market(s)`);
 
     return redeemable;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error(`🎁 [Redeem] Failed to fetch redeemable positions: ${errorMsg}`);
+    console.error(
+      `🎁 [Redeem] Failed to fetch redeemable positions: ${errorMsg}`,
+    );
     logger?.error?.(`Failed to fetch redeemable positions: ${errorMsg}`);
     return [];
   }
@@ -191,7 +206,9 @@ export async function redeemPosition(
   logger?: Logger,
 ): Promise<RedeemResult> {
   try {
-    console.log(`🎁 [Redeem] Starting redemption for conditionId: ${conditionId.slice(0, 16)}...`);
+    console.log(
+      `🎁 [Redeem] Starting redemption for conditionId: ${conditionId.slice(0, 16)}...`,
+    );
     logger?.info?.(`🔄 Redeeming: ${conditionId.slice(0, 16)}...`);
 
     const provider = wallet.provider;
@@ -201,7 +218,9 @@ export async function redeemPosition(
 
     // Check for proxy wallet (cached)
     const proxyAddress = await getProxyAddress(address, logger);
-    console.log(`🎁 [Redeem] Proxy address: ${proxyAddress ? proxyAddress.slice(0, 10) + '...' : 'none (using EOA)'}`);
+    console.log(
+      `🎁 [Redeem] Proxy address: ${proxyAddress ? proxyAddress.slice(0, 10) + "..." : "none (using EOA)"}`,
+    );
 
     // Get current gas prices (Milan uses 130% of current for faster confirmation)
     const feeData = await provider.getFeeData();
@@ -239,13 +258,25 @@ export async function redeemPosition(
     if (proxyAddress && proxyAddress !== address) {
       console.log(`🎁 [Redeem] Using proxy wallet for redemption`);
       logger?.debug?.(`Using proxy wallet: ${proxyAddress.slice(0, 8)}...`);
-      const proxyContract = new ethers.Contract(proxyAddress, PROXY_ABI, wallet);
-      tx = await proxyContract.proxy(POLYGON.CTF_ADDRESS, redeemData, txDetails);
+      const proxyContract = new ethers.Contract(
+        proxyAddress,
+        PROXY_ABI,
+        wallet,
+      );
+      tx = await proxyContract.proxy(
+        POLYGON.CTF_ADDRESS,
+        redeemData,
+        txDetails,
+      );
     } else {
       // Direct redemption (no proxy)
       console.log(`🎁 [Redeem] Direct redemption (no proxy)`);
       logger?.debug?.(`Direct redemption (no proxy)`);
-      const ctfContract = new ethers.Contract(POLYGON.CTF_ADDRESS, CTF_ABI, wallet);
+      const ctfContract = new ethers.Contract(
+        POLYGON.CTF_ADDRESS,
+        CTF_ABI,
+        wallet,
+      );
       tx = await ctfContract.redeemPositions(
         POLYGON.USDC_ADDRESS,
         ethers.ZeroHash,
@@ -284,7 +315,9 @@ export async function redeemPosition(
     }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error(`🎁 [Redeem] ❌ Redemption failed for ${conditionId.slice(0, 16)}...: ${errorMsg}`);
+    console.error(
+      `🎁 [Redeem] ❌ Redemption failed for ${conditionId.slice(0, 16)}...: ${errorMsg}`,
+    );
     logger?.error?.(`❌ Redemption failed: ${errorMsg}`);
 
     return {
@@ -325,7 +358,8 @@ export async function redeemAllPositions(
 
   let totalValue = 0;
   for (const pos of positions) {
-    const valueStr = pos.value > 0 ? `~$${pos.value.toFixed(2)}` : '$0 (losing position)';
+    const valueStr =
+      pos.value > 0 ? `~$${pos.value.toFixed(2)}` : "$0 (losing position)";
     console.log(`🎁 [Redeem]    ${pos.outcome}: ${valueStr}`);
     logger?.info?.(`   ${pos.outcome}: ${valueStr}`);
     if (pos.question) {
@@ -348,8 +382,15 @@ export async function redeemAllPositions(
   let failed = 0;
 
   for (const pos of positions) {
-    console.log(`🎁 [Redeem] Processing ${redeemed + failed + 1}/${positions.length}: ${pos.conditionId.slice(0, 16)}...`);
-    const result = await redeemPosition(pos.conditionId, wallet, address, logger);
+    console.log(
+      `🎁 [Redeem] Processing ${redeemed + failed + 1}/${positions.length}: ${pos.conditionId.slice(0, 16)}...`,
+    );
+    const result = await redeemPosition(
+      pos.conditionId,
+      wallet,
+      address,
+      logger,
+    );
 
     if (result.success) {
       redeemed++;
@@ -404,15 +445,21 @@ interface LegacyApiPosition {
  */
 export async function getRedeemablePositions(
   address: string,
-): Promise<Array<{ conditionId: string; tokenId: string; size: number; value: number }>> {
+): Promise<
+  Array<{ conditionId: string; tokenId: string; size: number; value: number }>
+> {
   try {
     const url = `${POLYMARKET_API.DATA}/positions?user=${address}&limit=500`;
-    const { data } = await axios.get<LegacyApiPosition[]>(url, { timeout: 10000 });
+    const { data } = await axios.get<LegacyApiPosition[]>(url, {
+      timeout: 10000,
+    });
 
     if (!Array.isArray(data)) return [];
 
     return data
-      .filter((p) => p.redeemable && Number(p.size) > 0 && p.conditionId && p.asset)
+      .filter(
+        (p) => p.redeemable && Number(p.size) > 0 && p.conditionId && p.asset,
+      )
       .map((p) => ({
         conditionId: p.conditionId!,
         tokenId: p.asset!,
@@ -440,7 +487,12 @@ export async function redeemAll(
   for (const pos of positions) {
     if (pos.value < minValueUsd) continue;
 
-    const result = await redeemPosition(pos.conditionId, wallet, address, logger);
+    const result = await redeemPosition(
+      pos.conditionId,
+      wallet,
+      address,
+      logger,
+    );
     if (result.success) count++;
 
     // Delay between redemptions

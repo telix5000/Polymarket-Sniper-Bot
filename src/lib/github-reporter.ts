@@ -85,11 +85,12 @@ export class GitHubReporter {
   constructor(config: Partial<GitHubReporterConfig> = {}) {
     const token = config.token ?? process.env.GITHUB_ERROR_REPORTER_TOKEN ?? "";
     const repo = config.repo ?? process.env.GITHUB_ERROR_REPORTER_REPO ?? "";
-    
+
     // Only enable if BOTH token AND repo are configured
     const hasRequiredConfig = !!token && !!repo;
-    const explicitlyDisabled = process.env.GITHUB_ERROR_REPORTER_ENABLED === "false";
-    
+    const explicitlyDisabled =
+      process.env.GITHUB_ERROR_REPORTER_ENABLED === "false";
+
     this.config = {
       token,
       repo,
@@ -99,10 +100,12 @@ export class GitHubReporter {
       maxReportsPerHour: config.maxReportsPerHour ?? 10,
       dedupeWindowMs: config.dedupeWindowMs ?? 60 * 60 * 1000, // 1 hour
     };
-    
+
     // Log initialization details for debugging
     if (hasRequiredConfig && !explicitlyDisabled) {
-      console.log(`📋 [GitHub] Initialized with repo: ${repo}, minSeverity: ${this.config.minSeverity}`);
+      console.log(
+        `📋 [GitHub] Initialized with repo: ${repo}, minSeverity: ${this.config.minSeverity}`,
+      );
     }
   }
 
@@ -122,9 +125,14 @@ export class GitHubReporter {
     }
 
     // Check severity threshold
-    if (SEVERITY_LEVELS[report.severity] < SEVERITY_LEVELS[this.config.minSeverity]) {
+    if (
+      SEVERITY_LEVELS[report.severity] <
+      SEVERITY_LEVELS[this.config.minSeverity]
+    ) {
       // Log when severity blocks reporting (helps debug why reports aren't sent)
-      console.log(`📋 [GitHub] Skipping report (severity ${report.severity} < min ${this.config.minSeverity}): ${report.title.slice(0, 50)}...`);
+      console.log(
+        `📋 [GitHub] Skipping report (severity ${report.severity} < min ${this.config.minSeverity}): ${report.title.slice(0, 50)}...`,
+      );
       return false;
     }
 
@@ -136,7 +144,9 @@ export class GitHubReporter {
     }
 
     if (this.reportCount >= this.config.maxReportsPerHour) {
-      console.log(`📋 GitHub reporter rate limited (${this.config.maxReportsPerHour}/hour)`);
+      console.log(
+        `📋 GitHub reporter rate limited (${this.config.maxReportsPerHour}/hour)`,
+      );
       return false;
     }
 
@@ -144,7 +154,9 @@ export class GitHubReporter {
     const dedupeKey = this.getDedupeKey(report);
     const lastReported = this.recentReports.get(dedupeKey);
     if (lastReported && now - lastReported < this.config.dedupeWindowMs) {
-      console.log(`📋 [GitHub] Skipping duplicate report: ${report.title.slice(0, 50)}...`);
+      console.log(
+        `📋 [GitHub] Skipping duplicate report: ${report.title.slice(0, 50)}...`,
+      );
       return false; // Skip duplicate
     }
 
@@ -160,7 +172,9 @@ export class GitHubReporter {
       console.log(`📋 Reported to GitHub: ${report.title}`);
       return true;
     } catch (err) {
-      console.error(`📋 Failed to report to GitHub: ${err instanceof Error ? err.message : err}`);
+      console.error(
+        `📋 Failed to report to GitHub: ${err instanceof Error ? err.message : err}`,
+      );
       return false;
     }
   }
@@ -261,7 +275,8 @@ export class GitHubReporter {
   }): Promise<boolean> {
     return this.report({
       title: `Startup Diagnostic: ${details.whaleTradesDetected} whale trades, ${details.entrySuccessCount}/${details.entryAttemptsCount} entries`,
-      message: `Startup diagnostic after 60 seconds of operation.\n\n` +
+      message:
+        `Startup diagnostic after 60 seconds of operation.\n\n` +
         `Whale Detection:\n` +
         `- Wallets loaded: ${details.whaleWalletsLoaded}\n` +
         `- Whale trades detected: ${details.whaleTradesDetected}\n` +
@@ -271,8 +286,8 @@ export class GitHubReporter {
         `- Entry attempts: ${details.entryAttemptsCount}\n` +
         `- Entry successes: ${details.entrySuccessCount}\n` +
         `- Orderbook fetch failures: ${details.orderbookFetchFailures}\n` +
-        (details.entryFailureReasons.length > 0 
-          ? `- Failure reasons: ${[...new Set(details.entryFailureReasons)].join(", ")}\n` 
+        (details.entryFailureReasons.length > 0
+          ? `- Failure reasons: ${[...new Set(details.entryFailureReasons)].join(", ")}\n`
           : "") +
         `\nNetwork:\n` +
         `- RPC latency: ${details.rpcLatencyMs}ms\n` +
@@ -285,7 +300,10 @@ export class GitHubReporter {
         `- Copy any whale buy: ${details.config.copyAnyWhaleBuy}\n` +
         `- Min whale trade: $${details.config.whaleTradeUsd}\n` +
         `- Scan active markets: ${details.config.scanActiveMarkets}`,
-      severity: details.whaleTradesDetected === 0 && details.entrySuccessCount === 0 ? "warning" : "info",
+      severity:
+        details.whaleTradesDetected === 0 && details.entrySuccessCount === 0
+          ? "warning"
+          : "info",
       context: {
         whaleWalletsLoaded: details.whaleWalletsLoaded,
         marketsScanned: details.marketsScanned,
@@ -321,8 +339,9 @@ export class GitHubReporter {
       result = result.replace(pattern, "[REDACTED]");
     }
     // Also truncate wallet addresses but keep first/last chars for debugging
-    result = result.replace(/0x[a-fA-F0-9]{40}/g, (match) =>
-      `${match.slice(0, 8)}...${match.slice(-6)}`
+    result = result.replace(
+      /0x[a-fA-F0-9]{40}/g,
+      (match) => `${match.slice(0, 8)}...${match.slice(-6)}`,
     );
     return result;
   }
@@ -349,7 +368,7 @@ export class GitHubReporter {
           "Content-Type": "application/json",
         },
         timeout: 10000,
-      }
+      },
     );
   }
 
@@ -400,7 +419,9 @@ export function getGitHubReporter(): GitHubReporter {
 /**
  * Initialize the GitHub reporter with custom config
  */
-export function initGitHubReporter(config: Partial<GitHubReporterConfig>): GitHubReporter {
+export function initGitHubReporter(
+  config: Partial<GitHubReporterConfig>,
+): GitHubReporter {
   globalReporter = new GitHubReporter(config);
   return globalReporter;
 }
@@ -412,18 +433,20 @@ export function reportError(
   title: string,
   message: string,
   severity: ErrorSeverity = "error",
-  context?: Record<string, unknown>
+  context?: Record<string, unknown>,
 ): void {
   const reporter = getGitHubReporter();
   if (reporter.isEnabled()) {
-    reporter.report({
-      title,
-      message,
-      severity,
-      context,
-      timestamp: Date.now(),
-    }).catch(() => {
-      // Silently ignore reporting failures
-    });
+    reporter
+      .report({
+        title,
+        message,
+        severity,
+        context,
+        timestamp: Date.now(),
+      })
+      .catch(() => {
+        // Silently ignore reporting failures
+      });
   }
 }

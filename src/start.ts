@@ -142,7 +142,7 @@ function shouldCooldownOnFailure(reason: string | undefined): boolean {
     lowerReason.includes("liquidity") ||
     lowerReason.includes("bounds") ||
     lowerReason.includes("spread") ||
-    lowerReason.includes("price") && lowerReason.includes("outside")
+    (lowerReason.includes("price") && lowerReason.includes("outside"))
   );
 }
 
@@ -197,7 +197,7 @@ interface ChurnConfig {
   // ═══════════════════════════════════════════════════════════════════════════
   // USER CONFIGURABLE (the ONLY thing you should change)
   // ═══════════════════════════════════════════════════════════════════════════
-  maxTradeUsd: number;  // Your bet size in USD (default: $25)
+  maxTradeUsd: number; // Your bet size in USD (default: $25)
 
   // ═══════════════════════════════════════════════════════════════════════════
   // FIXED BY THE MATH (do not change)
@@ -264,25 +264,25 @@ interface ChurnConfig {
   useAvailableBalanceOnly: boolean;
 
   // Liquidation Mode
-  liquidationMode: "off" | "losing" | "all";  // "off" = normal trading, "losing" = sell losing positions, "all" = sell everything
-  liquidationMaxSlippagePct: number;  // Max slippage for liquidation sells (default: 10%)
-  liquidationPollIntervalMs: number;  // Poll interval in liquidation mode (default: 1000ms)
+  liquidationMode: "off" | "losing" | "all"; // "off" = normal trading, "losing" = sell losing positions, "all" = sell everything
+  liquidationMaxSlippagePct: number; // Max slippage for liquidation sells (default: 10%)
+  liquidationPollIntervalMs: number; // Poll interval in liquidation mode (default: 1000ms)
 
   // Aggressive Whale Copy Mode
-  copyAnyWhaleBuy: boolean;  // If true, copy ANY whale buy without waiting for bias confirmation
+  copyAnyWhaleBuy: boolean; // If true, copy ANY whale buy without waiting for bias confirmation
 
   // Market Scanner - Scan for most active/trending markets
-  scanActiveMarkets: boolean;  // If true, scan for active markets to trade
-  scanMinVolumeUsd: number;    // Minimum 24h volume to consider a market
-  scanTopNMarkets: number;     // Number of top markets to scan
+  scanActiveMarkets: boolean; // If true, scan for active markets to trade
+  scanMinVolumeUsd: number; // Minimum 24h volume to consider a market
+  scanTopNMarkets: number; // Number of top markets to scan
   scanIntervalSeconds: number; // How often to refresh the market scan
 
   // Dynamic Reserves - Self-balancing reserve system
-  dynamicReservesEnabled: boolean;    // If true, use dynamic reserve calculation
-  reserveAdaptationRate: number;      // How quickly reserves adapt (0-1, default: 0.1)
-  missedOpportunityWeight: number;    // Weight for missed opportunities (default: 0.5)
-  hedgeCoverageWeight: number;        // Weight for hedge coverage needs (default: 0.5)
-  maxReserveFraction: number;         // Maximum reserve as fraction of balance (default: 0.5)
+  dynamicReservesEnabled: boolean; // If true, use dynamic reserve calculation
+  reserveAdaptationRate: number; // How quickly reserves adapt (0-1, default: 0.1)
+  missedOpportunityWeight: number; // Weight for missed opportunities (default: 0.5)
+  hedgeCoverageWeight: number; // Weight for hedge coverage needs (default: 0.5)
+  maxReserveFraction: number; // Maximum reserve as fraction of balance (default: 0.5)
 
   // Auth
   privateKey: string;
@@ -317,7 +317,7 @@ function loadConfig(): ChurnConfig {
     // ═══════════════════════════════════════════════════════════════════════
     // USER CONFIGURABLE - This is the ONLY thing you should change
     // ═══════════════════════════════════════════════════════════════════════
-    maxTradeUsd: envNum("MAX_TRADE_USD", 25),  // 💰 Your bet size (default: $25)
+    maxTradeUsd: envNum("MAX_TRADE_USD", 25), // 💰 Your bet size (default: $25)
 
     // ═══════════════════════════════════════════════════════════════════════
     // FIXED BY THE MATH - Do NOT change these values
@@ -325,73 +325,75 @@ function loadConfig(): ChurnConfig {
     // ═══════════════════════════════════════════════════════════════════════
 
     // Capital sizing (fixed ratios that scale with MAX_TRADE_USD)
-    tradeFraction: 0.01,              // 1% of bankroll per trade
-    maxDeployedFractionTotal: 0.3,    // 30% max exposure
-    maxOpenPositionsTotal: 12,        // Max concurrent positions
-    maxOpenPositionsPerMarket: 1,     // 1 entry per token (hedges are stored inside position, not as separate entries)
-    cooldownSecondsPerToken: 180,     // 3min between trades same token
+    tradeFraction: 0.01, // 1% of bankroll per trade
+    maxDeployedFractionTotal: 0.3, // 30% max exposure
+    maxOpenPositionsTotal: 12, // Max concurrent positions
+    maxOpenPositionsPerMarket: 1, // 1 entry per token (hedges are stored inside position, not as separate entries)
+    cooldownSecondsPerToken: 180, // 3min between trades same token
 
     // Entry/Exit bands - produces avg_win=14¢, avg_loss=9¢
-    entryBandCents: 12,               // Min price movement to enter
-    tpCents: 14,                      // Take profit = 14¢
-    hedgeTriggerCents: 16,            // Hedge at 16¢ adverse
-    maxAdverseCents: 30,              // HARD STOP at 30¢ loss
-    maxHoldSeconds: 3600,             // 1 hour max hold
+    entryBandCents: 12, // Min price movement to enter
+    tpCents: 14, // Take profit = 14¢
+    hedgeTriggerCents: 16, // Hedge at 16¢ adverse
+    maxAdverseCents: 30, // HARD STOP at 30¢ loss
+    maxHoldSeconds: 3600, // 1 hour max hold
 
     // Hedge behavior - caps avg_loss to ~9¢ instead of 30¢
-    hedgeRatio: 0.4,                  // Hedge 40% on first trigger
-    maxHedgeRatio: 0.7,               // Never hedge more than 70%
+    hedgeRatio: 0.4, // Hedge 40% on first trigger
+    maxHedgeRatio: 0.7, // Never hedge more than 70%
 
     // Entry price bounds - room to win, hedge, and be wrong
-    minEntryPriceCents: 30,           // <30¢ = one bad tick kills you
-    maxEntryPriceCents: 82,           // >82¢ = no room for TP
-    preferredEntryLowCents: 35,       // Ideal zone starts
-    preferredEntryHighCents: 65,      // Ideal zone ends
-    entryBufferCents: 4,              // Safety buffer
+    minEntryPriceCents: 30, // <30¢ = one bad tick kills you
+    maxEntryPriceCents: 82, // >82¢ = no room for TP
+    preferredEntryLowCents: 35, // Ideal zone starts
+    preferredEntryHighCents: 65, // Ideal zone ends
+    entryBufferCents: 4, // Safety buffer
 
     // Liquidity gates - keeps churn cost at ~2¢
-    minSpreadCents: 6,                // Max acceptable spread
-    minDepthUsdAtExit: 25,            // Need liquidity to exit
-    minTradesLastX: 10,               // Market must be active
-    minBookUpdatesLastX: 20,          // Book must be updating
-    activityWindowSeconds: 300,       // 5min activity window
+    minSpreadCents: 6, // Max acceptable spread
+    minDepthUsdAtExit: 25, // Need liquidity to exit
+    minTradesLastX: 10, // Market must be active
+    minBookUpdatesLastX: 20, // Book must be updating
+    activityWindowSeconds: 300, // 5min activity window
 
     // EV controls - bot stops itself when math says stop
-    rollingWindowTrades: 200,         // Sample size for stats
-    churnCostCentsEstimate: 2,        // 2¢ churn cost
-    minEvCents: 0,                    // Pause if EV < 0
-    minProfitFactor: 1.25,            // avg_win/avg_loss >= 1.25
-    pauseSeconds: 300,                // 5min pause when table closed
+    rollingWindowTrades: 200, // Sample size for stats
+    churnCostCentsEstimate: 2, // 2¢ churn cost
+    minEvCents: 0, // Pause if EV < 0
+    minProfitFactor: 1.25, // avg_win/avg_loss >= 1.25
+    pauseSeconds: 300, // 5min pause when table closed
 
     // Bias (Leaderboard flow) - permission, not prediction
     // Track top 100 wallets for maximum signal coverage (churn all day)
     biasMode: "leaderboard_flow",
-    leaderboardTopN: 100,             // Track top 100 wallets for more signals
-    biasWindowSeconds: 3600,          // 1 hour window
-    biasMinNetUsd: 300,               // $300 net flow minimum
-    biasMinTrades: 3,                 // At least 3 trades
-    biasStaleSeconds: 900,            // Bias expires after 15min
+    leaderboardTopN: 100, // Track top 100 wallets for more signals
+    biasWindowSeconds: 3600, // 1 hour window
+    biasMinNetUsd: 300, // $300 net flow minimum
+    biasMinTrades: 3, // At least 3 trades
+    biasStaleSeconds: 900, // Bias expires after 15min
     allowEntriesOnlyWithBias: true,
     onBiasFlip: "MANAGE_EXITS_ONLY",
     onBiasNone: "PAUSE_ENTRIES",
 
     // Polling (fixed - fast polling for accurate position tracking)
-    pollIntervalMs: 200,              // 200ms = 5 req/sec
-    positionPollIntervalMs: 100,      // 100ms when holding positions
+    pollIntervalMs: 200, // 200ms = 5 req/sec
+    positionPollIntervalMs: 100, // 100ms when holding positions
     logLevel: envStr("LOG_LEVEL", "info"),
 
     // Wallet / Reserve (fixed - survive variance)
-    reserveFraction: 0.25,            // 25% always reserved
-    minReserveUsd: 100,               // $100 minimum reserve
+    reserveFraction: 0.25, // 25% always reserved
+    minReserveUsd: 100, // $100 minimum reserve
     useAvailableBalanceOnly: true,
 
     // Liquidation Mode - force sell existing positions
     // "off" = normal trading (default)
     // "losing" = only sell positions with negative P&L
     // "all" = sell all positions regardless of P&L
-    liquidationMode: parseLiquidationMode(process.env.LIQUIDATION_MODE || process.env.FORCE_LIQUIDATION),
-    liquidationMaxSlippagePct: envNum("LIQUIDATION_MAX_SLIPPAGE_PCT", 10),  // 10% default
-    liquidationPollIntervalMs: envNum("LIQUIDATION_POLL_INTERVAL_MS", 1000),  // 1s default
+    liquidationMode: parseLiquidationMode(
+      process.env.LIQUIDATION_MODE || process.env.FORCE_LIQUIDATION,
+    ),
+    liquidationMaxSlippagePct: envNum("LIQUIDATION_MAX_SLIPPAGE_PCT", 10), // 10% default
+    liquidationPollIntervalMs: envNum("LIQUIDATION_POLL_INTERVAL_MS", 1000), // 1s default
 
     // Aggressive Whale Copy Mode - copy ANY whale buy without waiting for bias
     // When true: sees whale buy → immediately copies (no $300 flow / 3 trade requirement)
@@ -403,25 +405,24 @@ function loadConfig(): ChurnConfig {
     // When enabled, the bot will scan Polymarket for the most active markets
     // and consider them as additional trading opportunities
     scanActiveMarkets: envBool("SCAN_ACTIVE_MARKETS", true),
-    scanMinVolumeUsd: envNum("SCAN_MIN_VOLUME_USD", 10000),  // $10k minimum 24h volume
-    scanTopNMarkets: envNum("SCAN_TOP_N_MARKETS", 20),        // Top 20 most active markets
+    scanMinVolumeUsd: envNum("SCAN_MIN_VOLUME_USD", 10000), // $10k minimum 24h volume
+    scanTopNMarkets: envNum("SCAN_TOP_N_MARKETS", 20), // Top 20 most active markets
     scanIntervalSeconds: envNum("SCAN_INTERVAL_SECONDS", 300), // Refresh every 5 minutes
 
     // Dynamic Reserves - Self-balancing reserve system
     // Automatically adjusts reserves based on missed opportunities and hedge needs
     dynamicReservesEnabled: envBool("DYNAMIC_RESERVES_ENABLED", true),
-    reserveAdaptationRate: envNum("RESERVE_ADAPTATION_RATE", 0.1),      // 10% adaptation per cycle
-    missedOpportunityWeight: envNum("MISSED_OPPORTUNITY_WEIGHT", 0.5),  // Weight for missed trades
-    hedgeCoverageWeight: envNum("HEDGE_COVERAGE_WEIGHT", 0.5),          // Weight for hedge needs
-    maxReserveFraction: envNum("MAX_RESERVE_FRACTION", 0.5),            // Max 50% reserve
+    reserveAdaptationRate: envNum("RESERVE_ADAPTATION_RATE", 0.1), // 10% adaptation per cycle
+    missedOpportunityWeight: envNum("MISSED_OPPORTUNITY_WEIGHT", 0.5), // Weight for missed trades
+    hedgeCoverageWeight: envNum("HEDGE_COVERAGE_WEIGHT", 0.5), // Weight for hedge needs
+    maxReserveFraction: envNum("MAX_RESERVE_FRACTION", 0.5), // Max 50% reserve
 
     // ═══════════════════════════════════════════════════════════════════════
     // AUTH & INTEGRATIONS (user provides these)
     // ═══════════════════════════════════════════════════════════════════════
     privateKey: process.env.PRIVATE_KEY ?? "",
     rpcUrl: envStr("RPC_URL", "https://polygon-rpc.com"),
-    liveTradingEnabled:
-      envStr("LIVE_TRADING", "") === "I_UNDERSTAND_THE_RISKS",
+    liveTradingEnabled: envStr("LIVE_TRADING", "") === "I_UNDERSTAND_THE_RISKS",
 
     // Telegram (optional)
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
@@ -432,10 +433,10 @@ function loadConfig(): ChurnConfig {
     // Does NOT proactively top off to polReserveTarget (50) - saves USDC
     // When triggered: swaps up to polReserveMaxSwapUsd USDC to reach target
     polReserveEnabled: true,
-    polReserveTarget: envNum("POL_RESERVE_TARGET", 50),  // Target POL when refilling
-    polReserveMin: envNum("POL_RESERVE_MIN", 0.5),       // Trigger threshold (refill when below this)
-    polReserveMaxSwapUsd: envNum("POL_RESERVE_MAX_SWAP_USD", 10),  // Max USDC per swap
-    polReserveCheckIntervalMin: envNum("POL_RESERVE_CHECK_INTERVAL_MIN", 5),  // Check every 5 min
+    polReserveTarget: envNum("POL_RESERVE_TARGET", 50), // Target POL when refilling
+    polReserveMin: envNum("POL_RESERVE_MIN", 0.5), // Trigger threshold (refill when below this)
+    polReserveMaxSwapUsd: envNum("POL_RESERVE_MAX_SWAP_USD", 10), // Max USDC per swap
+    polReserveCheckIntervalMin: envNum("POL_RESERVE_CHECK_INTERVAL_MIN", 5), // Check every 5 min
     polReserveSlippagePct: 3,
 
     // On-Chain Monitoring - Watch CTF Exchange contract via Infura WebSocket
@@ -445,7 +446,10 @@ function loadConfig(): ChurnConfig {
     // Min trade size to detect as a "whale trade" - supports both env names for convenience
     // WHALE_TRADE_USD is the simpler name, ONCHAIN_MIN_WHALE_TRADE_USD for backward compatibility
     // DEFAULT: $100 - lower threshold catches more whale activity
-    onchainMinWhaleTradeUsd: envNum("WHALE_TRADE_USD", envNum("ONCHAIN_MIN_WHALE_TRADE_USD", 100)),
+    onchainMinWhaleTradeUsd: envNum(
+      "WHALE_TRADE_USD",
+      envNum("ONCHAIN_MIN_WHALE_TRADE_USD", 100),
+    ),
     // Infura tier plan: "core" (free), "developer" ($50/mo), "team" ($225/mo), "growth" (enterprise)
     // Affects rate limiting to avoid hitting API caps
     infuraTier: parseInfuraTierEnv(process.env.INFURA_TIER),
@@ -464,7 +468,9 @@ function loadConfig(): ChurnConfig {
 /**
  * Parse Infura tier from environment variable
  */
-function parseInfuraTierEnv(tierStr?: string): "core" | "developer" | "team" | "growth" {
+function parseInfuraTierEnv(
+  tierStr?: string,
+): "core" | "developer" | "team" | "growth" {
   const normalized = (tierStr || "").toLowerCase().trim();
   if (normalized === "developer" || normalized === "dev") return "developer";
   if (normalized === "team") return "team";
@@ -478,17 +484,24 @@ function parseInfuraTierEnv(tierStr?: string): "core" | "developer" | "team" | "
  */
 function parseLiquidationMode(value?: string): "off" | "losing" | "all" {
   if (!value) return "off";
-  
+
   const normalized = value.toLowerCase().trim();
-  
+
   // New LIQUIDATION_MODE values
-  if (normalized === "losing" || normalized === "losers" || normalized === "red") return "losing";
+  if (
+    normalized === "losing" ||
+    normalized === "losers" ||
+    normalized === "red"
+  )
+    return "losing";
   if (normalized === "all" || normalized === "everything") return "all";
-  if (normalized === "off" || normalized === "false" || normalized === "no") return "off";
-  
+  if (normalized === "off" || normalized === "false" || normalized === "no")
+    return "off";
+
   // Legacy FORCE_LIQUIDATION=true support (maps to "all")
-  if (normalized === "true" || normalized === "yes" || normalized === "1") return "all";
-  
+  if (normalized === "true" || normalized === "yes" || normalized === "1")
+    return "all";
+
   return "off";
 }
 
@@ -520,11 +533,18 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log("");
   log("💰 YOUR SETTINGS:");
   log(`   Bet size: $${config.maxTradeUsd} per trade`);
-  log(`   Live trading: ${config.liveTradingEnabled ? "✅ ENABLED" : "⚠️ SIMULATION"}`);
-  log(`   Telegram: ${config.telegramBotToken && config.telegramChatId ? "✅ ENABLED" : "❌ DISABLED"}`);
+  log(
+    `   Live trading: ${config.liveTradingEnabled ? "✅ ENABLED" : "⚠️ SIMULATION"}`,
+  );
+  log(
+    `   Telegram: ${config.telegramBotToken && config.telegramChatId ? "✅ ENABLED" : "❌ DISABLED"}`,
+  );
   log(`   Debug mode: ${DEBUG ? "✅ ENABLED (verbose logs)" : "❌ DISABLED"}`);
   if (config.liquidationMode !== "off") {
-    const modeDesc = config.liquidationMode === "losing" ? "LOSING ONLY (negative P&L)" : "ALL POSITIONS";
+    const modeDesc =
+      config.liquidationMode === "losing"
+        ? "LOSING ONLY (negative P&L)"
+        : "ALL POSITIONS";
     log(`   Liquidation: ⚠️ ${modeDesc}`);
   }
   if (config.copyAnyWhaleBuy) {
@@ -540,15 +560,23 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log("");
   log("🐋 WHALE TRACKING:");
   log(`   Following top ${config.leaderboardTopN} wallets`);
-  log(`   Min trade size: $${config.onchainMinWhaleTradeUsd} (WHALE_TRADE_USD)`);
+  log(
+    `   Min trade size: $${config.onchainMinWhaleTradeUsd} (WHALE_TRADE_USD)`,
+  );
   if (config.copyAnyWhaleBuy) {
-    log(`   Mode: INSTANT COPY - copy ANY whale buy ≥ $${config.onchainMinWhaleTradeUsd}`);
+    log(
+      `   Mode: INSTANT COPY - copy ANY whale buy ≥ $${config.onchainMinWhaleTradeUsd}`,
+    );
   } else {
-    log(`   Mode: CONFIRMED - need $${config.biasMinNetUsd} flow + ${config.biasMinTrades} trades`);
+    log(
+      `   Mode: CONFIRMED - need $${config.biasMinNetUsd} flow + ${config.biasMinTrades} trades`,
+    );
   }
   log("");
   log("🔍 MARKET SCANNER:");
-  log(`   Scan active markets: ${config.scanActiveMarkets ? "✅ ENABLED" : "❌ DISABLED"}`);
+  log(
+    `   Scan active markets: ${config.scanActiveMarkets ? "✅ ENABLED" : "❌ DISABLED"}`,
+  );
   if (config.scanActiveMarkets) {
     log(`   Min 24h volume: $${config.scanMinVolumeUsd.toLocaleString()}`);
     log(`   Top markets: ${config.scanTopNMarkets}`);
@@ -556,7 +584,9 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   }
   log("");
   log("🏦 DYNAMIC RESERVES:");
-  log(`   Dynamic reserves: ${config.dynamicReservesEnabled ? "✅ ENABLED" : "❌ DISABLED"}`);
+  log(
+    `   Dynamic reserves: ${config.dynamicReservesEnabled ? "✅ ENABLED" : "❌ DISABLED"}`,
+  );
   if (config.dynamicReservesEnabled) {
     log(`   Base reserve: ${config.reserveFraction * 100}%`);
     log(`   Max reserve: ${config.maxReserveFraction * 100}%`);
@@ -1008,23 +1038,23 @@ class BiasAccumulator {
       // API may limit to 50 per page, so we paginate if needed
       const pageSize = 50; // Max per page (API limit)
       const allEntries: any[] = [];
-      
+
       let offset = 0;
       while (allEntries.length < targetCount) {
         const remaining = targetCount - allEntries.length;
         const limit = Math.min(pageSize, remaining);
-        
+
         // Use v1 leaderboard API with PNL ordering to get top performers
         const url = `${this.DATA_API}/v1/leaderboard?category=OVERALL&timePeriod=WEEK&orderBy=PNL&limit=${limit}&offset=${offset}`;
         const { data } = await axios.get(url, { timeout: 10000 });
-        
+
         if (!Array.isArray(data) || data.length === 0) {
           break; // No more results
         }
-        
+
         allEntries.push(...data);
         offset += data.length;
-        
+
         // If we got less than requested, no more pages
         if (data.length < limit) {
           break;
@@ -1033,7 +1063,7 @@ class BiasAccumulator {
 
       if (allEntries.length > 0) {
         this.leaderboardWallets.clear();
-        
+
         // Show top 10 at startup to verify it's working, sorted by last traded
         const isFirstFetch = this.lastLeaderboardFetch === 0;
         if (isFirstFetch) {
@@ -1045,37 +1075,53 @@ class BiasAccumulator {
             try {
               const { data } = await axios.get(
                 `${this.DATA_API}/activity?user=${wallet}&limit=1&sortBy=TIMESTAMP&sortDirection=DESC`,
-                { timeout: 5000 }
+                { timeout: 5000 },
               );
-              const lastTraded = Array.isArray(data) && data.length > 0 ? Number(data[0].timestamp || 0) * 1000 : 0;
+              const lastTraded =
+                Array.isArray(data) && data.length > 0
+                  ? Number(data[0].timestamp || 0) * 1000
+                  : 0;
               return { ...entry, lastTraded };
             } catch (err) {
               // Activity fetch failed - trader may have no activity or API issue
               // Continue gracefully - they'll show with N/A timestamp
-              console.debug?.(`   Activity fetch for ${wallet.slice(0, 10)}... failed: ${err instanceof Error ? err.message : 'Unknown'}`);
+              console.debug?.(
+                `   Activity fetch for ${wallet.slice(0, 10)}... failed: ${err instanceof Error ? err.message : "Unknown"}`,
+              );
               return { ...entry, lastTraded: 0 };
             }
           });
-          
+
           const top10WithActivity = await Promise.all(activityPromises);
-          
+
           // Sort by last traded (most recent first)
           top10WithActivity.sort((a, b) => b.lastTraded - a.lastTraded);
-          
-          console.log(`\n🐋 TOP 10 TRADERS (sorted by last traded, from ${allEntries.length} tracked):`);
+
+          console.log(
+            `\n🐋 TOP 10 TRADERS (sorted by last traded, from ${allEntries.length} tracked):`,
+          );
           for (const entry of top10WithActivity) {
-            const wallet = (entry.proxyWallet || entry.address || '').slice(0, 12);
+            const wallet = (entry.proxyWallet || entry.address || "").slice(
+              0,
+              12,
+            );
             const pnl = Number(entry.pnl || 0);
             const vol = Number(entry.vol || 0);
-            const name = entry.userName || 'anon';
-            const lastTradedStr = entry.lastTraded > 0 
-              ? new Date(entry.lastTraded).toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
-              : 'N/A';
-            console.log(`   ${wallet}... | Last: ${lastTradedStr} | PNL: $${pnl >= 1000 ? (pnl/1000).toFixed(0) + 'k' : pnl.toFixed(0)} | Vol: $${vol >= 1000 ? (vol/1000).toFixed(0) + 'k' : vol.toFixed(0)} | @${name}`);
+            const name = entry.userName || "anon";
+            const lastTradedStr =
+              entry.lastTraded > 0
+                ? new Date(entry.lastTraded)
+                    .toISOString()
+                    .replace("T", " ")
+                    .slice(0, 19) + " UTC"
+                : "N/A";
+            console.log(
+              `   ${wallet}... | Last: ${lastTradedStr} | PNL: $${pnl >= 1000 ? (pnl / 1000).toFixed(0) + "k" : pnl.toFixed(0)} | Vol: $${vol >= 1000 ? (vol / 1000).toFixed(0) + "k" : vol.toFixed(0)} | @${name}`,
+            );
           }
-          console.log('');
+          console.log("");
         }
-        
+
         for (const entry of allEntries) {
           // Use proxyWallet (where trades happen) or fallback to address
           const wallet = entry.proxyWallet || entry.address;
@@ -1085,15 +1131,21 @@ class BiasAccumulator {
         }
         this.lastLeaderboardFetch = now;
         const trackedCount = this.leaderboardWallets.size;
-        console.log(`🐋 Tracking ${trackedCount} top traders (requested: ${targetCount})`);
-        
+        console.log(
+          `🐋 Tracking ${trackedCount} top traders (requested: ${targetCount})`,
+        );
+
         // Report if we got significantly fewer wallets than requested (potential issue)
         if (trackedCount < targetCount * 0.95) {
           reportError(
             "Leaderboard Wallet Count Mismatch",
             `Got ${trackedCount} unique wallets instead of requested ${targetCount}. May have duplicates or API limit.`,
             "info",
-            { trackedCount, requestedCount: targetCount, entriesReturned: allEntries.length }
+            {
+              trackedCount,
+              requestedCount: targetCount,
+              entriesReturned: allEntries.length,
+            },
           );
         }
       }
@@ -1101,12 +1153,9 @@ class BiasAccumulator {
       // Keep existing wallets on error
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.warn(`⚠️ Leaderboard fetch failed: ${errorMsg}`);
-      reportError(
-        "Leaderboard Fetch Failed",
-        errorMsg,
-        "warning",
-        { requestedCount: targetCount }
-      );
+      reportError("Leaderboard Fetch Failed", errorMsg, "warning", {
+        requestedCount: targetCount,
+      });
     }
 
     return Array.from(this.leaderboardWallets);
@@ -1134,11 +1183,13 @@ class BiasAccumulator {
     const startIdx = (this.fetchCount * BATCH_SIZE) % wallets.length;
     const endIdx = Math.min(startIdx + BATCH_SIZE, wallets.length);
     const batchWallets = wallets.slice(startIdx, endIdx);
-    
+
     // Log when coverage is limited
     if (wallets.length > BATCH_SIZE && this.fetchCount % 10 === 0) {
       const cyclesForFullCoverage = Math.ceil(wallets.length / BATCH_SIZE);
-      console.log(`📊 [API] Rotating batch: wallets ${startIdx + 1}-${endIdx} of ${wallets.length} (full coverage in ${cyclesForFullCoverage} cycles)`);
+      console.log(
+        `📊 [API] Rotating batch: wallets ${startIdx + 1}-${endIdx} of ${wallets.length} (full coverage in ${cyclesForFullCoverage} cycles)`,
+      );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1163,21 +1214,21 @@ class BiasAccumulator {
           emptyResponses++;
           return [];
         }
-        
+
         if (data.length === 0) {
           emptyResponses++;
           return [];
         }
-        
+
         successfulFetches++;
 
         const trades: LeaderboardTrade[] = [];
         for (const activity of data) {
           // Only look at TRADE type activities
           if (activity.type !== "TRADE") continue;
-          
+
           totalTradesFound++;
-          
+
           // Only track BUY trades - we don't copy sells, we have our own exit math
           if (activity.side?.toUpperCase() !== "BUY") continue;
 
@@ -1185,10 +1236,17 @@ class BiasAccumulator {
           let timestamp: number;
           if (typeof rawTimestamp === "number") {
             // If the numeric timestamp is very large, assume it's already in ms
-            timestamp = rawTimestamp > 1e12 ? rawTimestamp : rawTimestamp * 1000;
-          } else if (typeof rawTimestamp === "string" && /^\d+$/.test(rawTimestamp)) {
+            timestamp =
+              rawTimestamp > 1e12 ? rawTimestamp : rawTimestamp * 1000;
+          } else if (
+            typeof rawTimestamp === "string" &&
+            /^\d+$/.test(rawTimestamp)
+          ) {
             const numericTimestamp = Number(rawTimestamp);
-            timestamp = numericTimestamp > 1e12 ? numericTimestamp : numericTimestamp * 1000;
+            timestamp =
+              numericTimestamp > 1e12
+                ? numericTimestamp
+                : numericTimestamp * 1000;
           } else {
             // Fallback for ISO strings or other date representations
             timestamp = new Date(rawTimestamp).getTime();
@@ -1196,7 +1254,7 @@ class BiasAccumulator {
 
           // Only trades within window
           if (timestamp < windowStart) continue;
-          
+
           tradesInWindow++;
 
           const tokenId = activity.asset || activity.tokenId;
@@ -1222,7 +1280,9 @@ class BiasAccumulator {
         const errMsg = err instanceof Error ? err.message : String(err);
         // Only log to console if it's not a timeout/network issue (those are noisy)
         if (!errMsg.includes("timeout") && !errMsg.includes("ECONNRESET")) {
-          console.warn(`[API] Fetch failed for ${wallet.slice(0, 10)}...: ${errMsg}`);
+          console.warn(
+            `[API] Fetch failed for ${wallet.slice(0, 10)}...: ${errMsg}`,
+          );
         } else {
           debug(`[API] Fetch failed for ${wallet.slice(0, 10)}...: ${errMsg}`);
         }
@@ -1237,24 +1297,30 @@ class BiasAccumulator {
     // ═══════════════════════════════════════════════════════════════════════════
     // DIAGNOSTIC: Log API fetch results - show first 5, then every 10th, or when trades found
     // ═══════════════════════════════════════════════════════════════════════════
-    if (this.fetchCount < 5 || this.fetchCount % 10 === 0 || newTrades.length > 0) {
+    if (
+      this.fetchCount < 5 ||
+      this.fetchCount % 10 === 0 ||
+      newTrades.length > 0
+    ) {
       const cyclesForFullCoverage = Math.ceil(wallets.length / BATCH_SIZE);
       console.log(
         `📊 [API Poll #${this.fetchCount}] Batch ${startIdx + 1}-${endIdx} of ${wallets.length} wallets (cycle ${(this.fetchCount % cyclesForFullCoverage) + 1}/${cyclesForFullCoverage}) | ` +
-        `Success: ${successfulFetches} | Trades found: ${totalTradesFound} | In window: ${tradesInWindow} | New BUYs: ${newTrades.length}`
+          `Success: ${successfulFetches} | Trades found: ${totalTradesFound} | In window: ${tradesInWindow} | New BUYs: ${newTrades.length}`,
       );
     }
-    
+
     // Debug: Show individual trades found
     if (DEBUG && newTrades.length > 0) {
       for (const trade of newTrades.slice(0, 5)) {
-        debug(`  Trade: ${trade.tokenId.slice(0, 12)}... | $${trade.sizeUsd.toFixed(0)} | wallet: ${trade.wallet.slice(0, 10)}...`);
+        debug(
+          `  Trade: ${trade.tokenId.slice(0, 12)}... | $${trade.sizeUsd.toFixed(0)} | wallet: ${trade.wallet.slice(0, 10)}...`,
+        );
       }
       if (newTrades.length > 5) {
         debug(`  ... and ${newTrades.length - 5} more trades`);
       }
     }
-    
+
     this.fetchCount++;
 
     // Add to accumulator and prune old trades
@@ -1262,7 +1328,7 @@ class BiasAccumulator {
 
     return newTrades;
   }
-  
+
   private fetchCount = 0;
 
   /**
@@ -1297,16 +1363,17 @@ class BiasAccumulator {
 
     for (const trade of filteredTrades) {
       const existing = this.trades.get(trade.tokenId) || [];
-      
+
       // Deduplication: check if this trade already exists
       // Use a composite key of timestamp + wallet + size to identify duplicates
       // (On-chain and API trades may have slightly different timestamps)
-      const isDuplicate = existing.some(t => 
-        t.wallet.toLowerCase() === trade.wallet.toLowerCase() &&
-        Math.abs(t.sizeUsd - trade.sizeUsd) < 0.01 && // Same size (within rounding)
-        Math.abs(t.timestamp - trade.timestamp) < 60000 // Within 1 minute
+      const isDuplicate = existing.some(
+        (t) =>
+          t.wallet.toLowerCase() === trade.wallet.toLowerCase() &&
+          Math.abs(t.sizeUsd - trade.sizeUsd) < 0.01 && // Same size (within rounding)
+          Math.abs(t.timestamp - trade.timestamp) < 60000, // Within 1 minute
       );
-      
+
       if (!isDuplicate) {
         existing.push(trade);
         this.trades.set(trade.tokenId, existing);
@@ -1380,7 +1447,7 @@ class BiasAccumulator {
 
     for (const tokenId of this.trades.keys()) {
       const bias = this.getBias(tokenId);
-      
+
       // COPY_ANY_WHALE_BUY mode: return ANY token with at least 1 whale buy
       // This is the key fix - we don't need 3 trades or $300 flow to copy
       if (this.config.copyAnyWhaleBuy) {
@@ -1560,7 +1627,7 @@ class MarketScanner {
    */
   async scanActiveMarkets(): Promise<ActiveMarket[]> {
     const now = Date.now();
-    
+
     // Only scan at configured interval
     if (now - this.lastScanTime < this.config.scanIntervalSeconds * 1000) {
       return this.activeMarkets;
@@ -1577,7 +1644,7 @@ class MarketScanner {
       }
 
       const markets: ActiveMarket[] = [];
-      
+
       for (const market of data) {
         try {
           // Parse token IDs from clobTokenIds JSON string
@@ -1585,7 +1652,7 @@ class MarketScanner {
           if (!Array.isArray(tokenIds) || tokenIds.length < 2) continue;
 
           const volume24h = parseFloat(market.volume24hr || "0");
-          
+
           // Skip markets below minimum volume
           if (volume24h < this.config.scanMinVolumeUsd) continue;
 
@@ -1594,7 +1661,7 @@ class MarketScanner {
           const yesPrice = parseFloat(prices[0] || "0.5");
 
           // Only consider markets in tradeable price range (20-80¢)
-          if (yesPrice < 0.20 || yesPrice > 0.80) continue;
+          if (yesPrice < 0.2 || yesPrice > 0.8) continue;
 
           markets.push({
             tokenId: tokenIds[0], // YES token
@@ -1615,16 +1682,20 @@ class MarketScanner {
       this.activeMarkets = markets
         .sort((a, b) => b.volume24h - a.volume24h)
         .slice(0, this.config.scanTopNMarkets);
-      
+
       this.lastScanTime = now;
 
       if (this.activeMarkets.length > 0) {
-        console.log(`📊 Scanned ${this.activeMarkets.length} active markets (top by 24h volume)`);
+        console.log(
+          `📊 Scanned ${this.activeMarkets.length} active markets (top by 24h volume)`,
+        );
       }
 
       return this.activeMarkets;
     } catch (err) {
-      console.warn(`[Scanner] Failed to scan markets: ${err instanceof Error ? err.message : err}`);
+      console.warn(
+        `[Scanner] Failed to scan markets: ${err instanceof Error ? err.message : err}`,
+      );
       return this.activeMarkets;
     }
   }
@@ -1634,7 +1705,7 @@ class MarketScanner {
    * These can be used as additional trading opportunities
    */
   getActiveTokenIds(): string[] {
-    return this.activeMarkets.map(m => m.tokenId);
+    return this.activeMarkets.map((m) => m.tokenId);
   }
 
   /**
@@ -1688,7 +1759,11 @@ class DynamicReserveManager {
   /**
    * Record a missed trading opportunity due to insufficient reserves
    */
-  recordMissedOpportunity(tokenId: string, sizeUsd: number, reason: "INSUFFICIENT_BALANCE" | "RESERVE_BLOCKED"): void {
+  recordMissedOpportunity(
+    tokenId: string,
+    sizeUsd: number,
+    reason: "INSUFFICIENT_BALANCE" | "RESERVE_BLOCKED",
+  ): void {
     if (!this.config.dynamicReservesEnabled) return;
 
     this.missedOpportunities.push({
@@ -1700,7 +1775,7 @@ class DynamicReserveManager {
 
     // Prune old entries
     this.pruneOldEntries();
-    
+
     // Adapt reserves
     this.adaptReserves();
   }
@@ -1731,12 +1806,18 @@ class DynamicReserveManager {
   /**
    * Calculate effective bankroll with dynamic reserves
    */
-  getEffectiveBankroll(balance: number): { effectiveBankroll: number; reserveUsd: number } {
+  getEffectiveBankroll(balance: number): {
+    effectiveBankroll: number;
+    reserveUsd: number;
+  } {
     const reserveFraction = this.getEffectiveReserveFraction();
-    const reserveUsd = Math.max(balance * reserveFraction, this.config.minReserveUsd);
-    return { 
-      effectiveBankroll: Math.max(0, balance - reserveUsd), 
-      reserveUsd 
+    const reserveUsd = Math.max(
+      balance * reserveFraction,
+      this.config.minReserveUsd,
+    );
+    return {
+      effectiveBankroll: Math.max(0, balance - reserveUsd),
+      reserveUsd,
     };
   }
 
@@ -1748,31 +1829,39 @@ class DynamicReserveManager {
 
     const now = Date.now();
     const windowStart = now - this.WINDOW_MS;
-    
+
     // Count recent missed opportunities
-    const recentMissed = this.missedOpportunities.filter(m => m.timestamp >= windowStart);
+    const recentMissed = this.missedOpportunities.filter(
+      (m) => m.timestamp >= windowStart,
+    );
     const missedCount = recentMissed.length;
 
     // Calculate adjustment factors
     // More missed opportunities → LOWER reserves (need more capital available)
     // More missed hedges → HIGHER reserves (need capital for hedging)
-    
+
     const missedFactor = Math.min(missedCount * 0.02, 0.15); // Up to 15% reduction
-    const hedgeFactor = Math.min(this.hedgesMissed * 0.03, 0.10); // Up to 10% increase
+    const hedgeFactor = Math.min(this.hedgesMissed * 0.03, 0.1); // Up to 10% increase
 
     // Apply weighted adjustments
     const missedAdjustment = missedFactor * this.config.missedOpportunityWeight;
     const hedgeAdjustment = hedgeFactor * this.config.hedgeCoverageWeight;
 
     // Calculate target reserve fraction
-    const targetFraction = this.config.reserveFraction - missedAdjustment + hedgeAdjustment;
-    
+    const targetFraction =
+      this.config.reserveFraction - missedAdjustment + hedgeAdjustment;
+
     // Clamp to valid range
-    const clampedTarget = Math.max(0.10, Math.min(this.config.maxReserveFraction, targetFraction));
+    const clampedTarget = Math.max(
+      0.1,
+      Math.min(this.config.maxReserveFraction, targetFraction),
+    );
 
     // Smooth adaptation
-    this.adaptedReserveFraction = this.adaptedReserveFraction + 
-      (clampedTarget - this.adaptedReserveFraction) * this.config.reserveAdaptationRate;
+    this.adaptedReserveFraction =
+      this.adaptedReserveFraction +
+      (clampedTarget - this.adaptedReserveFraction) *
+        this.config.reserveAdaptationRate;
   }
 
   /**
@@ -1780,8 +1869,10 @@ class DynamicReserveManager {
    */
   private pruneOldEntries(): void {
     const cutoff = Date.now() - this.WINDOW_MS;
-    this.missedOpportunities = this.missedOpportunities.filter(m => m.timestamp >= cutoff);
-    
+    this.missedOpportunities = this.missedOpportunities.filter(
+      (m) => m.timestamp >= cutoff,
+    );
+
     // Decay hedges missed over time
     if (this.hedgesMissed > 0 && this.missedOpportunities.length === 0) {
       this.hedgesMissed = Math.max(0, this.hedgesMissed - 1);
@@ -1794,12 +1885,16 @@ class DynamicReserveManager {
   getState(): DynamicReserveState {
     this.pruneOldEntries();
     const recentMissed = this.missedOpportunities;
-    
+
     return {
       baseReserveFraction: this.config.reserveFraction,
       adaptedReserveFraction: this.adaptedReserveFraction,
-      missedOpportunitiesUsd: recentMissed.reduce((sum, m) => sum + m.sizeUsd, 0),
-      hedgeNeedsUsd: this.hedgesMissed * this.config.maxTradeUsd * this.config.hedgeRatio,
+      missedOpportunitiesUsd: recentMissed.reduce(
+        (sum, m) => sum + m.sizeUsd,
+        0,
+      ),
+      hedgeNeedsUsd:
+        this.hedgesMissed * this.config.maxTradeUsd * this.config.hedgeRatio,
       missedCount: recentMissed.length,
       hedgesMissed: this.hedgesMissed,
     };
@@ -1987,7 +2082,9 @@ class PositionManager {
     const position = this.positions.get(positionId);
     if (position) {
       position.oppositeTokenId = oppositeTokenId;
-      console.log(`🔗 [HEDGE] Linked opposite token ${oppositeTokenId.slice(0, 16)}... for position ${positionId.slice(0, 16)}...`);
+      console.log(
+        `🔗 [HEDGE] Linked opposite token ${oppositeTokenId.slice(0, 16)}... for position ${positionId.slice(0, 16)}...`,
+      );
     }
   }
 
@@ -2002,10 +2099,12 @@ class PositionManager {
    * Register an external position for monitoring
    * This allows the bot to apply exit math (TP, stop loss, hedging) to positions
    * that were not opened by the bot (e.g., manual trades, pre-existing positions)
-   * 
+   *
    * Note: This is async because it needs to fetch the opposite token ID for hedging
    */
-  async registerExternalPosition(pos: Position): Promise<ManagedPosition | null> {
+  async registerExternalPosition(
+    pos: Position,
+  ): Promise<ManagedPosition | null> {
     // Check if already tracked
     for (const [, managed] of this.positions) {
       if (managed.tokenId === pos.tokenId && managed.state !== "CLOSED") {
@@ -2015,16 +2114,17 @@ class PositionManager {
 
     const id = `ext-${pos.tokenId}-${Date.now()}`;
     const now = Date.now();
-    
+
     // Determine side based on outcome (YES = LONG, NO = SHORT)
-    const side: "LONG" | "SHORT" = pos.outcome?.toUpperCase() === "NO" ? "SHORT" : "LONG";
-    
+    const side: "LONG" | "SHORT" =
+      pos.outcome?.toUpperCase() === "NO" ? "SHORT" : "LONG";
+
     // Convert current price to cents
     const currentPriceCents = pos.curPrice * 100;
-    
+
     // Use average price as entry (best guess for external positions)
     const entryPriceCents = pos.avgPrice * 100;
-    
+
     // Calculate targets based on current price (since we don't know original entry intent)
     let takeProfitPriceCents: number;
     let hedgeTriggerPriceCents: number;
@@ -2041,9 +2141,11 @@ class PositionManager {
     }
 
     // Calculate P&L correctly based on side
-    const pnlCents = pos.gainCents || (side === "LONG" 
-      ? (currentPriceCents - entryPriceCents) 
-      : (entryPriceCents - currentPriceCents));
+    const pnlCents =
+      pos.gainCents ||
+      (side === "LONG"
+        ? currentPriceCents - entryPriceCents
+        : entryPriceCents - currentPriceCents);
 
     const position: ManagedPosition = {
       id,
@@ -2069,18 +2171,24 @@ class PositionManager {
     };
 
     this.positions.set(id, position);
-    
+
     // Fetch opposite token ID for hedging capability
     try {
       const oppositeTokenId = await getOppositeTokenId(pos.tokenId);
       if (oppositeTokenId) {
         position.oppositeTokenId = oppositeTokenId;
-        console.log(`📋 Registered external position: ${pos.outcome} @ ${(entryPriceCents).toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? '+' : ''}${pos.pnlPct.toFixed(1)}%) [hedge-ready]`);
+        console.log(
+          `📋 Registered external position: ${pos.outcome} @ ${entryPriceCents.toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? "+" : ""}${pos.pnlPct.toFixed(1)}%) [hedge-ready]`,
+        );
       } else {
-        console.log(`📋 Registered external position: ${pos.outcome} @ ${(entryPriceCents).toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? '+' : ''}${pos.pnlPct.toFixed(1)}%) [no hedge]`);
+        console.log(
+          `📋 Registered external position: ${pos.outcome} @ ${entryPriceCents.toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? "+" : ""}${pos.pnlPct.toFixed(1)}%) [no hedge]`,
+        );
       }
     } catch {
-      console.log(`📋 Registered external position: ${pos.outcome} @ ${(entryPriceCents).toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? '+' : ''}${pos.pnlPct.toFixed(1)}%) [no hedge]`);
+      console.log(
+        `📋 Registered external position: ${pos.outcome} @ ${entryPriceCents.toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? "+" : ""}${pos.pnlPct.toFixed(1)}%) [no hedge]`,
+      );
     }
 
     return position;
@@ -2254,10 +2362,16 @@ class PositionManager {
     position.unrealizedPnlUsd = (position.unrealizedPnlCents / 100) * shares;
     position.currentPriceCents = exitPriceCents;
 
-    this.recordTransition(position, position.state, "CLOSED", "POSITION_CLOSED", {
-      evSnapshot,
-      biasDirection,
-    });
+    this.recordTransition(
+      position,
+      position.state,
+      "CLOSED",
+      "POSITION_CLOSED",
+      {
+        evSnapshot,
+        biasDirection,
+      },
+    );
     position.state = "CLOSED";
 
     return position;
@@ -2382,9 +2496,7 @@ class PositionManager {
       hardExitCents: position.hardExitPriceCents,
       hedgeCount: position.hedges.length,
       totalHedgeRatio: parseFloat(position.totalHedgeRatio.toFixed(2)),
-      holdTimeSeconds: Math.round(
-        (Date.now() - position.entryTime) / 1000,
-      ),
+      holdTimeSeconds: Math.round((Date.now() - position.entryTime) / 1000),
     };
   }
 }
@@ -2476,13 +2588,17 @@ class DecisionEngine {
     if (params.bias === "NONE") {
       checks.bias.reason = "No bias signal";
     } else if (params.bias === "SHORT") {
-      checks.bias.reason = "SHORT entries not supported on Polymarket (LONG-only)";
+      checks.bias.reason =
+        "SHORT entries not supported on Polymarket (LONG-only)";
     } else {
       checks.bias.passed = true;
     }
 
     // 2) Check liquidity gates
-    const liquidityCheck = this.checkLiquidity(params.orderbook, params.activity);
+    const liquidityCheck = this.checkLiquidity(
+      params.orderbook,
+      params.activity,
+    );
     checks.liquidity = liquidityCheck;
 
     // 3) Check price deviation from reference
@@ -2493,10 +2609,10 @@ class DecisionEngine {
     // - Whale signals provide the "edge" that replaces price deviation requirement
     const currentPriceCents = params.orderbook.midPriceCents;
     const deviation = Math.abs(currentPriceCents - params.referencePriceCents);
-    
+
     // Threshold for considering prices equal (accounts for floating point imprecision)
     const PRICE_EQUALITY_THRESHOLD_CENTS = 0.01;
-    
+
     // If reference equals current (new entry), skip this check - the bias signal is our edge
     // If reference differs (re-entry), require minimum deviation
     if (deviation < PRICE_EQUALITY_THRESHOLD_CENTS) {
@@ -2517,13 +2633,12 @@ class DecisionEngine {
         ? params.orderbook.bestAskCents
         : params.orderbook.bestBidCents;
 
-    const minBound = this.config.minEntryPriceCents + this.config.entryBufferCents;
-    const maxBound = this.config.maxEntryPriceCents - this.config.entryBufferCents;
-    
-    if (
-      entryPriceCents >= minBound &&
-      entryPriceCents <= maxBound
-    ) {
+    const minBound =
+      this.config.minEntryPriceCents + this.config.entryBufferCents;
+    const maxBound =
+      this.config.maxEntryPriceCents - this.config.entryBufferCents;
+
+    if (entryPriceCents >= minBound && entryPriceCents <= maxBound) {
       checks.priceBounds.passed = true;
     } else if (
       entryPriceCents >= this.config.minEntryPriceCents &&
@@ -2592,8 +2707,11 @@ class DecisionEngine {
     // exceeds this, the trade will likely be EV-negative regardless of edge.
     // Compute a single effective max spread: min(minSpreadCents, 2x churn budget)
     const maxSpreadForChurn = this.config.churnCostCentsEstimate * 2;
-    const effectiveMaxSpread = Math.min(this.config.minSpreadCents, maxSpreadForChurn);
-    
+    const effectiveMaxSpread = Math.min(
+      this.config.minSpreadCents,
+      maxSpreadForChurn,
+    );
+
     if (orderbook.spreadCents > effectiveMaxSpread) {
       return {
         passed: false,
@@ -2659,7 +2777,8 @@ class DecisionEngine {
     }
 
     // Max deployed fraction
-    const maxDeployed = effectiveBankroll * this.config.maxDeployedFractionTotal;
+    const maxDeployed =
+      effectiveBankroll * this.config.maxDeployedFractionTotal;
     if (totalDeployedUsd >= maxDeployed) {
       return {
         passed: false,
@@ -2711,11 +2830,13 @@ class DecisionEngine {
     if (this.isInPreferredZone(params.priceCents)) {
       // Center of preferred zone is ideal
       const center =
-        (this.config.preferredEntryLowCents + this.config.preferredEntryHighCents) /
+        (this.config.preferredEntryLowCents +
+          this.config.preferredEntryHighCents) /
         2;
       const distFromCenter = Math.abs(params.priceCents - center);
       const maxDist =
-        (this.config.preferredEntryHighCents - this.config.preferredEntryLowCents) /
+        (this.config.preferredEntryHighCents -
+          this.config.preferredEntryLowCents) /
         2;
       score += 30 * (1 - distFromCenter / maxDist);
     }
@@ -2877,7 +2998,7 @@ interface ExecutionResult {
   filledUsd?: number;
   filledPriceCents?: number;
   reason?: string;
-  pending?: boolean;  // True if order is GTC and waiting for fill
+  pending?: boolean; // True if order is GTC and waiting for fill
 }
 
 interface TokenMarketData {
@@ -2898,9 +3019,15 @@ interface ChurnLogger {
 }
 
 class SimpleLogger implements ChurnLogger {
-  info(msg: string): void { console.log(msg); }
-  warn(msg: string): void { console.log(`⚠️ ${msg}`); }
-  error(msg: string): void { console.log(`❌ ${msg}`); }
+  info(msg: string): void {
+    console.log(msg);
+  }
+  warn(msg: string): void {
+    console.log(`⚠️ ${msg}`);
+  }
+  error(msg: string): void {
+    console.log(`❌ ${msg}`);
+  }
 }
 
 class ExecutionEngine {
@@ -2933,8 +3060,14 @@ class ExecutionEngine {
     this.client = client;
   }
 
-  getEffectiveBankroll(balance: number): { effectiveBankroll: number; reserveUsd: number } {
-    const reserveUsd = Math.max(balance * this.config.reserveFraction, this.config.minReserveUsd);
+  getEffectiveBankroll(balance: number): {
+    effectiveBankroll: number;
+    reserveUsd: number;
+  } {
+    const reserveUsd = Math.max(
+      balance * this.config.reserveFraction,
+      this.config.minReserveUsd,
+    );
     return { effectiveBankroll: Math.max(0, balance - reserveUsd), reserveUsd };
   }
 
@@ -2942,7 +3075,12 @@ class ExecutionEngine {
   // ENTRY
   // ─────────────────────────────────────────────────────────────────────────
 
-  async processEntry(tokenId: string, marketData: TokenMarketData, balance: number, skipBiasCheck = false): Promise<ExecutionResult> {
+  async processEntry(
+    tokenId: string,
+    marketData: TokenMarketData,
+    balance: number,
+    skipBiasCheck = false,
+  ): Promise<ExecutionResult> {
     // Cooldown check
     const cooldownUntil = this.cooldowns.get(tokenId) || 0;
     if (Date.now() < cooldownUntil) {
@@ -2966,7 +3104,11 @@ class ExecutionEngine {
       // Scanner-originated entries: use LONG since we only scan for active markets
       // with prices in the 20-80¢ range (good entry territory)
       effectiveBias = "LONG";
-    } else if (this.config.copyAnyWhaleBuy && bias.tradeCount >= 1 && !bias.isStale) {
+    } else if (
+      this.config.copyAnyWhaleBuy &&
+      bias.tradeCount >= 1 &&
+      !bias.isStale
+    ) {
       // COPY_ANY_WHALE_BUY mode: any single non-stale whale buy is enough
       // Override direction to LONG (we only track buys)
       effectiveBias = "LONG";
@@ -3005,7 +3147,10 @@ class ExecutionEngine {
     );
 
     if (result.success) {
-      this.cooldowns.set(tokenId, Date.now() + this.config.cooldownSecondsPerToken * 1000);
+      this.cooldowns.set(
+        tokenId,
+        Date.now() + this.config.cooldownSecondsPerToken * 1000,
+      );
     }
 
     return result;
@@ -3028,18 +3173,26 @@ class ExecutionEngine {
     try {
       oppositeTokenId = await getOppositeTokenId(tokenId);
       if (oppositeTokenId) {
-        console.log(`🔍 [HEDGE] Found opposite token for hedging: ${oppositeTokenId.slice(0, 16)}...`);
+        console.log(
+          `🔍 [HEDGE] Found opposite token for hedging: ${oppositeTokenId.slice(0, 16)}...`,
+        );
       } else {
-        console.warn(`⚠️ [HEDGE] Could not find opposite token for ${tokenId.slice(0, 16)}... - hedging will be disabled`);
+        console.warn(
+          `⚠️ [HEDGE] Could not find opposite token for ${tokenId.slice(0, 16)}... - hedging will be disabled`,
+        );
       }
     } catch (err) {
-      console.warn(`⚠️ [HEDGE] Error looking up opposite token: ${err instanceof Error ? err.message : err}`);
+      console.warn(
+        `⚠️ [HEDGE] Error looking up opposite token: ${err instanceof Error ? err.message : err}`,
+      );
     }
 
     // Simulation mode
     if (!this.config.liveTradingEnabled) {
       const position = this.positionManager.openPosition({
-        tokenId, marketId, side,
+        tokenId,
+        marketId,
+        side,
         entryPriceCents: priceCents,
         sizeUsd,
         referencePriceCents,
@@ -3050,8 +3203,14 @@ class ExecutionEngine {
       if (oppositeTokenId) {
         this.positionManager.setOppositeToken(position.id, oppositeTokenId);
       }
-      console.log(`🎲 [SIM] ${side} $${sizeUsd.toFixed(2)} @ ${priceCents.toFixed(1)}¢`);
-      return { success: true, filledUsd: sizeUsd, filledPriceCents: priceCents };
+      console.log(
+        `🎲 [SIM] ${side} $${sizeUsd.toFixed(2)} @ ${priceCents.toFixed(1)}¢`,
+      );
+      return {
+        success: true,
+        filledUsd: sizeUsd,
+        filledPriceCents: priceCents,
+      };
     }
 
     if (!this.client) return { success: false, reason: "NO_CLIENT" };
@@ -3063,17 +3222,24 @@ class ExecutionEngine {
       // ═══════════════════════════════════════════════════════════════════════
       const latencyMonitor = getLatencyMonitor();
       const tradingSafety = latencyMonitor.isTradingSafe();
-      
+
       if (!tradingSafety.safe) {
-        console.error(`🚨 TRADING BLOCKED - Network unsafe: ${tradingSafety.reason}`);
-        console.error(`   Trade NOT executed to protect your funds. Waiting for network to stabilize...`);
+        console.error(
+          `🚨 TRADING BLOCKED - Network unsafe: ${tradingSafety.reason}`,
+        );
+        console.error(
+          `   Trade NOT executed to protect your funds. Waiting for network to stabilize...`,
+        );
         reportError(
           "Trading Blocked - Network Unsafe",
           `Trade blocked due to unsafe network conditions: ${tradingSafety.reason}`,
           "warning",
-          { tokenId, side, sizeUsd, reason: tradingSafety.reason }
+          { tokenId, side, sizeUsd, reason: tradingSafety.reason },
         );
-        return { success: false, reason: `NETWORK_UNSAFE: ${tradingSafety.reason}` };
+        return {
+          success: false,
+          reason: `NETWORK_UNSAFE: ${tradingSafety.reason}`,
+        };
       }
 
       // ═══════════════════════════════════════════════════════════════════════
@@ -3081,19 +3247,29 @@ class ExecutionEngine {
       // ═══════════════════════════════════════════════════════════════════════
       const networkHealth = latencyMonitor.getNetworkHealth();
       const dynamicSlippagePct = networkHealth.recommendedSlippagePct;
-      
+
       // Warn if network is degraded - higher chance of missed fills or bad slippage
       if (networkHealth.status === "critical") {
-        console.warn(`🔴 CRITICAL LATENCY: ${networkHealth.rpcLatencyMs.toFixed(0)}ms RPC, ${networkHealth.apiLatencyMs.toFixed(0)}ms API`);
-        console.warn(`   Using ${dynamicSlippagePct.toFixed(1)}% slippage buffer - HIGH RISK of slippage loss!`);
+        console.warn(
+          `🔴 CRITICAL LATENCY: ${networkHealth.rpcLatencyMs.toFixed(0)}ms RPC, ${networkHealth.apiLatencyMs.toFixed(0)}ms API`,
+        );
+        console.warn(
+          `   Using ${dynamicSlippagePct.toFixed(1)}% slippage buffer - HIGH RISK of slippage loss!`,
+        );
         reportError(
           "Critical Network Latency",
           `Attempting trade with critical latency: RPC ${networkHealth.rpcLatencyMs.toFixed(0)}ms, API ${networkHealth.apiLatencyMs.toFixed(0)}ms`,
           "warning",
-          { rpcLatencyMs: networkHealth.rpcLatencyMs, apiLatencyMs: networkHealth.apiLatencyMs, slippagePct: dynamicSlippagePct }
+          {
+            rpcLatencyMs: networkHealth.rpcLatencyMs,
+            apiLatencyMs: networkHealth.apiLatencyMs,
+            slippagePct: dynamicSlippagePct,
+          },
         );
       } else if (networkHealth.status === "degraded") {
-        console.warn(`🟡 High latency: ${networkHealth.rpcLatencyMs.toFixed(0)}ms RPC - using ${dynamicSlippagePct.toFixed(1)}% slippage`);
+        console.warn(
+          `🟡 High latency: ${networkHealth.rpcLatencyMs.toFixed(0)}ms RPC - using ${dynamicSlippagePct.toFixed(1)}% slippage`,
+        );
       }
 
       const orderBook = await this.client.getOrderBook(tokenId);
@@ -3101,31 +3277,32 @@ class ExecutionEngine {
       if (!levels?.length) return { success: false, reason: "NO_LIQUIDITY" };
 
       const bestPrice = parseFloat(levels[0].price);
-      
+
       // Apply latency-adjusted slippage buffer to price
       // For BUY: We're willing to pay MORE (price + slippage) to ensure fill
       // For SELL: We're willing to accept LESS (price - slippage) to ensure fill
       const slippageMultiplier = dynamicSlippagePct / 100;
-      const fokPrice = side === "LONG" 
-        ? bestPrice * (1 + slippageMultiplier)  // BUY: pay up to X% more
-        : bestPrice * (1 - slippageMultiplier); // SELL: accept X% less
-      
-      // CRITICAL FIX (Clause 2.2): Entry sizing must use worst-case (slippage-adjusted) 
+      const fokPrice =
+        side === "LONG"
+          ? bestPrice * (1 + slippageMultiplier) // BUY: pay up to X% more
+          : bestPrice * (1 - slippageMultiplier); // SELL: accept X% less
+
+      // CRITICAL FIX (Clause 2.2): Entry sizing must use worst-case (slippage-adjusted)
       // limit price, not best price. This prevents overspending notional when slippage
       // occurs. The fokPrice represents the worst price we're willing to accept.
       const shares = sizeUsd / fokPrice; // Use worst-case price for share calculation
 
       const { Side, OrderType } = await import("@polymarket/clob-client");
-      
+
       // ═══════════════════════════════════════════════════════════════════════
       // COMBO ORDER STRATEGY: Try FOK first, fall back to GTC if needed
       // FOK = instant fill or nothing (best for racing whale trades)
       // GTC = post limit order (backup if FOK misses)
       // ═══════════════════════════════════════════════════════════════════════
-      
+
       // Measure actual order execution time
       const execStart = performance.now();
-      
+
       // STEP 1: Try FOK (Fill-Or-Kill) first - instant execution
       const fokOrder = await this.client.createMarketOrder({
         side: side === "LONG" ? Side.BUY : Side.SELL,
@@ -3136,15 +3313,19 @@ class ExecutionEngine {
 
       const fokResponse = await this.client.postOrder(fokOrder, OrderType.FOK);
       const execLatencyMs = performance.now() - execStart;
-      
+
       // Log execution timing for analysis
       if (execLatencyMs > 500) {
-        console.warn(`⏱️ Slow order execution: ${execLatencyMs.toFixed(0)}ms - consider the slippage impact`);
+        console.warn(
+          `⏱️ Slow order execution: ${execLatencyMs.toFixed(0)}ms - consider the slippage impact`,
+        );
       }
 
       if (fokResponse.success) {
         const position = this.positionManager.openPosition({
-          tokenId, marketId, side,
+          tokenId,
+          marketId,
+          side,
           entryPriceCents: bestPrice * 100,
           sizeUsd,
           referencePriceCents,
@@ -3154,18 +3335,25 @@ class ExecutionEngine {
         if (oppositeTokenId) {
           this.positionManager.setOppositeToken(position.id, oppositeTokenId);
         }
-        console.log(`📥 FOK ${side} $${sizeUsd.toFixed(2)} @ ${(bestPrice * 100).toFixed(1)}¢ (slippage: ${dynamicSlippagePct.toFixed(1)}%, exec: ${execLatencyMs.toFixed(0)}ms)`);
-        return { success: true, filledUsd: sizeUsd, filledPriceCents: bestPrice * 100 };
+        console.log(
+          `📥 FOK ${side} $${sizeUsd.toFixed(2)} @ ${(bestPrice * 100).toFixed(1)}¢ (slippage: ${dynamicSlippagePct.toFixed(1)}%, exec: ${execLatencyMs.toFixed(0)}ms)`,
+        );
+        return {
+          success: true,
+          filledUsd: sizeUsd,
+          filledPriceCents: bestPrice * 100,
+        };
       }
 
       // STEP 2: FOK failed - try GTC (limit order) as fallback
       // Use a tighter price for GTC - we're willing to wait for a better fill
       console.log(`⏳ FOK missed, trying GTC limit order...`);
-      
-      const gtcPrice = side === "LONG"
-        ? bestPrice * (1 + slippageMultiplier * 0.5)  // Tighter slippage for GTC
-        : bestPrice * (1 - slippageMultiplier * 0.5);
-      
+
+      const gtcPrice =
+        side === "LONG"
+          ? bestPrice * (1 + slippageMultiplier * 0.5) // Tighter slippage for GTC
+          : bestPrice * (1 - slippageMultiplier * 0.5);
+
       try {
         const gtcOrder = await this.client.createOrder({
           side: side === "LONG" ? Side.BUY : Side.SELL,
@@ -3174,19 +3362,31 @@ class ExecutionEngine {
           price: gtcPrice,
         });
 
-        const gtcResponse = await this.client.postOrder(gtcOrder, OrderType.GTC);
-        
+        const gtcResponse = await this.client.postOrder(
+          gtcOrder,
+          OrderType.GTC,
+        );
+
         if (gtcResponse.success) {
           // GTC order posted - it will sit on the book until filled
-          console.log(`📋 GTC order posted @ ${(gtcPrice * 100).toFixed(1)}¢ - waiting for fill...`);
-          
+          console.log(
+            `📋 GTC order posted @ ${(gtcPrice * 100).toFixed(1)}¢ - waiting for fill...`,
+          );
+
           // Note: For GTC, we don't immediately open a position
           // The position will be tracked when the order fills (via on-chain monitor)
           // For now, return success but note it's pending
-          return { success: true, filledUsd: 0, filledPriceCents: gtcPrice * 100, pending: true };
+          return {
+            success: true,
+            filledUsd: 0,
+            filledPriceCents: gtcPrice * 100,
+            pending: true,
+          };
         }
       } catch (gtcErr) {
-        console.warn(`⚠️ GTC fallback also failed: ${gtcErr instanceof Error ? gtcErr.message : gtcErr}`);
+        console.warn(
+          `⚠️ GTC fallback also failed: ${gtcErr instanceof Error ? gtcErr.message : gtcErr}`,
+        );
       }
 
       // Both FOK and GTC failed
@@ -3194,18 +3394,26 @@ class ExecutionEngine {
         "Order Rejected (FOK + GTC)",
         `Both FOK and GTC orders rejected for ${tokenId.slice(0, 16)}...`,
         "warning",
-        { tokenId, side, sizeUsd, priceCents: bestPrice * 100, marketId, slippagePct: dynamicSlippagePct, execLatencyMs }
+        {
+          tokenId,
+          side,
+          sizeUsd,
+          priceCents: bestPrice * 100,
+          marketId,
+          slippagePct: dynamicSlippagePct,
+          execLatencyMs,
+        },
       );
       return { success: false, reason: "ORDER_REJECTED" };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "ERROR";
       // Report execution error to GitHub
-      reportError(
-        "Entry Execution Failed",
-        errorMsg,
-        "error",
-        { tokenId, side, sizeUsd, marketId }
-      );
+      reportError("Entry Execution Failed", errorMsg, "error", {
+        tokenId,
+        side,
+        sizeUsd,
+        marketId,
+      });
       return { success: false, reason: errorMsg };
     }
   }
@@ -3214,7 +3422,9 @@ class ExecutionEngine {
   // EXIT (uses smart-sell for reliable fills)
   // ─────────────────────────────────────────────────────────────────────────
 
-  async processExits(marketDataMap: Map<string, TokenMarketData>): Promise<{ exited: string[]; hedged: string[] }> {
+  async processExits(
+    marketDataMap: Map<string, TokenMarketData>,
+  ): Promise<{ exited: string[]; hedged: string[] }> {
     const exited: string[] = [];
     const hedged: string[] = [];
 
@@ -3227,9 +3437,9 @@ class ExecutionEngine {
       biasDirection: BiasDirection;
       marketData: TokenMarketData; // Include for proactive opposite token monitoring
     };
-    
+
     const pendingActions: PendingAction[] = [];
-    
+
     for (const position of this.positionManager.getOpenPositions()) {
       const marketData = marketDataMap.get(position.tokenId);
       if (!marketData) continue;
@@ -3239,12 +3449,30 @@ class ExecutionEngine {
       const evMetrics = this.evTracker.getMetrics();
 
       // Update price and check triggers
-      const update = this.positionManager.updatePrice(position.id, priceCents, evMetrics, bias.direction);
+      const update = this.positionManager.updatePrice(
+        position.id,
+        priceCents,
+        evMetrics,
+        bias.direction,
+      );
 
       if (update.action === "EXIT") {
-        pendingActions.push({ position, action: "EXIT", reason: update.reason, priceCents, biasDirection: bias.direction, marketData });
+        pendingActions.push({
+          position,
+          action: "EXIT",
+          reason: update.reason,
+          priceCents,
+          biasDirection: bias.direction,
+          marketData,
+        });
       } else if (update.action === "HEDGE") {
-        pendingActions.push({ position, action: "HEDGE", priceCents, biasDirection: bias.direction, marketData });
+        pendingActions.push({
+          position,
+          action: "HEDGE",
+          priceCents,
+          biasDirection: bias.direction,
+          marketData,
+        });
       } else {
         // Check decision engine for other exit conditions
         const exitCheck = this.decisionEngine.evaluateExit({
@@ -3254,7 +3482,14 @@ class ExecutionEngine {
           evAllowed: this.evTracker.isTradingAllowed(),
         });
         if (exitCheck.shouldExit) {
-          pendingActions.push({ position, action: "EXIT", reason: exitCheck.reason, priceCents, biasDirection: bias.direction, marketData });
+          pendingActions.push({
+            position,
+            action: "EXIT",
+            reason: exitCheck.reason,
+            priceCents,
+            biasDirection: bias.direction,
+            marketData,
+          });
         }
       }
     }
@@ -3265,22 +3500,41 @@ class ExecutionEngine {
         pendingActions.map(async (action) => {
           try {
             if (action.action === "EXIT") {
-              const result = await this.executeExit(action.position, action.reason!, action.priceCents, action.biasDirection);
-              return { id: action.position.id, action: "EXIT" as const, success: result.success };
+              const result = await this.executeExit(
+                action.position,
+                action.reason!,
+                action.priceCents,
+                action.biasDirection,
+              );
+              return {
+                id: action.position.id,
+                action: "EXIT" as const,
+                success: result.success,
+              };
             } else {
               // Pass the proactively-monitored opposite orderbook to executeHedge
               const result = await this.executeHedge(
-                action.position, 
+                action.position,
                 action.biasDirection,
                 action.marketData.oppositeOrderbook, // Use pre-fetched opposite data!
               );
-              return { id: action.position.id, action: "HEDGE" as const, success: result.success };
+              return {
+                id: action.position.id,
+                action: "HEDGE" as const,
+                success: result.success,
+              };
             }
           } catch (err) {
-            console.warn(`⚠️ ${action.action} failed for ${action.position.id}: ${err instanceof Error ? err.message : err}`);
-            return { id: action.position.id, action: action.action, success: false };
+            console.warn(
+              `⚠️ ${action.action} failed for ${action.position.id}: ${err instanceof Error ? err.message : err}`,
+            );
+            return {
+              id: action.position.id,
+              action: action.action,
+              success: false,
+            };
           }
-        })
+        }),
       );
 
       // Collect results
@@ -3302,11 +3556,22 @@ class ExecutionEngine {
     biasDirection: BiasDirection,
   ): Promise<ExecutionResult> {
     const evMetrics = this.evTracker.getMetrics();
-    this.positionManager.beginExit(position.id, reason, evMetrics, biasDirection);
+    this.positionManager.beginExit(
+      position.id,
+      reason,
+      evMetrics,
+      biasDirection,
+    );
 
     // Simulation mode
     if (!this.config.liveTradingEnabled) {
-      return this.closeAndLog(position, priceCents, reason, biasDirection, "[SIM]");
+      return this.closeAndLog(
+        position,
+        priceCents,
+        reason,
+        biasDirection,
+        "[SIM]",
+      );
     }
 
     if (!this.client) return { success: false, reason: "NO_CLIENT" };
@@ -3338,7 +3603,7 @@ class ExecutionEngine {
 
     // Slippage based on exit type (derived from churn_cost = 2¢)
     const isUrgent = reason === "HARD_EXIT" || reason === "STOP_LOSS";
-    const slippagePct = reason === "TAKE_PROFIT" ? 4 : (isUrgent ? 15 : 8);
+    const slippagePct = reason === "TAKE_PROFIT" ? 4 : isUrgent ? 15 : 8;
 
     console.log(`📤 Selling | ${reason} | ${slippagePct}% max slippage`);
 
@@ -3351,17 +3616,19 @@ class ExecutionEngine {
     if (result.success) {
       // Use actual fill price from API response
       const exitPrice = (result.avgPrice || priceCents / 100) * 100;
-      
+
       // CRITICAL (Clause 5.1/5.2): Unwind hedge legs after primary exit succeeds.
       // Hedges are real positions that become residual exposure if not unwound.
       // If any hedge sell fails, we force a position refresh to track the residual.
       const hedgeUnwindResult = await this.unwindHedges(position);
       if (!hedgeUnwindResult.success && hedgeUnwindResult.failedCount > 0) {
-        console.warn(`⚠️ [HEDGE UNWIND] ${hedgeUnwindResult.failedCount} hedge(s) failed to sell - residual exposure remains`);
+        console.warn(
+          `⚠️ [HEDGE UNWIND] ${hedgeUnwindResult.failedCount} hedge(s) failed to sell - residual exposure remains`,
+        );
         // Force position refresh to track any remaining hedge positions
         invalidatePositions();
       }
-      
+
       return this.closeAndLog(position, exitPrice, reason, biasDirection, "");
     }
 
@@ -3375,15 +3642,23 @@ class ExecutionEngine {
       });
       if (retry.success) {
         const exitPrice = (retry.avgPrice || priceCents / 100) * 100;
-        
+
         // CRITICAL (Clause 5.1/5.2): Unwind hedge legs after primary exit succeeds.
         const hedgeUnwindResult = await this.unwindHedges(position);
         if (!hedgeUnwindResult.success && hedgeUnwindResult.failedCount > 0) {
-          console.warn(`⚠️ [HEDGE UNWIND] ${hedgeUnwindResult.failedCount} hedge(s) failed to sell - residual exposure remains`);
+          console.warn(
+            `⚠️ [HEDGE UNWIND] ${hedgeUnwindResult.failedCount} hedge(s) failed to sell - residual exposure remains`,
+          );
           invalidatePositions();
         }
-        
-        return this.closeAndLog(position, exitPrice, reason, biasDirection, "(retry)");
+
+        return this.closeAndLog(
+          position,
+          exitPrice,
+          reason,
+          biasDirection,
+          "(retry)",
+        );
       }
     }
 
@@ -3399,20 +3674,29 @@ class ExecutionEngine {
     tag: string,
   ): ExecutionResult {
     const evMetrics = this.evTracker.getMetrics();
-    const closed = this.positionManager.closePosition(position.id, exitPriceCents, evMetrics, biasDirection);
+    const closed = this.positionManager.closePosition(
+      position.id,
+      exitPriceCents,
+      evMetrics,
+      biasDirection,
+    );
 
     if (closed) {
-      this.evTracker.recordTrade(createTradeResult(
-        position.tokenId,
-        position.side,
-        position.entryPriceCents,
-        exitPriceCents,
-        position.entrySizeUsd,
-      ));
+      this.evTracker.recordTrade(
+        createTradeResult(
+          position.tokenId,
+          position.side,
+          position.entryPriceCents,
+          exitPriceCents,
+          position.entrySizeUsd,
+        ),
+      );
 
       const emoji = closed.unrealizedPnlCents >= 0 ? "✅" : "❌";
       const sign = closed.unrealizedPnlCents >= 0 ? "+" : "";
-      console.log(`${emoji} ${tag} ${reason} | ${sign}${closed.unrealizedPnlCents.toFixed(1)}¢ ($${closed.unrealizedPnlUsd.toFixed(2)})`);
+      console.log(
+        `${emoji} ${tag} ${reason} | ${sign}${closed.unrealizedPnlCents.toFixed(1)}¢ ($${closed.unrealizedPnlUsd.toFixed(2)})`,
+      );
     }
 
     return { success: true, filledPriceCents: exitPriceCents };
@@ -3420,27 +3704,33 @@ class ExecutionEngine {
 
   /**
    * Unwind (sell) all hedge legs for a position after primary exit.
-   * 
+   *
    * CRITICAL (Clause 5.1/5.2): Hedges are real positions that become residual
    * exposure if not unwound. This method attempts to sell all hedge legs
    * using FOK-only orders to avoid phantom fills.
-   * 
+   *
    * @param position - The position whose hedges should be unwound
    * @returns Result with success status and count of failed unwinds
    */
-  private async unwindHedges(position: ManagedPosition): Promise<{ success: boolean; failedCount: number }> {
+  private async unwindHedges(
+    position: ManagedPosition,
+  ): Promise<{ success: boolean; failedCount: number }> {
     const hedges = position.hedges || [];
-    
+
     if (hedges.length === 0) {
       return { success: true, failedCount: 0 };
     }
 
-    console.log(`🔄 [HEDGE UNWIND] Unwinding ${hedges.length} hedge leg(s) for position ${position.id.slice(0, 16)}...`);
+    console.log(
+      `🔄 [HEDGE UNWIND] Unwinding ${hedges.length} hedge leg(s) for position ${position.id.slice(0, 16)}...`,
+    );
 
     // Simulation mode - just log
     if (!this.config.liveTradingEnabled) {
       for (const hedge of hedges) {
-        console.log(`🛡️ [SIM] [HEDGE UNWIND] Would sell hedge: ${hedge.tokenId.slice(0, 16)}... ($${hedge.sizeUsd.toFixed(2)})`);
+        console.log(
+          `🛡️ [SIM] [HEDGE UNWIND] Would sell hedge: ${hedge.tokenId.slice(0, 16)}... ($${hedge.sizeUsd.toFixed(2)})`,
+        );
       }
       return { success: true, failedCount: 0 };
     }
@@ -3459,7 +3749,9 @@ class ExecutionEngine {
         const bids = orderBook?.bids;
 
         if (!bids || bids.length === 0) {
-          console.warn(`⚠️ [HEDGE UNWIND] No bids for hedge token ${hedge.tokenId.slice(0, 16)}... - cannot sell`);
+          console.warn(
+            `⚠️ [HEDGE UNWIND] No bids for hedge token ${hedge.tokenId.slice(0, 16)}... - cannot sell`,
+          );
           failedCount++;
           continue;
         }
@@ -3473,7 +3765,7 @@ class ExecutionEngine {
 
         // Create sell order with FOK to ensure confirmed fill
         const { Side, OrderType } = await import("@polymarket/clob-client");
-        
+
         const order = await this.client.createMarketOrder({
           side: Side.SELL,
           tokenID: hedge.tokenId,
@@ -3488,38 +3780,57 @@ class ExecutionEngine {
           // Verify FOK fill (same check as smartSell)
           const respAny = response as any;
           const rawStatus = respAny?.status;
-          const status = typeof rawStatus === "string" ? rawStatus.toUpperCase() : "";
+          const status =
+            typeof rawStatus === "string" ? rawStatus.toUpperCase() : "";
           const takingAmount = parseFloat(respAny?.takingAmount || "0");
           const makingAmount = parseFloat(respAny?.makingAmount || "0");
-          
+
           const isMatched = status === "MATCHED" || status === "FILLED";
           const hasFilledAmount = takingAmount > 0 || makingAmount > 0;
-          const hasStatusInfo = typeof rawStatus === "string" && rawStatus.length > 0;
-          const hasAmountInfo = respAny?.takingAmount !== undefined || respAny?.makingAmount !== undefined;
-          
+          const hasStatusInfo =
+            typeof rawStatus === "string" && rawStatus.length > 0;
+          const hasAmountInfo =
+            respAny?.takingAmount !== undefined ||
+            respAny?.makingAmount !== undefined;
+
           // Check for confirmed fill (align with smartSell: missing evidence ⇒ treat as NOT filled)
-          if ((hasStatusInfo && isMatched) || (hasAmountInfo && hasFilledAmount)) {
-            console.log(`✅ [HEDGE UNWIND] Sold hedge: ${hedge.tokenId.slice(0, 16)}... @ ${(bestBid * 100).toFixed(1)}¢`);
+          if (
+            (hasStatusInfo && isMatched) ||
+            (hasAmountInfo && hasFilledAmount)
+          ) {
+            console.log(
+              `✅ [HEDGE UNWIND] Sold hedge: ${hedge.tokenId.slice(0, 16)}... @ ${(bestBid * 100).toFixed(1)}¢`,
+            );
           } else {
-            console.warn(`⚠️ [HEDGE UNWIND] FOK not filled for hedge ${hedge.tokenId.slice(0, 16)}...`);
+            console.warn(
+              `⚠️ [HEDGE UNWIND] FOK not filled for hedge ${hedge.tokenId.slice(0, 16)}...`,
+            );
             failedCount++;
           }
         } else {
-          console.warn(`⚠️ [HEDGE UNWIND] Order rejected for hedge ${hedge.tokenId.slice(0, 16)}...`);
+          console.warn(
+            `⚠️ [HEDGE UNWIND] Order rejected for hedge ${hedge.tokenId.slice(0, 16)}...`,
+          );
           failedCount++;
         }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
-        console.error(`❌ [HEDGE UNWIND] Error unwinding hedge ${hedge.tokenId.slice(0, 16)}...: ${errorMsg}`);
+        console.error(
+          `❌ [HEDGE UNWIND] Error unwinding hedge ${hedge.tokenId.slice(0, 16)}...: ${errorMsg}`,
+        );
         failedCount++;
       }
     }
 
     const success = failedCount === 0;
     if (success) {
-      console.log(`✅ [HEDGE UNWIND] All ${hedges.length} hedge(s) unwound successfully`);
+      console.log(
+        `✅ [HEDGE UNWIND] All ${hedges.length} hedge(s) unwound successfully`,
+      );
     } else {
-      console.warn(`⚠️ [HEDGE UNWIND] ${failedCount}/${hedges.length} hedge(s) failed to unwind`);
+      console.warn(
+        `⚠️ [HEDGE UNWIND] ${failedCount}/${hedges.length} hedge(s) failed to unwind`,
+      );
     }
 
     return { success, failedCount };
@@ -3527,7 +3838,7 @@ class ExecutionEngine {
 
   /**
    * Execute a hedge by buying the opposite token
-   * 
+   *
    * @param position - The position to hedge
    * @param biasDirection - Current bias direction
    * @param prefetchedOppositeOrderbook - Optional pre-fetched opposite orderbook (for proactive monitoring)
@@ -3542,28 +3853,37 @@ class ExecutionEngine {
 
     // Get the opposite token ID for hedging
     const oppositeTokenId = position.oppositeTokenId;
-    
+
     if (!oppositeTokenId) {
-      console.warn(`⚠️ [HEDGE] No opposite token available for position ${position.id.slice(0, 16)}... - cannot hedge`);
+      console.warn(
+        `⚠️ [HEDGE] No opposite token available for position ${position.id.slice(0, 16)}... - cannot hedge`,
+      );
       return { success: false, reason: "NO_OPPOSITE_TOKEN" };
     }
 
     // Simulation mode - just record the hedge
     if (!this.config.liveTradingEnabled) {
       // Use pre-fetched price if available, otherwise use position's current price as estimate
-      const hedgePrice = prefetchedOppositeOrderbook?.bestAskCents 
-        ? prefetchedOppositeOrderbook.bestAskCents 
+      const hedgePrice = prefetchedOppositeOrderbook?.bestAskCents
+        ? prefetchedOppositeOrderbook.bestAskCents
         : position.currentPriceCents;
-      
-      this.positionManager.recordHedge(position.id, {
-        tokenId: oppositeTokenId, // Use REAL opposite token ID!
-        sizeUsd: hedgeSize,
-        entryPriceCents: hedgePrice,
-        entryTime: Date.now(),
-      }, evMetrics, biasDirection);
+
+      this.positionManager.recordHedge(
+        position.id,
+        {
+          tokenId: oppositeTokenId, // Use REAL opposite token ID!
+          sizeUsd: hedgeSize,
+          entryPriceCents: hedgePrice,
+          entryTime: Date.now(),
+        },
+        evMetrics,
+        biasDirection,
+      );
 
       const proactiveTag = prefetchedOppositeOrderbook ? " [PROACTIVE]" : "";
-      console.log(`🛡️ [SIM]${proactiveTag} Hedged $${hedgeSize.toFixed(2)} by buying opposite @ ${hedgePrice.toFixed(1)}¢`);
+      console.log(
+        `🛡️ [SIM]${proactiveTag} Hedged $${hedgeSize.toFixed(2)} by buying opposite @ ${hedgePrice.toFixed(1)}¢`,
+      );
       return { success: true, filledUsd: hedgeSize };
     }
 
@@ -3575,55 +3895,64 @@ class ExecutionEngine {
 
     try {
       let price: number;
-      
+
       // Use pre-fetched orderbook if available (proactive monitoring)
       // Validate: price > 0 AND there's liquidity (askDepthUsd > 0)
       const MIN_LIQUIDITY_USD = 5; // Minimum liquidity to trust pre-fetched data
-      const hasPrefetchedData = prefetchedOppositeOrderbook && 
+      const hasPrefetchedData =
+        prefetchedOppositeOrderbook &&
         prefetchedOppositeOrderbook.bestAskCents > 0 &&
         prefetchedOppositeOrderbook.askDepthUsd >= MIN_LIQUIDITY_USD;
-      
+
       if (hasPrefetchedData) {
         price = prefetchedOppositeOrderbook!.bestAskCents / 100; // Convert cents to dollars
-        console.log(`🔄 [HEDGE] Using proactively monitored opposite price: ${(price * 100).toFixed(1)}¢ (depth: $${prefetchedOppositeOrderbook!.askDepthUsd.toFixed(0)})`);
+        console.log(
+          `🔄 [HEDGE] Using proactively monitored opposite price: ${(price * 100).toFixed(1)}¢ (depth: $${prefetchedOppositeOrderbook!.askDepthUsd.toFixed(0)})`,
+        );
       } else {
         // Fallback: fetch fresh orderbook (no pre-fetched data or insufficient liquidity)
-        const reason = prefetchedOppositeOrderbook 
+        const reason = prefetchedOppositeOrderbook
           ? `insufficient liquidity ($${prefetchedOppositeOrderbook.askDepthUsd?.toFixed(0) || 0})`
           : "no pre-fetched data";
         console.log(`📡 [HEDGE] Fetching fresh opposite orderbook (${reason})`);
         const orderBook = await this.client.getOrderBook(oppositeTokenId);
         const asks = orderBook?.asks;
-        
+
         if (!asks?.length) {
-          console.warn(`⚠️ [HEDGE] No asks available for opposite token - cannot hedge`);
+          console.warn(
+            `⚠️ [HEDGE] No asks available for opposite token - cannot hedge`,
+          );
           return { success: false, reason: "NO_LIQUIDITY" };
         }
-        
+
         price = parseFloat(asks[0].price);
       }
-      
+
       // Validate price is above minimum tradeable
       const MIN_TRADEABLE_PRICE = 0.001;
       if (!price || price <= MIN_TRADEABLE_PRICE) {
         console.warn(`⚠️ [HEDGE] Price ${price} is too low for hedge order`);
         return { success: false, reason: "PRICE_TOO_LOW" };
       }
-      
+
       const shares = hedgeSize / price;
-      
+
       // Validate shares is above minimum threshold
       const MIN_SHARES = 0.0001;
       if (shares < MIN_SHARES) {
-        console.warn(`⚠️ [HEDGE] Calculated shares ${shares} is below minimum ${MIN_SHARES}`);
+        console.warn(
+          `⚠️ [HEDGE] Calculated shares ${shares} is below minimum ${MIN_SHARES}`,
+        );
         return { success: false, reason: "SIZE_TOO_SMALL" };
       }
 
-      console.log(`🛡️ [HEDGE] Placing hedge order: BUY ${shares.toFixed(4)} shares @ ${(price * 100).toFixed(1)}¢`);
+      console.log(
+        `🛡️ [HEDGE] Placing hedge order: BUY ${shares.toFixed(4)} shares @ ${(price * 100).toFixed(1)}¢`,
+      );
 
       // Import SDK types
       const { Side, OrderType } = await import("@polymarket/clob-client");
-      
+
       // Create and post hedge order
       const order = await this.client.createMarketOrder({
         side: Side.BUY, // Always BUY the opposite token to hedge
@@ -3637,18 +3966,31 @@ class ExecutionEngine {
       if (response.success) {
         // Record the successful hedge with real token ID and fill price
         const fillPriceCents = price * 100;
-        
-        this.positionManager.recordHedge(position.id, {
-          tokenId: oppositeTokenId,
-          sizeUsd: hedgeSize,
-          entryPriceCents: fillPriceCents,
-          entryTime: Date.now(),
-        }, evMetrics, biasDirection);
 
-        console.log(`✅ [HEDGE] Successfully hedged $${hedgeSize.toFixed(2)} @ ${fillPriceCents.toFixed(1)}¢`);
-        return { success: true, filledUsd: hedgeSize, filledPriceCents: fillPriceCents };
+        this.positionManager.recordHedge(
+          position.id,
+          {
+            tokenId: oppositeTokenId,
+            sizeUsd: hedgeSize,
+            entryPriceCents: fillPriceCents,
+            entryTime: Date.now(),
+          },
+          evMetrics,
+          biasDirection,
+        );
+
+        console.log(
+          `✅ [HEDGE] Successfully hedged $${hedgeSize.toFixed(2)} @ ${fillPriceCents.toFixed(1)}¢`,
+        );
+        return {
+          success: true,
+          filledUsd: hedgeSize,
+          filledPriceCents: fillPriceCents,
+        };
       } else {
-        console.warn(`⚠️ [HEDGE] Hedge order rejected: ${response.errorMsg || "unknown reason"}`);
+        console.warn(
+          `⚠️ [HEDGE] Hedge order rejected: ${response.errorMsg || "unknown reason"}`,
+        );
         return { success: false, reason: "ORDER_REJECTED" };
       }
     } catch (err) {
@@ -3720,7 +4062,7 @@ class ChurnEngine {
   // Maps tokenId to timestamp when it was sold
   private recentlySoldPositions = new Map<string, number>();
   private readonly SOLD_POSITION_COOLDOWN_MS = 30 * 1000; // 30 seconds cooldown
-  
+
   // Cooldown for tokens that fail entry checks (price/spread issues)
   // Prevents spamming the same failing token repeatedly
   private failedEntryCooldowns = new Map<string, number>();
@@ -3753,7 +4095,9 @@ class ChurnEngine {
   private trackFailureReason(reason: string): void {
     this.diagnostics.entryFailureReasons.push(reason);
     // Keep only the last MAX_FAILURE_REASONS entries
-    if (this.diagnostics.entryFailureReasons.length > this.MAX_FAILURE_REASONS) {
+    if (
+      this.diagnostics.entryFailureReasons.length > this.MAX_FAILURE_REASONS
+    ) {
       this.diagnostics.entryFailureReasons.shift();
     }
   }
@@ -3807,7 +4151,9 @@ class ChurnEngine {
 
     // Log bias changes
     this.biasAccumulator.onBiasChange((e) => {
-      console.log(`📊 Bias | ${e.tokenId.slice(0, 8)}... | ${e.previousDirection} → ${e.newDirection} | $${e.netUsd.toFixed(0)} flow`);
+      console.log(
+        `📊 Bias | ${e.tokenId.slice(0, 8)}... | ${e.previousDirection} → ${e.newDirection} | $${e.netUsd.toFixed(0)} flow`,
+      );
     });
   }
 
@@ -3862,15 +4208,24 @@ class ChurnEngine {
       // Help user understand why it's disabled
       const hasToken = !!process.env.GITHUB_ERROR_REPORTER_TOKEN;
       const hasRepo = !!process.env.GITHUB_ERROR_REPORTER_REPO;
-      const explicitlyDisabled = process.env.GITHUB_ERROR_REPORTER_ENABLED === "false";
-      
+      const explicitlyDisabled =
+        process.env.GITHUB_ERROR_REPORTER_ENABLED === "false";
+
       if (explicitlyDisabled) {
-        console.log("📋 GitHub error reporting disabled (GITHUB_ERROR_REPORTER_ENABLED=false)");
+        console.log(
+          "📋 GitHub error reporting disabled (GITHUB_ERROR_REPORTER_ENABLED=false)",
+        );
       } else if (hasToken && !hasRepo) {
-        console.log("📋 GitHub error reporting disabled - GITHUB_ERROR_REPORTER_REPO not set");
-        console.log("   ↳ Set GITHUB_ERROR_REPORTER_REPO=owner/repo-name to enable");
+        console.log(
+          "📋 GitHub error reporting disabled - GITHUB_ERROR_REPORTER_REPO not set",
+        );
+        console.log(
+          "   ↳ Set GITHUB_ERROR_REPORTER_REPO=owner/repo-name to enable",
+        );
       } else if (!hasToken && hasRepo) {
-        console.log("📋 GitHub error reporting disabled - GITHUB_ERROR_REPORTER_TOKEN not set");
+        console.log(
+          "📋 GitHub error reporting disabled - GITHUB_ERROR_REPORTER_TOKEN not set",
+        );
       } else if (!hasToken && !hasRepo) {
         // Neither set - user probably doesn't want it, stay quiet
       }
@@ -3903,15 +4258,17 @@ class ChurnEngine {
     // Initialize market data store and facade for real-time orderbook streaming
     initMarketDataStore();
     this.marketDataFacade = initMarketDataFacade(this.client);
-    
+
     // Setup WebSocket bypass (before VPN changes default routes)
     // WebSocket traffic is read-only and doesn't need VPN protection
     await setupWebSocketBypass(this.logger);
-    
+
     // Initialize WebSocket client for market data streaming
     const wsMarketClient = initWebSocketMarketClient({
       onConnect: () => {
-        console.log("📡 CLOB WebSocket connected (real-time orderbook streaming)");
+        console.log(
+          "📡 CLOB WebSocket connected (real-time orderbook streaming)",
+        );
       },
       onDisconnect: (code, reason) => {
         console.log(`📡 CLOB WebSocket disconnected: ${code} - ${reason}`);
@@ -3920,14 +4277,14 @@ class ChurnEngine {
         console.warn(`📡 CLOB WebSocket error: ${err.message}`);
       },
     });
-    
+
     // Connect WebSocket (will auto-reconnect on failure)
     wsMarketClient.connect();
-    
+
     // TODO: When implementing or updating ChurnEngine.stop(), ensure both
     //       the market and user WebSocket clients are cleanly disconnected
     //       and any heartbeat/reconnect timers are stopped to avoid leaks.
-    
+
     // Initialize User WebSocket for order/fill events (authenticated)
     // Note: User WebSocket is optional - system continues without it but
     // will rely on polling for order status updates
@@ -3935,14 +4292,19 @@ class ChurnEngine {
     wsUserClient.connect(this.client).catch((err) => {
       // Log at error level since this affects order tracking functionality
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`📡 User WebSocket connection failed (order tracking degraded): ${msg}`);
-      console.log(`   ↳ Order/fill events will fall back to polling-based detection`);
-      
+      console.error(
+        `📡 User WebSocket connection failed (order tracking degraded): ${msg}`,
+      );
+      console.log(
+        `   ↳ Order/fill events will fall back to polling-based detection`,
+      );
+
       // Schedule a delayed retry attempt (30 seconds)
       setTimeout(() => {
         console.log(`📡 Retrying User WebSocket connection...`);
         wsUserClient.connect(this.client).catch((retryErr) => {
-          const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          const retryMsg =
+            retryErr instanceof Error ? retryErr.message : String(retryErr);
           console.error(`📡 User WebSocket retry failed: ${retryMsg}`);
           // After retry failure, the built-in reconnection logic will continue attempts
         });
@@ -3971,16 +4333,26 @@ class ChurnEngine {
       existingPositions = await getPositions(this.address, true);
       positionValue = existingPositions.reduce((sum, p) => sum + p.value, 0);
     } catch (err) {
-      console.warn(`⚠️ Could not fetch existing positions: ${err instanceof Error ? err.message : err}`);
+      console.warn(
+        `⚠️ Could not fetch existing positions: ${err instanceof Error ? err.message : err}`,
+      );
     }
 
     console.log("");
-    console.log(`💰 Balance: $${usdcBalance.toFixed(2)} USDC | ${polBalance.toFixed(4)} POL`);
-    console.log(`🏦 Reserve: $${reserveUsd.toFixed(2)} | Effective: $${effectiveBankroll.toFixed(2)}`);
+    console.log(
+      `💰 Balance: $${usdcBalance.toFixed(2)} USDC | ${polBalance.toFixed(4)} POL`,
+    );
+    console.log(
+      `🏦 Reserve: $${reserveUsd.toFixed(2)} | Effective: $${effectiveBankroll.toFixed(2)}`,
+    );
     if (existingPositions.length > 0) {
-      console.log(`📦 Existing Positions: ${existingPositions.length} (value: $${positionValue.toFixed(2)})`);
+      console.log(
+        `📦 Existing Positions: ${existingPositions.length} (value: $${positionValue.toFixed(2)})`,
+      );
     }
-    console.log(`${this.config.liveTradingEnabled ? "🟢" : "🔴"} Mode: ${this.config.liveTradingEnabled ? "LIVE TRADING" : "SIMULATION"}`);
+    console.log(
+      `${this.config.liveTradingEnabled ? "🟢" : "🔴"} Mode: ${this.config.liveTradingEnabled ? "LIVE TRADING" : "SIMULATION"}`,
+    );
     console.log("");
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -3991,21 +4363,32 @@ class ChurnEngine {
     // FORCE_LIQUIDATION=true (legacy) - Same as LIQUIDATION_MODE=all
     if (this.config.liquidationMode !== "off" && existingPositions.length > 0) {
       // Filter positions based on liquidation mode
-      const positionsToLiquidate = this.config.liquidationMode === "losing"
-        ? existingPositions.filter(p => p.pnlPct < 0)
-        : existingPositions;
-      
-      const liquidateValue = positionsToLiquidate.reduce((sum, p) => sum + p.value, 0);
-      const modeDesc = this.config.liquidationMode === "losing" ? "LOSING ONLY" : "ALL";
-      
+      const positionsToLiquidate =
+        this.config.liquidationMode === "losing"
+          ? existingPositions.filter((p) => p.pnlPct < 0)
+          : existingPositions;
+
+      const liquidateValue = positionsToLiquidate.reduce(
+        (sum, p) => sum + p.value,
+        0,
+      );
+      const modeDesc =
+        this.config.liquidationMode === "losing" ? "LOSING ONLY" : "ALL";
+
       if (positionsToLiquidate.length > 0) {
         console.log("━".repeat(60));
         console.log(`🔥 LIQUIDATION MODE ACTIVATED (${modeDesc})`);
         console.log("━".repeat(60));
-        console.log(`   Mode: ${this.config.liquidationMode === "losing" ? "Selling losing positions only" : "Selling ALL positions"}`);
+        console.log(
+          `   Mode: ${this.config.liquidationMode === "losing" ? "Selling losing positions only" : "Selling ALL positions"}`,
+        );
         console.log(`   Current balance: $${usdcBalance.toFixed(2)}`);
-        console.log(`   Total positions: ${existingPositions.length} (worth $${positionValue.toFixed(2)})`);
-        console.log(`   To liquidate: ${positionsToLiquidate.length} (worth $${liquidateValue.toFixed(2)})`);
+        console.log(
+          `   Total positions: ${existingPositions.length} (worth $${positionValue.toFixed(2)})`,
+        );
+        console.log(
+          `   To liquidate: ${positionsToLiquidate.length} (worth $${liquidateValue.toFixed(2)})`,
+        );
         console.log("━".repeat(60));
         console.log("");
 
@@ -4022,7 +4405,9 @@ class ChurnEngine {
 
         return true;
       } else {
-        console.log(`ℹ️ Liquidation mode (${modeDesc}) enabled but no matching positions to sell`);
+        console.log(
+          `ℹ️ Liquidation mode (${modeDesc}) enabled but no matching positions to sell`,
+        );
       }
     }
 
@@ -4030,8 +4415,12 @@ class ChurnEngine {
     if (effectiveBankroll <= 0) {
       if (existingPositions.length > 0) {
         console.error("❌ No effective bankroll available");
-        console.error(`   You have ${existingPositions.length} positions worth $${positionValue.toFixed(2)}`);
-        console.error(`   Set LIQUIDATION_MODE=all to sell all, or LIQUIDATION_MODE=losing to sell only losing positions`);
+        console.error(
+          `   You have ${existingPositions.length} positions worth $${positionValue.toFixed(2)}`,
+        );
+        console.error(
+          `   Set LIQUIDATION_MODE=all to sell all, or LIQUIDATION_MODE=losing to sell only losing positions`,
+        );
         return false;
       } else {
         console.error("❌ No effective bankroll available");
@@ -4047,7 +4436,9 @@ class ChurnEngine {
     if (this.config.onchainMonitorEnabled) {
       // Fire and forget - don't await, let it run in parallel
       this.initializeOnChainMonitor().catch((err) => {
-        console.warn(`⚠️ On-chain monitor background init failed: ${err instanceof Error ? err.message : err}`);
+        console.warn(
+          `⚠️ On-chain monitor background init failed: ${err instanceof Error ? err.message : err}`,
+        );
       });
     }
 
@@ -4068,12 +4459,12 @@ class ChurnEngine {
   /**
    * Initialize on-chain monitor for position monitoring and settlement verification
    * Connects to CTF Exchange contract via Infura WebSocket
-   * 
+   *
    * ═══════════════════════════════════════════════════════════════════════════
    * ⚠️ NOTE: On-chain monitor is now LIMITED to:
    * - Position change monitoring (when our orders fill)
    * - Settlement verification and reconciliation
-   * 
+   *
    * On-chain is NOT used for primary whale detection because:
    * - Data API is actually faster (CLOB updates API before settlement)
    * - On-chain sees trades AFTER they've been matched on CLOB
@@ -4085,7 +4476,7 @@ class ChurnEngine {
       // Fetch initial leaderboard in parallel with other startup tasks
       // The BiasAccumulator will update the whale wallets Set
       await this.biasAccumulator.refreshLeaderboard();
-      
+
       // Create on-chain monitor config - shares the whale wallets Set reference
       // When BiasAccumulator refreshes wallets, the monitor automatically sees updates
       // Also pass our wallet address for position monitoring
@@ -4097,7 +4488,7 @@ class ChurnEngine {
           enabled: this.config.onchainMonitorEnabled,
           minWhaleTradeUsd: this.config.onchainMinWhaleTradeUsd,
           infuraTier: this.config.infuraTier,
-        }
+        },
       );
 
       this.onchainMonitor = new OnChainMonitor(monitorConfig);
@@ -4112,8 +4503,10 @@ class ChurnEngine {
       this.onchainMonitor.onWhaleTrade((trade) => {
         // Log whale trades for debugging/reconciliation only
         // This is SECONDARY - Data API polling is the primary source
-        console.log(`📡 [Reconciliation] On-chain whale ${trade.side} | $${trade.sizeUsd.toFixed(0)} @ ${(trade.price * 100).toFixed(1)}¢ | Block #${trade.blockNumber}`);
-        
+        console.log(
+          `📡 [Reconciliation] On-chain whale ${trade.side} | $${trade.sizeUsd.toFixed(0)} @ ${(trade.price * 100).toFixed(1)}¢ | Block #${trade.blockNumber}`,
+        );
+
         // Only record BUY trades for bias (we copy buys, not sells)
         if (trade.side === "BUY") {
           // Determine which address is the whale with defensive validation
@@ -4144,7 +4537,7 @@ class ChurnEngine {
             timestamp: trade.timestamp,
             price: trade.price, // Include price for price-range filtering
           });
-          
+
           console.log(`   ℹ️ On-chain signal recorded (secondary to Data API)`);
         } else {
           console.log(`   ℹ️ SELL trade - not copying (we only copy buys)`);
@@ -4158,14 +4551,18 @@ class ChurnEngine {
       this.onchainMonitor.onPositionChange((change) => {
         if (change.isIncoming) {
           // We received tokens - likely an order filled!
-          console.log(`⚡ Position FILLED | +${change.amountFormatted.toFixed(2)} tokens | Block #${change.blockNumber}`);
-          
+          console.log(
+            `⚡ Position FILLED | +${change.amountFormatted.toFixed(2)} tokens | Block #${change.blockNumber}`,
+          );
+
           // Invalidate position cache to force refresh
           invalidatePositions();
         } else {
           // We sent tokens - we sold or transferred
-          console.log(`⚡ Position SOLD | -${change.amountFormatted.toFixed(2)} tokens | Block #${change.blockNumber}`);
-          
+          console.log(
+            `⚡ Position SOLD | -${change.amountFormatted.toFixed(2)} tokens | Block #${change.blockNumber}`,
+          );
+
           // Invalidate position cache
           invalidatePositions();
         }
@@ -4175,12 +4572,20 @@ class ChurnEngine {
       const started = await this.onchainMonitor.start();
       if (started) {
         const stats = this.onchainMonitor.getStats();
-        console.log(`📡 On-chain monitor: Infura ${stats.infuraTier} tier | Position monitoring: ${stats.monitoringOwnPositions ? 'ON' : 'OFF'}`);
-        console.log(`📡 On-chain role: Position verification & reconciliation (NOT primary whale detection)`);
+        console.log(
+          `📡 On-chain monitor: Infura ${stats.infuraTier} tier | Position monitoring: ${stats.monitoringOwnPositions ? "ON" : "OFF"}`,
+        );
+        console.log(
+          `📡 On-chain role: Position verification & reconciliation (NOT primary whale detection)`,
+        );
       }
     } catch (err) {
-      console.warn(`⚠️ On-chain monitor init failed: ${err instanceof Error ? err.message : err}`);
-      console.warn(`   Position monitoring disabled, but whale detection via Data API still works`);
+      console.warn(
+        `⚠️ On-chain monitor init failed: ${err instanceof Error ? err.message : err}`,
+      );
+      console.warn(
+        `   Position monitoring disabled, but whale detection via Data API still works`,
+      );
     }
   }
 
@@ -4216,7 +4621,7 @@ class ChurnEngine {
       if (process.env.VPN_BYPASS_RPC !== "false") {
         await setupRpcBypass(this.config.rpcUrl, this.logger);
       }
-      
+
       // Bypass read-only APIs (gamma-api, data-api) - they don't need VPN
       // Use the polymarket-specific bypass when explicitly enabled; otherwise use the generic one.
       if (process.env.VPN_BYPASS_POLYMARKET_READS === "true") {
@@ -4236,7 +4641,7 @@ class ChurnEngine {
    */
   async run(): Promise<void> {
     this.running = true;
-    
+
     if (this.liquidationMode) {
       console.log("🔥 Running in LIQUIDATION MODE...\n");
     } else {
@@ -4260,10 +4665,10 @@ class ChurnEngine {
       const openCount = this.positionManager.getOpenPositions().length;
       const pollInterval = this.liquidationMode
         ? this.config.liquidationPollIntervalMs
-        : (openCount > 0
-          ? this.config.positionPollIntervalMs  // 100ms - track positions fast
-          : this.config.pollIntervalMs);        // 200ms - scan for opportunities
-      
+        : openCount > 0
+          ? this.config.positionPollIntervalMs // 100ms - track positions fast
+          : this.config.pollIntervalMs; // 200ms - scan for opportunities
+
       await this.sleep(pollInterval);
     }
 
@@ -4295,7 +4700,8 @@ class ChurnEngine {
     // 2. GET BALANCES
     // ─────────────────────────────────────────────────────────────────
     const usdcBalance = await getUsdcBalance(this.wallet, this.address);
-    const { reserveUsd } = this.executionEngine.getEffectiveBankroll(usdcBalance);
+    const { reserveUsd } =
+      this.executionEngine.getEffectiveBankroll(usdcBalance);
 
     // ─────────────────────────────────────────────────────────────────
     // 3. FETCH AND LIQUIDATE EXISTING POLYMARKET POSITIONS
@@ -4304,7 +4710,9 @@ class ChurnEngine {
     try {
       positions = await getPositions(this.address, true);
     } catch (err) {
-      console.warn(`⚠️ Could not fetch positions: ${err instanceof Error ? err.message : err}`);
+      console.warn(
+        `⚠️ Could not fetch positions: ${err instanceof Error ? err.message : err}`,
+      );
       return;
     }
 
@@ -4312,8 +4720,9 @@ class ChurnEngine {
       // ─────────────────────────────────────────────────────────────────
       // LIQUIDATION COMPLETE - Transition back to normal trading
       // ─────────────────────────────────────────────────────────────────
-      const { effectiveBankroll } = this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
-      
+      const { effectiveBankroll } =
+        this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
+
       if (effectiveBankroll > 0) {
         console.log("");
         console.log("━".repeat(60));
@@ -4340,7 +4749,9 @@ class ChurnEngine {
         return; // Next cycle will be normal trading
       } else {
         console.log("📦 No positions to liquidate");
-        console.log(`   Balance: $${usdcBalance.toFixed(2)} (need $${reserveUsd.toFixed(2)} for trading)`);
+        console.log(
+          `   Balance: $${usdcBalance.toFixed(2)} (need $${reserveUsd.toFixed(2)} for trading)`,
+        );
         console.log(`   Waiting for deposits or position settlements...`);
         return;
       }
@@ -4351,20 +4762,29 @@ class ChurnEngine {
     // ─────────────────────────────────────────────────────────────────
     // "losing" mode: Only liquidate positions with negative P&L
     // "all" mode: Liquidate all positions
-    const modeFilteredPositions = this.config.liquidationMode === "losing"
-      ? positions.filter(p => p.pnlPct < 0)
-      : positions;
+    const modeFilteredPositions =
+      this.config.liquidationMode === "losing"
+        ? positions.filter((p) => p.pnlPct < 0)
+        : positions;
 
-    if (modeFilteredPositions.length === 0 && this.config.liquidationMode === "losing") {
+    if (
+      modeFilteredPositions.length === 0 &&
+      this.config.liquidationMode === "losing"
+    ) {
       // All remaining positions are winners - exit liquidation mode
-      const { effectiveBankroll } = this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
-      
+      const { effectiveBankroll } =
+        this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
+
       console.log("");
       console.log("━".repeat(60));
-      console.log("✅ LIQUIDATION COMPLETE (losers only) - Resuming normal trading");
+      console.log(
+        "✅ LIQUIDATION COMPLETE (losers only) - Resuming normal trading",
+      );
       console.log("━".repeat(60));
       console.log(`   All losing positions sold!`);
-      console.log(`   Remaining winners: ${positions.length} (will be managed normally)`);
+      console.log(
+        `   Remaining winners: ${positions.length} (will be managed normally)`,
+      );
       console.log(`   Balance: $${usdcBalance.toFixed(2)}`);
       console.log(`   Effective bankroll: $${effectiveBankroll.toFixed(2)}`);
       console.log("━".repeat(60));
@@ -4393,7 +4813,7 @@ class ChurnEngine {
     }
 
     // Filter out positions that were recently sold (waiting for API cache to update)
-    const eligiblePositions = modeFilteredPositions.filter(p => {
+    const eligiblePositions = modeFilteredPositions.filter((p) => {
       const soldTime = this.recentlySoldPositions.get(p.tokenId);
       if (soldTime && now - soldTime < this.SOLD_POSITION_COOLDOWN_MS) {
         return false; // Skip - recently sold, waiting for API to reflect
@@ -4402,36 +4822,50 @@ class ChurnEngine {
     });
 
     // Sort by value descending - sell largest positions first for fastest capital recovery
-    const sortedPositions = [...eligiblePositions].sort((a, b) => b.value - a.value);
+    const sortedPositions = [...eligiblePositions].sort(
+      (a, b) => b.value - a.value,
+    );
 
     if (sortedPositions.length === 0) {
-      const cooldownCount = modeFilteredPositions.length - eligiblePositions.length;
-      console.log(`⏳ Waiting for ${cooldownCount} recent sell(s) to settle...`);
+      const cooldownCount =
+        modeFilteredPositions.length - eligiblePositions.length;
+      console.log(
+        `⏳ Waiting for ${cooldownCount} recent sell(s) to settle...`,
+      );
       return;
     }
 
-    const modeLabel = this.config.liquidationMode === "losing" ? " (losing)" : "";
-    console.log(`🔥 Liquidating ${sortedPositions.length} positions${modeLabel} (total value: $${sortedPositions.reduce((s, p) => s + p.value, 0).toFixed(2)})`);
+    const modeLabel =
+      this.config.liquidationMode === "losing" ? " (losing)" : "";
+    console.log(
+      `🔥 Liquidating ${sortedPositions.length} positions${modeLabel} (total value: $${sortedPositions.reduce((s, p) => s + p.value, 0).toFixed(2)})`,
+    );
 
     // Sell one position per cycle to avoid overwhelming the API
     const positionToSell = sortedPositions[0];
     if (positionToSell) {
-      console.log(`📤 Selling: $${positionToSell.value.toFixed(2)} @ ${(positionToSell.curPrice * 100).toFixed(1)}¢ (P&L: ${positionToSell.pnlPct >= 0 ? '+' : ''}${positionToSell.pnlPct.toFixed(1)}%)`);
+      console.log(
+        `📤 Selling: $${positionToSell.value.toFixed(2)} @ ${(positionToSell.curPrice * 100).toFixed(1)}¢ (P&L: ${positionToSell.pnlPct >= 0 ? "+" : ""}${positionToSell.pnlPct.toFixed(1)}%)`,
+      );
 
       if (!this.config.liveTradingEnabled) {
-        console.log(`   [SIM] Would sell ${positionToSell.size.toFixed(2)} shares`);
+        console.log(
+          `   [SIM] Would sell ${positionToSell.size.toFixed(2)} shares`,
+        );
       } else if (!this.client) {
         console.warn(`   ⚠️ No client available for selling`);
       } else {
         try {
           const result = await smartSell(this.client, positionToSell, {
             maxSlippagePct: this.config.liquidationMaxSlippagePct,
-            forceSell: true,     // Force sell even if conditions aren't ideal
+            forceSell: true, // Force sell even if conditions aren't ideal
             logger: this.logger,
           });
 
           if (result.success) {
-            console.log(`   ✅ Sold for $${result.filledUsd?.toFixed(2) || 'unknown'}`);
+            console.log(
+              `   ✅ Sold for $${result.filledUsd?.toFixed(2) || "unknown"}`,
+            );
 
             // Track this position as recently sold to prevent re-selling
             // while waiting for position API to reflect the change
@@ -4444,21 +4878,28 @@ class ChurnEngine {
               await sendTelegram(
                 "🔥 Position Liquidated",
                 `Sold: $${result.filledUsd?.toFixed(2) || positionToSell.value.toFixed(2)}\n` +
-                  `P&L: ${positionToSell.pnlPct >= 0 ? '+' : ''}${positionToSell.pnlPct.toFixed(1)}%`,
+                  `P&L: ${positionToSell.pnlPct >= 0 ? "+" : ""}${positionToSell.pnlPct.toFixed(1)}%`,
               ).catch(() => {});
             }
           } else {
             // If sell failed due to balance issue, the position might already be sold
             // (API cache delay). Add to cooldown to prevent spamming the same position.
             // This also helps avoid rate limiting when there's a genuine issue.
-            if (result.reason === "INSUFFICIENT_BALANCE" || result.reason === "INSUFFICIENT_ALLOWANCE") {
-              console.log(`   ⏳ Adding to cooldown (likely already sold, waiting for API update)`);
+            if (
+              result.reason === "INSUFFICIENT_BALANCE" ||
+              result.reason === "INSUFFICIENT_ALLOWANCE"
+            ) {
+              console.log(
+                `   ⏳ Adding to cooldown (likely already sold, waiting for API update)`,
+              );
               this.recentlySoldPositions.set(positionToSell.tokenId, now);
             }
             console.log(`   ❌ Sell failed: ${result.reason}`);
           }
         } catch (err) {
-          console.warn(`   ⚠️ Sell error: ${err instanceof Error ? err.message : err}`);
+          console.warn(
+            `   ⚠️ Sell error: ${err instanceof Error ? err.message : err}`,
+          );
         }
       }
     }
@@ -4468,8 +4909,12 @@ class ChurnEngine {
       const totalValue = positions.reduce((s, p) => s + p.value, 0);
       console.log("");
       console.log(`📊 LIQUIDATION STATUS`);
-      console.log(`   Balance: $${usdcBalance.toFixed(2)} | Need: $${reserveUsd.toFixed(2)}`);
-      console.log(`   Positions remaining: ${positions.length} ($${totalValue.toFixed(2)})`);
+      console.log(
+        `   Balance: $${usdcBalance.toFixed(2)} | Need: $${reserveUsd.toFixed(2)}`,
+      );
+      console.log(
+        `   Positions remaining: ${positions.length} ($${totalValue.toFixed(2)})`,
+      );
       console.log("");
       this.lastSummaryTime = now;
     }
@@ -4477,7 +4922,7 @@ class ChurnEngine {
 
   /**
    * Single trading cycle - SIMPLE
-   * 
+   *
    * 1. Check our positions (direct API)
    * 2. Exit if needed (TP, stop loss, time stop)
    * 3. Poll whale flow for bias
@@ -4494,8 +4939,9 @@ class ChurnEngine {
     // These are independent operations - run them ALL in parallel for speed!
     // ─────────────────────────────────────────────────────────────────
     const shouldSyncPositions = this.cycleCount % 10 === 0;
-    const shouldScanMarkets = this.config.scanActiveMarkets && 
-      (now - this.lastScanTime >= this.config.scanIntervalSeconds * 1000);
+    const shouldScanMarkets =
+      this.config.scanActiveMarkets &&
+      now - this.lastScanTime >= this.config.scanIntervalSeconds * 1000;
 
     // Build parallel tasks array
     const parallelTasks: Promise<any>[] = [
@@ -4533,10 +4979,13 @@ class ChurnEngine {
     // Unpack results
     const [usdcBalance, polBalance] = results[0] as [number, number];
     const newTrades = results[1] as LeaderboardTrade[];
-    const allPositions: Position[] = shouldSyncPositions ? (results[2] as Position[] || []) : [];
-    
+    const allPositions: Position[] = shouldSyncPositions
+      ? (results[2] as Position[]) || []
+      : [];
+
     // Use dynamic reserves for effective bankroll calculation
-    const { effectiveBankroll, reserveUsd } = this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
+    const { effectiveBankroll } =
+      this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
 
     if (effectiveBankroll <= 0) {
       // No effective bankroll available this cycle; skip trading logic
@@ -4556,26 +5005,31 @@ class ChurnEngine {
       // Register any untracked positions with the position manager
       // Run registrations in parallel too
       const registrationPromises = allPositions
-        .filter(pos => this.positionManager.getPositionsByToken(pos.tokenId).length === 0)
-        .map(pos => this.positionManager.registerExternalPosition(pos).catch(() => {}));
-      
+        .filter(
+          (pos) =>
+            this.positionManager.getPositionsByToken(pos.tokenId).length === 0,
+        )
+        .map((pos) =>
+          this.positionManager.registerExternalPosition(pos).catch(() => {}),
+        );
+
       if (registrationPromises.length > 0) {
         await Promise.all(registrationPromises);
       }
     }
-    
+
     // ─────────────────────────────────────────────────────────────────
     // 3. PROCESS EXITS FOR OPEN POSITIONS
     // ─────────────────────────────────────────────────────────────────
     const openPositions = this.positionManager.getOpenPositions();
-    
+
     if (openPositions.length > 0) {
       // Get fresh prices for all positions
       const marketDataMap = await this.buildMarketData(openPositions);
-      
+
       // Process exits (TP, stop loss, hedge, time stop)
       const exitResult = await this.executionEngine.processExits(marketDataMap);
-      
+
       if (exitResult.exited.length > 0) {
         console.log(`📤 Exited ${exitResult.exited.length} position(s)`);
       }
@@ -4597,16 +5051,18 @@ class ChurnEngine {
     // ─────────────────────────────────────────────────────────────────
     const evAllowed = this.evTracker.isTradingAllowed();
     const activeBiases = this.biasAccumulator.getActiveBiases();
-    
+
     // Debug: show all active biases before filtering
     if (DEBUG && activeBiases.length > 0) {
       debug(`Active biases before cooldown filter: ${activeBiases.length}`);
       for (const bias of activeBiases.slice(0, 5)) {
         const onCooldown = this.failedEntryCooldowns.has(bias.tokenId);
-        debug(`  ${bias.tokenId.slice(0, 12)}... | dir: ${bias.direction} | $${bias.netUsd.toFixed(0)} flow | trades: ${bias.tradeCount} | cooldown: ${onCooldown}`);
+        debug(
+          `  ${bias.tokenId.slice(0, 12)}... | dir: ${bias.direction} | $${bias.netUsd.toFixed(0)} flow | trades: ${bias.tradeCount} | cooldown: ${onCooldown}`,
+        );
       }
     }
-    
+
     // Clean up expired cooldowns
     for (const [tokenId, expiry] of this.failedEntryCooldowns.entries()) {
       if (now >= expiry) {
@@ -4614,24 +5070,27 @@ class ChurnEngine {
         this.failedEntryCooldowns.delete(tokenId);
       }
     }
-    
+
     // Filter out tokens that are on cooldown (failed recently due to price/liquidity)
-    const eligibleBiases = activeBiases.filter(bias => {
+    const eligibleBiases = activeBiases.filter((bias) => {
       const cooldownExpiry = this.failedEntryCooldowns.get(bias.tokenId);
       return !cooldownExpiry || now >= cooldownExpiry;
     });
-    
+
     const skippedCount = activeBiases.length - eligibleBiases.length;
-    
+
     if (evAllowed.allowed) {
       if (eligibleBiases.length > 0) {
         // Log when we have active biases - helps diagnose trade detection
-        const cooldownMsg = skippedCount > 0 ? ` (${skippedCount} on cooldown)` : '';
-        console.log(`🐋 [Bias] ${eligibleBiases.length} eligible whale signals${cooldownMsg}`);
-        
+        const cooldownMsg =
+          skippedCount > 0 ? ` (${skippedCount} on cooldown)` : "";
+        console.log(
+          `🐋 [Bias] ${eligibleBiases.length} eligible whale signals${cooldownMsg}`,
+        );
+
         // Execute whale-signal entries in parallel to avoid missing opportunities
         // when multiple whale signals arrive simultaneously.
-        // 
+        //
         // RACE CONDITION SAFEGUARD: The position manager enforces:
         // - maxOpenPositionsTotal (12) - hard limit on concurrent positions
         // - maxDeployedFractionTotal (30%) - max exposure cap
@@ -4639,137 +5098,208 @@ class ChurnEngine {
         // These checks happen atomically in processEntry, preventing over-allocation.
         const entryPromises = eligibleBiases.slice(0, 3).map(async (bias) => {
           this.diagnostics.entryAttempts++;
-          debug(`Attempting entry for ${bias.tokenId.slice(0, 12)}... (bias: ${bias.direction}, flow: $${bias.netUsd.toFixed(0)})`);
+          debug(
+            `Attempting entry for ${bias.tokenId.slice(0, 12)}... (bias: ${bias.direction}, flow: $${bias.netUsd.toFixed(0)})`,
+          );
           try {
             this.diagnostics.marketDataFetchAttempts++;
             const marketData = await this.fetchTokenMarketData(bias.tokenId);
             if (marketData) {
               this.diagnostics.marketDataFetchSuccesses++;
-              debug(`Market data: mid=${marketData.orderbook.midPriceCents}¢, spread=${marketData.orderbook.spreadCents}¢, bid=${marketData.orderbook.bestBidCents}¢, ask=${marketData.orderbook.bestAskCents}¢`);
-              const result = await this.executionEngine.processEntry(bias.tokenId, marketData, usdcBalance);
+              debug(
+                `Market data: mid=${marketData.orderbook.midPriceCents}¢, spread=${marketData.orderbook.spreadCents}¢, bid=${marketData.orderbook.bestBidCents}¢, ask=${marketData.orderbook.bestAskCents}¢`,
+              );
+              const result = await this.executionEngine.processEntry(
+                bias.tokenId,
+                marketData,
+                usdcBalance,
+              );
               if (result.success) {
                 this.diagnostics.entrySuccesses++;
-                console.log(`✅ [Entry] SUCCESS: Copied whale trade on ${bias.tokenId.slice(0, 12)}...`);
+                console.log(
+                  `✅ [Entry] SUCCESS: Copied whale trade on ${bias.tokenId.slice(0, 12)}...`,
+                );
                 // Clear any cooldown on success
                 this.failedEntryCooldowns.delete(bias.tokenId);
               } else {
                 this.trackFailureReason(result.reason || "unknown");
-                console.log(`❌ [Entry] FAILED: ${bias.tokenId.slice(0, 12)}... - ${result.reason}`);
-                
+                console.log(
+                  `❌ [Entry] FAILED: ${bias.tokenId.slice(0, 12)}... - ${result.reason}`,
+                );
+
                 // Add to cooldown if failed due to price/liquidity issues (not bankroll)
                 // This prevents spamming the same failing token repeatedly
                 if (shouldCooldownOnFailure(result.reason)) {
-                  this.failedEntryCooldowns.set(bias.tokenId, Date.now() + this.FAILED_ENTRY_COOLDOWN_MS);
-                  console.log(`   ⏳ Token on cooldown for 60s (price/liquidity issue)`);
+                  this.failedEntryCooldowns.set(
+                    bias.tokenId,
+                    Date.now() + this.FAILED_ENTRY_COOLDOWN_MS,
+                  );
+                  console.log(
+                    `   ⏳ Token on cooldown for 60s (price/liquidity issue)`,
+                  );
                 }
               }
               // Track missed opportunities - check for actual reason strings from processEntry
-              if (!result.success && (result.reason === "NO_BANKROLL" || result.reason?.startsWith("Max deployed") || result.reason === "No effective bankroll")) {
-                this.dynamicReserveManager.recordMissedOpportunity(bias.tokenId, this.config.maxTradeUsd, "RESERVE_BLOCKED");
+              if (
+                !result.success &&
+                (result.reason === "NO_BANKROLL" ||
+                  result.reason?.startsWith("Max deployed") ||
+                  result.reason === "No effective bankroll")
+              ) {
+                this.dynamicReserveManager.recordMissedOpportunity(
+                  bias.tokenId,
+                  this.config.maxTradeUsd,
+                  "RESERVE_BLOCKED",
+                );
               }
               return result;
             } else {
-              debug(`No market data returned for ${bias.tokenId.slice(0, 12)}...`);
-              console.log(`⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}...`);
+              debug(
+                `No market data returned for ${bias.tokenId.slice(0, 12)}...`,
+              );
+              console.log(
+                `⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}...`,
+              );
               this.trackFailureReason("NO_MARKET_DATA");
             }
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
             this.trackFailureReason(`ERROR: ${errMsg}`);
-            console.warn(`⚠️ Entry failed for ${bias.tokenId.slice(0, 8)}...: ${errMsg}`);
+            console.warn(
+              `⚠️ Entry failed for ${bias.tokenId.slice(0, 8)}...: ${errMsg}`,
+            );
           }
           return null;
         });
-        
+
         await Promise.all(entryPromises);
       } else if (activeBiases.length > 0 && eligibleBiases.length === 0) {
         // All biases are on cooldown - only log occasionally
         if (this.cycleCount % 30 === 0) {
-          console.log(`⏳ [Bias] ${activeBiases.length} whale signals on cooldown (price/liquidity issues)`);
+          console.log(
+            `⏳ [Bias] ${activeBiases.length} whale signals on cooldown (price/liquidity issues)`,
+          );
         }
-      } else if (scannedOpportunities.length > 0 && this.config.scanActiveMarkets) {
+      } else if (
+        scannedOpportunities.length > 0 &&
+        this.config.scanActiveMarkets
+      ) {
         // No whale signals - scan for trades from active markets
         // Filter out tokens on cooldown
-        const eligibleScanned = scannedOpportunities.filter(tokenId => {
+        const eligibleScanned = scannedOpportunities.filter((tokenId) => {
           const cooldownExpiry = this.failedEntryCooldowns.get(tokenId);
           return !cooldownExpiry || now >= cooldownExpiry;
         });
-        
+
         // Only log occasionally to avoid spam
         if (this.cycleCount % 50 === 0 && eligibleScanned.length > 0) {
-          console.log(`🔍 No active whale signals - scanning ${eligibleScanned.length} active markets for opportunities...`);
+          console.log(
+            `🔍 No active whale signals - scanning ${eligibleScanned.length} active markets for opportunities...`,
+          );
         }
-        
-        // Try top scanned markets (limit to avoid rate limiting)
-        const scannedEntryPromises = eligibleScanned.slice(0, 2).map(async (tokenId) => {
-          this.diagnostics.entryAttempts++;
-          try {
-            // Check if we already have a position in this market
-            const existingPositions = this.positionManager.getPositionsByToken(tokenId);
-            if (existingPositions.length > 0) return null;
 
-            this.diagnostics.marketDataFetchAttempts++;
-            const marketData = await this.fetchTokenMarketData(tokenId);
-            if (marketData) {
-              this.diagnostics.marketDataFetchSuccesses++;
-              // For scanned markets, bypass bias check since these are high-volume
-              // markets selected by the scanner based on activity metrics
-              const result = await this.executionEngine.processEntry(tokenId, marketData, usdcBalance, true);
-              if (result.success) {
-                this.diagnostics.entrySuccesses++;
-                console.log(`✅ [Scanner] SUCCESS: Entered scanned market ${tokenId.slice(0, 12)}...`);
-                this.failedEntryCooldowns.delete(tokenId);
-              } else {
-                this.trackFailureReason(`SCAN: ${result.reason || "unknown"}`);
-                // Add to cooldown if failed due to price/liquidity issues
-                if (shouldCooldownOnFailure(result.reason)) {
-                  this.failedEntryCooldowns.set(tokenId, Date.now() + this.FAILED_ENTRY_COOLDOWN_MS);
+        // Try top scanned markets (limit to avoid rate limiting)
+        const scannedEntryPromises = eligibleScanned
+          .slice(0, 2)
+          .map(async (tokenId) => {
+            this.diagnostics.entryAttempts++;
+            try {
+              // Check if we already have a position in this market
+              const existingPositions =
+                this.positionManager.getPositionsByToken(tokenId);
+              if (existingPositions.length > 0) return null;
+
+              this.diagnostics.marketDataFetchAttempts++;
+              const marketData = await this.fetchTokenMarketData(tokenId);
+              if (marketData) {
+                this.diagnostics.marketDataFetchSuccesses++;
+                // For scanned markets, bypass bias check since these are high-volume
+                // markets selected by the scanner based on activity metrics
+                const result = await this.executionEngine.processEntry(
+                  tokenId,
+                  marketData,
+                  usdcBalance,
+                  true,
+                );
+                if (result.success) {
+                  this.diagnostics.entrySuccesses++;
                   console.log(
-                    `⏳ [Scanner] Token ${tokenId.slice(0, 12)}... on cooldown for ${Math.round(this.FAILED_ENTRY_COOLDOWN_MS / 1000)}s`
+                    `✅ [Scanner] SUCCESS: Entered scanned market ${tokenId.slice(0, 12)}...`,
+                  );
+                  this.failedEntryCooldowns.delete(tokenId);
+                } else {
+                  this.trackFailureReason(
+                    `SCAN: ${result.reason || "unknown"}`,
+                  );
+                  // Add to cooldown if failed due to price/liquidity issues
+                  if (shouldCooldownOnFailure(result.reason)) {
+                    this.failedEntryCooldowns.set(
+                      tokenId,
+                      Date.now() + this.FAILED_ENTRY_COOLDOWN_MS,
+                    );
+                    console.log(
+                      `⏳ [Scanner] Token ${tokenId.slice(0, 12)}... on cooldown for ${Math.round(this.FAILED_ENTRY_COOLDOWN_MS / 1000)}s`,
+                    );
+                  }
+                  // Only log scan failures periodically to avoid spam
+                  if (this.cycleCount % 20 === 0) {
+                    console.log(
+                      `❌ [Scanner] FAILED: ${tokenId.slice(0, 12)}... - ${result.reason}`,
+                    );
+                  }
+                }
+                // Track missed opportunities - check for actual reason strings from processEntry
+                if (
+                  !result.success &&
+                  (result.reason === "NO_BANKROLL" ||
+                    result.reason?.startsWith("Max deployed") ||
+                    result.reason === "No effective bankroll")
+                ) {
+                  this.dynamicReserveManager.recordMissedOpportunity(
+                    tokenId,
+                    this.config.maxTradeUsd,
+                    "RESERVE_BLOCKED",
                   );
                 }
-                // Only log scan failures periodically to avoid spam
-                if (this.cycleCount % 20 === 0) {
-                  console.log(`❌ [Scanner] FAILED: ${tokenId.slice(0, 12)}... - ${result.reason}`);
-                }
+                return result;
+              } else {
+                this.trackFailureReason("SCAN: NO_MARKET_DATA");
               }
-              // Track missed opportunities - check for actual reason strings from processEntry
-              if (!result.success && (result.reason === "NO_BANKROLL" || result.reason?.startsWith("Max deployed") || result.reason === "No effective bankroll")) {
-                this.dynamicReserveManager.recordMissedOpportunity(tokenId, this.config.maxTradeUsd, "RESERVE_BLOCKED");
+            } catch (err) {
+              const errMsg = err instanceof Error ? err.message : String(err);
+              this.trackFailureReason(`SCAN_ERROR: ${errMsg}`);
+              // Only log scan errors periodically
+              if (this.cycleCount % 50 === 0) {
+                console.warn(
+                  `⚠️ [Scanner] Error for ${tokenId.slice(0, 8)}...: ${errMsg}`,
+                );
               }
-              return result;
-            } else {
-              this.trackFailureReason("SCAN: NO_MARKET_DATA");
             }
-          } catch (err) {
-            const errMsg = err instanceof Error ? err.message : String(err);
-            this.trackFailureReason(`SCAN_ERROR: ${errMsg}`);
-            // Only log scan errors periodically
-            if (this.cycleCount % 50 === 0) {
-              console.warn(`⚠️ [Scanner] Error for ${tokenId.slice(0, 8)}...: ${errMsg}`);
-            }
-          }
-          return null;
-        });
-        
+            return null;
+          });
+
         await Promise.all(scannedEntryPromises);
       } else if (this.cycleCount % 100 === 0) {
         // No opportunities at all - keep churning message
-        console.log(`🔄 No active signals - keeping the churn going, waiting for opportunities...`);
+        console.log(
+          `🔄 No active signals - keeping the churn going, waiting for opportunities...`,
+        );
       }
     }
 
     // ─────────────────────────────────────────────────────────────────
     // 6. PERIODIC HOUSEKEEPING
     // ─────────────────────────────────────────────────────────────────
-    
+
     // Send startup diagnostic report after 60 seconds
-    if (!this.diagnostics.startupReportSent && 
-        now - this.diagnostics.startTime >= this.STARTUP_DIAGNOSTIC_DELAY_MS) {
+    if (
+      !this.diagnostics.startupReportSent &&
+      now - this.diagnostics.startTime >= this.STARTUP_DIAGNOSTIC_DELAY_MS
+    ) {
       await this.sendStartupDiagnostic(usdcBalance, effectiveBankroll);
       this.diagnostics.startupReportSent = true;
     }
-    
+
     // Auto-redeem resolved positions
     if (now - this.lastRedeemTime >= this.REDEEM_INTERVAL_MS) {
       await this.processRedemptions();
@@ -4778,7 +5308,10 @@ class ChurnEngine {
 
     // Auto-fill POL for gas
     const polCheckInterval = this.config.polReserveCheckIntervalMin * 60 * 1000;
-    if (this.config.polReserveEnabled && now - this.lastPolCheckTime >= polCheckInterval) {
+    if (
+      this.config.polReserveEnabled &&
+      now - this.lastPolCheckTime >= polCheckInterval
+    ) {
       await this.checkPolReserve(polBalance, usdcBalance);
       this.lastPolCheckTime = now;
     }
@@ -4798,11 +5331,15 @@ class ChurnEngine {
   /**
    * Log status - clean and simple
    */
-  private async logStatus(usdcBalance: number, effectiveBankroll: number, polBalance: number): Promise<void> {
+  private async logStatus(
+    usdcBalance: number,
+    effectiveBankroll: number,
+    polBalance: number,
+  ): Promise<void> {
     const metrics = this.evTracker.getMetrics();
     const managedPositions = this.positionManager.getOpenPositions();
     const trackedWallets = this.biasAccumulator.getTrackedWalletCount();
-    
+
     // Fetch actual Polymarket positions for accurate count
     let actualPositions: Position[] = [];
     try {
@@ -4810,91 +5347,133 @@ class ChurnEngine {
     } catch {
       // Continue with empty if fetch fails
     }
-    
+
     const winPct = (metrics.winRate * 100).toFixed(0);
     const evSign = metrics.evCents >= 0 ? "+" : "";
     const pnlSign = metrics.totalPnlUsd >= 0 ? "+" : "";
-    
+
     // POL status - show warning if below target
     const polTarget = this.config.polReserveTarget;
     const polWarning = polBalance < polTarget ? " ⚠️" : "";
-    
+
     // Show both managed (bot-opened) and actual (on-chain) positions
-    const positionDisplay = actualPositions.length > 0 
-      ? `${actualPositions.length} (${managedPositions.length} managed)`
-      : `${managedPositions.length}`;
-    
+    const positionDisplay =
+      actualPositions.length > 0
+        ? `${actualPositions.length} (${managedPositions.length} managed)`
+        : `${managedPositions.length}`;
+
     // Get active biases count for diagnostic
     const activeBiases = this.biasAccumulator.getActiveBiases();
-    
+
     // Get dynamic reserve state
     const reserveState = this.dynamicReserveManager.getState();
     const reservePct = (reserveState.adaptedReserveFraction * 100).toFixed(0);
-    
+
     // Get scanned markets count
-    const scannedMarkets = this.config.scanActiveMarkets ? this.marketScanner.getActiveMarketCount() : 0;
-    
+    const scannedMarkets = this.config.scanActiveMarkets
+      ? this.marketScanner.getActiveMarketCount()
+      : 0;
+
     console.log("");
     console.log(`📊 STATUS | ${new Date().toLocaleTimeString()}`);
-    console.log(`   💰 Balance: $${usdcBalance.toFixed(2)} | Bankroll: $${effectiveBankroll.toFixed(2)} | ⛽ POL: ${polBalance.toFixed(1)}${polWarning}`);
-    console.log(`   📈 Positions: ${positionDisplay} | Trades: ${metrics.totalTrades} | 🐋 Following: ${trackedWallets}`);
-    console.log(`   🎯 Win: ${winPct}% | EV: ${evSign}${metrics.evCents.toFixed(1)}¢ | P&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`);
-    
+    console.log(
+      `   💰 Balance: $${usdcBalance.toFixed(2)} | Bankroll: $${effectiveBankroll.toFixed(2)} | ⛽ POL: ${polBalance.toFixed(1)}${polWarning}`,
+    );
+    console.log(
+      `   📈 Positions: ${positionDisplay} | Trades: ${metrics.totalTrades} | 🐋 Following: ${trackedWallets}`,
+    );
+    console.log(
+      `   🎯 Win: ${winPct}% | EV: ${evSign}${metrics.evCents.toFixed(1)}¢ | P&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`,
+    );
+
     // Show whale copy mode status
     if (this.config.copyAnyWhaleBuy) {
-      console.log(`   ⚡ Mode: INSTANT COPY (copy any whale buy ≥ $${this.config.onchainMinWhaleTradeUsd})`);
+      console.log(
+        `   ⚡ Mode: INSTANT COPY (copy any whale buy ≥ $${this.config.onchainMinWhaleTradeUsd})`,
+      );
     } else {
-      console.log(`   🐢 Mode: CONFIRMED (need $${this.config.biasMinNetUsd} flow + ${this.config.biasMinTrades} trades)`);
+      console.log(
+        `   🐢 Mode: CONFIRMED (need $${this.config.biasMinNetUsd} flow + ${this.config.biasMinTrades} trades)`,
+      );
     }
-    
+
     // Show active signals and scanning status
     if (activeBiases.length > 0) {
-      console.log(`   📡 Active whale signals: ${activeBiases.length} | Live trading: ${this.config.liveTradingEnabled ? 'ON' : 'OFF (simulation)'}`);
+      console.log(
+        `   📡 Active whale signals: ${activeBiases.length} | Live trading: ${this.config.liveTradingEnabled ? "ON" : "OFF (simulation)"}`,
+      );
     } else if (scannedMarkets > 0) {
-      console.log(`   🔍 No whale signals - scanning ${scannedMarkets} active markets | Live trading: ${this.config.liveTradingEnabled ? 'ON' : 'OFF (simulation)'}`);
+      console.log(
+        `   🔍 No whale signals - scanning ${scannedMarkets} active markets | Live trading: ${this.config.liveTradingEnabled ? "ON" : "OFF (simulation)"}`,
+      );
     } else {
-      console.log(`   ⏳ Waiting for signals... | Live trading: ${this.config.liveTradingEnabled ? 'ON' : 'OFF (simulation)'}`);
+      console.log(
+        `   ⏳ Waiting for signals... | Live trading: ${this.config.liveTradingEnabled ? "ON" : "OFF (simulation)"}`,
+      );
     }
-    
+
     // Show dynamic reserves status if enabled
     if (this.config.dynamicReservesEnabled) {
-      const missedInfo = reserveState.missedCount > 0 ? ` | Missed: ${reserveState.missedCount}` : '';
-      console.log(`   🏦 Dynamic Reserve: ${reservePct}% (base: ${(reserveState.baseReserveFraction * 100).toFixed(0)}%)${missedInfo}`);
+      const missedInfo =
+        reserveState.missedCount > 0
+          ? ` | Missed: ${reserveState.missedCount}`
+          : "";
+      console.log(
+        `   🏦 Dynamic Reserve: ${reservePct}% (base: ${(reserveState.baseReserveFraction * 100).toFixed(0)}%)${missedInfo}`,
+      );
     }
-    
+
     // Show network health - CRITICAL for understanding slippage risk!
     const networkHealth = this.latencyMonitor.getNetworkHealth();
-    const networkEmoji = networkHealth.status === "healthy" ? "🟢" : networkHealth.status === "degraded" ? "🟡" : "🔴";
-    console.log(`   ${networkEmoji} Network: ${networkHealth.status.toUpperCase()} | RPC: ${networkHealth.rpcLatencyMs.toFixed(0)}ms | API: ${networkHealth.apiLatencyMs.toFixed(0)}ms | Slippage: ${networkHealth.recommendedSlippagePct.toFixed(1)}%`);
-    
+    const networkEmoji =
+      networkHealth.status === "healthy"
+        ? "🟢"
+        : networkHealth.status === "degraded"
+          ? "🟡"
+          : "🔴";
+    console.log(
+      `   ${networkEmoji} Network: ${networkHealth.status.toUpperCase()} | RPC: ${networkHealth.rpcLatencyMs.toFixed(0)}ms | API: ${networkHealth.apiLatencyMs.toFixed(0)}ms | Slippage: ${networkHealth.recommendedSlippagePct.toFixed(1)}%`,
+    );
+
     // ═══════════════════════════════════════════════════════════════════════════
     // DIAGNOSTIC: Show on-chain vs API detection stats
     // ═══════════════════════════════════════════════════════════════════════════
     if (this.onchainMonitor) {
       const onchainStats = this.onchainMonitor.getStats();
       const onchainEmoji = onchainStats.connected ? "🟢" : "🔴";
-      console.log(`   ${onchainEmoji} On-chain: ${onchainStats.connected ? 'CONNECTED' : 'DISCONNECTED'} | Events: ${onchainStats.eventsReceived} | Whales loaded: ${onchainStats.trackedWallets}`);
+      console.log(
+        `   ${onchainEmoji} On-chain: ${onchainStats.connected ? "CONNECTED" : "DISCONNECTED"} | Events: ${onchainStats.eventsReceived} | Whales loaded: ${onchainStats.trackedWallets}`,
+      );
     }
-    
+
     // Show entry pipeline diagnostics
-    const entrySuccessRate = this.diagnostics.entryAttempts > 0 
-      ? ((this.diagnostics.entrySuccesses / this.diagnostics.entryAttempts) * 100).toFixed(0)
-      : '0';
-    console.log(`   📊 Diagnostics: API trades detected: ${this.diagnostics.whaleTradesDetected} | Entry attempts: ${this.diagnostics.entryAttempts} (${entrySuccessRate}% success) | OB failures: ${this.diagnostics.orderbookFetchFailures}`);
-    
+    const entrySuccessRate =
+      this.diagnostics.entryAttempts > 0
+        ? (
+            (this.diagnostics.entrySuccesses / this.diagnostics.entryAttempts) *
+            100
+          ).toFixed(0)
+        : "0";
+    console.log(
+      `   📊 Diagnostics: API trades detected: ${this.diagnostics.whaleTradesDetected} | Entry attempts: ${this.diagnostics.entryAttempts} (${entrySuccessRate}% success) | OB failures: ${this.diagnostics.orderbookFetchFailures}`,
+    );
+
     // Warn if network is not healthy
-    if (networkHealth.warnings.length > 0 && networkHealth.status !== "healthy") {
+    if (
+      networkHealth.warnings.length > 0 &&
+      networkHealth.status !== "healthy"
+    ) {
       for (const warning of networkHealth.warnings) {
         console.log(`   ⚠️ ${warning}`);
       }
     }
     console.log("");
-    
+
     // Telegram update
     if (isTelegramEnabled() && metrics.totalTrades > 0) {
       await sendTelegram(
         "📊 Status",
-        `Balance: $${usdcBalance.toFixed(2)}\nPOL: ${polBalance.toFixed(1)}${polWarning}\nPositions: ${positionDisplay}\nFollowing: ${trackedWallets} wallets\nWin: ${winPct}%\nP&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`
+        `Balance: $${usdcBalance.toFixed(2)}\nPOL: ${polBalance.toFixed(1)}${polWarning}\nPositions: ${positionDisplay}\nFollowing: ${trackedWallets} wallets\nWin: ${winPct}%\nP&L: ${pnlSign}$${metrics.totalPnlUsd.toFixed(2)}`,
       ).catch(() => {});
     }
   }
@@ -4911,11 +5490,11 @@ class ChurnEngine {
         // Best bid = what we'd get if we sold right now
         return state.bestBidCents;
       }
-      
+
       // Fallback to direct API call (during initialization)
       const orderbook = await this.client.getOrderBook(tokenId);
       if (!orderbook?.bids?.length) return null;
-      
+
       // Best bid = what we'd get if we sold right now
       return parseFloat(orderbook.bids[0].price) * 100;
     } catch {
@@ -4926,7 +5505,9 @@ class ChurnEngine {
   /**
    * Get orderbook state for a token - via MarketDataFacade (WS preferred, REST fallback)
    */
-  private async getOrderbookState(tokenId: string): Promise<OrderbookState | null> {
+  private async getOrderbookState(
+    tokenId: string,
+  ): Promise<OrderbookState | null> {
     try {
       // Use facade if available (WS data with REST fallback)
       if (this.marketDataFacade) {
@@ -4934,18 +5515,22 @@ class ChurnEngine {
         if (!state) {
           // Log when orderbook is empty - helps diagnose issues
           if (this.cycleCount % 100 === 0) {
-            console.log(`📊 [Orderbook] Token ${tokenId.slice(0, 12)}... has no bids/asks`);
+            console.log(
+              `📊 [Orderbook] Token ${tokenId.slice(0, 12)}... has no bids/asks`,
+            );
           }
           this.diagnostics.orderbookFetchFailures++;
         }
         return state;
       }
-      
+
       // Fallback to direct API call (during initialization)
       const orderbook = await this.client.getOrderBook(tokenId);
       if (!orderbook?.bids?.length || !orderbook?.asks?.length) {
         if (this.cycleCount % 100 === 0) {
-          console.log(`📊 [Orderbook] Token ${tokenId.slice(0, 12)}... has no bids/asks`);
+          console.log(
+            `📊 [Orderbook] Token ${tokenId.slice(0, 12)}... has no bids/asks`,
+          );
         }
         this.diagnostics.orderbookFetchFailures++;
         return null;
@@ -4953,9 +5538,10 @@ class ChurnEngine {
 
       const bestBid = parseFloat(orderbook.bids[0].price);
       const bestAsk = parseFloat(orderbook.asks[0].price);
-      
+
       // Sum up depth
-      let bidDepth = 0, askDepth = 0;
+      let bidDepth = 0,
+        askDepth = 0;
       for (const level of orderbook.bids.slice(0, 5)) {
         bidDepth += parseFloat(level.size) * parseFloat(level.price);
       }
@@ -4975,7 +5561,9 @@ class ChurnEngine {
       // Log orderbook fetch errors - critical for diagnosing trade failures
       const errorMsg = err instanceof Error ? err.message : String(err);
       if (this.cycleCount % 50 === 0) {
-        console.warn(`📊 [Orderbook] Failed to fetch for ${tokenId.slice(0, 12)}...: ${errorMsg}`);
+        console.warn(
+          `📊 [Orderbook] Failed to fetch for ${tokenId.slice(0, 12)}...: ${errorMsg}`,
+        );
       }
       this.diagnostics.orderbookFetchFailures++;
       return null;
@@ -4984,23 +5572,28 @@ class ChurnEngine {
 
   /**
    * Build market data for positions - via MarketDataFacade (WS preferred, REST fallback)
-   * 
+   *
    * PROACTIVE MONITORING: Fetches BOTH the position's token AND the opposite
    * token's orderbook. This gives us real-time hedge signal data without
    * having to look it up when we need to hedge. Increases API calls proportionally
    * to positions with opposite tokens configured (typically up to 2x if all have opposites).
    */
-  private async buildMarketData(positions: any[]): Promise<Map<string, TokenMarketData>> {
+  private async buildMarketData(
+    positions: any[],
+  ): Promise<Map<string, TokenMarketData>> {
     const map = new Map<string, TokenMarketData>();
-    
+
     // Deduplicate tokens to fetch - avoid fetching same token multiple times
     // Key: tokenId, Value: { positions that need this token, isOpposite flag }
-    const tokensToFetch = new Map<string, { 
-      tokenId: string;
-      forPositions: Set<string>; // Position tokenIds that need this orderbook
-      isOpposite: boolean;
-    }>();
-    
+    const tokensToFetch = new Map<
+      string,
+      {
+        tokenId: string;
+        forPositions: Set<string>; // Position tokenIds that need this orderbook
+        isOpposite: boolean;
+      }
+    >();
+
     for (const pos of positions) {
       // Primary token - always fetch
       if (!tokensToFetch.has(pos.tokenId)) {
@@ -5011,7 +5604,7 @@ class ChurnEngine {
         });
       }
       tokensToFetch.get(pos.tokenId)!.forPositions.add(pos.tokenId);
-      
+
       // Opposite token - for hedging (deduplicated)
       if (pos.oppositeTokenId && !tokensToFetch.has(pos.oppositeTokenId)) {
         tokensToFetch.set(pos.oppositeTokenId, {
@@ -5024,7 +5617,7 @@ class ChurnEngine {
         tokensToFetch.get(pos.oppositeTokenId)!.forPositions.add(pos.tokenId);
       }
     }
-    
+
     // Subscribe to tokens via WebSocket for real-time updates
     // Also manage unsubscriptions for tokens no longer needed
     const tokenIds = Array.from(tokensToFetch.keys());
@@ -5035,19 +5628,23 @@ class ChurnEngine {
           // Get currently subscribed tokens
           const currentSubs = new Set(wsClient.getSubscriptions());
           const neededTokens = new Set(tokenIds);
-          
+
           // Subscribe to new tokens
-          const toSubscribe = tokenIds.filter(id => !currentSubs.has(id));
+          const toSubscribe = tokenIds.filter((id) => !currentSubs.has(id));
           if (toSubscribe.length > 0) {
             wsClient.subscribe(toSubscribe);
           }
-          
+
           // Unsubscribe from tokens no longer needed (cleanup old subscriptions)
-          const toUnsubscribe = Array.from(currentSubs).filter(id => !neededTokens.has(id));
+          const toUnsubscribe = Array.from(currentSubs).filter(
+            (id) => !neededTokens.has(id),
+          );
           if (toUnsubscribe.length > 0) {
             wsClient.unsubscribe(toUnsubscribe);
             if (this.cycleCount % 100 === 0 && toUnsubscribe.length > 0) {
-              console.log(`📡 [WS] Unsubscribed from ${toUnsubscribe.length} tokens no longer tracked`);
+              console.log(
+                `📡 [WS] Unsubscribed from ${toUnsubscribe.length} tokens no longer tracked`,
+              );
             }
           }
         }
@@ -5056,23 +5653,27 @@ class ChurnEngine {
         // Log at debug level since this is expected during initialization
         const msg = err instanceof Error ? err.message : String(err);
         if (this.cycleCount % 100 === 0) {
-          console.log(`📡 [WS] Subscription failed, using REST fallback: ${msg}`);
+          console.log(
+            `📡 [WS] Subscription failed, using REST fallback: ${msg}`,
+          );
         }
       }
     }
-    
+
     // Fetch all unique tokens in parallel - uses facade (WS data with REST fallback)
-    const fetchPromises = Array.from(tokensToFetch.values()).map(async (task) => {
-      const orderbook = await this.getOrderbookState(task.tokenId);
-      return { ...task, orderbook };
-    });
-    
+    const fetchPromises = Array.from(tokensToFetch.values()).map(
+      async (task) => {
+        const orderbook = await this.getOrderbookState(task.tokenId);
+        return { ...task, orderbook };
+      },
+    );
+
     const results = await Promise.all(fetchPromises);
-    
+
     // Create lookup maps for orderbooks
     const primaryOrderbooks = new Map<string, OrderbookState>();
     const oppositeOrderbooks = new Map<string, OrderbookState>();
-    
+
     for (const result of results) {
       if (result.orderbook) {
         if (result.isOpposite) {
@@ -5085,14 +5686,14 @@ class ChurnEngine {
         }
       }
     }
-    
+
     // Build market data map
     for (const pos of positions) {
       const orderbook = primaryOrderbooks.get(pos.tokenId);
       if (!orderbook) continue;
-      
+
       const activity: MarketActivity = {
-        tradesInWindow: 15,  // Assume active - can enhance later
+        tradesInWindow: 15, // Assume active - can enhance later
         bookUpdatesInWindow: 25,
         lastTradeTime: Date.now(),
         lastUpdateTime: Date.now(),
@@ -5111,10 +5712,14 @@ class ChurnEngine {
     }
 
     // Log when we have both tokens monitored
-    const withOpposite = Array.from(map.values()).filter(m => m.oppositeOrderbook).length;
+    const withOpposite = Array.from(map.values()).filter(
+      (m) => m.oppositeOrderbook,
+    ).length;
     const apiCalls = tokensToFetch.size;
     if (withOpposite > 0) {
-      console.log(`🔄 Monitoring ${map.size} positions + ${withOpposite} opposite tokens (${apiCalls} API calls)`);
+      console.log(
+        `🔄 Monitoring ${map.size} positions + ${withOpposite} opposite tokens (${apiCalls} API calls)`,
+      );
     }
 
     return map;
@@ -5140,7 +5745,9 @@ class ChurnEngine {
       return;
     }
 
-    console.log(`⛽ Gas low! POL: ${polBalance.toFixed(3)} (min: ${config.minPol})`);
+    console.log(
+      `⛽ Gas low! POL: ${polBalance.toFixed(3)} (min: ${config.minPol})`,
+    );
 
     if (!this.config.liveTradingEnabled) {
       console.log("⛽ Skipping swap (simulation mode)");
@@ -5157,7 +5764,9 @@ class ChurnEngine {
     );
 
     if (result?.success) {
-      console.log(`⛽ Refilled! Swapped $${result.usdcSwapped?.toFixed(2)} → ${result.polReceived?.toFixed(2)} POL`);
+      console.log(
+        `⛽ Refilled! Swapped $${result.usdcSwapped?.toFixed(2)} → ${result.polReceived?.toFixed(2)} POL`,
+      );
 
       if (isTelegramEnabled()) {
         await sendTelegram(
@@ -5172,7 +5781,9 @@ class ChurnEngine {
    * Fetch market data for a single token - DIRECT API CALL
    * No caching! Stale prices caused exit failures before.
    */
-  private async fetchTokenMarketData(tokenId: string): Promise<TokenMarketData | null> {
+  private async fetchTokenMarketData(
+    tokenId: string,
+  ): Promise<TokenMarketData | null> {
     const orderbook = await this.getOrderbookState(tokenId);
     if (!orderbook) return null;
 
@@ -5198,35 +5809,48 @@ class ChurnEngine {
    * Send startup diagnostic report to GitHub Issues
    * This helps debug trade detection issues by showing the first 60 seconds of operation
    */
-  private async sendStartupDiagnostic(usdcBalance: number, effectiveBankroll: number): Promise<void> {
+  private async sendStartupDiagnostic(
+    usdcBalance: number,
+    effectiveBankroll: number,
+  ): Promise<void> {
     const reporter = getGitHubReporter();
     if (!reporter.isEnabled()) {
-      console.log(`📋 [Diagnostic] GitHub reporter not enabled - skipping startup diagnostic`);
+      console.log(
+        `📋 [Diagnostic] GitHub reporter not enabled - skipping startup diagnostic`,
+      );
       return;
     }
 
     const networkHealth = this.latencyMonitor.getNetworkHealth();
     const trackedWallets = this.biasAccumulator.getTrackedWalletCount();
-    const scannedMarkets = this.config.scanActiveMarkets ? this.marketScanner.getActiveMarketCount() : 0;
+    const scannedMarkets = this.config.scanActiveMarkets
+      ? this.marketScanner.getActiveMarketCount()
+      : 0;
 
     // Determine on-chain monitor status
     let onchainStatus = "DISABLED";
     if (this.config.onchainMonitorEnabled) {
       if (this.onchainMonitor) {
         const stats = this.onchainMonitor.getStats();
-        onchainStatus = stats.connected 
-          ? `CONNECTED (${stats.eventsReceived} events)` 
+        onchainStatus = stats.connected
+          ? `CONNECTED (${stats.eventsReceived} events)`
           : "DISCONNECTED";
       } else {
         onchainStatus = "FAILED_TO_START";
       }
     }
 
-    console.log(`📋 [Diagnostic] Sending startup diagnostic to GitHub Issues...`);
-    console.log(`   Whale trades detected: ${this.diagnostics.whaleTradesDetected}`);
+    console.log(
+      `📋 [Diagnostic] Sending startup diagnostic to GitHub Issues...`,
+    );
+    console.log(
+      `   Whale trades detected: ${this.diagnostics.whaleTradesDetected}`,
+    );
     console.log(`   Entry attempts: ${this.diagnostics.entryAttempts}`);
     console.log(`   Entry successes: ${this.diagnostics.entrySuccesses}`);
-    console.log(`   Orderbook failures: ${this.diagnostics.orderbookFetchFailures}`);
+    console.log(
+      `   Orderbook failures: ${this.diagnostics.orderbookFetchFailures}`,
+    );
     console.log(`   On-chain: ${onchainStatus}`);
 
     try {
@@ -5252,7 +5876,9 @@ class ChurnEngine {
       });
       console.log(`📋 [Diagnostic] Startup diagnostic sent successfully`);
     } catch (err) {
-      console.warn(`📋 [Diagnostic] Failed to send: ${err instanceof Error ? err.message : err}`);
+      console.warn(
+        `📋 [Diagnostic] Failed to send: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 
@@ -5270,7 +5896,9 @@ class ChurnEngine {
       );
 
       if (result.redeemed > 0) {
-        console.log(`🎁 Redeemed ${result.redeemed} position(s) worth $${result.totalValue.toFixed(2)}`);
+        console.log(
+          `🎁 Redeemed ${result.redeemed} position(s) worth $${result.totalValue.toFixed(2)}`,
+        );
 
         if (isTelegramEnabled()) {
           await sendTelegram(
@@ -5301,7 +5929,9 @@ class ChurnEngine {
     }
 
     if (isTelegramEnabled()) {
-      sendTelegram("🛑 Bot Stopped", "Polymarket Bot has been stopped").catch(() => {});
+      sendTelegram("🛑 Bot Stopped", "Polymarket Bot has been stopped").catch(
+        () => {},
+      );
     }
   }
 
@@ -5347,7 +5977,7 @@ async function main(): Promise<void> {
 function isDirectlyExecuted(): boolean {
   // If we're in a test environment, don't run
   if (process.env.NODE_ENV === "test") return false;
-  
+
   // Check if process.argv[1] ends with our filename (start.js or start.ts)
   const scriptPath = process.argv[1] || "";
   return scriptPath.endsWith("start.js") || scriptPath.endsWith("start.ts");

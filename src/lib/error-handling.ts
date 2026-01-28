@@ -266,7 +266,7 @@ export function formatErrorForLog(error: unknown, maxLength = 500): string {
   } else {
     // Try to extract clean error message from CLOB response structures
     const errorObj = error as any;
-    
+
     if (errorObj?.response?.data?.error) {
       // CLOB API error response
       errorStr = String(errorObj.response.data.error);
@@ -289,7 +289,7 @@ export function formatErrorForLog(error: unknown, maxLength = 500): string {
         errorStr = redactSensitiveInString(String(error));
       }
     }
-    
+
     errorStr = redactSensitiveInString(errorStr);
   }
 

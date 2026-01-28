@@ -115,12 +115,12 @@ export interface OnChainPriceUpdate {
  */
 export interface PriceDeviance {
   tokenId: string;
-  onChainPrice: number;      // Last seen on-chain price
-  apiPrice: number;          // Current API/CLOB price
-  devianceCents: number;     // Difference in cents (onChain - api)
-  deviancePct: number;       // Percentage difference
-  timestamp: number;         // When deviance was calculated
-  opportunity: "BUY" | "SELL" | "NONE";  // Which side benefits from this deviance
+  onChainPrice: number; // Last seen on-chain price
+  apiPrice: number; // Current API/CLOB price
+  devianceCents: number; // Difference in cents (onChain - api)
+  deviancePct: number; // Percentage difference
+  timestamp: number; // When deviance was calculated
+  opportunity: "BUY" | "SELL" | "NONE"; // Which side benefits from this deviance
 }
 
 /**
@@ -138,11 +138,11 @@ export type InfuraTier = "core" | "developer" | "team" | "growth";
 
 /**
  * Infura tier limits - Reference values for documentation
- * 
+ *
  * NOTE: WebSocket event subscriptions are the primary mechanism and don't
  * consume credits per event (only per subscription). These limits are
  * documented for reference when implementing future polling fallbacks.
- * 
+ *
  * Current implementation uses WebSocket subscriptions which are very
  * credit-efficient (10 credits per subscription, events are FREE).
  */
@@ -153,7 +153,7 @@ export interface InfuraTierLimits {
 
 /**
  * Infura tier reference limits
- * 
+ *
  * WebSocket subscriptions are CHEAP (10 credits once) - events are FREE!
  * This is why we use WebSocket for monitoring instead of polling.
  */
@@ -247,17 +247,20 @@ export class OnChainMonitor {
   private running = false;
   private reconnectAttempts = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  
+
   // ═══════════════════════════════════════════════════════════════════════════
   // DIAGNOSTICS - Track event reception for debugging
   // ═══════════════════════════════════════════════════════════════════════════
   private eventCount = 0;
-  
+
   // ═══════════════════════════════════════════════════════════════════════════
   // PRICE DEVIANCE TRACKING - Track on-chain prices to compare with API
   // ═══════════════════════════════════════════════════════════════════════════
   /** Last known on-chain prices by tokenId */
-  private onChainPrices: Map<string, { price: number; timestamp: number; sizeUsd: number }> = new Map();
+  private onChainPrices: Map<
+    string,
+    { price: number; timestamp: number; sizeUsd: number }
+  > = new Map();
   /** Price staleness threshold - on-chain prices older than this are considered stale */
   private readonly PRICE_STALE_MS = 60000; // 1 minute
 
@@ -294,25 +297,27 @@ export class OnChainMonitor {
    * Get last known on-chain price for a token
    * Returns null if no price is known or price is stale
    */
-  getOnChainPrice(tokenId: string): { price: number; timestamp: number; sizeUsd: number } | null {
+  getOnChainPrice(
+    tokenId: string,
+  ): { price: number; timestamp: number; sizeUsd: number } | null {
     const data = this.onChainPrices.get(tokenId);
     if (!data) return null;
-    
+
     // Check if price is stale
     if (Date.now() - data.timestamp > this.PRICE_STALE_MS) {
       return null; // Too old to be useful
     }
-    
+
     return data;
   }
 
   /**
    * Calculate price deviance between on-chain and API prices
-   * 
+   *
    * @param tokenId - The token to check
    * @param apiPrice - Current price from Polymarket API/CLOB (0-1 scale)
    * @returns PriceDeviance object or null if no on-chain price available
-   * 
+   *
    * TRADING IMPLICATIONS:
    * - Negative deviance (on-chain < API): BUY opportunity - use on-chain price for GTC
    * - Positive deviance (on-chain > API): SELL opportunity - use on-chain price for GTC
@@ -320,19 +325,21 @@ export class OnChainMonitor {
   calculateDeviance(tokenId: string, apiPrice: number): PriceDeviance | null {
     const onChainData = this.getOnChainPrice(tokenId);
     if (!onChainData) return null;
-    
+
     const onChainPrice = onChainData.price;
     const devianceCents = (onChainPrice - apiPrice) * 100;
-    const deviancePct = apiPrice > 0 ? ((onChainPrice - apiPrice) / apiPrice) * 100 : 0;
-    
+    const deviancePct =
+      apiPrice > 0 ? ((onChainPrice - apiPrice) / apiPrice) * 100 : 0;
+
     // Determine opportunity direction
     // If on-chain is lower, it's a buy opportunity (buy at lower on-chain price)
     // If on-chain is higher, it's a sell opportunity (sell at higher on-chain price)
     let opportunity: "BUY" | "SELL" | "NONE" = "NONE";
-    if (Math.abs(devianceCents) >= 0.5) { // At least 0.5¢ deviance to matter
+    if (Math.abs(devianceCents) >= 0.5) {
+      // At least 0.5¢ deviance to matter
       opportunity = devianceCents < 0 ? "BUY" : "SELL";
     }
-    
+
     return {
       tokenId,
       onChainPrice,
@@ -350,32 +357,36 @@ export class OnChainMonitor {
    */
   getAllDeviances(apiPrices: Map<string, number>): PriceDeviance[] {
     const deviances: PriceDeviance[] = [];
-    
+
     for (const [tokenId, apiPrice] of apiPrices) {
       const deviance = this.calculateDeviance(tokenId, apiPrice);
       if (deviance) {
         deviances.push(deviance);
       }
     }
-    
+
     return deviances;
   }
 
   /**
    * Get recommended GTC price based on deviance
    * Returns the better of on-chain or API price for the given side
-   * 
-   * @param tokenId - Token to get price for  
+   *
+   * @param tokenId - Token to get price for
    * @param apiPrice - Current API price
    * @param side - "BUY" or "SELL"
    * @returns Recommended price for GTC order (takes the favorable price)
    */
-  getRecommendedGtcPrice(tokenId: string, apiPrice: number, side: "BUY" | "SELL"): number {
+  getRecommendedGtcPrice(
+    tokenId: string,
+    apiPrice: number,
+    side: "BUY" | "SELL",
+  ): number {
     const onChainData = this.getOnChainPrice(tokenId);
     if (!onChainData) return apiPrice; // No on-chain data, use API price
-    
+
     const onChainPrice = onChainData.price;
-    
+
     if (side === "BUY") {
       // For buys, we want the LOWER price (pay less)
       return Math.min(onChainPrice, apiPrice);
@@ -418,7 +429,9 @@ export class OnChainMonitor {
     }
 
     if (!this.config.wsRpcUrl) {
-      console.log("📡 On-chain monitoring: No WebSocket URL configured, skipping");
+      console.log(
+        "📡 On-chain monitoring: No WebSocket URL configured, skipping",
+      );
       return false;
     }
 
@@ -431,10 +444,14 @@ export class OnChainMonitor {
       await this.connect();
       this.running = true;
       const tierLimits = INFURA_TIER_LIMITS[this.config.infuraTier];
-      console.log(`📡 On-chain monitoring started (Infura tier: ${this.config.infuraTier}, ${tierLimits.creditsPerSecond} credits/sec)`);
+      console.log(
+        `📡 On-chain monitoring started (Infura tier: ${this.config.infuraTier}, ${tierLimits.creditsPerSecond} credits/sec)`,
+      );
       return true;
     } catch (err) {
-      console.error(`📡 On-chain monitoring failed to start: ${err instanceof Error ? err.message : err}`);
+      console.error(
+        `📡 On-chain monitoring failed to start: ${err instanceof Error ? err.message : err}`,
+      );
       return false;
     }
   }
@@ -506,7 +523,9 @@ export class OnChainMonitor {
       throw new Error("WebSocket RPC URL not configured");
     }
 
-    console.log(`📡 [WS] Connecting to WebSocket: ${wsUrl.replace(/\/[a-f0-9]{32}/i, '/[API_KEY]')}`);
+    console.log(
+      `📡 [WS] Connecting to WebSocket: ${wsUrl.replace(/\/[a-f0-9]{32}/i, "/[API_KEY]")}`,
+    );
 
     // Create WebSocket provider
     this.wsProvider = new ethers.WebSocketProvider(wsUrl);
@@ -532,23 +551,34 @@ export class OnChainMonitor {
     this.exchangeContract = new ethers.Contract(
       POLYGON.CTF_EXCHANGE,
       CTF_EXCHANGE_ABI,
-      this.wsProvider
+      this.wsProvider,
     );
     this.exchangeContract.on("OrderFilled", this.handleOrderFilled.bind(this));
-    console.log(`📡 [WS] Subscribed to OrderFilled on CTF Exchange at ${POLYGON.CTF_EXCHANGE}`);
+    console.log(
+      `📡 [WS] Subscribed to OrderFilled on CTF Exchange at ${POLYGON.CTF_EXCHANGE}`,
+    );
 
     // Also subscribe to NEG_RISK_CTF_EXCHANGE for negative risk markets
     this.negRiskExchangeContract = new ethers.Contract(
       POLYGON.NEG_RISK_CTF_EXCHANGE,
       CTF_EXCHANGE_ABI,
-      this.wsProvider
+      this.wsProvider,
     );
-    this.negRiskExchangeContract.on("OrderFilled", this.handleOrderFilled.bind(this));
-    console.log(`📡 [WS] Subscribed to OrderFilled on NEG_RISK Exchange at ${POLYGON.NEG_RISK_CTF_EXCHANGE}`);
-    
+    this.negRiskExchangeContract.on(
+      "OrderFilled",
+      this.handleOrderFilled.bind(this),
+    );
+    console.log(
+      `📡 [WS] Subscribed to OrderFilled on NEG_RISK Exchange at ${POLYGON.NEG_RISK_CTF_EXCHANGE}`,
+    );
+
     // Log whale tracking status
-    console.log(`📡 [WS] Tracking ${this.config.whaleWallets.size} whale wallets | Min trade: $${this.config.minWhaleTradeUsd}`);
-    console.log(`📡 [WS] ⚡ On-chain monitoring ACTIVE - will log first 5 events then every 100th`);
+    console.log(
+      `📡 [WS] Tracking ${this.config.whaleWallets.size} whale wallets | Min trade: $${this.config.minWhaleTradeUsd}`,
+    );
+    console.log(
+      `📡 [WS] ⚡ On-chain monitoring ACTIVE - will log first 5 events then every 100th`,
+    );
 
     // ═══════════════════════════════════════════════════════════════════════
     // SUBSCRIBE TO CTF TOKEN - Our position monitoring (if wallet configured)
@@ -558,7 +588,7 @@ export class OnChainMonitor {
       this.ctfContract = new ethers.Contract(
         POLYGON.CTF_ADDRESS,
         CTF_TOKEN_ABI,
-        this.wsProvider
+        this.wsProvider,
       );
 
       const wallet = this.config.ourWallet;
@@ -569,7 +599,7 @@ export class OnChainMonitor {
         this.ctfContract.filters.TransferSingle(null, null, wallet);
       this.ctfContract.on(
         transferSingleIncomingFilter,
-        this.handleTransferSingle.bind(this)
+        this.handleTransferSingle.bind(this),
       );
 
       // Outgoing transfers: from == wallet
@@ -577,7 +607,7 @@ export class OnChainMonitor {
         this.ctfContract.filters.TransferSingle(null, wallet, null);
       this.ctfContract.on(
         transferSingleOutgoingFilter,
-        this.handleTransferSingle.bind(this)
+        this.handleTransferSingle.bind(this),
       );
 
       // Subscribe to TransferBatch events involving our wallet
@@ -586,7 +616,7 @@ export class OnChainMonitor {
         this.ctfContract.filters.TransferBatch(null, null, wallet);
       this.ctfContract.on(
         transferBatchIncomingFilter,
-        this.handleTransferBatch.bind(this)
+        this.handleTransferBatch.bind(this),
       );
 
       // Outgoing transfers: from == wallet
@@ -594,17 +624,21 @@ export class OnChainMonitor {
         this.ctfContract.filters.TransferBatch(null, wallet, null);
       this.ctfContract.on(
         transferBatchOutgoingFilter,
-        this.handleTransferBatch.bind(this)
+        this.handleTransferBatch.bind(this),
       );
 
-      console.log(`📡 Position monitoring enabled for ${this.config.ourWallet.slice(0, 8)}...`);
+      console.log(
+        `📡 Position monitoring enabled for ${this.config.ourWallet.slice(0, 8)}...`,
+      );
     }
 
     // Reset reconnect attempts on successful connection
     this.reconnectAttempts = 0;
 
     console.log(`📡 Connected to CTF Exchange at ${POLYGON.CTF_EXCHANGE}`);
-    console.log(`📡 Connected to NEG_RISK Exchange at ${POLYGON.NEG_RISK_CTF_EXCHANGE}`);
+    console.log(
+      `📡 Connected to NEG_RISK Exchange at ${POLYGON.NEG_RISK_CTF_EXCHANGE}`,
+    );
   }
 
   private cleanup(): void {
@@ -638,16 +672,21 @@ export class OnChainMonitor {
     if (this.reconnectTimer) return;
 
     if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
-      console.error(`📡 Max reconnect attempts (${this.config.maxReconnectAttempts}) reached, giving up`);
+      console.error(
+        `📡 Max reconnect attempts (${this.config.maxReconnectAttempts}) reached, giving up`,
+      );
       this.cleanup(); // Ensure timer is cleared
       this.running = false;
       return;
     }
 
     this.reconnectAttempts++;
-    const delay = this.config.reconnectDelayMs * Math.pow(2, this.reconnectAttempts - 1); // Exponential backoff
+    const delay =
+      this.config.reconnectDelayMs * Math.pow(2, this.reconnectAttempts - 1); // Exponential backoff
 
-    console.log(`📡 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts})`);
+    console.log(
+      `📡 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.config.maxReconnectAttempts})`,
+    );
 
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
@@ -655,7 +694,9 @@ export class OnChainMonitor {
         await this.connect();
         console.log("📡 Reconnected successfully");
       } catch (err) {
-        console.error(`📡 Reconnect failed: ${err instanceof Error ? err.message : err}`);
+        console.error(
+          `📡 Reconnect failed: ${err instanceof Error ? err.message : err}`,
+        );
         this.scheduleReconnect();
       }
     }, delay);
@@ -670,14 +711,16 @@ export class OnChainMonitor {
     makerAmountFilled: bigint,
     takerAmountFilled: bigint,
     fee: bigint,
-    event: ethers.EventLog
+    event: ethers.EventLog,
   ): Promise<void> {
     // ═══════════════════════════════════════════════════════════════════════════
     // DIAGNOSTIC: Count ALL events received to verify WebSocket is working
     // ═══════════════════════════════════════════════════════════════════════════
     this.eventCount++;
     if (this.eventCount <= 5 || this.eventCount % 100 === 0) {
-      console.log(`📡 [EVENT #${this.eventCount}] OrderFilled received | Block: ${event.blockNumber} | TxHash: ${event.transactionHash.slice(0, 16)}...`);
+      console.log(
+        `📡 [EVENT #${this.eventCount}] OrderFilled received | Block: ${event.blockNumber} | TxHash: ${event.transactionHash.slice(0, 16)}...`,
+      );
     }
 
     try {
@@ -712,9 +755,8 @@ export class OnChainMonitor {
       const outcomeAmount = isOutcomeTokenMakerSide
         ? makerAmountFilled
         : takerAmountFilled;
-      const price = outcomeAmount > 0n
-        ? Number(usdAmount) / Number(outcomeAmount)
-        : 0;
+      const price =
+        outcomeAmount > 0n ? Number(usdAmount) / Number(outcomeAmount) : 0;
 
       const timestamp = Date.now();
 
@@ -723,7 +765,8 @@ export class OnChainMonitor {
       // This is the SOURCE OF TRUTH - what actually traded on-chain
       // Use this to scope GTC orders ahead of the market!
       // ═══════════════════════════════════════════════════════════════════════
-      if (price > 0 && sizeUsd >= 10) { // Only track meaningful trades ($10+)
+      if (price > 0 && sizeUsd >= 10) {
+        // Only track meaningful trades ($10+)
         this.onChainPrices.set(tokenId, {
           price,
           timestamp,
@@ -741,15 +784,17 @@ export class OnChainMonitor {
       // DEBUG: Log all trades $50+ to help diagnose if whale detection is working
       // This helps identify if whales ARE trading but being filtered
       if (sizeUsd >= 50) {
-        const whaleStatus = isMakerWhale || isTakerWhale 
-          ? `🐋 WHALE (${isMakerWhale ? 'maker' : 'taker'})` 
-          : `👤 non-whale`;
-        const thresholdStatus = sizeUsd >= this.config.minWhaleTradeUsd 
-          ? '✓ meets threshold' 
-          : `✗ below $${this.config.minWhaleTradeUsd}`;
+        const whaleStatus =
+          isMakerWhale || isTakerWhale
+            ? `🐋 WHALE (${isMakerWhale ? "maker" : "taker"})`
+            : `👤 non-whale`;
+        const thresholdStatus =
+          sizeUsd >= this.config.minWhaleTradeUsd
+            ? "✓ meets threshold"
+            : `✗ below $${this.config.minWhaleTradeUsd}`;
         console.log(
           `📡 Trade $${sizeUsd.toFixed(0)} | ${whaleStatus} | ${thresholdStatus} | ` +
-          `maker:${makerLower.slice(0, 8)}... taker:${takerLower.slice(0, 8)}...`
+            `maker:${makerLower.slice(0, 8)}... taker:${takerLower.slice(0, 8)}...`,
         );
       }
 
@@ -793,8 +838,8 @@ export class OnChainMonitor {
 
       console.log(
         `📡 Whale ${side} | ${whaleWallet.slice(0, 8)}... | ` +
-        `$${sizeUsd.toFixed(0)} @ ${(price * 100).toFixed(1)}¢ | ` +
-        `token:${tokenId.slice(0, 8)}...`
+          `$${sizeUsd.toFixed(0)} @ ${(price * 100).toFixed(1)}¢ | ` +
+          `token:${tokenId.slice(0, 8)}...`,
       );
 
       // Fire callbacks - these are NON-BLOCKING
@@ -802,11 +847,15 @@ export class OnChainMonitor {
         try {
           callback(tradeEvent);
         } catch (err) {
-          console.error(`📡 Callback error: ${err instanceof Error ? err.message : err}`);
+          console.error(
+            `📡 Callback error: ${err instanceof Error ? err.message : err}`,
+          );
         }
       }
     } catch (err) {
-      console.error(`📡 Error processing OrderFilled: ${err instanceof Error ? err.message : err}`);
+      console.error(
+        `📡 Error processing OrderFilled: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 
@@ -820,7 +869,7 @@ export class OnChainMonitor {
     to: string,
     id: bigint,
     value: bigint,
-    event: ethers.EventLog
+    event: ethers.EventLog,
   ): Promise<void> {
     await this.processPositionTransfer(from, to, id, value, event);
   }
@@ -835,13 +884,13 @@ export class OnChainMonitor {
     to: string,
     ids: bigint[],
     values: bigint[],
-    event: ethers.EventLog
+    event: ethers.EventLog,
   ): Promise<void> {
     // Process each transfer in the batch in parallel
     await Promise.all(
-      ids.map((id, index) => 
-        this.processPositionTransfer(from, to, id, values[index], event)
-      )
+      ids.map((id, index) =>
+        this.processPositionTransfer(from, to, id, values[index], event),
+      ),
     );
   }
 
@@ -853,7 +902,7 @@ export class OnChainMonitor {
     to: string,
     tokenId: bigint,
     amount: bigint,
-    event: ethers.EventLog
+    event: ethers.EventLog,
   ): Promise<void> {
     // Note: With filtered subscriptions, we only receive events for our wallet
     // The filter ensures from==wallet OR to==wallet, so no additional check needed
@@ -888,7 +937,7 @@ export class OnChainMonitor {
       const direction = isIncoming ? "RECEIVED" : "SENT";
       console.log(
         `📡 Position ${direction} | ${positionChange.amountFormatted.toFixed(2)} tokens | ` +
-        `token:${tokenId.toString().slice(0, 8)}... | block:${event.blockNumber}`
+          `token:${tokenId.toString().slice(0, 8)}... | block:${event.blockNumber}`,
       );
 
       // Fire callbacks - NON-BLOCKING
@@ -896,11 +945,15 @@ export class OnChainMonitor {
         try {
           callback(positionChange);
         } catch (err) {
-          console.error(`📡 Position callback error: ${err instanceof Error ? err.message : err}`);
+          console.error(
+            `📡 Position callback error: ${err instanceof Error ? err.message : err}`,
+          );
         }
       }
     } catch (err) {
-      console.error(`📡 Error processing position transfer: ${err instanceof Error ? err.message : err}`);
+      console.error(
+        `📡 Error processing position transfer: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 }
@@ -947,7 +1000,7 @@ export function parseInfuraTier(tierStr?: string): InfuraTier {
 
 /**
  * Create default on-chain monitor config from environment
- * 
+ *
  * @param httpRpcUrl - HTTP RPC URL (will auto-convert to WebSocket for Infura)
  * @param whaleWallets - Set of whale wallet addresses to track
  * @param ourWallet - Our wallet address to monitor position changes (optional)
@@ -957,7 +1010,7 @@ export function createOnChainMonitorConfig(
   httpRpcUrl: string,
   whaleWallets: Set<string> = new Set(),
   ourWallet?: string,
-  options: Partial<OnChainMonitorConfig> = {}
+  options: Partial<OnChainMonitorConfig> = {},
 ): OnChainMonitorConfig {
   const wsRpcUrl = process.env.WS_RPC_URL || httpToWsUrl(httpRpcUrl);
   const enabled = process.env.ONCHAIN_MONITOR_ENABLED !== "false" && !!wsRpcUrl;
@@ -970,10 +1023,15 @@ export function createOnChainMonitorConfig(
     ourWallet: ourWallet?.toLowerCase(),
     watchedTokens: new Set(), // Start empty, tokens added when positions opened
     // Support both WHALE_TRADE_USD (simpler) and ONCHAIN_MIN_WHALE_TRADE_USD (legacy)
-    minWhaleTradeUsd: Number(process.env.WHALE_TRADE_USD ?? process.env.ONCHAIN_MIN_WHALE_TRADE_USD ?? 500),
+    minWhaleTradeUsd: Number(
+      process.env.WHALE_TRADE_USD ??
+        process.env.ONCHAIN_MIN_WHALE_TRADE_USD ??
+        500,
+    ),
     enabled,
     reconnectDelayMs: Number(process.env.ONCHAIN_RECONNECT_DELAY_MS) || 1000,
-    maxReconnectAttempts: Number(process.env.ONCHAIN_MAX_RECONNECT_ATTEMPTS) || 10,
+    maxReconnectAttempts:
+      Number(process.env.ONCHAIN_MAX_RECONNECT_ATTEMPTS) || 10,
     infuraTier,
     ...options,
   };
