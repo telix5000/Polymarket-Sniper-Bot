@@ -41,6 +41,12 @@ export type DiagReason =
   | "orderbook_unavailable"
   | "insufficient_liquidity"
   | "price_out_of_range"
+  | "spread_too_wide"
+  | "invalid_orderbook"
+  // Price formation
+  | "price_clamped"
+  | "price_too_high"
+  | "price_too_low"
   // Trading limits
   | "cooldown_active"
   | "risk_limits_blocked"
@@ -48,12 +54,26 @@ export type DiagReason =
   | "no_wallet_credentials"
   | "ws_disconnected"
   | "api_error"
+  | "cloudflare_blocked"
+  | "network_error"
+  | "timeout"
+  | "auth_failed"
+  | "rate_limited"
+  // Balance/allowance
+  | "insufficient_balance"
+  | "insufficient_allowance"
   // Sell-specific
   | "no_position_to_sell"
   | "sell_skipped_no_buy"
   // Timeouts
   | "timeout_waiting_for_whale"
   | "order_timeout"
+  // VPN routing
+  | "vpn_write_not_routed"
+  // Hedge-specific
+  | "hedge_not_triggered"
+  | "hedge_order_rejected"
+  | "hard_stop_triggered"
   // Other
   | "unknown_error";
 

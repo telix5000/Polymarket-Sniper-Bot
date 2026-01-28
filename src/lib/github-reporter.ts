@@ -172,11 +172,79 @@ export class GitHubReporter {
       console.log(`📋 Reported to GitHub: ${report.title}`);
       return true;
     } catch (err) {
-      console.error(
-        `📋 Failed to report to GitHub: ${err instanceof Error ? err.message : err}`,
-      );
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isPermissionError =
+        errMsg.includes("403") ||
+        errMsg.includes("permission") ||
+        errMsg.includes("Forbidden") ||
+        errMsg.includes("Resource not accessible");
+
+      if (isPermissionError) {
+        console.warn(
+          `📋 [GitHub] Issue creation failed: INSUFFICIENT_GITHUB_PERMISSIONS. ` +
+            `Token may lack 'issues:write' scope or this is a fork PR context.`,
+        );
+        // Fall back to step summary if available
+        this.writeToStepSummary(report);
+      } else {
+        console.error(`📋 Failed to report to GitHub: ${errMsg}`);
+      }
       return false;
     }
+  }
+
+  /**
+   * Write report to GitHub Actions Step Summary as fallback.
+   * This always works in Actions context without special permissions.
+   */
+  private writeToStepSummary(report: ErrorReport): void {
+    const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+    if (!summaryPath) {
+      console.log(
+        "📋 [GitHub] GITHUB_STEP_SUMMARY not available - skipping step summary",
+      );
+      return;
+    }
+
+    try {
+      const fs = require("fs");
+      const summaryContent = this.formatStepSummary(report);
+      fs.appendFileSync(summaryPath, summaryContent + "\n\n");
+      console.log(`📋 [GitHub] Wrote report to step summary`);
+    } catch (err) {
+      console.warn(
+        `📋 [GitHub] Failed to write step summary: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  /**
+   * Format a report for GitHub Actions Step Summary (Markdown format)
+   */
+  private formatStepSummary(report: ErrorReport): string {
+    const timestamp = new Date(report.timestamp).toISOString();
+    const contextStr = report.context
+      ? Object.entries(report.context)
+          .map(([k, v]) => `| ${k} | ${this.sanitize(String(v))} |`)
+          .join("\n")
+      : "| N/A | N/A |";
+
+    return `## ${SEVERITY_LABELS[report.severity]} ${this.sanitize(report.title)}
+
+**Timestamp**: ${timestamp}
+
+### Message
+\`\`\`
+${this.sanitize(report.message)}
+\`\`\`
+
+### Context
+| Key | Value |
+|-----|-------|
+${contextStr}
+
+---
+`;
   }
 
   /**
@@ -506,5 +574,115 @@ export function reportError(
       .catch(() => {
         // Silently ignore reporting failures
       });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DIAGNOSTIC TRACE FILE
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Path for diagnostic trace JSONL file (relative to workspace)
+ */
+const DIAG_TRACE_FILENAME = "diag-trace.jsonl";
+
+/**
+ * Write a diagnostic event to the JSONL trace file.
+ * This file can be uploaded as a GitHub Actions artifact.
+ *
+ * @param event - Any JSON-serializable event object
+ * @param outputDir - Optional output directory (default: current working directory)
+ */
+export function writeDiagTraceEvent(
+  event: Record<string, unknown>,
+  outputDir?: string,
+): void {
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    const dir = outputDir ?? process.cwd();
+    const filePath = path.join(dir, DIAG_TRACE_FILENAME);
+
+    const line = JSON.stringify({
+      ...event,
+      _timestamp: new Date().toISOString(),
+    });
+
+    fs.appendFileSync(filePath, line + "\n");
+  } catch (err) {
+    // Silently ignore write failures
+    console.warn(
+      `Failed to write diag trace: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+}
+
+/**
+ * Get the path to the diagnostic trace file
+ */
+export function getDiagTracePath(outputDir?: string): string {
+  const path = require("path");
+  const dir = outputDir ?? process.cwd();
+  return path.join(dir, DIAG_TRACE_FILENAME);
+}
+
+/**
+ * Write a complete diagnostic workflow result to the trace file.
+ *
+ * @param result - Diagnostic workflow result
+ * @param outputDir - Optional output directory
+ */
+export function writeDiagWorkflowTrace(
+  result: {
+    traceId: string;
+    startTime: Date;
+    endTime: Date;
+    steps: Array<{
+      step: string;
+      result: string;
+      reason?: string;
+      marketId?: string;
+      tokenId?: string;
+      traceEvents?: Array<Record<string, unknown>>;
+    }>;
+    exitCode: number;
+  },
+  outputDir?: string,
+): void {
+  // Write summary event
+  writeDiagTraceEvent(
+    {
+      event: "DIAG_WORKFLOW_COMPLETE",
+      traceId: result.traceId,
+      startTime: result.startTime.toISOString(),
+      endTime: result.endTime.toISOString(),
+      durationMs: result.endTime.getTime() - result.startTime.getTime(),
+      exitCode: result.exitCode,
+      stepSummary: result.steps.map((s) => `${s.step}:${s.result}`).join(", "),
+    },
+    outputDir,
+  );
+
+  // Write individual step events
+  for (const step of result.steps) {
+    writeDiagTraceEvent(
+      {
+        event: "DIAG_STEP_RESULT",
+        traceId: result.traceId,
+        step: step.step,
+        result: step.result,
+        reason: step.reason,
+        marketId: step.marketId,
+        tokenId: step.tokenId,
+      },
+      outputDir,
+    );
+
+    // Write individual trace events if available
+    if (step.traceEvents) {
+      for (const traceEvent of step.traceEvents) {
+        writeDiagTraceEvent(traceEvent, outputDir);
+      }
+    }
   }
 }

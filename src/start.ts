@@ -7232,17 +7232,55 @@ async function main(): Promise<void> {
         `\n🔬 Diagnostic workflow completed. Exit code: ${result.exitCode}`,
       );
 
-      // In GitHub Actions, exit immediately so CI remains one-shot
-      if (isGitHubActions()) {
-        console.log(
-          "\n🏁 GitHub Actions detected - exiting after diagnostic workflow.",
-        );
+      // Write diagnostic trace to JSONL file for artifact upload
+      const { writeDiagWorkflowTrace, getDiagTracePath } = await import(
+        "./lib/github-reporter"
+      );
+      writeDiagWorkflowTrace({
+        traceId: result.traceId,
+        startTime: result.startTime,
+        endTime: result.endTime,
+        steps: result.steps.map((s) => ({
+          step: s.step,
+          result: s.result,
+          reason: s.reason,
+          marketId: s.marketId,
+          tokenId: s.tokenId,
+          traceEvents: s.traceEvents as unknown as Array<Record<string, unknown>>,
+        })),
+        exitCode: result.exitCode,
+      });
+      console.log(`📋 Diagnostic trace written to: ${getDiagTracePath()}`);
+
+      // Determine exit behavior:
+      // - DIAG_EXIT=1: Exit immediately (for testing or when restart is acceptable)
+      // - GitHub Actions: Exit immediately (CI should be one-shot)
+      // - Default: Hold mode (keeps container running to prevent restart loops)
+      const diagExitEnabled =
+        process.env.DIAG_EXIT === "1" || process.env.DIAG_EXIT === "true";
+      const holdSeconds = parseInt(process.env.DIAG_HOLD_SECONDS ?? "0", 10);
+
+      if (isGitHubActions() || diagExitEnabled) {
+        const reason = isGitHubActions() ? "GitHub Actions detected" : "DIAG_EXIT=1";
+        console.log(`\n🏁 ${reason} - exiting after diagnostic workflow.`);
         process.exit(diagExitCode);
       }
 
-      // Instead of exiting (which causes container restarts), enter idle state
-      // This keeps the container running without restarting (non-CI / container use)
-      console.log("\n💤 Entering idle state (container will not restart)...");
+      // Hold mode: Keep the container running to prevent restart loops
+      // This is the default behavior for non-CI environments
+      if (holdSeconds > 0) {
+        console.log(
+          `\n💤 Holding for ${holdSeconds} seconds (DIAG_HOLD_SECONDS)...`,
+        );
+        console.log("   Press Ctrl+C to stop earlier.");
+        await new Promise((resolve) => setTimeout(resolve, holdSeconds * 1000));
+        console.log("🏁 Hold period complete, exiting.");
+        process.exit(diagExitCode);
+      }
+
+      // Default: Enter idle state indefinitely (safest for containers)
+      console.log("\n💤 DIAG complete, holding indefinitely (container will not restart)...");
+      console.log("   Set DIAG_EXIT=1 to exit, or DIAG_HOLD_SECONDS=N to hold for N seconds.");
       console.log("   Press Ctrl+C to stop the container manually.");
 
       // Keep the process alive indefinitely without a constant-condition loop.
