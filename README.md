@@ -1,6 +1,6 @@
 # Polymarket Bot
 
-A trading bot for Polymarket prediction markets with real-time terminal dashboard.
+A trading bot for Polymarket prediction markets with real-time web dashboard.
 
 ## Quick Start
 
@@ -15,13 +15,14 @@ cp .env.example .env
 # 3. Run
 npm start
 
-# 4. (Optional) Run with live dashboard
-DASHBOARD_ENABLED=true npm start
+# 4. (Optional) Run with web dashboard on port 3000
+DASHBOARD_PORT=3000 npm start
+# Then open http://localhost:3000 in your browser
 ```
 
-## Live Dashboard
+## Web Dashboard
 
-The bot includes a Glances-style live terminal dashboard that shows real-time updates:
+The bot includes a Glances-style web dashboard accessible via port. It shows real-time updates:
 
 - **Wallet & Metrics**: USDC balance, POL, effective bankroll, reserve
 - **Trading Stats**: Total trades, win rate, P&L, EV
@@ -29,20 +30,29 @@ The bot includes a Glances-style live terminal dashboard that shows real-time up
 - **Whale Activity**: Live feed of whale trades being copied
 - **System Status**: API latency, WebSocket connection status
 
-Enable with `DASHBOARD_ENABLED=true`. Press `q` or `Ctrl+C` to exit.
+Enable by setting `DASHBOARD_PORT=3000` (or any port). Access at `http://localhost:3000`.
+
+### API Endpoints
+
+The dashboard also exposes JSON APIs:
+- `/api/data` - Full dashboard data
+- `/api/metrics` - Bot metrics only
+- `/api/positions` - Current positions
+- `/api/trades` - Recent trades
+- `/api/whales` - Whale activity
 
 ### Docker with Dashboard
 
 ```bash
-# Interactive mode required for dashboard
-docker run -it --rm \
+# Expose port 3000 for dashboard access
+docker run -p 3000:3000 \
   -e PRIVATE_KEY=your_key \
   -e RPC_URL=your_rpc \
-  -e DASHBOARD_ENABLED=true \
+  -e DASHBOARD_PORT=3000 \
   polymarket-bot
 
-# Or with docker-compose
-docker-compose run --rm polymarket-bot
+# Or with docker-compose (port auto-exposed in docker-compose.yml)
+DASHBOARD_PORT=3000 docker-compose up
 ```
 
 ## Configuration
@@ -53,7 +63,7 @@ docker-compose run --rm polymarket-bot
 | `RPC_URL` | No | Polygon RPC endpoint (default: `https://polygon-rpc.com`). Infura recommended: `https://polygon-mainnet.infura.io/v3/YOUR_API_KEY` |
 | `MAX_TRADE_USD` | No | Bet size in USD (default: `25`) |
 | `LIVE_TRADING` | No | Set to `I_UNDERSTAND_THE_RISKS` to enable real trades (default: simulation) |
-| `DASHBOARD_ENABLED` | No | Set to `true` to enable live terminal dashboard |
+| `DASHBOARD_PORT` | No | Port for web dashboard (e.g., `3000`). Dashboard starts when this is set. |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram bot token for notifications |
 | `TELEGRAM_CHAT_ID` | No | Telegram chat ID for notifications |
 
