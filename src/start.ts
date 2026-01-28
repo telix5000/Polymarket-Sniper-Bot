@@ -1118,8 +1118,23 @@ class BiasAccumulator {
 
     for (const tokenId of this.trades.keys()) {
       const bias = this.getBias(tokenId);
-      if (bias.direction !== "NONE") {
-        biases.push(bias);
+      
+      // COPY_ANY_WHALE_BUY mode: return ANY token with at least 1 whale buy
+      // This is the key fix - we don't need 3 trades or $300 flow to copy
+      if (this.config.copyAnyWhaleBuy) {
+        // Return as LONG if we have at least 1 trade (all trades are BUYs)
+        if (bias.tradeCount >= 1 && !bias.isStale) {
+          // Override direction to LONG since we're in copy-any-buy mode
+          biases.push({
+            ...bias,
+            direction: "LONG",
+          });
+        }
+      } else {
+        // Conservative mode: require full bias confirmation
+        if (bias.direction !== "NONE") {
+          biases.push(bias);
+        }
       }
     }
 
@@ -1135,8 +1150,12 @@ class BiasAccumulator {
     if (this.config.copyAnyWhaleBuy) {
       const bias = this.getBias(tokenId);
       // Allow if we've seen at least 1 trade (which must be a BUY since we only track buys)
-      if (bias.tradeCount >= 1) {
+      // Also check staleness for consistency with getActiveBiases()
+      if (bias.tradeCount >= 1 && !bias.isStale) {
         return { allowed: true };
+      }
+      if (bias.isStale) {
+        return { allowed: false, reason: "BIAS_STALE" };
       }
       return { allowed: false, reason: "NO_WHALE_BUY_SEEN" };
     }
@@ -2199,9 +2218,24 @@ class DecisionEngine {
     checks.liquidity = liquidityCheck;
 
     // 3) Check price deviation from reference
+    // NOTE: For NEW entries, referencePriceCents equals current midPrice (no historical reference)
+    // The deviation check is only meaningful for RE-ENTRY after exiting a position.
+    // For new entries triggered by whale signals or scanner, we skip this check since:
+    // - Price bounds check (30-82¢) ensures we enter at reasonable prices
+    // - Whale signals provide the "edge" that replaces price deviation requirement
     const currentPriceCents = params.orderbook.midPriceCents;
     const deviation = Math.abs(currentPriceCents - params.referencePriceCents);
-    if (deviation >= this.config.entryBandCents) {
+    
+    // Threshold for considering prices equal (accounts for floating point imprecision)
+    const PRICE_EQUALITY_THRESHOLD_CENTS = 0.01;
+    
+    // If reference equals current (new entry), skip this check - the bias signal is our edge
+    // If reference differs (re-entry), require minimum deviation
+    if (deviation < PRICE_EQUALITY_THRESHOLD_CENTS) {
+      // New entry: reference price equals current price, skip deviation check
+      checks.priceDeviation.passed = true;
+      checks.priceDeviation.reason = "New entry (whale/scanner signal)";
+    } else if (deviation >= this.config.entryBandCents) {
       checks.priceDeviation.passed = true;
     } else {
       checks.priceDeviation.reason = `Deviation ${deviation.toFixed(1)}¢ < ${this.config.entryBandCents}¢`;
@@ -2633,9 +2667,23 @@ class ExecutionEngine {
       return { success: false, reason: "NO_BANKROLL" };
     }
 
-    // For scanner-originated entries, use LONG as default bias since we only scan for
-    // active markets with prices in the 20-80¢ range (good entry territory)
-    const effectiveBias: BiasDirection = skipBiasCheck ? "LONG" : bias.direction;
+    // Determine effective bias direction:
+    // 1. skipBiasCheck (scanner entries): use LONG
+    // 2. copyAnyWhaleBuy mode: treat any non-stale token with 1+ whale buy as LONG
+    // 3. Otherwise: use the computed bias direction (requires 3+ trades, $300 flow)
+    let effectiveBias: BiasDirection;
+    if (skipBiasCheck) {
+      // Scanner-originated entries: use LONG since we only scan for active markets
+      // with prices in the 20-80¢ range (good entry territory)
+      effectiveBias = "LONG";
+    } else if (this.config.copyAnyWhaleBuy && bias.tradeCount >= 1 && !bias.isStale) {
+      // COPY_ANY_WHALE_BUY mode: any single non-stale whale buy is enough
+      // Override direction to LONG (we only track buys)
+      effectiveBias = "LONG";
+    } else {
+      // Conservative mode: use computed bias direction
+      effectiveBias = bias.direction;
+    }
 
     // Evaluate entry
     const decision = this.decisionEngine.evaluateEntry({
