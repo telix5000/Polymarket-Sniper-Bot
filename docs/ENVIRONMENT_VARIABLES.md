@@ -71,6 +71,48 @@ The bot follows top Polymarket traders (whales) and copies their trades.
 |----------|---------|-------------|
 | `WHALE_TRADE_USD` | `500` | Minimum trade size to consider as "whale trade" |
 | `COPY_ANY_WHALE_BUY` | `false` | If `true`, copy ANY whale buy immediately without bias confirmation |
+| `WHALE_PRICE_MIN` | `0.35` | Minimum price (0-1) to filter whale trades (35¢ default) |
+| `WHALE_PRICE_MAX` | `0.65` | Maximum price (0-1) to filter whale trades (65¢ default) |
+
+### Price-Range Filtering
+
+By default, whale trades are filtered to the 35¢-65¢ price range. This matches the bot's **preferred entry zone** (`preferredEntryLowCents`/`preferredEntryHighCents`) from the core math:
+- Prices are not too close to 0 (very unlikely outcomes, one bad tick kills you)
+- Prices are not too close to 1 (nearly certain outcomes, no room for take profit)
+- There's meaningful upside potential in this "sweet spot"
+
+**Default behavior (no env vars needed)**:
+```env
+# These are the defaults - matches the bot's preferred entry zone
+# WHALE_PRICE_MIN=0.35
+# WHALE_PRICE_MAX=0.65
+```
+
+**Custom range example**:
+```env
+WHALE_PRICE_MIN=0.30
+WHALE_PRICE_MAX=0.70
+```
+
+**Disable filtering entirely**:
+```env
+# Set to empty string to disable price filtering
+WHALE_PRICE_MIN=
+WHALE_PRICE_MAX=
+```
+
+**One-sided filter (minimum only)**:
+```env
+WHALE_PRICE_MIN=0.30
+WHALE_PRICE_MAX=
+```
+
+**Notes:**
+- Default range is 0.35-0.65 (35¢-65¢) - active out of the box
+- Set to empty string (`WHALE_PRICE_MIN=`) to disable a bound
+- If `WHALE_PRICE_MIN > WHALE_PRICE_MAX`, a warning is logged and filtering is disabled
+- Trades without price information pass through the filter
+- Filter is applied before bias/copy logic, so filtered trades don't create signals
 
 ### Whale Tracking Modes
 
