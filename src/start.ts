@@ -1306,7 +1306,7 @@ class BiasAccumulator {
           // Reject if tokenId is empty or invalid
           if (!tokenId || tokenId.trim() === "") {
             debug(
-              `[Whale Trade] Rejected: empty tokenId | conditionId: ${conditionId} | outcome: ${outcome} | wallet: ${wallet.slice(0, 10)}...`,
+              `[Whale Trade] Rejected: empty tokenId | conditionId: ${conditionId || "N/A"} | outcome: ${outcome || "N/A"} | wallet: ${(wallet ?? "unknown").slice(0, 10)}...`,
             );
             continue;
           }
@@ -5481,25 +5481,42 @@ class ChurnEngine {
                 this.diagnostics.candidatesRejectedLiquidity++;
               }
 
-              const cooldownMs = this.marketDataCooldownManager.recordFailure(
-                bias.tokenId,
-                reason,
-              );
-              const info = this.marketDataCooldownManager.getCooldownInfo(
-                bias.tokenId,
-              );
+              // TASK 5: Only cooldown transient errors, NOT permanent market conditions
+              // Permanent conditions (dust books, invalid liquidity, invalid prices) should NOT cooldown
+              const isPermanentCondition =
+                reason === "INVALID_LIQUIDITY" ||
+                reason === "DUST_BOOK" ||
+                reason === "INVALID_PRICES";
 
-              this.trackFailureReason(`NO_MARKET_DATA:${reason}`);
+              if (!isPermanentCondition) {
+                const cooldownMs = this.marketDataCooldownManager.recordFailure(
+                  bias.tokenId,
+                  reason,
+                );
+                const info = this.marketDataCooldownManager.getCooldownInfo(
+                  bias.tokenId,
+                );
 
-              // Only log for long cooldowns (NO_ORDERBOOK/NOT_FOUND) or periodically for transient errors
-              if (shouldApplyLongCooldown(reason)) {
-                console.log(
-                  `⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}... | reason: ${reason} | strike ${info?.strikes || 1} | cooldown: ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
-                );
-              } else if (this.cycleCount % 20 === 0) {
-                console.warn(
-                  `⚠️ [Entry] Transient error for ${bias.tokenId.slice(0, 12)}... | ${reason}: ${detail?.slice(0, 50) || "unknown"} | retry in ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
-                );
+                this.trackFailureReason(`NO_MARKET_DATA:${reason}`);
+
+                // Only log for long cooldowns (NO_ORDERBOOK/NOT_FOUND) or periodically for transient errors
+                if (shouldApplyLongCooldown(reason)) {
+                  console.log(
+                    `⚠️ [Entry] No market data for ${bias.tokenId.slice(0, 12)}... | reason: ${reason} | strike ${info?.strikes || 1} | cooldown: ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
+                  );
+                } else if (this.cycleCount % 20 === 0) {
+                  console.warn(
+                    `⚠️ [Entry] Transient error for ${bias.tokenId.slice(0, 12)}... | ${reason}: ${detail?.slice(0, 50) || "unknown"} | retry in ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
+                  );
+                }
+              } else {
+                // Permanent condition - log but don't cooldown
+                this.trackFailureReason(`NO_MARKET_DATA:${reason}`);
+                if (this.cycleCount % 20 === 0) {
+                  console.log(
+                    `⚠️ [Entry] Permanent condition for ${bias.tokenId.slice(0, 12)}... | ${reason}: ${detail?.slice(0, 50) || "unknown"} | no cooldown`,
+                  );
+                }
               }
             }
           } catch (err) {
@@ -5615,24 +5632,42 @@ class ChurnEngine {
                 return result;
               } else {
                 // Handle structured failure with appropriate cooldown
-                const { reason } = fetchResult;
-                const cooldownMs = this.marketDataCooldownManager.recordFailure(
-                  tokenId,
-                  reason,
-                );
-                const info =
-                  this.marketDataCooldownManager.getCooldownInfo(tokenId);
+                const { reason, detail } = fetchResult;
 
-                this.trackFailureReason(`SCAN: NO_MARKET_DATA:${reason}`);
+                // TASK 5: Only cooldown transient errors, NOT permanent market conditions
+                const isPermanentCondition =
+                  reason === "INVALID_LIQUIDITY" ||
+                  reason === "DUST_BOOK" ||
+                  reason === "INVALID_PRICES";
 
-                // Periodic logging for market data failures
-                if (
-                  this.cycleCount % 50 === 0 &&
-                  shouldApplyLongCooldown(reason)
-                ) {
-                  console.log(
-                    `⚠️ [Scanner] No market data for ${tokenId.slice(0, 12)}... | reason: ${reason} | strike ${info?.strikes || 1} | cooldown: ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
-                  );
+                if (!isPermanentCondition) {
+                  const cooldownMs =
+                    this.marketDataCooldownManager.recordFailure(
+                      tokenId,
+                      reason,
+                    );
+                  const info =
+                    this.marketDataCooldownManager.getCooldownInfo(tokenId);
+
+                  this.trackFailureReason(`SCAN: NO_MARKET_DATA:${reason}`);
+
+                  // Periodic logging for market data failures
+                  if (
+                    this.cycleCount % 50 === 0 &&
+                    shouldApplyLongCooldown(reason)
+                  ) {
+                    console.log(
+                      `⚠️ [Scanner] No market data for ${tokenId.slice(0, 12)}... | reason: ${reason} | strike ${info?.strikes || 1} | cooldown: ${MarketDataCooldownManager.formatDuration(cooldownMs)}`,
+                    );
+                  }
+                } else {
+                  // Permanent condition - log but don't cooldown
+                  this.trackFailureReason(`SCAN: NO_MARKET_DATA:${reason}`);
+                  if (this.cycleCount % 50 === 0) {
+                    console.log(
+                      `⚠️ [Scanner] Permanent condition for ${tokenId.slice(0, 12)}... | ${reason}: ${detail?.slice(0, 50) || "unknown"} | no cooldown`,
+                    );
+                  }
                 }
               }
             } catch (err) {

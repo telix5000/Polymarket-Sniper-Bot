@@ -65,7 +65,7 @@ All have sensible defaults and can be overridden:
 - [x] ENTRY_COOLDOWN_SECONDS_TRANSIENT=30
 
 ## ✅ Code Quality
-- [x] No console.log in production code (uses debug() helper)
+- [x] Production logging uses console.log; debug() helper is used for DEBUG-mode verbose logging
 - [x] No accumulating counters
 - [x] Clear separation of concerns
 - [x] Deterministic behavior
