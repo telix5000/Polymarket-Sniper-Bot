@@ -269,8 +269,10 @@ class EwmaCalculator {
    */
   isStable(maxVarianceMultiplier: number): boolean {
     if (this.count < 5) return false;
-    const normalizedVariance =
-      this.variance / (this.initialValue * this.initialValue);
+    // Guard against division by zero when initialValue is 0
+    const denominator = this.initialValue * this.initialValue;
+    if (denominator === 0) return false;
+    const normalizedVariance = this.variance / denominator;
     return normalizedVariance < maxVarianceMultiplier;
   }
 

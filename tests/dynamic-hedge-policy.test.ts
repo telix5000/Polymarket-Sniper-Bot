@@ -527,4 +527,55 @@ describe("DynamicHedgePolicy", () => {
       );
     });
   });
+
+  describe("Enabled Flag", () => {
+    it("should always return static base values when disabled", () => {
+      const policy = createDynamicHedgePolicy({
+        enabled: false,
+        baseTriggerCents: 16,
+        baseHedgeRatio: 0.4,
+        maxHedgeRatio: 0.7,
+        baseMaxAdverseCents: 30,
+      });
+
+      // Record lots of data that would normally trigger adaptation
+      for (let i = 0; i < 50; i++) {
+        policy.recordPrice("token1", 50 + Math.random() * 30);
+        policy.recordAdverseMove("token1", 25, 1000);
+        policy.recordHedgeOutcome(createEffectiveHedge());
+      }
+
+      const params = policy.getParameters();
+
+      // Should return base values regardless of recorded data
+      assert.strictEqual(params.triggerCents, 16, "Should use base trigger cents");
+      assert.strictEqual(params.hedgeRatio, 0.4, "Should use base hedge ratio");
+      assert.strictEqual(params.maxHedgeRatio, 0.7, "Should use base max hedge ratio");
+      assert.strictEqual(params.maxAdverseCents, 30, "Should use base max adverse cents");
+      assert.strictEqual(params.usingAdaptedValues, false, "Should not use adapted values");
+      assert.strictEqual(params.adaptationReason, "DYNAMIC_HEDGE_DISABLED", "Should show disabled reason");
+    });
+
+    it("should adapt values when enabled", () => {
+      const policy = createDynamicHedgePolicy({
+        enabled: true,
+        baseTriggerCents: 16,
+        minObservationsForAdaptation: 10,
+        adaptationIntervalMs: 0,
+        maxChangePerInterval: 1.0,
+      });
+
+      // Record data that should trigger adaptation
+      for (let i = 0; i < 30; i++) {
+        policy.recordPrice("token1", 50 + (i % 2) * 20);
+        policy.recordAdverseMove("token1", 25, 1000);
+        policy.recordHedgeOutcome(createEffectiveHedge());
+      }
+
+      const params = policy.getParameters();
+
+      assert.strictEqual(params.usingAdaptedValues, true, "Should use adapted values when enabled");
+      assert.notStrictEqual(params.adaptationReason, "DYNAMIC_HEDGE_DISABLED", "Should not show disabled reason");
+    });
+  });
 });

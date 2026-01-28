@@ -466,4 +466,43 @@ describe("DynamicEvEngine", () => {
       assert(highConfidence > lowConfidence);
     });
   });
+
+  describe("Enabled Flag", () => {
+    it("should always allow full size when disabled", () => {
+      const engine = createDynamicEvEngine({
+        enabled: false,
+      });
+
+      // Even with negative EV conditions, should allow full size
+      for (let i = 0; i < 20; i++) {
+        engine.recordTrade(createLosingTrade());
+      }
+
+      const decision = engine.evaluateEntry();
+
+      assert.strictEqual(decision.allowed, true, "Should allow entry when disabled");
+      assert.strictEqual(decision.sizeFactor, 1.0, "Should use full size when disabled");
+      assert.strictEqual(decision.reason, "DYNAMIC_EV_DISABLED", "Should show disabled reason");
+    });
+
+    it("should apply EV gating when enabled", () => {
+      const engine = createDynamicEvEngine({
+        enabled: true,
+        minTradesForPauseDecision: 5,
+      });
+
+      // Create negative EV conditions
+      for (let i = 0; i < 10; i++) {
+        engine.recordTrade(createLosingTrade());
+      }
+
+      const decision = engine.evaluateEntry();
+
+      // When EV is negative and enabled, should either pause or reduce size
+      assert(
+        decision.sizeFactor < 1.0 || !decision.allowed,
+        "Should apply EV gating when enabled"
+      );
+    });
+  });
 });
