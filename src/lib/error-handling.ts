@@ -611,6 +611,13 @@ export function setVpnStatusGetter(
   vpnStatusGetter = getter;
 }
 
+// Provide a safe default VPN status getter so Cloudflare block events
+// always have deterministic VPN fields, even if no real VPN integration
+// registers an implementation. Callers in vpn.ts/startup can override this.
+setVpnStatusGetter(() => ({
+  active: false,
+  bypassed: () => false,
+}));
 /**
  * Emit a structured Cloudflare block event with GitHub Actions annotation
  *
