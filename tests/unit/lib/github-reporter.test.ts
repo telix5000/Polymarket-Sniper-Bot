@@ -163,7 +163,7 @@ describe("GitHubReporter", () => {
       const result = await reporter.reportDiagnosticWorkflow(allOkDetails);
       assert.strictEqual(result, false); // Disabled, but method runs
 
-      // Test with no OK steps (should trigger warning severity)
+      // Test with no OK steps (all reports use warning severity)
       const noOkDetails = {
         traceId: "test-no-ok",
         durationMs: 5000,
