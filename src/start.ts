@@ -170,12 +170,25 @@ interface ChurnConfig {
   useAvailableBalanceOnly: boolean;
 
   // Liquidation Mode
-  forceLiquidation: boolean;  // If true, start liquidating positions even with no effective bankroll
+  liquidationMode: "off" | "losing" | "all";  // "off" = normal trading, "losing" = sell losing positions, "all" = sell everything
   liquidationMaxSlippagePct: number;  // Max slippage for liquidation sells (default: 10%)
   liquidationPollIntervalMs: number;  // Poll interval in liquidation mode (default: 1000ms)
 
   // Aggressive Whale Copy Mode
   copyAnyWhaleBuy: boolean;  // If true, copy ANY whale buy without waiting for bias confirmation
+
+  // Market Scanner - Scan for most active/trending markets
+  scanActiveMarkets: boolean;  // If true, scan for active markets to trade
+  scanMinVolumeUsd: number;    // Minimum 24h volume to consider a market
+  scanTopNMarkets: number;     // Number of top markets to scan
+  scanIntervalSeconds: number; // How often to refresh the market scan
+
+  // Dynamic Reserves - Self-balancing reserve system
+  dynamicReservesEnabled: boolean;    // If true, use dynamic reserve calculation
+  reserveAdaptationRate: number;      // How quickly reserves adapt (0-1, default: 0.1)
+  missedOpportunityWeight: number;    // Weight for missed opportunities (default: 0.5)
+  hedgeCoverageWeight: number;        // Weight for hedge coverage needs (default: 0.5)
+  maxReserveFraction: number;         // Maximum reserve as fraction of balance (default: 0.5)
 
   // Auth
   privateKey: string;
@@ -273,8 +286,11 @@ function loadConfig(): ChurnConfig {
     minReserveUsd: 100,               // $100 minimum reserve
     useAvailableBalanceOnly: true,
 
-    // Liquidation Mode - force sell existing positions when balance is too low
-    forceLiquidation: envBool("FORCE_LIQUIDATION", false),
+    // Liquidation Mode - force sell existing positions
+    // "off" = normal trading (default)
+    // "losing" = only sell positions with negative P&L
+    // "all" = sell all positions regardless of P&L
+    liquidationMode: parseLiquidationMode(process.env.LIQUIDATION_MODE || process.env.FORCE_LIQUIDATION),
     liquidationMaxSlippagePct: envNum("LIQUIDATION_MAX_SLIPPAGE_PCT", 10),  // 10% default
     liquidationPollIntervalMs: envNum("LIQUIDATION_POLL_INTERVAL_MS", 1000),  // 1s default
 
@@ -282,6 +298,22 @@ function loadConfig(): ChurnConfig {
     // When true: sees whale buy → immediately copies (no $300 flow / 3 trade requirement)
     // When false (default): requires bias confirmation (multiple whale trades in same direction)
     copyAnyWhaleBuy: envBool("COPY_ANY_WHALE_BUY", false),
+
+    // Market Scanner - Scan for most active/trending markets to trade
+    // When enabled, the bot will scan Polymarket for the most active markets
+    // and consider them as additional trading opportunities
+    scanActiveMarkets: envBool("SCAN_ACTIVE_MARKETS", true),
+    scanMinVolumeUsd: envNum("SCAN_MIN_VOLUME_USD", 10000),  // $10k minimum 24h volume
+    scanTopNMarkets: envNum("SCAN_TOP_N_MARKETS", 20),        // Top 20 most active markets
+    scanIntervalSeconds: envNum("SCAN_INTERVAL_SECONDS", 300), // Refresh every 5 minutes
+
+    // Dynamic Reserves - Self-balancing reserve system
+    // Automatically adjusts reserves based on missed opportunities and hedge needs
+    dynamicReservesEnabled: envBool("DYNAMIC_RESERVES_ENABLED", true),
+    reserveAdaptationRate: envNum("RESERVE_ADAPTATION_RATE", 0.1),      // 10% adaptation per cycle
+    missedOpportunityWeight: envNum("MISSED_OPPORTUNITY_WEIGHT", 0.5),  // Weight for missed trades
+    hedgeCoverageWeight: envNum("HEDGE_COVERAGE_WEIGHT", 0.5),          // Weight for hedge needs
+    maxReserveFraction: envNum("MAX_RESERVE_FRACTION", 0.5),            // Max 50% reserve
 
     // ═══════════════════════════════════════════════════════════════════════
     // AUTH & INTEGRATIONS (user provides these)
@@ -330,6 +362,26 @@ function parseInfuraTierEnv(tierStr?: string): "core" | "developer" | "team" | "
   return "core"; // Default to free tier
 }
 
+/**
+ * Parse liquidation mode from environment variable
+ * Supports both new LIQUIDATION_MODE and legacy FORCE_LIQUIDATION
+ */
+function parseLiquidationMode(value?: string): "off" | "losing" | "all" {
+  if (!value) return "off";
+  
+  const normalized = value.toLowerCase().trim();
+  
+  // New LIQUIDATION_MODE values
+  if (normalized === "losing" || normalized === "losers" || normalized === "red") return "losing";
+  if (normalized === "all" || normalized === "everything") return "all";
+  if (normalized === "off" || normalized === "false" || normalized === "no") return "off";
+  
+  // Legacy FORCE_LIQUIDATION=true support (maps to "all")
+  if (normalized === "true" || normalized === "yes" || normalized === "1") return "all";
+  
+  return "off";
+}
+
 interface ValidationError {
   field: string;
   message: string;
@@ -360,14 +412,15 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log(`   Bet size: $${config.maxTradeUsd} per trade`);
   log(`   Live trading: ${config.liveTradingEnabled ? "✅ ENABLED" : "⚠️ SIMULATION"}`);
   log(`   Telegram: ${config.telegramBotToken && config.telegramChatId ? "✅ ENABLED" : "❌ DISABLED"}`);
-  if (config.forceLiquidation) {
-    log(`   Force liquidation: ⚠️ ENABLED`);
+  if (config.liquidationMode !== "off") {
+    const modeDesc = config.liquidationMode === "losing" ? "LOSING ONLY (negative P&L)" : "ALL POSITIONS";
+    log(`   Liquidation: ⚠️ ${modeDesc}`);
   }
   if (config.copyAnyWhaleBuy) {
     log(`   Copy any whale buy: ⚠️ AGGRESSIVE MODE (no bias confirmation)`);
   }
   log("");
-  log("📊 THE MATH (fixed, don't change):");
+  log("📊 THE MATH (applied to ALL positions):");
   log(`   Take profit: +${config.tpCents}¢ (avg win)`);
   log(`   Hedge trigger: -${config.hedgeTriggerCents}¢`);
   log(`   Hard stop: -${config.maxAdverseCents}¢`);
@@ -381,6 +434,24 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
     log(`   Mode: AGGRESSIVE - copy ANY whale buy ≥ $${config.onchainMinWhaleTradeUsd}`);
   } else {
     log(`   Mode: CONSERVATIVE - need $${config.biasMinNetUsd} flow + ${config.biasMinTrades} trades`);
+  }
+  log("");
+  log("🔍 MARKET SCANNER:");
+  log(`   Scan active markets: ${config.scanActiveMarkets ? "✅ ENABLED" : "❌ DISABLED"}`);
+  if (config.scanActiveMarkets) {
+    log(`   Min 24h volume: $${config.scanMinVolumeUsd.toLocaleString()}`);
+    log(`   Top markets: ${config.scanTopNMarkets}`);
+    log(`   Scan interval: ${config.scanIntervalSeconds}s`);
+  }
+  log("");
+  log("🏦 DYNAMIC RESERVES:");
+  log(`   Dynamic reserves: ${config.dynamicReservesEnabled ? "✅ ENABLED" : "❌ DISABLED"}`);
+  if (config.dynamicReservesEnabled) {
+    log(`   Base reserve: ${config.reserveFraction * 100}%`);
+    log(`   Max reserve: ${config.maxReserveFraction * 100}%`);
+    log(`   Adaptation rate: ${config.reserveAdaptationRate * 100}%`);
+  } else {
+    log(`   Fixed reserve: ${config.reserveFraction * 100}%`);
   }
   log("");
   log("🛡️ RISK LIMITS:");
@@ -1135,6 +1206,292 @@ class BiasAccumulator {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// MARKET SCANNER - Scan for most active/trending markets
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface ActiveMarket {
+  tokenId: string;
+  conditionId: string;
+  marketId: string;
+  question: string;
+  volume24h: number;
+  price: number;
+  lastTradeTime: number;
+}
+
+class MarketScanner {
+  private readonly config: ChurnConfig;
+  private readonly DATA_API = "https://data-api.polymarket.com";
+  private readonly GAMMA_API = "https://gamma-api.polymarket.com";
+  private activeMarkets: ActiveMarket[] = [];
+  private lastScanTime = 0;
+
+  constructor(config: ChurnConfig) {
+    this.config = config;
+  }
+
+  /**
+   * Scan for the most active markets on Polymarket
+   * Returns markets sorted by 24h volume that meet minimum criteria
+   */
+  async scanActiveMarkets(): Promise<ActiveMarket[]> {
+    const now = Date.now();
+    
+    // Only scan at configured interval
+    if (now - this.lastScanTime < this.config.scanIntervalSeconds * 1000) {
+      return this.activeMarkets;
+    }
+
+    try {
+      // Fetch active markets from Gamma API sorted by volume
+      const url = `${this.GAMMA_API}/markets?closed=false&active=true&limit=${this.config.scanTopNMarkets * 2}&order=volume24hr&ascending=false`;
+      const { data } = await axios.get(url, { timeout: 10000 });
+
+      if (!Array.isArray(data)) {
+        console.warn("[Scanner] Invalid response from markets API");
+        return this.activeMarkets;
+      }
+
+      const markets: ActiveMarket[] = [];
+      
+      for (const market of data) {
+        try {
+          // Parse token IDs from clobTokenIds JSON string
+          const tokenIds = JSON.parse(market.clobTokenIds || "[]");
+          if (!Array.isArray(tokenIds) || tokenIds.length < 2) continue;
+
+          const volume24h = parseFloat(market.volume24hr || "0");
+          
+          // Skip markets below minimum volume
+          if (volume24h < this.config.scanMinVolumeUsd) continue;
+
+          // Parse prices
+          const prices = JSON.parse(market.outcomePrices || "[]");
+          const yesPrice = parseFloat(prices[0] || "0.5");
+
+          // Only consider markets in tradeable price range (20-80¢)
+          if (yesPrice < 0.20 || yesPrice > 0.80) continue;
+
+          markets.push({
+            tokenId: tokenIds[0], // YES token
+            conditionId: market.conditionId,
+            marketId: market.id,
+            question: market.question || "Unknown",
+            volume24h,
+            price: yesPrice,
+            lastTradeTime: new Date(market.updatedAt || Date.now()).getTime(),
+          });
+        } catch {
+          // Skip malformed market entries
+          continue;
+        }
+      }
+
+      // Sort by volume and take top N
+      this.activeMarkets = markets
+        .sort((a, b) => b.volume24h - a.volume24h)
+        .slice(0, this.config.scanTopNMarkets);
+      
+      this.lastScanTime = now;
+
+      if (this.activeMarkets.length > 0) {
+        console.log(`📊 Scanned ${this.activeMarkets.length} active markets (top by 24h volume)`);
+      }
+
+      return this.activeMarkets;
+    } catch (err) {
+      console.warn(`[Scanner] Failed to scan markets: ${err instanceof Error ? err.message : err}`);
+      return this.activeMarkets;
+    }
+  }
+
+  /**
+   * Get token IDs from scanned active markets
+   * These can be used as additional trading opportunities
+   */
+  getActiveTokenIds(): string[] {
+    return this.activeMarkets.map(m => m.tokenId);
+  }
+
+  /**
+   * Get count of active markets being tracked
+   */
+  getActiveMarketCount(): number {
+    return this.activeMarkets.length;
+  }
+
+  /**
+   * Clear scanner cache (for testing)
+   */
+  clear(): void {
+    this.activeMarkets = [];
+    this.lastScanTime = 0;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DYNAMIC RESERVES - Self-balancing reserve system
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface MissedOpportunity {
+  tokenId: string;
+  sizeUsd: number;
+  reason: "INSUFFICIENT_BALANCE" | "RESERVE_BLOCKED";
+  timestamp: number;
+}
+
+interface DynamicReserveState {
+  baseReserveFraction: number;
+  adaptedReserveFraction: number;
+  missedOpportunitiesUsd: number;
+  hedgeNeedsUsd: number;
+  missedCount: number;
+  hedgesMissed: number;
+}
+
+class DynamicReserveManager {
+  private readonly config: ChurnConfig;
+  private missedOpportunities: MissedOpportunity[] = [];
+  private hedgesMissed = 0;
+  private adaptedReserveFraction: number;
+  private readonly WINDOW_MS = 30 * 60 * 1000; // 30 minute window
+
+  constructor(config: ChurnConfig) {
+    this.config = config;
+    this.adaptedReserveFraction = config.reserveFraction;
+  }
+
+  /**
+   * Record a missed trading opportunity due to insufficient reserves
+   */
+  recordMissedOpportunity(tokenId: string, sizeUsd: number, reason: "INSUFFICIENT_BALANCE" | "RESERVE_BLOCKED"): void {
+    if (!this.config.dynamicReservesEnabled) return;
+
+    this.missedOpportunities.push({
+      tokenId,
+      sizeUsd,
+      reason,
+      timestamp: Date.now(),
+    });
+
+    // Prune old entries
+    this.pruneOldEntries();
+    
+    // Adapt reserves
+    this.adaptReserves();
+  }
+
+  /**
+   * Record a missed hedge opportunity
+   */
+  recordMissedHedge(sizeUsd: number): void {
+    if (!this.config.dynamicReservesEnabled) return;
+    this.hedgesMissed++;
+    this.adaptReserves();
+  }
+
+  /**
+   * Get the dynamically calculated effective reserve fraction
+   * Balances between:
+   * - Base reserve fraction (configured minimum)
+   * - Missed opportunities (need more capital available)
+   * - Hedge needs (need reserve for hedging)
+   */
+  getEffectiveReserveFraction(): number {
+    if (!this.config.dynamicReservesEnabled) {
+      return this.config.reserveFraction;
+    }
+    return this.adaptedReserveFraction;
+  }
+
+  /**
+   * Calculate effective bankroll with dynamic reserves
+   */
+  getEffectiveBankroll(balance: number): { effectiveBankroll: number; reserveUsd: number } {
+    const reserveFraction = this.getEffectiveReserveFraction();
+    const reserveUsd = Math.max(balance * reserveFraction, this.config.minReserveUsd);
+    return { 
+      effectiveBankroll: Math.max(0, balance - reserveUsd), 
+      reserveUsd 
+    };
+  }
+
+  /**
+   * Adapt reserves based on missed opportunities and hedge needs
+   */
+  private adaptReserves(): void {
+    this.pruneOldEntries();
+
+    const now = Date.now();
+    const windowStart = now - this.WINDOW_MS;
+    
+    // Count recent missed opportunities
+    const recentMissed = this.missedOpportunities.filter(m => m.timestamp >= windowStart);
+    const missedCount = recentMissed.length;
+
+    // Calculate adjustment factors
+    // More missed opportunities → LOWER reserves (need more capital available)
+    // More missed hedges → HIGHER reserves (need capital for hedging)
+    
+    const missedFactor = Math.min(missedCount * 0.02, 0.15); // Up to 15% reduction
+    const hedgeFactor = Math.min(this.hedgesMissed * 0.03, 0.10); // Up to 10% increase
+
+    // Apply weighted adjustments
+    const missedAdjustment = missedFactor * this.config.missedOpportunityWeight;
+    const hedgeAdjustment = hedgeFactor * this.config.hedgeCoverageWeight;
+
+    // Calculate target reserve fraction
+    const targetFraction = this.config.reserveFraction - missedAdjustment + hedgeAdjustment;
+    
+    // Clamp to valid range
+    const clampedTarget = Math.max(0.10, Math.min(this.config.maxReserveFraction, targetFraction));
+
+    // Smooth adaptation
+    this.adaptedReserveFraction = this.adaptedReserveFraction + 
+      (clampedTarget - this.adaptedReserveFraction) * this.config.reserveAdaptationRate;
+  }
+
+  /**
+   * Remove old entries outside the window
+   */
+  private pruneOldEntries(): void {
+    const cutoff = Date.now() - this.WINDOW_MS;
+    this.missedOpportunities = this.missedOpportunities.filter(m => m.timestamp >= cutoff);
+    
+    // Decay hedges missed over time
+    if (this.hedgesMissed > 0 && this.missedOpportunities.length === 0) {
+      this.hedgesMissed = Math.max(0, this.hedgesMissed - 1);
+    }
+  }
+
+  /**
+   * Get current state for logging
+   */
+  getState(): DynamicReserveState {
+    this.pruneOldEntries();
+    const recentMissed = this.missedOpportunities;
+    
+    return {
+      baseReserveFraction: this.config.reserveFraction,
+      adaptedReserveFraction: this.adaptedReserveFraction,
+      missedOpportunitiesUsd: recentMissed.reduce((sum, m) => sum + m.sizeUsd, 0),
+      hedgeNeedsUsd: this.hedgesMissed * this.config.maxTradeUsd * this.config.hedgeRatio,
+      missedCount: recentMissed.length,
+      hedgesMissed: this.hedgesMissed,
+    };
+  }
+
+  /**
+   * Reset state (for testing or after liquidation)
+   */
+  reset(): void {
+    this.missedOpportunities = [];
+    this.hedgesMissed = 0;
+    this.adaptedReserveFraction = this.config.reserveFraction;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // POSITION STATE MACHINE
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1202,6 +1559,9 @@ interface ManagedPosition {
   // History
   transitions: StateTransition[];
   lastUpdateTime: number;
+
+  // External position flag - true if not opened by the bot
+  isExternal?: boolean;
 }
 
 interface PositionManagerConfig {
@@ -1312,6 +1672,94 @@ class PositionManager {
    */
   getOppositeToken(positionId: string): string | undefined {
     return this.positions.get(positionId)?.oppositeTokenId;
+  }
+
+  /**
+   * Register an external position for monitoring
+   * This allows the bot to apply exit math (TP, stop loss, hedging) to positions
+   * that were not opened by the bot (e.g., manual trades, pre-existing positions)
+   * 
+   * Note: This is async because it needs to fetch the opposite token ID for hedging
+   */
+  async registerExternalPosition(pos: Position): Promise<ManagedPosition | null> {
+    // Check if already tracked
+    for (const [, managed] of this.positions) {
+      if (managed.tokenId === pos.tokenId && managed.state !== "CLOSED") {
+        return null; // Already tracking
+      }
+    }
+
+    const id = `ext-${pos.tokenId}-${Date.now()}`;
+    const now = Date.now();
+    
+    // Determine side based on outcome (YES = LONG, NO = SHORT)
+    const side: "LONG" | "SHORT" = pos.outcome?.toUpperCase() === "NO" ? "SHORT" : "LONG";
+    
+    // Convert current price to cents
+    const currentPriceCents = pos.curPrice * 100;
+    
+    // Use average price as entry (best guess for external positions)
+    const entryPriceCents = pos.avgPrice * 100;
+    
+    // Calculate targets based on current price (since we don't know original entry intent)
+    let takeProfitPriceCents: number;
+    let hedgeTriggerPriceCents: number;
+    let hardExitPriceCents: number;
+
+    if (side === "LONG") {
+      takeProfitPriceCents = entryPriceCents + this.config.tpCents;
+      hedgeTriggerPriceCents = entryPriceCents - this.config.hedgeTriggerCents;
+      hardExitPriceCents = entryPriceCents - this.config.maxAdverseCents;
+    } else {
+      takeProfitPriceCents = entryPriceCents - this.config.tpCents;
+      hedgeTriggerPriceCents = entryPriceCents + this.config.hedgeTriggerCents;
+      hardExitPriceCents = entryPriceCents + this.config.maxAdverseCents;
+    }
+
+    // Calculate P&L correctly based on side
+    const pnlCents = pos.gainCents || (side === "LONG" 
+      ? (currentPriceCents - entryPriceCents) 
+      : (entryPriceCents - currentPriceCents));
+
+    const position: ManagedPosition = {
+      id,
+      tokenId: pos.tokenId,
+      marketId: pos.marketId,
+      side,
+      state: "OPEN",
+      entryPriceCents,
+      entrySizeUsd: pos.value,
+      entryTime: pos.entryTime || now - 60000, // Default to 1 min ago if unknown
+      currentPriceCents,
+      unrealizedPnlCents: pnlCents,
+      unrealizedPnlUsd: pos.pnlUsd,
+      takeProfitPriceCents,
+      hedgeTriggerPriceCents,
+      hardExitPriceCents,
+      hedges: [],
+      totalHedgeRatio: 0,
+      referencePriceCents: currentPriceCents,
+      transitions: [],
+      lastUpdateTime: now,
+      isExternal: true, // Flag to identify external positions
+    };
+
+    this.positions.set(id, position);
+    
+    // Fetch opposite token ID for hedging capability
+    try {
+      const oppositeTokenId = await getOppositeTokenId(pos.tokenId);
+      if (oppositeTokenId) {
+        position.oppositeTokenId = oppositeTokenId;
+        console.log(`📋 Registered external position: ${pos.outcome} @ ${(entryPriceCents).toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? '+' : ''}${pos.pnlPct.toFixed(1)}%) [hedge-ready]`);
+      } else {
+        console.log(`📋 Registered external position: ${pos.outcome} @ ${(entryPriceCents).toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? '+' : ''}${pos.pnlPct.toFixed(1)}%) [no hedge]`);
+      }
+    } catch {
+      console.log(`📋 Registered external position: ${pos.outcome} @ ${(entryPriceCents).toFixed(0)}¢ (P&L: ${pos.pnlPct >= 0 ? '+' : ''}${pos.pnlPct.toFixed(1)}%) [no hedge]`);
+    }
+
+    return position;
   }
 
   /**
@@ -2126,7 +2574,7 @@ class ExecutionEngine {
   // ENTRY
   // ─────────────────────────────────────────────────────────────────────────
 
-  async processEntry(tokenId: string, marketData: TokenMarketData, balance: number): Promise<ExecutionResult> {
+  async processEntry(tokenId: string, marketData: TokenMarketData, balance: number, skipBiasCheck = false): Promise<ExecutionResult> {
     // Cooldown check
     const cooldownUntil = this.cooldowns.get(tokenId) || 0;
     if (Date.now() < cooldownUntil) {
@@ -2141,10 +2589,14 @@ class ExecutionEngine {
       return { success: false, reason: "NO_BANKROLL" };
     }
 
+    // For scanner-originated entries, use LONG as default bias since we only scan for
+    // active markets with prices in the 20-80¢ range (good entry territory)
+    const effectiveBias: BiasDirection = skipBiasCheck ? "LONG" : bias.direction;
+
     // Evaluate entry
     const decision = this.decisionEngine.evaluateEntry({
       tokenId,
-      bias: bias.direction,
+      bias: effectiveBias,
       orderbook: marketData.orderbook,
       activity: marketData.activity,
       referencePriceCents: marketData.referencePriceCents,
@@ -2167,7 +2619,7 @@ class ExecutionEngine {
       decision.priceCents!,
       decision.sizeUsd!,
       marketData.referencePriceCents,
-      bias.direction,
+      effectiveBias,
     );
 
     if (result.success) {
@@ -2625,6 +3077,8 @@ class ChurnEngine {
   private decisionEngine: DecisionEngine;
   private executionEngine: ExecutionEngine;
   private onchainMonitor: OnChainMonitor | null = null;
+  private marketScanner: MarketScanner;
+  private dynamicReserveManager: DynamicReserveManager;
 
   private client: any = null;
   private wallet: any = null;
@@ -2636,6 +3090,7 @@ class ChurnEngine {
   // Position tracking - no cache needed, API is fast
   private lastSummaryTime = 0;
   private lastPolCheckTime = 0;
+  private lastScanTime = 0;
   // Liquidation mode - when true, prioritize selling existing positions
   private liquidationMode = false;
   // Track recently sold positions to prevent re-selling during API cache delay
@@ -2653,6 +3108,8 @@ class ChurnEngine {
 
     this.evTracker = new EvTracker(this.config);
     this.biasAccumulator = new BiasAccumulator(this.config);
+    this.marketScanner = new MarketScanner(this.config);
+    this.dynamicReserveManager = new DynamicReserveManager(this.config);
     this.positionManager = new PositionManager({
       tpCents: this.config.tpCents,
       hedgeTriggerCents: this.config.hedgeTriggerCents,
@@ -2783,32 +3240,46 @@ class ChurnEngine {
     console.log("");
 
     // ═══════════════════════════════════════════════════════════════════════
-    // LIQUIDATION MODE - Force sell ALL existing positions when enabled
+    // LIQUIDATION MODE - Force sell positions based on mode
     // ═══════════════════════════════════════════════════════════════════════
-    // FORCE_LIQUIDATION=true will sell positions regardless of bankroll status
-    // This allows users to exit all positions even when they have sufficient balance
-    if (this.config.forceLiquidation && existingPositions.length > 0) {
-      console.log("━".repeat(60));
-      console.log("🔥 LIQUIDATION MODE ACTIVATED");
-      console.log("━".repeat(60));
-      console.log(`   FORCE_LIQUIDATION=true - selling ALL existing positions`);
-      console.log(`   Current balance: $${usdcBalance.toFixed(2)}`);
-      console.log(`   Positions to liquidate: ${existingPositions.length} (worth $${positionValue.toFixed(2)})`);
-      console.log("━".repeat(60));
-      console.log("");
+    // LIQUIDATION_MODE=losing - Only sell positions with negative P&L
+    // LIQUIDATION_MODE=all - Sell all positions regardless of P&L
+    // FORCE_LIQUIDATION=true (legacy) - Same as LIQUIDATION_MODE=all
+    if (this.config.liquidationMode !== "off" && existingPositions.length > 0) {
+      // Filter positions based on liquidation mode
+      const positionsToLiquidate = this.config.liquidationMode === "losing"
+        ? existingPositions.filter(p => p.pnlPct < 0)
+        : existingPositions;
+      
+      const liquidateValue = positionsToLiquidate.reduce((sum, p) => sum + p.value, 0);
+      const modeDesc = this.config.liquidationMode === "losing" ? "LOSING ONLY" : "ALL";
+      
+      if (positionsToLiquidate.length > 0) {
+        console.log("━".repeat(60));
+        console.log(`🔥 LIQUIDATION MODE ACTIVATED (${modeDesc})`);
+        console.log("━".repeat(60));
+        console.log(`   Mode: ${this.config.liquidationMode === "losing" ? "Selling losing positions only" : "Selling ALL positions"}`);
+        console.log(`   Current balance: $${usdcBalance.toFixed(2)}`);
+        console.log(`   Total positions: ${existingPositions.length} (worth $${positionValue.toFixed(2)})`);
+        console.log(`   To liquidate: ${positionsToLiquidate.length} (worth $${liquidateValue.toFixed(2)})`);
+        console.log("━".repeat(60));
+        console.log("");
 
-      this.liquidationMode = true;
+        this.liquidationMode = true;
 
-      if (this.config.telegramBotToken) {
-        await sendTelegram(
-          "🔥 Liquidation Mode Activated",
-          `Balance: $${usdcBalance.toFixed(2)}\n` +
-            `Positions: ${existingPositions.length} ($${positionValue.toFixed(2)})\n` +
-            `Will sell ALL positions`,
-        ).catch(() => {});
+        if (this.config.telegramBotToken) {
+          await sendTelegram(
+            `🔥 Liquidation Mode (${modeDesc})`,
+            `Balance: $${usdcBalance.toFixed(2)}\n` +
+              `Total positions: ${existingPositions.length} ($${positionValue.toFixed(2)})\n` +
+              `To liquidate: ${positionsToLiquidate.length} ($${liquidateValue.toFixed(2)})`,
+          ).catch(() => {});
+        }
+
+        return true;
+      } else {
+        console.log(`ℹ️ Liquidation mode (${modeDesc}) enabled but no matching positions to sell`);
       }
-
-      return true;
     }
 
     // If no effective bankroll and positions exist, suggest enabling liquidation
@@ -2816,7 +3287,7 @@ class ChurnEngine {
       if (existingPositions.length > 0) {
         console.error("❌ No effective bankroll available");
         console.error(`   You have ${existingPositions.length} positions worth $${positionValue.toFixed(2)}`);
-        console.error(`   Set FORCE_LIQUIDATION=true to sell them and free up capital`);
+        console.error(`   Set LIQUIDATION_MODE=all to sell all, or LIQUIDATION_MODE=losing to sell only losing positions`);
         return false;
       } else {
         console.error("❌ No effective bankroll available");
@@ -3084,9 +3555,79 @@ class ChurnEngine {
     }
 
     if (positions.length === 0) {
-      console.log("📦 No positions to liquidate");
-      console.log(`   Balance: $${usdcBalance.toFixed(2)} (need $${reserveUsd.toFixed(2)} for trading)`);
-      console.log(`   Waiting for deposits or position settlements...`);
+      // ─────────────────────────────────────────────────────────────────
+      // LIQUIDATION COMPLETE - Transition back to normal trading
+      // ─────────────────────────────────────────────────────────────────
+      const { effectiveBankroll } = this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
+      
+      if (effectiveBankroll > 0) {
+        console.log("");
+        console.log("━".repeat(60));
+        console.log("✅ LIQUIDATION COMPLETE - Resuming normal trading");
+        console.log("━".repeat(60));
+        console.log(`   All positions sold!`);
+        console.log(`   Balance: $${usdcBalance.toFixed(2)}`);
+        console.log(`   Effective bankroll: $${effectiveBankroll.toFixed(2)}`);
+        console.log("━".repeat(60));
+        console.log("");
+
+        // Reset liquidation mode and dynamic reserves
+        this.liquidationMode = false;
+        this.recentlySoldPositions.clear();
+        this.dynamicReserveManager.reset();
+
+        if (this.config.telegramBotToken) {
+          await sendTelegram(
+            "✅ Liquidation Complete",
+            `All positions sold!\nBalance: $${usdcBalance.toFixed(2)}\nResuming normal trading...`,
+          ).catch(() => {});
+        }
+
+        return; // Next cycle will be normal trading
+      } else {
+        console.log("📦 No positions to liquidate");
+        console.log(`   Balance: $${usdcBalance.toFixed(2)} (need $${reserveUsd.toFixed(2)} for trading)`);
+        console.log(`   Waiting for deposits or position settlements...`);
+        return;
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // FILTER POSITIONS BASED ON LIQUIDATION MODE
+    // ─────────────────────────────────────────────────────────────────
+    // "losing" mode: Only liquidate positions with negative P&L
+    // "all" mode: Liquidate all positions
+    const modeFilteredPositions = this.config.liquidationMode === "losing"
+      ? positions.filter(p => p.pnlPct < 0)
+      : positions;
+
+    if (modeFilteredPositions.length === 0 && this.config.liquidationMode === "losing") {
+      // All remaining positions are winners - exit liquidation mode
+      const { effectiveBankroll } = this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
+      
+      console.log("");
+      console.log("━".repeat(60));
+      console.log("✅ LIQUIDATION COMPLETE (losers only) - Resuming normal trading");
+      console.log("━".repeat(60));
+      console.log(`   All losing positions sold!`);
+      console.log(`   Remaining winners: ${positions.length} (will be managed normally)`);
+      console.log(`   Balance: $${usdcBalance.toFixed(2)}`);
+      console.log(`   Effective bankroll: $${effectiveBankroll.toFixed(2)}`);
+      console.log("━".repeat(60));
+      console.log("");
+
+      // Reset liquidation mode
+      this.liquidationMode = false;
+      this.recentlySoldPositions.clear();
+      this.dynamicReserveManager.reset();
+
+      if (this.config.telegramBotToken) {
+        await sendTelegram(
+          "✅ Losers Liquidated",
+          `All losing positions sold!\nRemaining winners: ${positions.length}\nBalance: $${usdcBalance.toFixed(2)}\nResuming normal trading...`,
+        ).catch(() => {});
+      }
+
       return;
     }
 
@@ -3098,7 +3639,7 @@ class ChurnEngine {
     }
 
     // Filter out positions that were recently sold (waiting for API cache to update)
-    const eligiblePositions = positions.filter(p => {
+    const eligiblePositions = modeFilteredPositions.filter(p => {
       const soldTime = this.recentlySoldPositions.get(p.tokenId);
       if (soldTime && now - soldTime < this.SOLD_POSITION_COOLDOWN_MS) {
         return false; // Skip - recently sold, waiting for API to reflect
@@ -3110,12 +3651,13 @@ class ChurnEngine {
     const sortedPositions = [...eligiblePositions].sort((a, b) => b.value - a.value);
 
     if (sortedPositions.length === 0) {
-      const cooldownCount = positions.length - eligiblePositions.length;
+      const cooldownCount = modeFilteredPositions.length - eligiblePositions.length;
       console.log(`⏳ Waiting for ${cooldownCount} recent sell(s) to settle...`);
       return;
     }
 
-    console.log(`🔥 Liquidating ${sortedPositions.length} positions (total value: $${sortedPositions.reduce((s, p) => s + p.value, 0).toFixed(2)})`);
+    const modeLabel = this.config.liquidationMode === "losing" ? " (losing)" : "";
+    console.log(`🔥 Liquidating ${sortedPositions.length} positions${modeLabel} (total value: $${sortedPositions.reduce((s, p) => s + p.value, 0).toFixed(2)})`);
 
     // Sell one position per cycle to avoid overwhelming the API
     const positionToSell = sortedPositions[0];
@@ -3185,8 +3727,9 @@ class ChurnEngine {
    * 1. Check our positions (direct API)
    * 2. Exit if needed (TP, stop loss, time stop)
    * 3. Poll whale flow for bias
-   * 4. Enter if bias allows
-   * 5. Periodic housekeeping
+   * 4. Scan active markets for opportunities
+   * 5. Enter if bias allows OR scanned opportunity available
+   * 6. Periodic housekeeping
    */
   private async cycle(): Promise<void> {
     this.cycleCount++;
@@ -3199,15 +3742,42 @@ class ChurnEngine {
       getUsdcBalance(this.wallet, this.address),
       getPolBalance(this.wallet, this.address),
     ]);
-    const { effectiveBankroll } = this.executionEngine.getEffectiveBankroll(usdcBalance);
+    
+    // Use dynamic reserves for effective bankroll calculation
+    const { effectiveBankroll } = this.dynamicReserveManager.getEffectiveBankroll(usdcBalance);
 
     if (effectiveBankroll <= 0) {
+      // No effective bankroll available this cycle; skip trading logic
       return; // No money to trade
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // 2. CHECK OUR POSITIONS - DIRECT API, NO CACHE
+    // 2. MONITOR ALL POSITIONS - Apply math to ALL positions, not just bot-opened ones
     // ─────────────────────────────────────────────────────────────────
+    // This includes positions from before the bot started, manual trades, etc.
+    // The bot will apply TP, stop loss, hedging, and time stops to everything.
+    
+    // First, sync any on-chain positions not yet tracked by the position manager
+    // Only sync every 10 cycles to reduce API load
+    let allPositions: Position[] = [];
+    if (this.cycleCount % 10 === 0) {
+      try {
+        allPositions = await getPositions(this.address, true);
+        
+        // Register any untracked positions with the position manager
+        // so they get the same exit logic applied
+        for (const pos of allPositions) {
+          const existingPositions = this.positionManager.getPositionsByToken(pos.tokenId);
+          if (existingPositions.length === 0) {
+            // This is an external position - register it for monitoring (async)
+            await this.positionManager.registerExternalPosition(pos);
+          }
+        }
+      } catch {
+        // Continue with managed positions only if fetch fails
+      }
+    }
+    
     const openPositions = this.positionManager.getOpenPositions();
     
     if (openPositions.length > 0) {
@@ -3233,37 +3803,92 @@ class ChurnEngine {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // 4. ENTER IF BIAS ALLOWS - PARALLEL EXECUTION
+    // 4. SCAN ACTIVE MARKETS FOR OPPORTUNITIES
+    // ─────────────────────────────────────────────────────────────────
+    let scannedOpportunities: string[] = [];
+    if (this.config.scanActiveMarkets) {
+      const scanInterval = this.config.scanIntervalSeconds * 1000;
+      if (now - this.lastScanTime >= scanInterval) {
+        await this.marketScanner.scanActiveMarkets();
+        this.lastScanTime = now;
+      }
+      scannedOpportunities = this.marketScanner.getActiveTokenIds();
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 5. ENTER IF BIAS ALLOWS OR SCANNED OPPORTUNITY AVAILABLE
     // ─────────────────────────────────────────────────────────────────
     const evAllowed = this.evTracker.isTradingAllowed();
     const activeBiases = this.biasAccumulator.getActiveBiases();
     
-    if (evAllowed.allowed && activeBiases.length > 0) {
-      // Execute entries in parallel to avoid missing opportunities
-      // when multiple whale signals arrive simultaneously.
-      // 
-      // RACE CONDITION SAFEGUARD: The position manager enforces:
-      // - maxOpenPositionsTotal (12) - hard limit on concurrent positions
-      // - maxDeployedFractionTotal (30%) - max exposure cap
-      // - maxOpenPositionsPerMarket (2) - per-token limit
-      // These checks happen atomically in processEntry, preventing over-allocation.
-      const entryPromises = activeBiases.slice(0, 3).map(async (bias) => {
-        try {
-          const marketData = await this.fetchTokenMarketData(bias.tokenId);
-          if (marketData) {
-            return this.executionEngine.processEntry(bias.tokenId, marketData, usdcBalance);
+    if (evAllowed.allowed) {
+      if (activeBiases.length > 0) {
+        // Execute whale-signal entries in parallel to avoid missing opportunities
+        // when multiple whale signals arrive simultaneously.
+        // 
+        // RACE CONDITION SAFEGUARD: The position manager enforces:
+        // - maxOpenPositionsTotal (12) - hard limit on concurrent positions
+        // - maxDeployedFractionTotal (30%) - max exposure cap
+        // - maxOpenPositionsPerMarket (2) - per-token limit
+        // These checks happen atomically in processEntry, preventing over-allocation.
+        const entryPromises = activeBiases.slice(0, 3).map(async (bias) => {
+          try {
+            const marketData = await this.fetchTokenMarketData(bias.tokenId);
+            if (marketData) {
+              const result = await this.executionEngine.processEntry(bias.tokenId, marketData, usdcBalance);
+              // Track missed opportunities - check for actual reason strings from processEntry
+              if (!result.success && (result.reason === "NO_BANKROLL" || result.reason?.startsWith("Max deployed") || result.reason === "No effective bankroll")) {
+                this.dynamicReserveManager.recordMissedOpportunity(bias.tokenId, this.config.maxTradeUsd, "RESERVE_BLOCKED");
+              }
+              return result;
+            }
+          } catch (err) {
+            console.warn(`⚠️ Entry failed for ${bias.tokenId.slice(0, 8)}...: ${err instanceof Error ? err.message : err}`);
           }
-        } catch (err) {
-          console.warn(`⚠️ Entry failed for ${bias.tokenId.slice(0, 8)}...: ${err instanceof Error ? err.message : err}`);
+          return null;
+        });
+        
+        await Promise.all(entryPromises);
+      } else if (scannedOpportunities.length > 0 && this.config.scanActiveMarkets) {
+        // No whale signals - scan for trades from active markets
+        // Only log occasionally to avoid spam
+        if (this.cycleCount % 50 === 0) {
+          console.log(`🔍 No active whale signals - scanning ${scannedOpportunities.length} active markets for opportunities...`);
         }
-        return null;
-      });
-      
-      await Promise.all(entryPromises);
+        
+        // Try top scanned markets (limit to avoid rate limiting)
+        const scannedEntryPromises = scannedOpportunities.slice(0, 2).map(async (tokenId) => {
+          try {
+            // Check if we already have a position in this market
+            const existingPositions = this.positionManager.getPositionsByToken(tokenId);
+            if (existingPositions.length > 0) return null;
+
+            const marketData = await this.fetchTokenMarketData(tokenId);
+            if (marketData) {
+              // For scanned markets, bypass bias check since these are high-volume
+              // markets selected by the scanner based on activity metrics
+              const result = await this.executionEngine.processEntry(tokenId, marketData, usdcBalance, true);
+              // Track missed opportunities - check for actual reason strings from processEntry
+              if (!result.success && (result.reason === "NO_BANKROLL" || result.reason?.startsWith("Max deployed") || result.reason === "No effective bankroll")) {
+                this.dynamicReserveManager.recordMissedOpportunity(tokenId, this.config.maxTradeUsd, "RESERVE_BLOCKED");
+              }
+              return result;
+            }
+          } catch {
+            // Silently skip failed scanned entries
+          }
+          return null;
+        });
+        
+        await Promise.all(scannedEntryPromises);
+      } else if (this.cycleCount % 100 === 0) {
+        // No opportunities at all - keep churning message
+        console.log(`🔄 No active signals - keeping the churn going, waiting for opportunities...`);
+      }
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // 5. PERIODIC HOUSEKEEPING
+    // 6. PERIODIC HOUSEKEEPING
     // ─────────────────────────────────────────────────────────────────
     
     // Auto-redeem resolved positions
@@ -3323,6 +3948,13 @@ class ChurnEngine {
     // Get active biases count for diagnostic
     const activeBiases = this.biasAccumulator.getActiveBiases();
     
+    // Get dynamic reserve state
+    const reserveState = this.dynamicReserveManager.getState();
+    const reservePct = (reserveState.adaptedReserveFraction * 100).toFixed(0);
+    
+    // Get scanned markets count
+    const scannedMarkets = this.config.scanActiveMarkets ? this.marketScanner.getActiveMarketCount() : 0;
+    
     console.log("");
     console.log(`📊 STATUS | ${new Date().toLocaleTimeString()}`);
     console.log(`   💰 Balance: $${usdcBalance.toFixed(2)} | Bankroll: $${effectiveBankroll.toFixed(2)} | ⛽ POL: ${polBalance.toFixed(1)}${polWarning}`);
@@ -3335,7 +3967,21 @@ class ChurnEngine {
     } else {
       console.log(`   🐢 Mode: CONSERVATIVE (need $${this.config.biasMinNetUsd} flow + ${this.config.biasMinTrades} trades)`);
     }
-    console.log(`   📡 Active signals: ${activeBiases.length} | Live trading: ${this.config.liveTradingEnabled ? 'ON' : 'OFF (simulation)'}`);
+    
+    // Show active signals and scanning status
+    if (activeBiases.length > 0) {
+      console.log(`   📡 Active whale signals: ${activeBiases.length} | Live trading: ${this.config.liveTradingEnabled ? 'ON' : 'OFF (simulation)'}`);
+    } else if (scannedMarkets > 0) {
+      console.log(`   🔍 No whale signals - scanning ${scannedMarkets} active markets | Live trading: ${this.config.liveTradingEnabled ? 'ON' : 'OFF (simulation)'}`);
+    } else {
+      console.log(`   ⏳ Waiting for signals... | Live trading: ${this.config.liveTradingEnabled ? 'ON' : 'OFF (simulation)'}`);
+    }
+    
+    // Show dynamic reserves status if enabled
+    if (this.config.dynamicReservesEnabled) {
+      const missedInfo = reserveState.missedCount > 0 ? ` | Missed: ${reserveState.missedCount}` : '';
+      console.log(`   🏦 Dynamic Reserve: ${reservePct}% (base: ${(reserveState.baseReserveFraction * 100).toFixed(0)}%)${missedInfo}`);
+    }
     console.log("");
     
     // Telegram update
