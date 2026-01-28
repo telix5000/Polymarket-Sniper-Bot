@@ -3063,7 +3063,7 @@ interface CooldownEntry {
 
 interface CooldownStats {
   cooldownHits: number; // Total times a token was blocked by cooldown
-  totalTokensCooledDown: number; // Total unique tokens that have ever been cooled down (cumulative)
+  totalTokensCooledDown: number; // Total times tokens have been put into cooldown since start (may count the same token multiple times)
   resolvedLaterCount: number; // Tokens that succeeded after being in cooldown
 }
 
@@ -5420,7 +5420,7 @@ class ChurnEngine {
         // All biases are on cooldown - only log occasionally
         if (this.cycleCount % 30 === 0) {
           console.log(
-            `⏳ [Bias] ${activeBiases.length} whale signals on cooldown (price/liquidity issues)`,
+            `⏳ [Bias] ${activeBiases.length} whale signals on cooldown (price/liquidity or market-data issues)`,
           );
         }
       } else if (
@@ -5517,7 +5517,7 @@ class ChurnEngine {
                 return result;
               } else {
                 // Handle structured failure with appropriate cooldown
-                const { reason, detail } = fetchResult;
+                const { reason } = fetchResult;
                 const cooldownMs = this.marketDataCooldownManager.recordFailure(
                   tokenId,
                   reason,
@@ -6077,10 +6077,12 @@ class ChurnEngine {
         const state = await this.marketDataFacade.getOrderbookState(tokenId);
         if (!state) {
           this.diagnostics.orderbookFetchFailures++;
+          // Facade-null can mean rate limit or transient REST failure, not necessarily "no orderbook"
           return {
             ok: false,
-            reason: "NO_ORDERBOOK",
-            detail: "No bids/asks available",
+            reason: "NETWORK_ERROR",
+            detail:
+              "MarketDataFacade returned null (possible rate limit or transient failure)",
           };
         }
 
@@ -6201,13 +6203,14 @@ class ChurnEngine {
       };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsgLower = errorMsg.toLowerCase();
       this.diagnostics.orderbookFetchFailures++;
 
-      // Classify unexpected errors
+      // Classify unexpected errors (case-insensitive to match earlier classification)
       if (
-        errorMsg.includes("parse") ||
-        errorMsg.includes("JSON") ||
-        errorMsg.includes("undefined")
+        errorMsgLower.includes("parse") ||
+        errorMsgLower.includes("json") ||
+        errorMsgLower.includes("unexpected token")
       ) {
         return { ok: false, reason: "PARSE_ERROR", detail: errorMsg };
       }
