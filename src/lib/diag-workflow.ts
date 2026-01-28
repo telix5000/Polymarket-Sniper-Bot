@@ -32,6 +32,7 @@ import { postOrder } from "./order";
 import type { Logger } from "./types";
 import { getPositions, invalidatePositions } from "./positions";
 import { smartSell } from "./smart-sell";
+import { verifyWritePathBeforeOrder } from "./vpn";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -732,7 +733,107 @@ interface DiagOrderResult {
  * Default slippage percentage for DIAG mode BUY orders.
  * This is a small tolerance above bestAsk to increase fill probability.
  */
-const DIAG_BUY_SLIPPAGE_PCT = 2; // 2% above bestAsk
+export const DIAG_BUY_SLIPPAGE_PCT = 2; // 2% above bestAsk
+
+/**
+ * Maximum price cap for diagnostic orders (default 0.70).
+ * Prevents accidentally buying at extreme prices (e.g., limit=1.0).
+ * Can be overridden via DIAG_MAX_PRICE env var.
+ */
+export function getDiagMaxPrice(): number {
+  const envValue = process.env.DIAG_MAX_PRICE;
+  if (envValue) {
+    const parsed = parseFloat(envValue);
+    if (!isNaN(parsed) && parsed > 0 && parsed <= 1.0) {
+      return parsed;
+    }
+  }
+  return 0.7; // Default max price for diagnostic mode
+}
+
+/**
+ * Threshold for considering a book "too wide" (untradeable).
+ * If bestAsk - bestBid > this value, skip the trade.
+ */
+export const DIAG_MAX_SPREAD = 0.3;
+
+/**
+ * Threshold for "too high" bestAsk - indicates market is nearly resolved.
+ */
+export const DIAG_MAX_BEST_ASK = 0.95;
+
+/**
+ * Check if a book is tradeable for diagnostic mode.
+ * Returns null if tradeable, or a reason string if not.
+ */
+export function checkBookTradeable(
+  bestBid: number | null,
+  bestAsk: number,
+): { tradeable: boolean; reason?: string; detail?: Record<string, unknown> } {
+  // Check if bestAsk is too high (market nearly resolved)
+  if (bestAsk > DIAG_MAX_BEST_ASK) {
+    return {
+      tradeable: false,
+      reason: "BOOK_TOO_WIDE",
+      detail: {
+        bestAsk,
+        threshold: DIAG_MAX_BEST_ASK,
+        issue: "bestAsk > threshold - market nearly resolved",
+      },
+    };
+  }
+
+  // Check if spread is too wide (illiquid market)
+  if (bestBid !== null) {
+    const spread = bestAsk - bestBid;
+    if (spread > DIAG_MAX_SPREAD) {
+      return {
+        tradeable: false,
+        reason: "BOOK_TOO_WIDE",
+        detail: {
+          bestBid,
+          bestAsk,
+          spread,
+          threshold: DIAG_MAX_SPREAD,
+          issue: "spread > threshold - illiquid market",
+        },
+      };
+    }
+  }
+
+  return { tradeable: true };
+}
+
+/**
+ * Calculate the diagnostic limit price with safety caps.
+ * Exported for testing and reuse.
+ *
+ * @param bestAsk - Current best ask price from orderbook
+ * @param signalPrice - Optional signal price
+ * @returns Object with calculated price and whether it was clamped
+ */
+export function calculateDiagLimitPrice(
+  bestAsk: number,
+  signalPrice?: number,
+): { price: number; clamped: boolean } {
+  const slippageMultiplier = 1 + DIAG_BUY_SLIPPAGE_PCT / 100;
+  const diagMaxPrice = getDiagMaxPrice();
+
+  // Calculate candidate prices
+  const askBasedPrice = bestAsk * slippageMultiplier;
+  const signalBasedPrice = signalPrice
+    ? signalPrice * slippageMultiplier
+    : Infinity;
+
+  // Apply DIAG_MAX_PRICE cap
+  const rawChosenPrice = Math.min(askBasedPrice, signalBasedPrice);
+  const chosenLimitPrice = Math.min(rawChosenPrice, diagMaxPrice);
+
+  return {
+    price: chosenLimitPrice,
+    clamped: rawChosenPrice > diagMaxPrice,
+  };
+}
 
 /**
  * Attempt a diagnostic BUY order
@@ -743,9 +844,11 @@ const DIAG_BUY_SLIPPAGE_PCT = 2; // 2% above bestAsk
  *
  * NEW LOGIC:
  * 1. Fetch orderbook FIRST to get current bestBid/bestAsk
- * 2. Use bestAsk + small tolerance as chosenLimitPrice for BUY
- * 3. If orderbook unavailable, reject with "orderbook_unavailable"
- * 4. Log comprehensive DIAG trace with all pricing details before submission
+ * 2. Check for UNTRADABLE_BOOK conditions (bestAsk > 0.95 or spread > 0.30)
+ * 3. Apply DIAG_MAX_PRICE cap to prevent extreme prices
+ * 4. Use bestAsk + small tolerance as chosenLimitPrice for BUY
+ * 5. If orderbook unavailable, reject with "orderbook_unavailable"
+ * 6. Log comprehensive DIAG trace with all pricing details before submission
  */
 async function attemptDiagBuy(
   deps: DiagWorkflowDeps,
@@ -858,13 +961,82 @@ async function attemptDiagBuy(
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // STEP 3: Compute limit price for BUY
-    // For BUY: Use bestAsk + small tolerance (slippage) as limit
-    // This ensures we can fill at or near the current ask
+    // STEP 2.5: Check book tradeability (SAFE DIAGNOSTIC MODE)
+    // Skip trades on extreme books to prevent accidental loss
+    // ═══════════════════════════════════════════════════════════════════════
+    const bookCheck = checkBookTradeable(bestBid, bestAsk);
+    if (!bookCheck.tradeable) {
+      tracer.trace({
+        step,
+        action: "book_too_wide",
+        result: "REJECTED",
+        reason: "spread_too_wide",
+        marketId: signal.marketId,
+        tokenId: signal.tokenId,
+        detail: {
+          ...bookCheck.detail,
+          bestBid,
+          bestAsk,
+        },
+      });
+
+      const detailStr =
+        bookCheck.detail?.issue ?? "book conditions too extreme";
+      console.log(`🚫 BUY rejected: BOOK_TOO_WIDE - ${detailStr}`);
+      console.log(
+        `   bestBid=${bestBid?.toFixed(4) ?? "N/A"}, bestAsk=${bestAsk.toFixed(4)}, ` +
+          `spread=${bestBid ? (bestAsk - bestBid).toFixed(4) : "N/A"}`,
+      );
+
+      return {
+        success: false,
+        reason: "spread_too_wide",
+        detail: {
+          ...bookCheck.detail,
+          bestBid,
+          bestAsk,
+        },
+      };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 3: Compute limit price for BUY (with DIAG_MAX_PRICE cap)
+    // For BUY: Use min(bestAsk + slippage, signal.price + slippage, DIAG_MAX_PRICE)
+    // This ensures we never accidentally buy at extreme prices like 1.0
     // ═══════════════════════════════════════════════════════════════════════
     const slippagePct = DIAG_BUY_SLIPPAGE_PCT;
     const slippageMultiplier = 1 + slippagePct / 100;
-    const chosenLimitPrice = Math.min(bestAsk * slippageMultiplier, 1.0);
+    const diagMaxPrice = getDiagMaxPrice();
+
+    // Calculate candidate prices
+    const askBasedPrice = bestAsk * slippageMultiplier;
+    const signalBasedPrice = signal.price
+      ? signal.price * slippageMultiplier
+      : Infinity;
+
+    // Apply DIAG_MAX_PRICE cap - NEVER exceed this in diagnostic mode
+    const rawChosenPrice = Math.min(askBasedPrice, signalBasedPrice);
+    const chosenLimitPrice = Math.min(rawChosenPrice, diagMaxPrice);
+
+    // Track if price was clamped for logging
+    const priceClamped = rawChosenPrice > diagMaxPrice;
+    if (priceClamped) {
+      tracer.trace({
+        step,
+        action: "price_clamped",
+        result: "OK",
+        marketId: signal.marketId,
+        tokenId: signal.tokenId,
+        detail: {
+          rawPrice: rawChosenPrice,
+          clampedTo: diagMaxPrice,
+          reason: "DIAG_MAX_PRICE cap applied for safety",
+        },
+      });
+      console.log(
+        `⚠️ [DIAG] Price clamped: ${rawChosenPrice.toFixed(4)} → ${diagMaxPrice.toFixed(4)} (DIAG_MAX_PRICE cap)`,
+      );
+    }
 
     // Note: priceUnits is for logging/documentation only - the Polymarket CLOB API
     // expects price in decimal format (0.0 to 1.0) representing probability/price per share
@@ -913,8 +1085,12 @@ async function attemptDiagBuy(
         orderbookTimestamp,
         // Price formation
         chosenLimitPrice,
+        rawChosenPrice,
+        diagMaxPrice,
+        priceClamped,
         slippagePct,
-        dynamicAdjustments: "bestAsk + slippage tolerance",
+        dynamicAdjustments:
+          "min(bestAsk + slippage, signalPrice + slippage, DIAG_MAX_PRICE)",
         priceUnits,
         // Order payload fields (no secrets)
         orderPayload,
@@ -924,8 +1100,41 @@ async function attemptDiagBuy(
     console.log(
       `📊 [DIAG] Price formation: signal=${signal.price?.toFixed(4) ?? "N/A"}, ` +
         `bestBid=${bestBid?.toFixed(4) ?? "N/A"}, bestAsk=${bestAsk.toFixed(4)}, ` +
-        `chosenLimit=${chosenLimitPrice.toFixed(4)} (bestAsk + ${slippagePct}%)`,
+        `chosenLimit=${chosenLimitPrice.toFixed(4)}${priceClamped ? " (capped)" : ""} (max=${diagMaxPrice})`,
     );
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 4.5: Pre-order VPN routing verification
+    // Ensure WRITE hosts are not bypassed before submitting order
+    // ═══════════════════════════════════════════════════════════════════════
+    const vpnCheck = verifyWritePathBeforeOrder(
+      tracer.getTraceId(),
+      deps.logger,
+    );
+    if (!vpnCheck.ok) {
+      tracer.trace({
+        step,
+        action: "vpn_write_not_routed",
+        result: "REJECTED",
+        reason: "vpn_write_not_routed",
+        marketId: signal.marketId,
+        tokenId: signal.tokenId,
+        detail: {
+          misroutedHosts: vpnCheck.misroutedHosts,
+          message: "Order blocked: WRITE hosts bypassed VPN",
+        },
+      });
+
+      console.log(
+        `🚫 BUY rejected: vpn_write_not_routed - WRITE hosts ${vpnCheck.misroutedHosts.join(", ")} are bypassed`,
+      );
+
+      return {
+        success: false,
+        reason: "vpn_write_not_routed",
+        detail: { misroutedHosts: vpnCheck.misroutedHosts },
+      };
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // STEP 5: Submit order with bestAsk-based limit price
@@ -1240,30 +1449,99 @@ async function runHedgeVerificationStep(
     detail: { verifyingHedgeLogic: true },
   });
 
-  // Check if buy was executed
-  if (!buyContext || !buyContext.executedShares) {
-    const reason: DiagReason = "hedge_not_triggered";
+  // Check if buy was executed - with explicit skip reasons
+  if (!buyContext) {
+    // Case 1: No buy context at all (buy step didn't execute or was skipped)
+    const skipReason = "no_executed_position";
 
     tracer.trace({
       step,
-      action: "hedge_skipped_no_buy",
+      action: "hedge_skipped",
       result: "SKIPPED",
-      reason,
+      reason: "hedge_not_triggered",
       detail: {
-        message: "Hedge verification skipped: no executed buy position",
+        skipReason,
+        message: "Hedge verification skipped: buy step did not execute",
       },
     });
 
     console.log(
-      `⏭️ ${step}: Skipped - no executed buy position to verify hedge logic`,
+      `⏭️ ${step}: SKIPPED (${skipReason}) - buy step did not execute`,
     );
 
     ghEndGroup();
     return {
       step,
       result: "SKIPPED",
-      reason,
-      detail: { message: "No executed buy position to verify hedge logic" },
+      reason: "hedge_not_triggered",
+      detail: { skipReason, message: "Buy step did not execute" },
+      traceEvents: tracer.getStepEvents(step),
+    };
+  }
+
+  if (!buyContext.executedShares || buyContext.executedShares <= 0) {
+    // Case 2: Buy context exists but no shares executed (order was rejected)
+    const skipReason = "no_executed_position";
+
+    tracer.trace({
+      step,
+      action: "hedge_skipped",
+      result: "SKIPPED",
+      reason: "hedge_not_triggered",
+      detail: {
+        skipReason,
+        executedShares: buyContext.executedShares ?? 0,
+        message: "Hedge verification skipped: no shares were executed in buy",
+      },
+    });
+
+    console.log(
+      `⏭️ ${step}: SKIPPED (${skipReason}) - no shares executed in buy`,
+    );
+
+    ghEndGroup();
+    return {
+      step,
+      result: "SKIPPED",
+      reason: "hedge_not_triggered",
+      detail: {
+        skipReason,
+        executedShares: buyContext.executedShares ?? 0,
+        message: "No shares were executed in buy",
+      },
+      traceEvents: tracer.getStepEvents(step),
+    };
+  }
+
+  if (!buyContext.entryPriceCents && !deps.getMarketData) {
+    // Case 3: Missing position data (no entry price and no way to get market data)
+    const skipReason = "missing_position_data";
+
+    tracer.trace({
+      step,
+      action: "hedge_skipped",
+      result: "SKIPPED",
+      reason: "hedge_not_triggered",
+      detail: {
+        skipReason,
+        message:
+          "Hedge verification skipped: missing entry price and no market data source",
+      },
+    });
+
+    console.log(
+      `⏭️ ${step}: SKIPPED (${skipReason}) - missing entry price data`,
+    );
+
+    ghEndGroup();
+    return {
+      step,
+      result: "SKIPPED",
+      reason: "hedge_not_triggered",
+      detail: {
+        skipReason,
+        message: "Missing entry price and market data source",
+      },
       traceEvents: tracer.getStepEvents(step),
     };
   }

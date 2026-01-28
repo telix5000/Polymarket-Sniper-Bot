@@ -590,22 +590,68 @@ export interface CloudflareBlockEvent {
   statusCode: number;
   rayId?: string;
   server?: string;
+  vpnActive?: boolean;
+  hostBypassed?: boolean;
   remediation: string[];
 }
 
 /**
+ * VPN status getter - lazy import to avoid circular dependency
+ */
+let vpnStatusGetter:
+  | (() => { active: boolean; bypassed: (host: string) => boolean })
+  | null = null;
+
+/**
+ * Set the VPN status getter function (call from vpn.ts or startup)
+ */
+export function setVpnStatusGetter(
+  getter: () => { active: boolean; bypassed: (host: string) => boolean },
+): void {
+  vpnStatusGetter = getter;
+}
+
+// Provide a safe default VPN status getter so Cloudflare block events
+// always have deterministic VPN fields, even if no real VPN integration
+// registers an implementation. Callers in vpn.ts/startup can override this.
+setVpnStatusGetter(() => ({
+  active: false,
+  bypassed: () => false,
+}));
+/**
  * Emit a structured Cloudflare block event with GitHub Actions annotation
+ *
+ * Enhanced to include VPN status and bypass information for better diagnostics.
  *
  * @param traceId - Trace ID for correlation
  * @param host - The host that was blocked (sanitized, no path/query)
  * @param error - The original error
+ * @param vpnInfo - Optional VPN info (vpnActive, hostBypassed)
  */
 export function emitCloudflareBlockEvent(
   traceId: string,
   host: string,
   error: unknown,
+  vpnInfo?: { vpnActive?: boolean; hostBypassed?: boolean },
 ): CloudflareBlockEvent {
   const cfInfo = detectCloudflareBlock(error);
+
+  // Try to get VPN status if not provided
+  let vpnActive = vpnInfo?.vpnActive;
+  let hostBypassed = vpnInfo?.hostBypassed;
+
+  if (
+    vpnStatusGetter &&
+    (vpnActive === undefined || hostBypassed === undefined)
+  ) {
+    try {
+      const status = vpnStatusGetter();
+      vpnActive = vpnActive ?? status.active;
+      hostBypassed = hostBypassed ?? status.bypassed(host);
+    } catch {
+      // Ignore errors getting VPN status
+    }
+  }
 
   const event: CloudflareBlockEvent = {
     event: "CLOUDFLARE_BLOCKED",
@@ -615,10 +661,13 @@ export function emitCloudflareBlockEvent(
     statusCode: cfInfo.statusCode ?? 403,
     rayId: cfInfo.rayId,
     server: cfInfo.server,
+    vpnActive,
+    hostBypassed,
     remediation: [
+      "403 suggests geo-block or datacenter IP; ensure order writes go through VPN egress that Cloudflare accepts",
       "Ensure WRITE host (clob.polymarket.com) routes through VPN",
       "Check VPN is active and properly configured",
-      "Try a different VPN server/region",
+      "Try a different VPN server/region (residential/mobile IPs work better)",
       "Verify no bypass routes exist for the WRITE host",
     ],
   };
@@ -626,11 +675,28 @@ export function emitCloudflareBlockEvent(
   // Emit structured JSON log
   console.log(JSON.stringify(event));
 
+  // Emit human-readable log with VPN status
+  const vpnStatusStr =
+    vpnActive === undefined ? "unknown" : vpnActive ? "YES" : "NO";
+  const bypassStr =
+    hostBypassed === undefined
+      ? "unknown"
+      : hostBypassed
+        ? "YES (PROBLEM!)"
+        : "NO";
+
+  console.error(
+    `⚠️ CLOUDFLARE_BLOCKED: host=${host}, vpnActive=${vpnStatusStr}, hostBypassed=${bypassStr}` +
+      (cfInfo.rayId ? `, rayId=${cfInfo.rayId}` : "") +
+      `\n   HINT: 403 suggests geo-block or datacenter IP; ensure order writes go through VPN egress that Cloudflare accepts.`,
+  );
+
   // Emit GitHub Actions annotation with concise message
   const message =
     `Cloudflare blocked request to ${host} (403).` +
     (cfInfo.rayId ? ` Ray ID: ${cfInfo.rayId}.` : "") +
-    ` Consider using a VPN or checking VPN configuration.`;
+    ` VPN: ${vpnStatusStr}, Bypassed: ${bypassStr}.` +
+    ` Ensure WRITE traffic routes through VPN.`;
 
   ghErrorAnnotation(message);
 

@@ -88,8 +88,11 @@ export class GitHubReporter {
     const token = config.token ?? process.env.GITHUB_ERROR_REPORTER_TOKEN ?? "";
     const repo = config.repo ?? process.env.GITHUB_ERROR_REPORTER_REPO ?? "";
 
-    // Only enable if BOTH token AND repo are configured
-    const hasRequiredConfig = !!token && !!repo;
+    // Validate repo format (must be "owner/repo")
+    const repoFormatValid = this.validateRepoFormat(repo);
+
+    // Only enable if BOTH token AND repo are configured AND repo format is valid
+    const hasRequiredConfig = !!token && !!repo && repoFormatValid;
     const explicitlyDisabled =
       process.env.GITHUB_ERROR_REPORTER_ENABLED === "false";
 
@@ -109,6 +112,34 @@ export class GitHubReporter {
         `📋 [GitHub] Initialized with repo: ${repo}, minSeverity: ${this.config.minSeverity}`,
       );
     }
+
+    // Log warning if repo format is invalid (but don't crash)
+    if (repo && !repoFormatValid) {
+      console.warn(
+        `📋 [GitHub] Invalid GITHUB_ERROR_REPORTER_REPO format: "${repo}". ` +
+          `Expected format: "owner/repo" (e.g., "telix5000/Polymarket-Sniper-Bot"). ` +
+          `GitHub issue reporting is disabled.`,
+      );
+    }
+  }
+
+  /**
+   * Validate repo format (must be "owner/repo" with valid characters)
+   * GitHub naming rules: alphanumeric characters, hyphens, underscores, and periods
+   */
+  private validateRepoFormat(repo: string): boolean {
+    if (!repo) return false;
+
+    // Check for basic "owner/repo" format
+    const parts = repo.split("/");
+    if (parts.length !== 2) return false;
+
+    const [owner, name] = parts;
+    if (!owner || !name) return false;
+
+    // GitHub naming: alphanumeric, hyphens, underscores, and periods
+    const validPattern = /^[a-zA-Z0-9._-]+$/;
+    return validPattern.test(owner) && validPattern.test(name);
   }
 
   /**
@@ -182,8 +213,27 @@ export class GitHubReporter {
         errMsg.includes("Resource not accessible");
 
       if (isPermissionError) {
+        // Emit structured GITHUB_REPORT_FORBIDDEN event
+        const forbiddenEvent = {
+          event: "GITHUB_REPORT_FORBIDDEN",
+          timestamp: new Date().toISOString(),
+          tokenExists: !!this.config.token,
+          repo: this.config.repo,
+          isCI:
+            process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true",
+          error: errMsg.includes("403")
+            ? "403 Forbidden"
+            : errMsg.slice(0, 100),
+          remediation: [
+            "For GitHub Actions: Ensure workflow has 'permissions: issues: write'",
+            "For fork PRs: Issue creation may not be allowed from forks",
+            "For PAT tokens: Ensure token has 'repo' scope for private repos",
+          ],
+        };
+        console.warn(JSON.stringify(forbiddenEvent));
         console.warn(
-          `📋 [GitHub] Issue creation failed: INSUFFICIENT_GITHUB_PERMISSIONS. ` +
+          `📋 [GitHub] GITHUB_REPORT_FORBIDDEN: Issue creation failed. ` +
+            `tokenExists=${forbiddenEvent.tokenExists}, isCI=${forbiddenEvent.isCI}. ` +
             `Token may lack 'issues:write' scope or this is a fork PR context.`,
         );
         // Fall back to step summary if available
