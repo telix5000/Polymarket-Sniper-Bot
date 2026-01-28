@@ -8,6 +8,14 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert";
 
+// Import actual WRITE_HOSTS and READ_ONLY_HOSTS from source
+import {
+  WRITE_HOSTS,
+  READ_ONLY_HOSTS,
+  isWriteHost,
+  isReadOnlyHost,
+} from "../../../src/lib/vpn";
+
 // Store original env values
 const originalEnv: Record<string, string | undefined> = {};
 
@@ -314,62 +322,67 @@ describe("VPN DNS Container Handling", () => {
       }
     });
 
-    describe("WRITE_HOSTS protection", () => {
+    describe("WRITE_HOSTS protection (imported from source)", () => {
       it("should define clob.polymarket.com as a WRITE host", () => {
-        // Import the WRITE_HOSTS set from vpn.ts
-        // For testing, we simulate the expected behavior
-        const WRITE_HOSTS = new Set<string>(["clob.polymarket.com"]);
-
+        // Using actual WRITE_HOSTS imported from vpn.ts
         assert.ok(
           WRITE_HOSTS.has("clob.polymarket.com"),
           "clob.polymarket.com must be in WRITE_HOSTS",
         );
+        assert.ok(
+          isWriteHost("clob.polymarket.com"),
+          "isWriteHost should return true for clob.polymarket.com",
+        );
       });
 
       it("should NOT include read-only hosts in WRITE_HOSTS", () => {
-        const WRITE_HOSTS = new Set<string>(["clob.polymarket.com"]);
-
-        // These should NOT be in WRITE_HOSTS
-        const READ_ONLY_HOSTS = [
-          "gamma-api.polymarket.com",
-          "data-api.polymarket.com",
-          "ws-subscriptions-clob.polymarket.com",
-          "polygon-mainnet.infura.io",
-        ];
-
+        // Using actual READ_ONLY_HOSTS imported from vpn.ts
         for (const host of READ_ONLY_HOSTS) {
           assert.ok(
             !WRITE_HOSTS.has(host),
             `${host} should NOT be in WRITE_HOSTS (it's read-only)`,
           );
         }
+
+        // Also check other known read-only hosts
+        const additionalReadOnlyHosts = [
+          "ws-subscriptions-clob.polymarket.com",
+          "polygon-mainnet.infura.io",
+        ];
+
+        for (const host of additionalReadOnlyHosts) {
+          assert.ok(
+            !WRITE_HOSTS.has(host),
+            `${host} should NOT be in WRITE_HOSTS`,
+          );
+        }
       });
 
-      it("should block bypass attempts for WRITE hosts", () => {
-        const WRITE_HOSTS = new Set<string>(["clob.polymarket.com"]);
-
-        // Simulate the bypass blocking logic
-        function canBypass(hostname: string): boolean {
-          return !WRITE_HOSTS.has(hostname);
-        }
-
-        // WRITE hosts cannot be bypassed
-        assert.strictEqual(
-          canBypass("clob.polymarket.com"),
-          false,
-          "clob.polymarket.com must NOT be bypassable",
+      it("should correctly identify write vs read hosts using helper functions", () => {
+        // WRITE hosts
+        assert.ok(
+          isWriteHost("clob.polymarket.com"),
+          "clob.polymarket.com should be identified as WRITE host",
         );
 
-        // Read-only hosts can be bypassed
-        assert.strictEqual(
-          canBypass("gamma-api.polymarket.com"),
-          true,
-          "gamma-api.polymarket.com should be bypassable",
+        // READ-ONLY hosts
+        assert.ok(
+          isReadOnlyHost("gamma-api.polymarket.com"),
+          "gamma-api.polymarket.com should be identified as READ-ONLY host",
         );
-        assert.strictEqual(
-          canBypass("data-api.polymarket.com"),
-          true,
-          "data-api.polymarket.com should be bypassable",
+        assert.ok(
+          isReadOnlyHost("data-api.polymarket.com"),
+          "data-api.polymarket.com should be identified as READ-ONLY host",
+        );
+
+        // Neither WRITE nor READ-ONLY (other hosts)
+        assert.ok(
+          !isWriteHost("example.com"),
+          "example.com should NOT be identified as WRITE host",
+        );
+        assert.ok(
+          !isReadOnlyHost("example.com"),
+          "example.com should NOT be identified as READ-ONLY host",
         );
       });
     });

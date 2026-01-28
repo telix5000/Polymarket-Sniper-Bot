@@ -542,6 +542,44 @@ SCAN_ACTIVE_MARKETS=true
 
 ---
 
+## Diagnostic Mode
+
+Test the bot's auth and execution pipeline in a controlled way. See [docs/diagnostic.md](./diagnostic.md) for full details.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DIAG_MODE` | `false` | Enable diagnostic mode (one-shot workflow) |
+| `DIAGNOSTIC_POST_ACTION` | `halt` | What to do after workflow: `exit` or `halt` |
+| `DIAG_MAX_PRICE` | `0.70` | Maximum price cap for diagnostic buys (0.0-1.0) |
+| `DIAG_WHALE_TIMEOUT_SEC` | `120` | Timeout waiting for whale signal |
+| `DIAG_ORDER_TIMEOUT_SEC` | `30` | Timeout for order execution |
+
+---
+
+## GitHub Issue Reporting
+
+Automatically report errors to GitHub Issues.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GITHUB_ERROR_REPORTER_TOKEN` | (none) | GitHub PAT with `repo` scope |
+| `GITHUB_ERROR_REPORTER_REPO` | (none) | Target repo in `owner/repo` format |
+| `GITHUB_ERROR_REPORTER_ENABLED` | `true` | Enable/disable reporting (auto-enabled if token+repo set) |
+
+### GitHub Actions Workflow Permissions
+
+When running in GitHub Actions, add these permissions to your workflow:
+
+```yaml
+permissions:
+  issues: write  # Required for creating issues
+  contents: read # Required for code checkout
+```
+
+For fork PRs, issue creation may not be allowed due to security restrictions.
+
+---
+
 ## Quick Reference
 
 | Category | Key Variables |
@@ -552,5 +590,7 @@ SCAN_ACTIVE_MARKETS=true
 | **Reserves** | `DYNAMIC_RESERVES_ENABLED`, `MAX_RESERVE_FRACTION` |
 | **Liquidation** | `LIQUIDATION_MODE`, `LIQUIDATION_MAX_SLIPPAGE_PCT` |
 | **Notifications** | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
+| **Diagnostic Mode** | `DIAG_MODE`, `DIAGNOSTIC_POST_ACTION`, `DIAG_MAX_PRICE` |
+| **GitHub Reporting** | `GITHUB_ERROR_REPORTER_TOKEN`, `GITHUB_ERROR_REPORTER_REPO` |
 
 For questions or issues, check the README or open a GitHub issue.

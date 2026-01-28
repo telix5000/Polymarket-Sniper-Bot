@@ -732,14 +732,14 @@ interface DiagOrderResult {
  * Default slippage percentage for DIAG mode BUY orders.
  * This is a small tolerance above bestAsk to increase fill probability.
  */
-const DIAG_BUY_SLIPPAGE_PCT = 2; // 2% above bestAsk
+export const DIAG_BUY_SLIPPAGE_PCT = 2; // 2% above bestAsk
 
 /**
  * Maximum price cap for diagnostic orders (default 0.70).
  * Prevents accidentally buying at extreme prices (e.g., limit=1.0).
  * Can be overridden via DIAG_MAX_PRICE env var.
  */
-function getDiagMaxPrice(): number {
+export function getDiagMaxPrice(): number {
   const envValue = process.env.DIAG_MAX_PRICE;
   if (envValue) {
     const parsed = parseFloat(envValue);
@@ -754,18 +754,18 @@ function getDiagMaxPrice(): number {
  * Threshold for considering a book "too wide" (untradeable).
  * If bestAsk - bestBid > this value, skip the trade.
  */
-const DIAG_MAX_SPREAD = 0.3;
+export const DIAG_MAX_SPREAD = 0.3;
 
 /**
  * Threshold for "too high" bestAsk - indicates market is nearly resolved.
  */
-const DIAG_MAX_BEST_ASK = 0.95;
+export const DIAG_MAX_BEST_ASK = 0.95;
 
 /**
  * Check if a book is tradeable for diagnostic mode.
  * Returns null if tradeable, or a reason string if not.
  */
-function checkBookTradeable(
+export function checkBookTradeable(
   bestBid: number | null,
   bestAsk: number,
 ): { tradeable: boolean; reason?: string; detail?: Record<string, unknown> } {
@@ -1387,7 +1387,7 @@ async function runHedgeVerificationStep(
   // Check if buy was executed - with explicit skip reasons
   if (!buyContext) {
     // Case 1: No buy context at all (buy step didn't execute or was skipped)
-    const skipReason = "no_executed_position" as const;
+    const skipReason = "no_executed_position";
 
     tracer.trace({
       step,
@@ -1416,7 +1416,7 @@ async function runHedgeVerificationStep(
 
   if (!buyContext.executedShares || buyContext.executedShares <= 0) {
     // Case 2: Buy context exists but no shares executed (order was rejected)
-    const skipReason = "no_executed_position" as const;
+    const skipReason = "no_executed_position";
 
     tracer.trace({
       step,
@@ -1450,7 +1450,7 @@ async function runHedgeVerificationStep(
 
   if (!buyContext.entryPriceCents && !deps.getMarketData) {
     // Case 3: Missing position data (no entry price and no way to get market data)
-    const skipReason = "missing_position_data" as const;
+    const skipReason = "missing_position_data";
 
     tracer.trace({
       step,

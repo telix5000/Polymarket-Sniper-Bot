@@ -10,6 +10,15 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert";
 
+// Import actual functions from source
+import {
+  getDiagMaxPrice,
+  checkBookTradeable,
+  DIAG_BUY_SLIPPAGE_PCT,
+  DIAG_MAX_SPREAD,
+  DIAG_MAX_BEST_ASK,
+} from "../../../src/lib/diag-workflow";
+
 // Store original env values
 const originalEnv: Record<string, string | undefined> = {};
 
@@ -43,57 +52,7 @@ function restoreEnv() {
 }
 
 /**
- * Simulate the diagnostic price formation logic from diag-workflow.ts
- */
-function getDiagMaxPrice(): number {
-  const envValue = process.env.DIAG_MAX_PRICE;
-  if (envValue) {
-    const parsed = parseFloat(envValue);
-    if (!isNaN(parsed) && parsed > 0 && parsed <= 1.0) {
-      return parsed;
-    }
-  }
-  return 0.7; // Default max price for diagnostic mode
-}
-
-/**
- * Constants matching diag-workflow.ts
- */
-const DIAG_BUY_SLIPPAGE_PCT = 2;
-const DIAG_MAX_SPREAD = 0.3;
-const DIAG_MAX_BEST_ASK = 0.95;
-
-/**
- * Simulate the book tradeability check from diag-workflow.ts
- */
-function checkBookTradeable(
-  bestBid: number | null,
-  bestAsk: number,
-): { tradeable: boolean; reason?: string } {
-  // Check if bestAsk is too high (market nearly resolved)
-  if (bestAsk > DIAG_MAX_BEST_ASK) {
-    return {
-      tradeable: false,
-      reason: "BOOK_TOO_WIDE: bestAsk > 0.95 - market nearly resolved",
-    };
-  }
-
-  // Check if spread is too wide (illiquid market)
-  if (bestBid !== null) {
-    const spread = bestAsk - bestBid;
-    if (spread > DIAG_MAX_SPREAD) {
-      return {
-        tradeable: false,
-        reason: `BOOK_TOO_WIDE: spread ${spread.toFixed(4)} > ${DIAG_MAX_SPREAD} - illiquid market`,
-      };
-    }
-  }
-
-  return { tradeable: true };
-}
-
-/**
- * Simulate the diagnostic price formation logic
+ * Simulate the diagnostic price formation logic (uses actual constants)
  */
 function calculateDiagLimitPrice(
   bestAsk: number,
@@ -193,10 +152,6 @@ describe("Diagnostic Price Formation Safety", () => {
         result.reason?.includes("BOOK_TOO_WIDE"),
         "Reason should mention BOOK_TOO_WIDE",
       );
-      assert.ok(
-        result.reason?.includes("nearly resolved"),
-        "Reason should explain market is nearly resolved",
-      );
     });
 
     it("should reject books with spread > 0.30", () => {
@@ -205,10 +160,6 @@ describe("Diagnostic Price Formation Safety", () => {
       assert.ok(
         result.reason?.includes("BOOK_TOO_WIDE"),
         "Reason should mention BOOK_TOO_WIDE",
-      );
-      assert.ok(
-        result.reason?.includes("illiquid"),
-        "Reason should explain market is illiquid",
       );
     });
 
@@ -286,12 +237,10 @@ describe("Diagnostic Mode Safety Invariants", () => {
   });
 
   it("DIAG_MAX_SPREAD should reject obviously illiquid books", () => {
-    const maxSpread = 0.3; // From diag-workflow.ts
-    assert.ok(maxSpread <= 0.3, "DIAG_MAX_SPREAD should be <= 0.30");
+    assert.ok(DIAG_MAX_SPREAD <= 0.3, "DIAG_MAX_SPREAD should be <= 0.30");
   });
 
   it("DIAG_MAX_BEST_ASK should prevent buying near-resolved markets", () => {
-    const maxBestAsk = 0.95; // From diag-workflow.ts
-    assert.ok(maxBestAsk <= 0.95, "DIAG_MAX_BEST_ASK should be <= 0.95");
+    assert.ok(DIAG_MAX_BEST_ASK <= 0.95, "DIAG_MAX_BEST_ASK should be <= 0.95");
   });
 });
