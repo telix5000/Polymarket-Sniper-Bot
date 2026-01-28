@@ -5440,6 +5440,29 @@ class ChurnEngine {
           `🐋 [Bias] ${eligibleBiases.length} eligible whale signals${cooldownMsg}${biasRejectMsg}`,
         );
 
+        // TASK 3: Ensure WS subscribes to eligible bias tokens for real-time data
+        // This prevents falling back to REST for tokens we're about to trade
+        try {
+          const wsClient = getWebSocketMarketClient();
+          if (wsClient.isConnected()) {
+            const currentSubs = new Set(wsClient.getSubscriptions());
+            const biasTokensToSubscribe = eligibleBiases
+              .map((b) => b.tokenId)
+              .filter((id) => !currentSubs.has(id));
+            if (biasTokensToSubscribe.length > 0) {
+              wsClient.subscribe(biasTokensToSubscribe);
+              debug(
+                `📡 [WS] Subscribed to ${biasTokensToSubscribe.length} whale signal tokens`,
+              );
+            }
+          }
+        } catch (wsErr) {
+          // WS subscription failed - will use REST fallback in fetchTokenMarketDataWithReason
+          debug(
+            `📡 [WS] Bias token subscription failed: ${wsErr instanceof Error ? wsErr.message : String(wsErr)}`,
+          );
+        }
+
         // Execute whale-signal entries in parallel to avoid missing opportunities
         // when multiple whale signals arrive simultaneously.
         //
@@ -5611,6 +5634,28 @@ class ChurnEngine {
         if (this.cycleCount % 50 === 0 && eligibleScanned.length > 0) {
           console.log(
             `🔍 No active whale signals - scanning ${eligibleScanned.length} active markets for opportunities...`,
+          );
+        }
+
+        // TASK 3: Ensure WS subscribes to scanned tokens for real-time data
+        try {
+          const wsClient = getWebSocketMarketClient();
+          if (wsClient.isConnected()) {
+            const currentSubs = new Set(wsClient.getSubscriptions());
+            const scannedToSubscribe = eligibleScanned
+              .slice(0, 2)
+              .filter((id) => !currentSubs.has(id));
+            if (scannedToSubscribe.length > 0) {
+              wsClient.subscribe(scannedToSubscribe);
+              debug(
+                `📡 [WS] Subscribed to ${scannedToSubscribe.length} scanned tokens`,
+              );
+            }
+          }
+        } catch (wsErr) {
+          // WS subscription failed - will use REST fallback
+          debug(
+            `📡 [WS] Scanned token subscription failed: ${wsErr instanceof Error ? wsErr.message : String(wsErr)}`,
           );
         }
 
