@@ -321,7 +321,11 @@ function attemptWriteRouteAutoFix(
 ): WriteRouteAutoFixResult {
   // Can't fix if we don't have the IP or VPN isn't active
   if (!check.resolvedIp || !vpnActive) {
-    return { attempted: false, success: false, error: "Missing IP or VPN not active" };
+    return {
+      attempted: false,
+      success: false,
+      error: "Missing IP or VPN not active",
+    };
   }
 
   // Validate IP to prevent injection
@@ -341,7 +345,11 @@ function attemptWriteRouteAutoFix(
 
   // Validate interface name
   if (!isValidIface(vpnIface)) {
-    return { attempted: false, success: false, error: "Invalid VPN interface name" };
+    return {
+      attempted: false,
+      success: false,
+      error: "Invalid VPN interface name",
+    };
   }
 
   try {

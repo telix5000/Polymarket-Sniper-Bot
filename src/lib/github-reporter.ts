@@ -504,7 +504,12 @@ ${contextStr}
     };
     // Key failures encountered
     keyFailures?: Array<{
-      type: "CLOUDFLARE_BLOCKED" | "WRITE_ROUTE_MISMATCH" | "EMPTY_BOOK" | "AUTH_FAILED" | "OTHER";
+      type:
+        | "CLOUDFLARE_BLOCKED"
+        | "WRITE_ROUTE_MISMATCH"
+        | "EMPTY_BOOK"
+        | "AUTH_FAILED"
+        | "OTHER";
       host?: string;
       statusCode?: number;
       marketId?: string;
@@ -720,18 +725,14 @@ ${contextStr}
     const nextActions: string[] = [];
 
     // Check for write route mismatch
-    if (
-      details.vpnRoutingPolicy?.writeRouteCheck?.some((c) => c.mismatch)
-    ) {
+    if (details.vpnRoutingPolicy?.writeRouteCheck?.some((c) => c.mismatch)) {
       nextActions.push(
         "🔧 **Fix VPN routing**: Ensure clob.polymarket.com routes through the VPN interface (wg0/tun0). Check `ip route get <clob_ip>` and verify it doesn't use the pre-VPN gateway.",
       );
     }
 
     // Check for Cloudflare blocked
-    if (
-      details.keyFailures?.some((f) => f.type === "CLOUDFLARE_BLOCKED")
-    ) {
+    if (details.keyFailures?.some((f) => f.type === "CLOUDFLARE_BLOCKED")) {
       nextActions.push(
         "🌐 **Cloudflare 403**: Verify WRITE host routes through VPN. Check VPN server IP isn't geo-blocked. Try a different VPN endpoint location.",
       );

@@ -62,6 +62,11 @@ import {
   // VPN routing policy events
   emitRoutingPolicyPreEvent,
   emitRoutingPolicyEffectiveEvent,
+  VPN_BYPASS_DEFAULTS,
+  isVpnActive,
+  getVpnType,
+  getBypassedHosts,
+  WRITE_HOSTS,
   // POL Reserve (auto gas fill)
   runPolReserve,
   shouldRebalance,
@@ -89,7 +94,6 @@ import {
   isTelegramEnabled,
   // WebSocket market data layer
   initMarketDataFacade,
-  getMarketDataFacade,
   initMarketDataStore,
   getWebSocketMarketClient,
   initWebSocketMarketClient,
@@ -103,6 +107,8 @@ import {
   isGitHubActions,
   ghNotice,
   type DiagWorkflowDeps,
+  getRejectionStats,
+  checkWriteHostRoute,
 } from "./lib";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -7205,6 +7211,92 @@ async function main(): Promise<void> {
         try {
           const durationMs =
             result.endTime.getTime() - result.startTime.getTime();
+
+          // Get rejection stats for candidate summary
+          const rejectionStats = getRejectionStats();
+
+          // Get write route check results
+          const writeRouteChecks = [...WRITE_HOSTS].map((hostname) =>
+            checkWriteHostRoute(hostname),
+          );
+
+          // Determine env overrides
+          const envOverrides: Record<string, string> = {};
+          if (process.env.VPN_BYPASS_RPC !== undefined) {
+            envOverrides.VPN_BYPASS_RPC = process.env.VPN_BYPASS_RPC;
+          }
+          if (process.env.VPN_BYPASS_POLYMARKET_READS !== undefined) {
+            envOverrides.VPN_BYPASS_POLYMARKET_READS =
+              process.env.VPN_BYPASS_POLYMARKET_READS;
+          }
+          if (process.env.VPN_BYPASS_POLYMARKET_WS !== undefined) {
+            envOverrides.VPN_BYPASS_POLYMARKET_WS =
+              process.env.VPN_BYPASS_POLYMARKET_WS;
+          }
+
+          // Detect key failures from step results
+          const keyFailures: Array<{
+            type:
+              | "CLOUDFLARE_BLOCKED"
+              | "WRITE_ROUTE_MISMATCH"
+              | "EMPTY_BOOK"
+              | "AUTH_FAILED"
+              | "OTHER";
+            host?: string;
+            statusCode?: number;
+            marketId?: string;
+            tokenId?: string;
+            details?: string;
+          }> = [];
+
+          // Check for write route mismatch
+          for (const check of writeRouteChecks) {
+            if (check.mismatch) {
+              keyFailures.push({
+                type: "WRITE_ROUTE_MISMATCH",
+                host: check.hostname,
+                details: `IP=${check.resolvedIp}, Interface=${check.outgoingInterface}, Gateway=${check.outgoingGateway}`,
+              });
+            }
+          }
+
+          // Check for empty book rejections
+          if (rejectionStats.byRule.emptyBook > 0) {
+            const sample = rejectionStats.sampleRejected.find(
+              (s) => s.rule === "empty_book",
+            );
+            keyFailures.push({
+              type: "EMPTY_BOOK",
+              marketId: sample?.marketId,
+              tokenId: sample?.tokenId,
+              details: `${rejectionStats.byRule.emptyBook} candidates had empty books`,
+            });
+          }
+
+          // Check step results for auth failures or cloudflare blocks
+          for (const step of result.steps) {
+            if (
+              step.reason?.includes("403") ||
+              step.reason?.includes("blocked")
+            ) {
+              keyFailures.push({
+                type: "CLOUDFLARE_BLOCKED",
+                host: "clob.polymarket.com",
+                statusCode: 403,
+                details: step.reason,
+              });
+            }
+            if (
+              step.reason?.includes("auth") ||
+              step.reason?.includes("credential")
+            ) {
+              keyFailures.push({
+                type: "AUTH_FAILED",
+                details: step.reason,
+              });
+            }
+          }
+
           const reported = await reporter.reportDiagnosticWorkflow({
             traceId: result.traceId,
             durationMs,
@@ -7214,7 +7306,46 @@ async function main(): Promise<void> {
               reason: s.reason,
               marketId: s.marketId,
               tokenId: s.tokenId,
+              detail: s.detail,
             })),
+            vpnRoutingPolicy: {
+              vpnActive: isVpnActive(),
+              vpnType: getVpnType(),
+              defaultsApplied: {
+                VPN_BYPASS_RPC: VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC,
+                VPN_BYPASS_POLYMARKET_READS:
+                  VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+                VPN_BYPASS_POLYMARKET_WS:
+                  VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_WS,
+              },
+              envOverrides,
+              bypassedHosts: getBypassedHosts(),
+              writeHosts: [...WRITE_HOSTS],
+              writeRouteCheck: writeRouteChecks,
+            },
+            candidateRejectionSummary: {
+              totalCandidates: rejectionStats.totalCandidates,
+              byRule: {
+                askTooHigh: rejectionStats.byRule.askTooHigh,
+                spreadTooWide: rejectionStats.byRule.spreadTooWide,
+                emptyBook: rejectionStats.byRule.emptyBook,
+                cooldown: rejectionStats.skippedCooldown,
+              },
+              sampleRejected: rejectionStats.sampleRejected.map((s) => ({
+                tokenId: s.tokenId,
+                rule: s.rule,
+                bestBid: s.bestBid,
+                bestAsk: s.bestAsk,
+              })),
+            },
+            keyFailures: keyFailures.length > 0 ? keyFailures : undefined,
+            diagConfig: {
+              whaleTimeoutSec: diagConfig.whaleTimeoutSec,
+              orderTimeoutSec: diagConfig.orderTimeoutSec,
+              maxAttempts: diagConfig.maxCandidateAttempts,
+              bookMaxAsk: diagConfig.bookMaxAsk,
+              bookMaxSpread: diagConfig.bookMaxSpread,
+            },
           });
           if (reported) {
             console.log("📋 Diagnostic results reported to GitHub Issues");
