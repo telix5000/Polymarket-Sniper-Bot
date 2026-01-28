@@ -492,10 +492,7 @@ export class DynamicHedgePolicy {
       // Loosen trigger when calm
       const looseningFactor = Math.max(
         0,
-        Math.min(
-          1,
-          1 - volatility / this.config.lowVolatilityThreshold,
-        ),
+        Math.min(1, 1 - volatility / this.config.lowVolatilityThreshold),
       );
       targetTrigger =
         this.config.baseTriggerCents +
