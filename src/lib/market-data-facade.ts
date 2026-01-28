@@ -26,6 +26,9 @@ import {
 // Types
 // ============================================================================
 
+/** Book source indicating where the data came from */
+export type BookSource = "WS" | "REST" | "STALE_CACHE";
+
 /** Orderbook state returned to callers (matches existing OrderbookState interface) */
 export interface OrderbookState {
   bestBidCents: number;
@@ -34,6 +37,8 @@ export interface OrderbookState {
   askDepthUsd: number;
   spreadCents: number;
   midPriceCents: number;
+  /** Source of the orderbook data (WS = WebSocket, REST = REST API, STALE_CACHE = stale cached data) */
+  source?: BookSource;
 }
 
 /** Detailed orderbook with levels */
@@ -231,7 +236,7 @@ export class MarketDataFacade {
       if (cached && !store.isStale(tokenId)) {
         this.wsHits++;
         this.recordResponseTime(startTime);
-        return this.toOrderbookState(cached);
+        return this.toOrderbookState(cached, cached.source === "WS" ? "WS" : "REST");
       }
 
       // Data is stale or missing - try REST fallback with atomic rate limiter
@@ -240,7 +245,8 @@ export class MarketDataFacade {
         if (cached) {
           this.wsHits++;
           this.recordResponseTime(startTime);
-          return this.toOrderbookState(cached);
+          // Mark as STALE_CACHE since we couldn't refresh
+          return this.toOrderbookState(cached, "STALE_CACHE");
         }
         return null;
       }
@@ -252,12 +258,12 @@ export class MarketDataFacade {
 
         if (restData) {
           this.restFallbacks++;
-          return restData;
+          return restData; // fetchFromRest already sets source to "REST"
         }
 
         // REST failed - return stale data if available
         if (cached) {
-          return this.toOrderbookState(cached);
+          return this.toOrderbookState(cached, "STALE_CACHE");
         }
 
         return null;
@@ -275,7 +281,7 @@ export class MarketDataFacade {
       const store = getMarketDataStore();
       const cached = store.get(tokenId);
       if (cached) {
-        return this.toOrderbookState(cached);
+        return this.toOrderbookState(cached, "STALE_CACHE");
       }
 
       return null;
@@ -433,7 +439,7 @@ export class MarketDataFacade {
   /**
    * Convert TokenMarketData to OrderbookState
    */
-  private toOrderbookState(data: TokenMarketData): OrderbookState {
+  private toOrderbookState(data: TokenMarketData, source?: BookSource): OrderbookState {
     return {
       bestBidCents: data.bestBid * 100,
       bestAskCents: data.bestAsk * 100,
@@ -441,6 +447,7 @@ export class MarketDataFacade {
       askDepthUsd: data.askDepthUsd,
       spreadCents: data.spreadCents,
       midPriceCents: data.mid * 100,
+      source: source ?? (data.source === "WS" ? "WS" : "REST"),
     };
   }
 
@@ -506,6 +513,7 @@ export class MarketDataFacade {
         askDepthUsd: askDepth,
         spreadCents: (bestAsk - bestBid) * 100,
         midPriceCents: mid * 100,
+        source: "REST" as BookSource,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
