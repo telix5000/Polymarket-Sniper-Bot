@@ -468,25 +468,40 @@ export class ChurnEngine {
           t.toState === "OPEN" &&
           t.reason === "POSITION_OPENED"
         ) {
-          // New position opened - notify via Telegram with trade details
-          const priceInfo =
-            t.entryPriceCents !== undefined
-              ? `\nPrice: ${(t.entryPriceCents / 100).toFixed(2)}`
-              : "";
-          const sizeInfo =
-            t.entrySizeUsd !== undefined
-              ? `\nAmount: $${t.entrySizeUsd.toFixed(2)}`
-              : "";
-          // Calculate shares if both price and size are available
-          const sharesInfo =
-            t.entrySizeUsd !== undefined &&
-            t.entryPriceCents !== undefined &&
-            t.entryPriceCents > 0
-              ? `\nShares: ${(t.entrySizeUsd / (t.entryPriceCents / 100)).toFixed(1)}`
-              : "";
+          // New position opened - notify via Telegram with exit strategy
+          const pos = this.positionManager.getPosition(t.positionId);
+          const exitStrategy = pos
+            ? `\n📋 Strategy: TP ${pos.takeProfitPriceCents.toFixed(0)}¢ | Hedge ${pos.hedgeTriggerPriceCents.toFixed(0)}¢ | Stop ${pos.hardExitPriceCents.toFixed(0)}¢`
+            : "";
           sendTelegram(
             "📈 Position Opened",
-            `Bought: ${t.outcomeLabel || "Unknown"}${marketInfo}${priceInfo}${sizeInfo}${sharesInfo}`,
+            `Bought: ${t.outcomeLabel || "Unknown"}${marketInfo}${exitStrategy}`,
+          ).catch(() => {});
+        } else if (t.toState === "HEDGED" && t.reason === "HEDGE_PLACED") {
+          // Hedge placed - notify via Telegram
+          const pos = this.positionManager.getPosition(t.positionId);
+          const hedgeInfo = pos
+            ? `\nCoverage: ${(pos.totalHedgeRatio * 100).toFixed(0)}%`
+            : "";
+          sendTelegram(
+            "🛡️ Hedge Placed",
+            `Position hedged${outcomeInfo}${marketInfo}${hedgeInfo}\nCurrent P&L: ${t.pnlCents >= 0 ? "+" : ""}${t.pnlCents.toFixed(1)}¢`,
+          ).catch(() => {});
+        } else if (t.toState === "EXITING") {
+          // Position entering exit phase - notify with formatted reason
+          const reasonMap: Record<string, string> = {
+            TAKE_PROFIT: "Take Profit",
+            STOP_LOSS: "Stop Loss",
+            TIME_STOP: "Time Stop",
+            HARD_EXIT: "Hard Exit",
+            BIAS_FLIP: "Bias Flip",
+            EV_DEGRADED: "EV Degraded",
+            MANUAL: "Manual Exit",
+          };
+          const readableReason = reasonMap[t.reason] || t.reason;
+          sendTelegram(
+            "🚪 Exiting Position",
+            `Reason: ${readableReason}${outcomeInfo}${marketInfo}\nCurrent P&L: ${t.pnlCents >= 0 ? "+" : ""}${t.pnlCents.toFixed(1)}¢`,
           ).catch(() => {});
         }
       }
@@ -811,18 +826,137 @@ export class ChurnEngine {
       });
     }
 
-    // Send startup notification
+    // Send startup notification with enhanced details
     if (isTelegramEnabled()) {
-      await sendTelegram(
-        "🤖 Polymarket Bot Started",
-        `Balance: $${usdcBalance.toFixed(2)}\n` +
-          `Reserve: $${reserveUsd.toFixed(2)}\n` +
-          `Effective: $${effectiveBankroll.toFixed(2)}\n` +
-          `${this.config.liveTradingEnabled ? "🟢 LIVE" : "🔴 SIM"}`,
-      ).catch(() => {});
+      const startupMsg = this.formatStartupMessage(
+        usdcBalance,
+        reserveUsd,
+        effectiveBankroll,
+        existingPositions,
+        positionValue,
+      );
+      await sendTelegram("🤖 Polymarket Bot Started", startupMsg).catch(
+        () => {},
+      );
     }
 
     return true;
+  }
+
+  /**
+   * Format the startup notification message with detailed position and reserve info
+   */
+  private formatStartupMessage(
+    usdcBalance: number,
+    reserveUsd: number,
+    effectiveBankroll: number,
+    positions: Position[],
+    positionValue: number,
+  ): string {
+    const lines: string[] = [];
+
+    // Basic balance info
+    lines.push(`Balance: $${usdcBalance.toFixed(2)}`);
+    lines.push(`Reserve: $${reserveUsd.toFixed(2)}`);
+    lines.push(`Effective: $${effectiveBankroll.toFixed(2)}`);
+
+    // Mode indicator
+    lines.push(this.config.liveTradingEnabled ? "🟢 LIVE" : "🔴 SIM");
+
+    // Positions section
+    if (positions.length > 0) {
+      lines.push("");
+      lines.push(
+        `📦 Positions: ${positions.length} ($${positionValue.toFixed(2)})`,
+      );
+
+      // Show each position with P&L info and exit strategy (limit to 5 to avoid message overflow)
+      const managedPositions = this.positionManager.getOpenPositions();
+      const positionsToShow = positions.slice(0, 5);
+      for (const pos of positionsToShow) {
+        const pnlSign = pos.pnlPct >= 0 ? "+" : "";
+        const pnlEmoji = pos.pnlPct >= 0 ? "📈" : "📉";
+        // Entry cost = avgPrice * size
+        const entryCost = pos.avgPrice * pos.size;
+        lines.push(
+          `${pnlEmoji} ${pos.outcome}: $${entryCost.toFixed(2)} → $${pos.value.toFixed(2)} (${pnlSign}${pos.pnlPct.toFixed(1)}%)`,
+        );
+
+        // Find matching managed position to show exit strategy
+        const managed = managedPositions.find(
+          (mp) => mp.tokenId === pos.tokenId,
+        );
+        if (managed) {
+          const stateEmoji =
+            managed.state === "HEDGED"
+              ? "🛡️"
+              : managed.state === "EXITING"
+                ? "🚪"
+                : "📋";
+          lines.push(
+            `   ${stateEmoji} TP: ${managed.takeProfitPriceCents.toFixed(0)}¢ | Hedge: ${managed.hedgeTriggerPriceCents.toFixed(0)}¢ | Stop: ${managed.hardExitPriceCents.toFixed(0)}¢`,
+          );
+        } else {
+          // For positions without managed tracking, use config defaults
+          const entryPriceCents = pos.avgPrice * 100;
+          const tpCents = entryPriceCents + this.config.tpCents;
+          const hedgeCents = entryPriceCents - this.config.hedgeTriggerCents;
+          const stopCents = entryPriceCents - this.config.maxAdverseCents;
+          lines.push(
+            `   📋 TP: ${tpCents.toFixed(0)}¢ | Hedge: ${hedgeCents.toFixed(0)}¢ | Stop: ${stopCents.toFixed(0)}¢`,
+          );
+        }
+      }
+      if (positions.length > 5) {
+        lines.push(`... +${positions.length - 5} more`);
+      }
+
+      // Check for hedged positions via the position manager
+      // We check both state and hedges array because:
+      // - state === "HEDGED" indicates the position is currently in hedged phase
+      // - hedges.length > 0 captures positions with accumulated hedges that may have transitioned
+      const hedgedCount = managedPositions.filter(
+        (mp) => mp.state === "HEDGED" || mp.hedges.length > 0,
+      ).length;
+      const totalHedgeCost = managedPositions.reduce(
+        (sum, mp) => sum + mp.hedges.reduce((hs, h) => hs + h.sizeUsd, 0),
+        0,
+      );
+
+      if (hedgedCount > 0) {
+        lines.push(
+          `🛡️ Hedged: ${hedgedCount} position(s) ($${totalHedgeCost.toFixed(2)} coverage)`,
+        );
+      } else if (managedPositions.length > 0) {
+        lines.push(`⚠️ Hedge: None active`);
+      }
+    } else {
+      lines.push("");
+      lines.push("📦 Positions: None");
+    }
+
+    // Dynamic reserve status
+    if (this.config.dynamicReservesEnabled) {
+      const reserveState = this.dynamicReserveManager.getState();
+      const reservePct = (reserveState.adaptedReserveFraction * 100).toFixed(0);
+      const basePct = (reserveState.baseReserveFraction * 100).toFixed(0);
+
+      lines.push("");
+      lines.push(`🏦 Reserve Policy: ${reservePct}% (base: ${basePct}%)`);
+
+      if (reserveState.missedCount > 0 || reserveState.hedgesMissed > 0) {
+        const status: string[] = [];
+        if (reserveState.missedCount > 0) {
+          status.push(`${reserveState.missedCount} missed opps`);
+        }
+        if (reserveState.hedgesMissed > 0) {
+          status.push(`${reserveState.hedgesMissed} missed hedges`);
+        }
+        lines.push(`   ${status.join(", ")}`);
+      }
+    }
+
+    return lines.join("\n");
   }
 
   /**

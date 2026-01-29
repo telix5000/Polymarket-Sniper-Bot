@@ -30,11 +30,7 @@ import {
   assertSnapshotIntegrity,
   generateAttemptId,
 } from "../lib/market-snapshot";
-import {
-  EvTracker,
-  calculatePnlUsd,
-  createTradeResult,
-} from "./ev-tracker";
+import { EvTracker, createTradeResult } from "./ev-tracker";
 import {
   DecisionEngine,
   type EvMetrics,
