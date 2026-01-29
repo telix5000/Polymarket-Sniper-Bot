@@ -636,8 +636,8 @@ export interface ComputeLimitPriceResult {
 /**
  * Compute a safe limit price for order submission.
  *
- * This is the SINGLE SOURCE OF TRUTH for limit price calculation.
- * Both whale entries and scan entries MUST use this function.
+ * This utility function encapsulates the price clamping logic for convenience.
+ * It can be used by any order submission path that needs to compute a safe limit price.
  *
  * Policy:
  * - For BUY: limitPrice = min(MAX_PRICE, bestAsk * (1 + slippageFrac))

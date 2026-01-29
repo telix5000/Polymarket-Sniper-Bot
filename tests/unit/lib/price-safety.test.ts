@@ -14,6 +14,7 @@ import {
   DEAD_BOOK_THRESHOLDS,
   calculateSafeLimitPrice,
   isWithinEntryBounds,
+  computeLimitPrice,
   MIN_PRICE,
   MAX_PRICE,
 } from "../../../src/lib/price-safety";
@@ -443,9 +444,6 @@ describe("Price Safety Module", () => {
   });
 
   describe("computeLimitPrice", () => {
-    // Import the function we're testing
-    const { computeLimitPrice } = require("../../../src/lib/price-safety");
-
     describe("BUY orders", () => {
       it("should compute correct BUY price with 5.9% slippage for bestAsk=0.60", () => {
         const result = computeLimitPrice({

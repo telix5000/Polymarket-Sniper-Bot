@@ -23,6 +23,7 @@ import type { OrderSide, OrderOutcome, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
 import { isCloudflareBlock, formatErrorForLog } from "../infra/error-handling";
 import { getBestPricesFromRaw } from "./orderbook-utils";
+import { MIN_PRICE, MAX_PRICE } from "./price-safety";
 
 // In-flight tracking to prevent duplicate orders
 const inFlight = new Map<string, number>();
@@ -289,9 +290,7 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       const levelSize = parseFloat(level.size);
 
       // CRITICAL: Clamp price to valid Polymarket bounds [0.01, 0.99]
-      // This prevents "invalid price" errors from the CLOB API
-      const MIN_PRICE = 0.01;
-      const MAX_PRICE = 0.99;
+      // MIN_PRICE and MAX_PRICE imported from price-safety module
       const levelPrice = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawLevelPrice));
 
       // Log if price was clamped (shouldn't happen normally, but safety first)
