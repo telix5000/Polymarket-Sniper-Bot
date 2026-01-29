@@ -68,18 +68,20 @@ export interface ExecutedTradeRecord {
 }
 
 /**
- * Exposure metrics for a single asset/market
+ * Historical trading volume metrics for a single asset/market.
+ * Note: These represent completed trade volumes, NOT current open position exposure.
+ * For current position exposure, use the PositionManager.
  */
 export interface AssetExposure {
   /** Asset/market identifier */
   marketId: string;
-  /** Net exposure in USD (positive = long, negative = short) */
+  /** Net trading volume in USD (long volume - short volume) */
   netExposureUsd: number;
-  /** Total long exposure in USD */
+  /** Total long volume traded in USD (historical, not current positions) */
   longExposureUsd: number;
-  /** Total short exposure in USD */
+  /** Total short volume traded in USD (historical, not current positions) */
   shortExposureUsd: number;
-  /** Number of active positions */
+  /** Number of trades in this asset (historical count, not active positions) */
   positionCount: number;
   /** Win rate for this asset */
   assetWinRate: number;
@@ -385,15 +387,69 @@ export class HistoricalTradeSnapshot {
   }
 
   /**
-   * Prune trades outside the rolling window
+   * Prune trades outside the rolling window and recalculate drawdown
+   * to keep drawdown metrics consistent with current trade window
    */
   private pruneOldTrades(): void {
     const windowStart = Date.now() - this.config.windowDurationMs;
+    const originalLength = this.trades.length;
     this.trades = this.trades.filter((t) => t.timestamp >= windowStart);
 
     // Also enforce max trades limit
     while (this.trades.length > this.config.maxTrades) {
       this.trades.shift();
+    }
+
+    // If trades were pruned, recalculate drawdown from scratch
+    // to ensure consistency with the current window
+    if (this.trades.length < originalLength) {
+      this.recalculateDrawdown();
+    }
+  }
+
+  /**
+   * Recalculate drawdown metrics from the current trade window.
+   * Called after pruning to ensure accuracy.
+   */
+  private recalculateDrawdown(): void {
+    // Reset drawdown state
+    this.drawdownState = {
+      currentValue: 0,
+      peakValue: 0,
+      currentDrawdownPct: 0,
+      maxDrawdownPct: 0,
+      peakTimestamp: Date.now(),
+      isInDrawdown: false,
+    };
+
+    // Replay all trades to rebuild drawdown state
+    for (const trade of this.trades) {
+      this.drawdownState.currentValue += trade.realizedPnlUsd;
+
+      // Update peak if we have a new high
+      if (this.drawdownState.currentValue > this.drawdownState.peakValue) {
+        this.drawdownState.peakValue = this.drawdownState.currentValue;
+        this.drawdownState.peakTimestamp = trade.timestamp;
+        this.drawdownState.isInDrawdown = false;
+        this.drawdownState.currentDrawdownPct = 0;
+      } else if (this.drawdownState.peakValue > 0) {
+        // Calculate current drawdown
+        const drawdown =
+          this.drawdownState.peakValue - this.drawdownState.currentValue;
+        this.drawdownState.currentDrawdownPct =
+          (drawdown / this.drawdownState.peakValue) * 100;
+        this.drawdownState.isInDrawdown =
+          this.drawdownState.currentDrawdownPct > 0;
+
+        // Track max drawdown
+        if (
+          this.drawdownState.currentDrawdownPct >
+          this.drawdownState.maxDrawdownPct
+        ) {
+          this.drawdownState.maxDrawdownPct =
+            this.drawdownState.currentDrawdownPct;
+        }
+      }
     }
   }
 
@@ -749,27 +805,30 @@ export class HistoricalTradeSnapshot {
     // Max slippage
     const maxSlippageCents = Math.max(...slippages, 0);
 
-    // Slippage standard deviation
+    // Slippage standard deviation (unweighted for simplicity)
     const mean = slippages.reduce((a, b) => a + b, 0) / slippages.length;
     const variance =
       slippages.reduce((sum, s) => sum + Math.pow(s - mean, 2), 0) /
       slippages.length;
     const slippageStdDev = Math.sqrt(variance);
 
-    // Determine slippage trend (compare recent to overall)
+    // Determine slippage trend (compare recent weighted to overall weighted)
+    // Use weighted average for recent trades for consistent comparison
     const recentTrades = this.trades.slice(-Math.min(10, this.trades.length));
-    const recentSlippages = recentTrades.map((t) =>
-      Math.abs(t.entryPriceCents - t.expectedPriceCents),
-    );
-    const recentAvg =
-      recentSlippages.length > 0
-        ? recentSlippages.reduce((a, b) => a + b, 0) / recentSlippages.length
+    const recentWeightedAvg =
+      recentTrades.length > 0
+        ? this.weightedAverage(
+            recentTrades.map((t) => ({
+              value: Math.abs(t.entryPriceCents - t.expectedPriceCents),
+              timestamp: t.timestamp,
+            })),
+          )
         : 0;
 
     let slippageTrend: "IMPROVING" | "WORSENING" | "STABLE" = "STABLE";
-    if (recentAvg < avgSlippageCents * 0.8) {
+    if (recentWeightedAvg < avgSlippageCents * 0.8) {
       slippageTrend = "IMPROVING";
-    } else if (recentAvg > avgSlippageCents * 1.2) {
+    } else if (recentWeightedAvg > avgSlippageCents * 1.2) {
       slippageTrend = "WORSENING";
     }
 

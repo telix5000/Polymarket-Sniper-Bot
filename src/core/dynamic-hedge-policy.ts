@@ -828,10 +828,12 @@ export class DynamicHedgePolicy {
       originalRatio * historicalRecommendation.adjustmentFactor;
     const params = baseDecision.parameters;
 
-    // Clamp to available capacity
+    // Clamp to available capacity with a floor based on the ORIGINAL calculated ratio
+    // (not the base config ratio) to maintain consistency with the hedge decision
     const availableRatio = params.maxHedgeRatio - currentHedgeRatio;
+    const minimumRatio = originalRatio * 0.5; // Minimum 50% of original to prevent under-hedging
     adjustedRatio = Math.max(
-      params.hedgeRatio * 0.5, // Minimum 50% of base ratio to prevent under-hedging
+      minimumRatio,
       Math.min(adjustedRatio, availableRatio),
     );
 
