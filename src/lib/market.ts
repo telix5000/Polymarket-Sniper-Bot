@@ -40,9 +40,9 @@ export interface OutcomeToken {
  * Supports ANY 2-outcome market, not just YES/NO markets.
  */
 export interface MarketTokenPair {
-  /** @deprecated Use tokens[0].tokenId - Token at outcomeIndex 1 (for backward compat, often YES) */
+  /** @deprecated Use tokens.find(t => t.outcomeIndex === 1)?.tokenId - Token at outcomeIndex 1 (for backward compat, often YES) */
   yesTokenId: string;
-  /** @deprecated Use tokens[1].tokenId - Token at outcomeIndex 2 (for backward compat, often NO) */
+  /** @deprecated Use tokens.find(t => t.outcomeIndex === 2)?.tokenId - Token at outcomeIndex 2 (for backward compat, often NO) */
   noTokenId: string;
   /** All tokens with their outcomeIndex and label */
   tokens: OutcomeToken[];
@@ -390,7 +390,8 @@ export async function getOppositeTokenId(
   if (!market) return null;
 
   // Find the token in the tokens array and return the other one
-  const tokenInfo = market.tokens.find((t) => t.tokenId === tokenId);
+  // Use optional chaining in case market.tokens is undefined (cached data from before this PR)
+  const tokenInfo = market.tokens?.find((t) => t.tokenId === tokenId);
   if (!tokenInfo) {
     // Fallback to legacy yesTokenId/noTokenId for backward compat
     if (market.yesTokenId === tokenId) {
@@ -405,7 +406,7 @@ export async function getOppositeTokenId(
   }
 
   // Return the other token (opposite outcomeIndex)
-  const oppositeToken = market.tokens.find((t) => t.tokenId !== tokenId);
+  const oppositeToken = market.tokens?.find((t) => t.tokenId !== tokenId);
   return oppositeToken?.tokenId ?? null;
 }
 
@@ -431,7 +432,8 @@ export async function getTokenInfo(
   const market = await fetchMarketByTokenId(tokenId);
   if (!market) return null;
 
-  const tokenInfo = market.tokens.find((t) => t.tokenId === tokenId);
+  // Use optional chaining in case market.tokens is undefined (cached data from before this PR)
+  const tokenInfo = market.tokens?.find((t) => t.tokenId === tokenId);
   return tokenInfo ?? null;
 }
 

@@ -75,16 +75,16 @@ export class MarketCache extends BaseStore<string, MarketTokenPair> {
    * Cache a market with both token IDs as keys
    */
   cacheMarket(market: MarketTokenPair): void {
-    // Store by all token IDs from tokens array
-    if (market.tokens) {
+    // Prefer tokens array if available (new format), otherwise fall back to legacy fields
+    if (market.tokens && market.tokens.length > 0) {
       for (const token of market.tokens) {
         this.set(token.tokenId, market);
       }
+    } else if (market.yesTokenId && market.noTokenId) {
+      // Fallback to legacy fields only if tokens array is empty/missing
+      this.set(market.yesTokenId, market);
+      this.set(market.noTokenId, market);
     }
-
-    // Also store by legacy yesTokenId/noTokenId for backward compat
-    this.set(market.yesTokenId, market);
-    this.set(market.noTokenId, market);
 
     // Store in condition index
     this.conditionIndex.set(market.conditionId, market);

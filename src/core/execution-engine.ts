@@ -776,13 +776,14 @@ export class ExecutionEngine {
 
     const shares = position.entrySizeUsd / (position.entryPriceCents / 100);
     const pnlUsd = (position.unrealizedPnlCents / 100) * shares;
-    // Use position's actual outcome label if available, otherwise infer from side
-    // Note: LONG means we bought this token, so we sell the same token
-    const outcomeLabel = position.side === "LONG" ? "LONG" : "SHORT";
+    // Use position's actual outcome label if available, otherwise fall back to side indicator
+    // This ensures non-YES/NO markets show actual outcome (e.g., "Lakers") instead of "LONG"
+    const outcomeLabel =
+      position.outcomeLabel || (position.side === "LONG" ? "LONG" : "SHORT");
     const sellPosition: Position = {
       tokenId: position.tokenId,
       conditionId: position.tokenId,
-      outcome: outcomeLabel, // Use generic label - tokenId is the canonical identifier
+      outcome: outcomeLabel, // Use actual outcome label when available
       size: shares,
       avgPrice: position.entryPriceCents / 100,
       curPrice: priceCents / 100,

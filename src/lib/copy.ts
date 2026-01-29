@@ -55,12 +55,15 @@ function generateTradeKey(trade: {
 
   // Normalize outcome to outcomeIndex for the key
   // IMPORTANT: Supports ANY outcome label, not just YES/NO
+  // NOTE: This uses the API's 0-indexed convention (YES=0, NO=1) for consistency with
+  // incoming trade data from the Polymarket API. The internal OutcomeToken representation
+  // uses 1-based indices (outcomeIndex: 1|2), but dedup keys match API format.
   let outcomeIndex: number;
   if (typeof trade.outcomeIndex === "number") {
     outcomeIndex = trade.outcomeIndex;
   } else if (trade.outcome) {
     const upperOutcome = trade.outcome.toUpperCase();
-    // Map YES/NO to indices for backward compat
+    // Map YES/NO to API's 0-indexed convention for backward compat
     if (upperOutcome === "NO") {
       outcomeIndex = 1;
     } else if (upperOutcome === "YES") {
