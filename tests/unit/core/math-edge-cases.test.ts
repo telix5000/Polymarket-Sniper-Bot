@@ -19,7 +19,6 @@ import {
 } from "../../../src/core/ev-tracker";
 
 import {
-  DynamicEvEngine,
   createDynamicEvEngine,
   EV_DEFAULTS,
   type TradeOutcome,
@@ -47,25 +46,6 @@ function createWinningTrade(pnlCents = 14): TradeOutcome {
     pnlCents,
     pnlUsd: (pnlCents / 100) * (25 / 0.5),
     isWin: true,
-    spreadCents: 1,
-    slippageCents: 0.5,
-    feesCents: 0.5,
-    wasHedged: false,
-    hedgePnlCents: 0,
-  };
-}
-
-function createLosingTrade(pnlCents = -9): TradeOutcome {
-  return {
-    tokenId: "test-token",
-    side: "LONG",
-    entryPriceCents: 50,
-    exitPriceCents: 50 + pnlCents,
-    sizeUsd: 25,
-    timestamp: Date.now(),
-    pnlCents,
-    pnlUsd: (pnlCents / 100) * (25 / 0.5),
-    isWin: false,
     spreadCents: 1,
     slippageCents: 0.5,
     feesCents: 0.5,
@@ -275,7 +255,7 @@ describe("Position Manager - Edge Cases", () => {
       (position as any).entryPriceCents = 0;
 
       // Should not throw or produce NaN
-      const result = manager.updatePrice(position.id, 55, null, "LONG");
+      manager.updatePrice(position.id, 55, null, "LONG");
 
       // Position P&L should be 0 when entry price is 0
       const updatedPosition = manager.getPosition(position.id);
