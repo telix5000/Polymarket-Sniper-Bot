@@ -680,6 +680,12 @@ describe("Price Safety Module", () => {
         assert.strictEqual(isBookHealthyForExecution(0, 0.5).healthy, false);
         assert.strictEqual(isBookHealthyForExecution(NaN, 0.5).healthy, false);
       });
+
+      it("should reject crossed book (bid > ask)", () => {
+        const result = isBookHealthyForExecution(0.60, 0.55); // bid > ask
+        assert.strictEqual(result.healthy, false);
+        assert.strictEqual(result.reason, "CROSSED_BOOK");
+      });
     });
 
     describe("base price selection", () => {
@@ -719,6 +725,7 @@ describe("Price Safety Module", () => {
         });
         assert.strictEqual(result.success, false);
         assert.strictEqual(result.basePrice, 0.70);
+        assert.strictEqual(result.rejectionReason, "ASK_ABOVE_MAX");
       });
 
       it("should REJECT SELL when bestBid < MIN_PRICE (won't sell at that)", () => {
@@ -731,6 +738,7 @@ describe("Price Safety Module", () => {
         });
         assert.strictEqual(result.success, false);
         assert.strictEqual(result.basePrice, 0.30);
+        assert.strictEqual(result.rejectionReason, "BID_BELOW_MIN");
       });
 
       it("should clamp slippage-adjusted price to MAX_PRICE for BUY", () => {

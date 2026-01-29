@@ -828,7 +828,7 @@ export interface ComputeExecutionPriceResult {
   /** Direction of clamping: "min", "max", or null */
   clampDirection: "min" | "max" | null;
   /** Rejection reason if computation failed */
-  rejectionReason?: "INVALID_BOOK" | "DUST_BOOK" | "EMPTY_BOOK" | "PRICE_NAN";
+  rejectionReason?: "INVALID_BOOK" | "DUST_BOOK" | "EMPTY_BOOK" | "PRICE_NAN" | "ASK_ABOVE_MAX" | "BID_BELOW_MIN" | "CROSSED_BOOK";
 }
 
 /**
@@ -857,7 +857,7 @@ export function roundToTick(price: number, tickSize: number = DEFAULT_TICK_SIZE)
 export function isBookHealthyForExecution(
   bestBid: number | undefined | null,
   bestAsk: number | undefined | null,
-): { healthy: boolean; reason?: "INVALID_BOOK" | "DUST_BOOK" | "EMPTY_BOOK" } {
+): { healthy: boolean; reason?: "INVALID_BOOK" | "DUST_BOOK" | "EMPTY_BOOK" | "CROSSED_BOOK" } {
   // Check for invalid/missing prices
   if (
     bestBid === undefined || 
@@ -870,6 +870,11 @@ export function isBookHealthyForExecution(
     bestAsk <= 0
   ) {
     return { healthy: false, reason: "INVALID_BOOK" };
+  }
+
+  // Check for crossed book (bid > ask) - indicates stale/corrupted data
+  if (bestBid > bestAsk) {
+    return { healthy: false, reason: "CROSSED_BOOK" };
   }
 
   // Check for empty book (bid <= 1¢ AND ask >= 99¢)
@@ -980,7 +985,7 @@ export function computeExecutionLimitPrice(
       rawPrice: 0,
       wasClamped: false,
       clampDirection: null,
-      rejectionReason: "INVALID_BOOK", // Use existing type
+      rejectionReason: "ASK_ABOVE_MAX",
     };
   }
 
@@ -1008,7 +1013,7 @@ export function computeExecutionLimitPrice(
       rawPrice: 0,
       wasClamped: false,
       clampDirection: null,
-      rejectionReason: "INVALID_BOOK", // Use existing type
+      rejectionReason: "BID_BELOW_MIN",
     };
   }
 
@@ -1065,8 +1070,28 @@ export function computeExecutionLimitPrice(
     clampDirection = "min";
   }
 
-  // Step 6: Round to tick size
-  const limitPrice = roundToTick(clampedPrice, tickSize);
+  // Step 6: Round to tick size, then re-clamp to ensure we stay within bounds
+  // This handles edge cases where rounding might push us outside bounds
+  let limitPrice = roundToTick(clampedPrice, tickSize);
+  
+  // Re-clamp after rounding (in case rounding pushed us outside bounds)
+  if (limitPrice > MAX_PRICE) {
+    limitPrice = roundToTick(MAX_PRICE, tickSize);
+    // Round down if at MAX to stay within
+    if (limitPrice > MAX_PRICE) {
+      limitPrice = Math.floor(MAX_PRICE / tickSize) * tickSize;
+    }
+    wasClamped = true;
+    clampDirection = "max";
+  } else if (limitPrice < MIN_PRICE) {
+    limitPrice = roundToTick(MIN_PRICE, tickSize);
+    // Round up if at MIN to stay within
+    if (limitPrice < MIN_PRICE) {
+      limitPrice = Math.ceil(MIN_PRICE / tickSize) * tickSize;
+    }
+    wasClamped = true;
+    clampDirection = "min";
+  }
 
   // Step 7: Detailed logging
   const mid = (bestBid + bestAsk) / 2;

@@ -21,7 +21,6 @@ import {
   MAX_PRICE,
   computeExecutionLimitPrice,
   isBookHealthyForExecution,
-  roundToTick,
 } from "../lib/price-safety";
 import {
   EvTracker,
@@ -566,7 +565,7 @@ export class ExecutionEngine {
       const slippageFrac = dynamicSlippagePct / 100;
 
       // Compute execution limit price using the new unified function
-      // This uses EXEC_MIN_PRICE/EXEC_MAX_PRICE (0.01-0.99), NOT price filter bounds
+      // This uses MIN_PRICE/MAX_PRICE (user's bounds, default 0.35-0.65)
       const fokPriceResult = computeExecutionLimitPrice({
         bestBid: bestBid!,
         bestAsk: bestAsk!,
