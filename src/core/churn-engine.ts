@@ -21,10 +21,12 @@ import {
   startOpenvpn,
   setupRpcBypass,
   setupPolymarketReadBypass,
-  setupReadApiBypass,
   emitRoutingPolicyPreEvent,
   emitRoutingPolicyEffectiveEvent,
   ensureWriteHostVpnRoutes,
+  // VPN bypass utilities for proper default handling
+  getEnvBool,
+  VPN_BYPASS_DEFAULTS,
   runPolReserve,
   shouldRebalance,
   type PolReserveConfig,
@@ -219,7 +221,6 @@ export class SimpleLogger implements ChurnLogger {
   }
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════
 // DEPENDENCIES THAT MUST BE INJECTED
 // ═══════════════════════════════════════════════════════════════════════════
@@ -229,7 +230,9 @@ export class SimpleLogger implements ChurnLogger {
  */
 export interface ChurnEngineDeps {
   loadConfig: () => ChurnConfig;
-  validateConfig: (config: ChurnConfig) => Array<{ field: string; message: string }>;
+  validateConfig: (
+    config: ChurnConfig,
+  ) => Array<{ field: string; message: string }>;
   logConfig: (config: ChurnConfig, log: (msg: string) => void) => void;
   debug: (message: string, ...args: any[]) => void;
   shouldCooldownOnFailure: (reason: string | undefined) => boolean;
@@ -445,7 +448,9 @@ export class ChurnEngine {
    */
   private trackFailureReason(reason: string): void {
     this.diagnostics.entryFailureReasons.push(reason);
-    if (this.diagnostics.entryFailureReasons.length > this.MAX_FAILURE_REASONS) {
+    if (
+      this.diagnostics.entryFailureReasons.length > this.MAX_FAILURE_REASONS
+    ) {
       this.diagnostics.entryFailureReasons.shift();
     }
   }
@@ -944,16 +949,26 @@ export class ChurnEngine {
       }
 
       // Step 5: Setup bypass routes for READ/RPC traffic
-      if (process.env.VPN_BYPASS_RPC !== "false") {
+      // Use getEnvBool to properly apply defaults when env vars are unset
+      const bypassRpc = getEnvBool(
+        "VPN_BYPASS_RPC",
+        VPN_BYPASS_DEFAULTS.VPN_BYPASS_RPC,
+        this.logger,
+      );
+      if (bypassRpc) {
         await setupRpcBypass(this.config.rpcUrl, this.logger);
       }
 
-      // Bypass read-only APIs (gamma-api, data-api) - they don't need VPN
-      // Use the polymarket-specific bypass when explicitly enabled; otherwise use the generic one.
-      if (process.env.VPN_BYPASS_POLYMARKET_READS === "true") {
+      // Bypass read-only Polymarket APIs (gamma-api, data-api) ONLY when explicitly enabled.
+      // DEFAULT: false - all Polymarket reads go through VPN for safety.
+      // Set VPN_BYPASS_POLYMARKET_READS=true to bypass VPN for reads (faster but less safe).
+      const bypassPolymarketReads = getEnvBool(
+        "VPN_BYPASS_POLYMARKET_READS",
+        VPN_BYPASS_DEFAULTS.VPN_BYPASS_POLYMARKET_READS,
+        this.logger,
+      );
+      if (bypassPolymarketReads) {
         await setupPolymarketReadBypass(this.logger);
-      } else {
-        await setupReadApiBypass(this.logger);
       }
 
       // Step 6: Emit VPN_ROUTING_POLICY_EFFECTIVE event AFTER VPN is up and bypass routes are applied
@@ -1386,7 +1401,9 @@ export class ChurnEngine {
 
     // Debug: show all active biases before filtering
     if (this.deps.isDebugEnabled() && activeBiases.length > 0) {
-      this.deps.debug(`Active biases before cooldown filter: ${activeBiases.length}`);
+      this.deps.debug(
+        `Active biases before cooldown filter: ${activeBiases.length}`,
+      );
       for (const bias of activeBiases.slice(0, 5)) {
         const onCooldown = this.failedEntryCooldowns.has(bias.tokenId);
         this.deps.debug(

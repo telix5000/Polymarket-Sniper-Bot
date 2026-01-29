@@ -612,7 +612,6 @@ function calculateTradeSize(
 // BiasDirection type imported from ./core
 // ═══════════════════════════════════════════════════════════════════════════
 
-
 // ═══════════════════════════════════════════════════════════════════════════
 // VOLUME SCANNER - Imported from ./lib (renamed from MarketScanner)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -625,11 +624,9 @@ function calculateTradeSize(
 // POSITION STATE MACHINE - Types and PositionManager class imported from ./core
 // ═══════════════════════════════════════════════════════════════════════════
 
-
 // ═══════════════════════════════════════════════════════════════════════════
 // DECISION ENGINE - Types and DecisionEngine class imported from ./core
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EXECUTION ENGINE - Types and ExecutionEngine class imported from ./core
@@ -653,7 +650,6 @@ function createChurnEngineDeps(): ChurnEngineDeps {
     isDebugEnabled: () => DEBUG,
   };
 }
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ENTRY POINT
