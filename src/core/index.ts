@@ -133,3 +133,11 @@ export {
   type MissedOpportunity,
   type DynamicReserveState,
 } from "./reserve-manager";
+
+// ChurnEngine - main trading orchestrator (extracted from start.ts)
+export {
+  ChurnEngine,
+  SimpleLogger,
+  type ChurnConfig,
+  type ChurnEngineDeps,
+} from "./churn-engine";
