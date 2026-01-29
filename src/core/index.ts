@@ -125,3 +125,11 @@ export {
   PositionManager,
   type PositionManagerConfig,
 } from "./position-manager";
+
+// Reserve Manager - dynamic reserve management (extracted from start.ts)
+export {
+  DynamicReserveManager,
+  type ReserveManagerConfig,
+  type MissedOpportunity,
+  type DynamicReserveState,
+} from "./reserve-manager";
