@@ -2,7 +2,7 @@
  * Price Safety Module
  *
  * Ensures price formation is safe and cannot result in invalid prices.
- * In prediction markets, prices must be in (0, 1) range, clamped to [0.01, 0.99].
+ * In prediction markets, prices must be in (0, 1) range.
  *
  * Key safety features:
  * - Clamps all limit prices to safe bounds [MIN_PRICE, MAX_PRICE]
@@ -10,35 +10,50 @@
  * - Validates orderbook sanity
  * - Logs price formation decisions for diagnostics
  *
- * PRICE BOUNDS - Polymarket API Law:
+ * PRICE BOUNDS - The Profit Law (35¢ - 65¢):
  * ═══════════════════════════════════════════════════════════════════════════
- * Polymarket's CLOB API error message states: "min: 0.01 - max: 0.99"
- * 
- * These are HARD LIMITS enforced by the API:
- *   MIN_PRICE = 0.01 (1 cent)  - API rejects anything below
- *   MAX_PRICE = 0.99 (99 cents) - API rejects anything above
+ * Default bounds follow the "profit law" - the sweet spot for profitable trades:
  *
- * All order prices are clamped to this range before submission.
+ *   MIN_PRICE = 0.35 (35 cents) - Below this, risk/reward unfavorable
+ *   MAX_PRICE = 0.65 (65 cents) - Above this, limited upside potential
+ *
+ * This matches preferredEntryLowCents (35) and preferredEntryHighCents (65).
+ *
+ * Override via environment variables:
+ *   ORDER_MIN_PRICE - Minimum price bound (default: 0.35)
+ *   ORDER_MAX_PRICE - Maximum price bound (default: 0.65)
+ *
+ * Note: Polymarket API accepts 0.01-0.99, but we follow the profit law.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import { isGitHubActions, ghWarning, ghError } from "./diag-mode";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONSTANTS - Polymarket API enforced bounds (not configurable)
+// CONSTANTS - Profit Law defaults (configurable via ENV)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Minimum valid price - Polymarket API minimum.
- * From API error: "invalid price (...), min: 0.01 - max: 0.99"
- */
-export const MIN_PRICE = 0.01;
+// Helper to read numeric env vars
+const envNum = (key: string, defaultValue: number): number => {
+  const value = process.env[key];
+  if (value === undefined) return defaultValue;
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? defaultValue : parsed;
+};
 
 /**
- * Maximum valid price - Polymarket API maximum.
- * From API error: "invalid price (...), min: 0.01 - max: 0.99"
+ * Minimum valid price for orders.
+ * Default: 0.35 (35¢) - "Profit Law" minimum (matches preferredEntryLowCents)
+ * Override via ORDER_MIN_PRICE env var.
  */
-export const MAX_PRICE = 0.99;
+export const MIN_PRICE = envNum("ORDER_MIN_PRICE", 0.35);
+
+/**
+ * Maximum valid price for orders.
+ * Default: 0.65 (65¢) - "Profit Law" maximum (matches preferredEntryHighCents)
+ * Override via ORDER_MAX_PRICE env var.
+ */
+export const MAX_PRICE = envNum("ORDER_MAX_PRICE", 0.65);
 
 /** Default maximum acceptable spread in cents for liquid markets */
 export const DEFAULT_MAX_SPREAD_CENTS = 50;
