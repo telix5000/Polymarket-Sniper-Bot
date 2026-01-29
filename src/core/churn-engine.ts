@@ -2538,6 +2538,12 @@ export class ChurnEngine {
   /**
    * Clean up oldest entries from marketId cache to prevent unbounded growth
    * Removes the oldest 20% of cache entries when max size is reached
+   * 
+   * Note: This only cleans tokenMarketIdCache and marketIdCacheTimestamps.
+   * It does NOT clean marketIdInFlightRequests because:
+   * 1. In-flight requests are short-lived (API call duration)
+   * 2. They are always cleaned in finally block after promise resolution
+   * 3. Cleaning them during cache cleanup could break pending requests
    */
   private cleanupMarketIdCache(): void {
     const entries = Array.from(this.marketIdCacheTimestamps.entries());
