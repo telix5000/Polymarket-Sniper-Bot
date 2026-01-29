@@ -486,10 +486,20 @@ export class ChurnEngine {
             `Position hedged${outcomeInfo}${marketInfo}${hedgeInfo}\nCurrent P&L: ${t.pnlCents >= 0 ? "+" : ""}${t.pnlCents.toFixed(1)}¢`,
           ).catch(() => {});
         } else if (t.toState === "EXITING") {
-          // Position entering exit phase - notify with reason
+          // Position entering exit phase - notify with formatted reason
+          const reasonMap: Record<string, string> = {
+            TAKE_PROFIT: "Take Profit",
+            STOP_LOSS: "Stop Loss",
+            TIME_STOP: "Time Stop",
+            HARD_EXIT: "Hard Exit",
+            BIAS_FLIP: "Bias Flip",
+            EV_DEGRADED: "EV Degraded",
+            MANUAL: "Manual Exit",
+          };
+          const readableReason = reasonMap[t.reason] || t.reason;
           sendTelegram(
             "🚪 Exiting Position",
-            `Reason: ${t.reason}${outcomeInfo}${marketInfo}\nCurrent P&L: ${t.pnlCents >= 0 ? "+" : ""}${t.pnlCents.toFixed(1)}¢`,
+            `Reason: ${readableReason}${outcomeInfo}${marketInfo}\nCurrent P&L: ${t.pnlCents >= 0 ? "+" : ""}${t.pnlCents.toFixed(1)}¢`,
           ).catch(() => {});
         }
       }
@@ -900,6 +910,9 @@ export class ChurnEngine {
       }
 
       // Check for hedged positions via the position manager
+      // We check both state and hedges array because:
+      // - state === "HEDGED" indicates the position is currently in hedged phase
+      // - hedges.length > 0 captures positions with accumulated hedges that may have transitioned
       const hedgedCount = managedPositions.filter(
         (mp) => mp.state === "HEDGED" || mp.hedges.length > 0,
       ).length;
