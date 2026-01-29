@@ -25,7 +25,6 @@ import { getMarketDataStore, type OrderbookLevel } from "./market-data-store";
 import {
   sortBidsDescending,
   sortAsksAscending,
-  parseRawLevels,
 } from "./orderbook-utils";
 
 // ============================================================================

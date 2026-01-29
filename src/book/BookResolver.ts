@@ -32,7 +32,7 @@ import {
   type NormalizedLevel,
   type OrderBookSnapshot,
   type BookHealth,
-  type BookHealthStatus,
+  type BookResolverHealthStatus,
   type ResolveBookParams,
   type ResolveBookResult,
   BOOK_THRESHOLDS,
@@ -181,7 +181,6 @@ export class BookResolver {
    */
   private async fetchFromRest(tokenId: string): Promise<OrderBookSnapshot> {
     const startTime = Date.now();
-    const redactedUrl = `${POLYMARKET_API.CLOB}/book?token_id=${tokenId.slice(0, 12)}...`;
 
     try {
       const orderbook = await this.client.getOrderBook(tokenId);

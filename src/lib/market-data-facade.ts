@@ -739,7 +739,6 @@ export class MarketDataFacade {
    */
   private async fetchFromRest(tokenId: string): Promise<OrderbookState | null> {
     const startTime = Date.now();
-    const requestUrl = `${POLYMARKET_API.CLOB}/book?token_id=${tokenId}`;
     const redactedUrl = `${POLYMARKET_API.CLOB}/book?token_id=${tokenId.slice(0, 12)}...`;
 
     // Initialize diagnostic object

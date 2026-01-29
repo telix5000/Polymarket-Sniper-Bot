@@ -23,7 +23,7 @@ export type {
   NormalizedLevel,
   OrderBookSnapshot,
   BookHealth,
-  BookHealthStatus,
+  BookResolverHealthStatus,
   ResolveBookParams,
   ResolveBookResult,
 } from "./types";

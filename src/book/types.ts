@@ -47,9 +47,13 @@ export interface OrderBookSnapshot {
 }
 
 /**
- * Book health status enumeration
+ * Book health status enumeration for BookResolver
+ * 
+ * Note: This is distinct from BookHealthStatus in price-safety.ts which uses
+ * different values ("HEALTHY", "DEAD_BOOK"). This type is specific to the
+ * BookResolver module and includes more granular status values.
  */
-export type BookHealthStatus =
+export type BookResolverHealthStatus =
   | "OK"
   | "EMPTY_BOOK"
   | "DUST_BOOK"
@@ -65,7 +69,7 @@ export interface BookHealth {
   /** Whether the book is healthy enough to trade */
   healthy: boolean;
   /** Status classification */
-  status: BookHealthStatus;
+  status: BookResolverHealthStatus;
   /** Human-readable reason for the status */
   reason: string;
   /** Best bid in cents */
@@ -117,24 +121,28 @@ export interface ResolveBookResult {
 }
 
 // ============================================================================
-// Thresholds (Single Source of Truth)
+// Thresholds (Re-export from price-safety for consistency)
 // ============================================================================
+
+import { DEAD_BOOK_THRESHOLDS, DEFAULT_MAX_SPREAD_CENTS } from "../lib/price-safety";
 
 /**
  * Unified thresholds for book health evaluation
  * Both WHALE and SCAN flows use these same thresholds
+ * 
+ * Re-exports from price-safety.ts to maintain single source of truth
  */
 export const BOOK_THRESHOLDS = {
   /** Maximum bid for dust book classification (cents) */
-  DUST_BID_CENTS: 2,
+  DUST_BID_CENTS: DEAD_BOOK_THRESHOLDS.DEAD_BID_CENTS,
   /** Minimum ask for dust book classification (cents) */
-  DUST_ASK_CENTS: 98,
+  DUST_ASK_CENTS: DEAD_BOOK_THRESHOLDS.DEAD_ASK_CENTS,
   /** Maximum bid for empty book classification (cents) */
-  EMPTY_BID_CENTS: 1,
+  EMPTY_BID_CENTS: DEAD_BOOK_THRESHOLDS.EMPTY_BID_CENTS,
   /** Minimum ask for empty book classification (cents) */
-  EMPTY_ASK_CENTS: 99,
+  EMPTY_ASK_CENTS: DEAD_BOOK_THRESHOLDS.EMPTY_ASK_CENTS,
   /** Default maximum spread (cents) for healthy book */
-  DEFAULT_MAX_SPREAD_CENTS: 50,
+  DEFAULT_MAX_SPREAD_CENTS,
   /** Maximum ask price (cents) to consider healthy */
   MAX_ASK_CENTS: 95,
 } as const;
