@@ -794,18 +794,109 @@ export class ChurnEngine {
       });
     }
 
-    // Send startup notification
+    // Send startup notification with enhanced details
     if (isTelegramEnabled()) {
-      await sendTelegram(
-        "🤖 Polymarket Bot Started",
-        `Balance: $${usdcBalance.toFixed(2)}\n` +
-          `Reserve: $${reserveUsd.toFixed(2)}\n` +
-          `Effective: $${effectiveBankroll.toFixed(2)}\n` +
-          `${this.config.liveTradingEnabled ? "🟢 LIVE" : "🔴 SIM"}`,
-      ).catch(() => {});
+      const startupMsg = this.formatStartupMessage(
+        usdcBalance,
+        reserveUsd,
+        effectiveBankroll,
+        existingPositions,
+        positionValue,
+      );
+      await sendTelegram("🤖 Polymarket Bot Started", startupMsg).catch(
+        () => {},
+      );
     }
 
     return true;
+  }
+
+  /**
+   * Format the startup notification message with detailed position and reserve info
+   */
+  private formatStartupMessage(
+    usdcBalance: number,
+    reserveUsd: number,
+    effectiveBankroll: number,
+    positions: Position[],
+    positionValue: number,
+  ): string {
+    const lines: string[] = [];
+
+    // Basic balance info
+    lines.push(`Balance: $${usdcBalance.toFixed(2)}`);
+    lines.push(`Reserve: $${reserveUsd.toFixed(2)}`);
+    lines.push(`Effective: $${effectiveBankroll.toFixed(2)}`);
+
+    // Mode indicator
+    lines.push(this.config.liveTradingEnabled ? "🟢 LIVE" : "🔴 SIM");
+
+    // Positions section
+    if (positions.length > 0) {
+      lines.push("");
+      lines.push(
+        `📦 Positions: ${positions.length} ($${positionValue.toFixed(2)})`,
+      );
+
+      // Show each position with P&L info (limit to 5 to avoid message overflow)
+      const positionsToShow = positions.slice(0, 5);
+      for (const pos of positionsToShow) {
+        const pnlSign = pos.pnlPct >= 0 ? "+" : "";
+        const pnlEmoji = pos.pnlPct >= 0 ? "📈" : "📉";
+        // Entry cost = avgPrice * size
+        const entryCost = pos.avgPrice * pos.size;
+        lines.push(
+          `${pnlEmoji} ${pos.outcome}: $${entryCost.toFixed(2)} → $${pos.value.toFixed(2)} (${pnlSign}${pos.pnlPct.toFixed(1)}%)`,
+        );
+      }
+      if (positions.length > 5) {
+        lines.push(`... +${positions.length - 5} more`);
+      }
+
+      // Check for hedged positions via the position manager
+      const managedPositions = this.positionManager.getOpenPositions();
+      const hedgedCount = managedPositions.filter(
+        (mp) => mp.state === "HEDGED" || mp.hedges.length > 0,
+      ).length;
+      const totalHedgeCost = managedPositions.reduce(
+        (sum, mp) => sum + mp.hedges.reduce((hs, h) => hs + h.sizeUsd, 0),
+        0,
+      );
+
+      if (hedgedCount > 0) {
+        lines.push(
+          `🛡️ Hedged: ${hedgedCount} position(s) ($${totalHedgeCost.toFixed(2)} coverage)`,
+        );
+      } else if (managedPositions.length > 0) {
+        lines.push(`⚠️ Hedge: None active`);
+      }
+    } else {
+      lines.push("");
+      lines.push("📦 Positions: None");
+    }
+
+    // Dynamic reserve status
+    if (this.config.dynamicReservesEnabled) {
+      const reserveState = this.dynamicReserveManager.getState();
+      const reservePct = (reserveState.adaptedReserveFraction * 100).toFixed(0);
+      const basePct = (reserveState.baseReserveFraction * 100).toFixed(0);
+
+      lines.push("");
+      lines.push(`🏦 Reserve Policy: ${reservePct}% (base: ${basePct}%)`);
+
+      if (reserveState.missedCount > 0 || reserveState.hedgesMissed > 0) {
+        const status: string[] = [];
+        if (reserveState.missedCount > 0) {
+          status.push(`${reserveState.missedCount} missed opps`);
+        }
+        if (reserveState.hedgesMissed > 0) {
+          status.push(`${reserveState.hedgesMissed} missed hedges`);
+        }
+        lines.push(`   ${status.join(", ")}`);
+      }
+    }
+
+    return lines.join("\n");
   }
 
   /**
