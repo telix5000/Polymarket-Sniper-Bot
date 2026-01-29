@@ -42,18 +42,32 @@ const envNum = (key: string, defaultValue: number): number => {
 };
 
 /**
- * Minimum valid price for orders.
+ * Minimum valid price for orders (candidate selection AND execution).
  * Default: 0.35 (35¢) - "Profit Law" minimum (matches preferredEntryLowCents)
  * Override via ORDER_MIN_PRICE env var.
+ *
+ * This is used for:
+ * 1. Filtering whale trades/scan candidates by price range
+ * 2. Clamping execution limit prices (user doesn't want to trade below this)
  */
 export const MIN_PRICE = envNum("ORDER_MIN_PRICE", 0.35);
 
 /**
- * Maximum valid price for orders.
+ * Maximum valid price for orders (candidate selection AND execution).
  * Default: 0.65 (65¢) - "Profit Law" maximum (matches preferredEntryHighCents)
  * Override via ORDER_MAX_PRICE env var.
+ *
+ * This is used for:
+ * 1. Filtering whale trades/scan candidates by price range
+ * 2. Clamping execution limit prices (user doesn't want to trade above this)
  */
 export const MAX_PRICE = envNum("ORDER_MAX_PRICE", 0.65);
+
+/**
+ * Default tick size for Polymarket markets.
+ * Most markets use 0.01 (1¢) ticks.
+ */
+export const DEFAULT_TICK_SIZE = 0.01;
 
 /** Default maximum acceptable spread in cents for liquid markets */
 export const DEFAULT_MAX_SPREAD_CENTS = 50;
@@ -766,6 +780,349 @@ export function computeLimitPrice(
 
   return {
     limitPrice,
+    rawPrice,
+    wasClamped,
+    clampDirection,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXECUTION PRICE COMPUTATION (WITH PROPER BASE PRICE SELECTION)
+// ═══════════════════════════════════════════════════════════════════════════
+// The key fix: Use actual bestAsk for BUY, bestBid for SELL (not 0.99 default).
+// Clamping uses MIN_PRICE/MAX_PRICE (user's configured bounds).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Input for computing an execution limit price
+ */
+export interface ComputeExecutionPriceInput {
+  /** Best bid price in dollars (0-1 scale) */
+  bestBid: number;
+  /** Best ask price in dollars (0-1 scale) */
+  bestAsk: number;
+  /** Order side: "BUY" or "SELL" */
+  side: "BUY" | "SELL";
+  /** Slippage as a fraction (e.g., 0.061 for 6.1%) */
+  slippageFrac: number;
+  /** Token ID prefix for logging */
+  tokenIdPrefix?: string;
+  /** Tick size for price rounding (default: 0.01) */
+  tickSize?: number;
+}
+
+/**
+ * Result from computing an execution limit price
+ */
+export interface ComputeExecutionPriceResult {
+  /** Whether computation succeeded (book is healthy) */
+  success: boolean;
+  /** The computed execution limit price (clamped to [MIN_PRICE, MAX_PRICE], rounded to tick) */
+  limitPrice: number;
+  /** The base price used (bestAsk for BUY, bestBid for SELL) */
+  basePrice: number;
+  /** The raw computed price before clamping */
+  rawPrice: number;
+  /** Whether the price was clamped */
+  wasClamped: boolean;
+  /** Direction of clamping: "min", "max", or null */
+  clampDirection: "min" | "max" | null;
+  /** Rejection reason if computation failed */
+  rejectionReason?: "INVALID_BOOK" | "DUST_BOOK" | "EMPTY_BOOK" | "PRICE_NAN";
+}
+
+/**
+ * Round a price to the nearest valid tick size.
+ * 
+ * @param price - The price to round (in dollars, 0-1 scale)
+ * @param tickSize - The tick size (default: 0.01)
+ * @returns The rounded price
+ */
+export function roundToTick(price: number, tickSize: number = DEFAULT_TICK_SIZE): number {
+  if (!Number.isFinite(price) || !Number.isFinite(tickSize) || tickSize <= 0) {
+    return price;
+  }
+  // Round to nearest tick
+  return Math.round(price / tickSize) * tickSize;
+}
+
+/**
+ * Check if an orderbook is healthy enough for execution.
+ * Returns false for empty/dust books that should be rejected (not defaulted to 0.99).
+ * 
+ * @param bestBid - Best bid price (0-1 scale)
+ * @param bestAsk - Best ask price (0-1 scale)
+ * @returns Object with healthy flag and reason if unhealthy
+ */
+export function isBookHealthyForExecution(
+  bestBid: number | undefined | null,
+  bestAsk: number | undefined | null,
+): { healthy: boolean; reason?: "INVALID_BOOK" | "DUST_BOOK" | "EMPTY_BOOK" } {
+  // Check for invalid/missing prices
+  if (
+    bestBid === undefined || 
+    bestBid === null || 
+    bestAsk === undefined || 
+    bestAsk === null ||
+    !Number.isFinite(bestBid) ||
+    !Number.isFinite(bestAsk) ||
+    bestBid <= 0 ||
+    bestAsk <= 0
+  ) {
+    return { healthy: false, reason: "INVALID_BOOK" };
+  }
+
+  // Check for empty book (bid <= 1¢ AND ask >= 99¢)
+  const bidCents = bestBid * 100;
+  const askCents = bestAsk * 100;
+  
+  if (bidCents <= 1 && askCents >= 99) {
+    return { healthy: false, reason: "EMPTY_BOOK" };
+  }
+
+  // Check for dust book (bid <= 2¢ AND ask >= 98¢)
+  if (bidCents <= 2 && askCents >= 98) {
+    return { healthy: false, reason: "DUST_BOOK" };
+  }
+
+  return { healthy: true };
+}
+
+/**
+ * Compute an execution limit price for order submission.
+ * 
+ * KEY PRINCIPLE: The bot should NEVER grab prices outside user's configured bounds.
+ * If bestAsk > MAX_PRICE for BUY → reject (too expensive, won't pay that)
+ * If bestBid < MIN_PRICE for SELL → reject (too cheap, won't sell at that)
+ * 
+ * There's no point computing slippage on a price we won't trade at!
+ * 
+ * @param input - Execution price computation input
+ * @returns Result with limitPrice and diagnostics
+ */
+export function computeExecutionLimitPrice(
+  input: ComputeExecutionPriceInput,
+): ComputeExecutionPriceResult {
+  const {
+    bestBid,
+    bestAsk,
+    side,
+    slippageFrac,
+    tokenIdPrefix = "unknown",
+    tickSize = DEFAULT_TICK_SIZE,
+  } = input;
+
+  // Validate slippageFrac is a fraction, not a percentage
+  if (slippageFrac > 1) {
+    console.warn(
+      `⚠️ [EXEC_PRICE] slippageFrac=${slippageFrac} appears to be a percentage, not a fraction. ` +
+        `Expected value like 0.061 for 6.1%, not ${slippageFrac}. This may cause invalid prices!`,
+    );
+  }
+
+  // Step 1: Validate book health - REJECT if unhealthy (don't default to 0.99!)
+  const healthCheck = isBookHealthyForExecution(bestBid, bestAsk);
+  if (!healthCheck.healthy) {
+    console.log(
+      JSON.stringify({
+        event: "ORDER_PRICE_DEBUG",
+        result: "REJECTED",
+        reason: healthCheck.reason,
+        tokenIdPrefix,
+        side,
+        bestBid: bestBid?.toFixed?.(4) ?? "null",
+        bestAsk: bestAsk?.toFixed?.(4) ?? "null",
+        minPrice: MIN_PRICE,
+        maxPrice: MAX_PRICE,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
+    return {
+      success: false,
+      limitPrice: 0,
+      basePrice: 0,
+      rawPrice: 0,
+      wasClamped: false,
+      clampDirection: null,
+      rejectionReason: healthCheck.reason,
+    };
+  }
+
+  // Step 2: Determine base price from orderbook
+  // BUY: we pay the ask price (seller's price)
+  // SELL: we receive the bid price (buyer's price)
+  const basePrice = side === "BUY" ? bestAsk : bestBid;
+
+  // Step 3: CRITICAL - Check if base price is within user's bounds BEFORE computing anything
+  // Why grab a price outside bounds? The bot won't pay that!
+  if (side === "BUY" && basePrice > MAX_PRICE) {
+    console.log(
+      JSON.stringify({
+        event: "ORDER_PRICE_DEBUG",
+        result: "REJECTED",
+        reason: "ASK_ABOVE_MAX",
+        tokenIdPrefix,
+        side,
+        bestAsk: bestAsk.toFixed(4),
+        bestAskCents: (bestAsk * 100).toFixed(2),
+        maxPrice: MAX_PRICE,
+        maxPriceCents: (MAX_PRICE * 100).toFixed(2),
+        message: `bestAsk ${(bestAsk * 100).toFixed(1)}¢ > MAX_PRICE ${(MAX_PRICE * 100).toFixed(1)}¢ - won't pay that`,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
+    return {
+      success: false,
+      limitPrice: 0,
+      basePrice,
+      rawPrice: 0,
+      wasClamped: false,
+      clampDirection: null,
+      rejectionReason: "INVALID_BOOK", // Use existing type
+    };
+  }
+
+  if (side === "SELL" && basePrice < MIN_PRICE) {
+    console.log(
+      JSON.stringify({
+        event: "ORDER_PRICE_DEBUG",
+        result: "REJECTED",
+        reason: "BID_BELOW_MIN",
+        tokenIdPrefix,
+        side,
+        bestBid: bestBid.toFixed(4),
+        bestBidCents: (bestBid * 100).toFixed(2),
+        minPrice: MIN_PRICE,
+        minPriceCents: (MIN_PRICE * 100).toFixed(2),
+        message: `bestBid ${(bestBid * 100).toFixed(1)}¢ < MIN_PRICE ${(MIN_PRICE * 100).toFixed(1)}¢ - won't sell at that`,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
+    return {
+      success: false,
+      limitPrice: 0,
+      basePrice,
+      rawPrice: 0,
+      wasClamped: false,
+      clampDirection: null,
+      rejectionReason: "INVALID_BOOK", // Use existing type
+    };
+  }
+
+  // Step 4: Compute raw limit price with slippage
+  // BUY: willing to pay MORE (basePrice + slippage %)
+  // SELL: willing to accept LESS (basePrice - slippage %)
+  let rawPrice: number;
+  if (side === "BUY") {
+    rawPrice = basePrice * (1 + slippageFrac);
+  } else {
+    rawPrice = basePrice * (1 - slippageFrac);
+  }
+
+  // Handle NaN or invalid
+  if (!Number.isFinite(rawPrice)) {
+    console.log(
+      JSON.stringify({
+        event: "ORDER_PRICE_DEBUG",
+        result: "REJECTED",
+        reason: "PRICE_NAN",
+        tokenIdPrefix,
+        side,
+        basePrice: basePrice.toFixed(4),
+        slippageFrac: slippageFrac.toFixed(4),
+        rawPrice: String(rawPrice),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+
+    return {
+      success: false,
+      limitPrice: 0,
+      basePrice,
+      rawPrice: 0,
+      wasClamped: false,
+      clampDirection: null,
+      rejectionReason: "PRICE_NAN",
+    };
+  }
+
+  // Step 5: Clamp slippage-adjusted price to user's bounds
+  // This ensures we never exceed the ceiling or go below the floor
+  let clampedPrice = rawPrice;
+  let wasClamped = false;
+  let clampDirection: "min" | "max" | null = null;
+
+  if (rawPrice > MAX_PRICE) {
+    clampedPrice = MAX_PRICE;
+    wasClamped = true;
+    clampDirection = "max";
+  } else if (rawPrice < MIN_PRICE) {
+    clampedPrice = MIN_PRICE;
+    wasClamped = true;
+    clampDirection = "min";
+  }
+
+  // Step 6: Round to tick size
+  const limitPrice = roundToTick(clampedPrice, tickSize);
+
+  // Step 7: Detailed logging
+  const mid = (bestBid + bestAsk) / 2;
+  const spreadCents = (bestAsk - bestBid) * 100;
+
+  console.log(
+    JSON.stringify({
+      event: "ORDER_PRICE_DEBUG",
+      result: "OK",
+      tokenIdPrefix,
+      side,
+      // Book values
+      bestBid: bestBid.toFixed(4),
+      bestBidCents: (bestBid * 100).toFixed(2),
+      bestAsk: bestAsk.toFixed(4),
+      bestAskCents: (bestAsk * 100).toFixed(2),
+      spreadCents: spreadCents.toFixed(2),
+      mid: mid.toFixed(4),
+      // Base price selection
+      basePrice: basePrice.toFixed(4),
+      basePriceCents: (basePrice * 100).toFixed(2),
+      basePriceSource: side === "BUY" ? "bestAsk" : "bestBid",
+      // Slippage
+      slippageFrac: slippageFrac.toFixed(4),
+      slippagePct: (slippageFrac * 100).toFixed(2),
+      // Computed prices
+      rawPrice: rawPrice.toFixed(6),
+      rawPriceCents: (rawPrice * 100).toFixed(2),
+      clampedPrice: clampedPrice.toFixed(6),
+      finalLimitPrice: limitPrice.toFixed(6),
+      finalLimitPriceCents: (limitPrice * 100).toFixed(2),
+      // Clamping info
+      wasClamped,
+      clampDirection,
+      // Config values
+      minPrice: MIN_PRICE,
+      maxPrice: MAX_PRICE,
+      tickSize,
+      units: "dollars",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+
+  // Log warning if clamped
+  if (wasClamped) {
+    console.warn(
+      `⚠️ [EXEC_PRICE] Slippage-adjusted price clamped to ${clampDirection === "max" ? "MAX_PRICE" : "MIN_PRICE"}: ` +
+        `${rawPrice.toFixed(4)} → ${limitPrice.toFixed(4)} ` +
+        `(${side}, basePrice=${basePrice.toFixed(4)}, slippage=${(slippageFrac * 100).toFixed(2)}%)`,
+    );
+  }
+
+  return {
+    success: true,
+    limitPrice,
+    basePrice,
     rawPrice,
     wasClamped,
     clampDirection,

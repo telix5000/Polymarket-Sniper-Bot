@@ -315,8 +315,8 @@ async function fastSellAtBestBid(
       return { success: false, reason: "NO_BIDS" };
     }
 
-    // Get best bid and clamp to valid bounds
-    // MIN_PRICE and MAX_PRICE imported from price-safety module
+    // Get best bid and clamp to user's configured bounds
+    // User doesn't want to trade outside [MIN_PRICE, MAX_PRICE]
     const rawBestBid = parseFloat(orderBook.bids[0].price);
     const bestBid = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawBestBid));
     const priceWasClamped = bestBid !== rawBestBid;
@@ -506,8 +506,7 @@ export async function smartSell(
     // Note: FOK uses best bid because the order type itself ensures complete fill
     // The analysis already validated that we can fill within slippage tolerance
     //
-    // CRITICAL: Clamp to valid Polymarket bounds [0.01, 0.99]
-    // MIN_PRICE and MAX_PRICE imported from price-safety module
+    // Clamp to user's configured bounds [MIN_PRICE, MAX_PRICE]
     const rawOrderPrice = analysis.bestBid;
     const orderPrice = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawOrderPrice));
 

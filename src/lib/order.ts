@@ -289,8 +289,8 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       const rawLevelPrice = parseFloat(level.price);
       const levelSize = parseFloat(level.size);
 
-      // CRITICAL: Clamp price to valid Polymarket bounds [0.01, 0.99]
-      // MIN_PRICE and MAX_PRICE imported from price-safety module
+      // Clamp price to user's configured bounds [MIN_PRICE, MAX_PRICE]
+      // User doesn't want to trade outside these bounds
       const levelPrice = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawLevelPrice));
 
       // Log if price was clamped (shouldn't happen normally, but safety first)

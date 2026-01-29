@@ -16,7 +16,13 @@ import { getLatencyMonitor } from "../infra/latency-monitor";
 import { recordMissedTrade, recordSuccessfulTrade } from "../infra/api-rate-monitor";
 import { smartSell } from "./smart-sell";
 import type { Position } from "../models";
-import { MIN_PRICE, MAX_PRICE } from "../lib/price-safety";
+import {
+  MIN_PRICE,
+  MAX_PRICE,
+  computeExecutionLimitPrice,
+  isBookHealthyForExecution,
+  roundToTick,
+} from "../lib/price-safety";
 import {
   EvTracker,
   type TradeResult,
@@ -524,53 +530,61 @@ export class ExecutionEngine {
       }
 
       const orderBook = await this.client.getOrderBook(tokenId);
-      const levels = side === "LONG" ? orderBook?.asks : orderBook?.bids;
-      if (!levels?.length) return { success: false, reason: "NO_LIQUIDITY" };
-
-      const bestPrice = parseFloat(levels[0].price);
-
-      // Apply latency-adjusted slippage buffer to price
-      // For BUY: We're willing to pay MORE (price + slippage) to ensure fill
-      // For SELL: We're willing to accept LESS (price - slippage) to ensure fill
-      const slippageMultiplier = dynamicSlippagePct / 100;
-
-      // CRITICAL FIX: Clamp price to valid Polymarket bounds [0.01, 0.99]
-      // Without clamping, high prices + slippage can exceed 1.0 and cause "invalid price" errors
-      // MIN_PRICE and MAX_PRICE imported from price-safety module
-
-      const rawFokPrice =
-        side === "LONG"
-          ? bestPrice * (1 + slippageMultiplier) // BUY: pay up to X% more
-          : bestPrice * (1 - slippageMultiplier); // SELL: accept X% less
-
-      // Clamp to valid bounds
-      const fokPrice =
-        side === "LONG"
-          ? Math.min(rawFokPrice, MAX_PRICE) // BUY: never exceed MAX_PRICE
-          : Math.max(rawFokPrice, MIN_PRICE); // SELL: never go below MIN_PRICE
-
-      // Log ORDER_PRICE_DEBUG for diagnostics
-      const priceWasClamped = fokPrice !== rawFokPrice;
-      console.log(
-        JSON.stringify({
-          event: "ORDER_PRICE_DEBUG",
-          tokenIdPrefix: tokenId.slice(0, 12),
-          side: side === "LONG" ? "BUY" : "SELL",
-          bestPrice: bestPrice.toFixed(4),
-          bestPriceCents: (bestPrice * 100).toFixed(2),
-          slippagePct: dynamicSlippagePct.toFixed(2),
-          rawFokPrice: rawFokPrice.toFixed(6),
-          fokPrice: fokPrice.toFixed(6),
-          wasClamped: priceWasClamped,
-          units: "dollars",
-        }),
-      );
-
-      if (priceWasClamped) {
-        console.warn(
-          `⚠️ [ENTRY] Price clamped: ${rawFokPrice.toFixed(4)} → ${fokPrice.toFixed(4)} (${side})`,
-        );
+      
+      // Extract BOTH bid and ask from orderbook - needed for proper price selection
+      const asks = orderBook?.asks;
+      const bids = orderBook?.bids;
+      
+      if (!asks?.length && !bids?.length) {
+        return { success: false, reason: "NO_LIQUIDITY" };
       }
+
+      // Parse best bid and ask prices
+      const bestAsk = asks?.length ? parseFloat(asks[0].price) : undefined;
+      const bestBid = bids?.length ? parseFloat(bids[0].price) : undefined;
+
+      // Validate book health BEFORE attempting order
+      const bookHealth = isBookHealthyForExecution(bestBid, bestAsk);
+      if (!bookHealth.healthy) {
+        console.warn(
+          `⚠️ [ENTRY] Book unhealthy for ${tokenId.slice(0, 12)}...: ${bookHealth.reason} ` +
+            `(bid=${bestBid?.toFixed(4) ?? "null"}, ask=${bestAsk?.toFixed(4) ?? "null"})`,
+        );
+        return { success: false, reason: `UNHEALTHY_BOOK_${bookHealth.reason}` };
+      }
+
+      // For BUY (LONG): We need bestAsk (price we pay to buy)
+      // For SELL (SHORT): We need bestBid (price we receive when selling)
+      if (side === "LONG" && !bestAsk) {
+        return { success: false, reason: "NO_ASK_LIQUIDITY" };
+      }
+      if (side === "SHORT" && !bestBid) {
+        return { success: false, reason: "NO_BID_LIQUIDITY" };
+      }
+
+      // Convert slippage percentage to fraction for the computation
+      const slippageFrac = dynamicSlippagePct / 100;
+
+      // Compute execution limit price using the new unified function
+      // This uses EXEC_MIN_PRICE/EXEC_MAX_PRICE (0.01-0.99), NOT price filter bounds
+      const fokPriceResult = computeExecutionLimitPrice({
+        bestBid: bestBid!,
+        bestAsk: bestAsk!,
+        side: side === "LONG" ? "BUY" : "SELL",
+        slippageFrac,
+        tokenIdPrefix: tokenId.slice(0, 12),
+      });
+
+      // Check if price computation succeeded
+      if (!fokPriceResult.success) {
+        console.warn(
+          `⚠️ [ENTRY] Price computation failed for ${tokenId.slice(0, 12)}...: ${fokPriceResult.rejectionReason}`,
+        );
+        return { success: false, reason: `PRICE_COMPUTE_FAIL_${fokPriceResult.rejectionReason}` };
+      }
+
+      const fokPrice = fokPriceResult.limitPrice;
+      const bestPrice = fokPriceResult.basePrice; // basePrice is bestAsk for BUY, bestBid for SELL
 
       // CRITICAL FIX (Clause 2.2): Entry sizing must use worst-case (slippage-adjusted)
       // limit price, not best price. This prevents overspending notional when slippage
@@ -642,56 +656,57 @@ export class ExecutionEngine {
       // Use a tighter price for GTC - we're willing to wait for a better fill
       console.log(`⏳ FOK missed, trying GTC limit order...`);
 
-      const rawGtcPrice =
-        side === "LONG"
-          ? bestPrice * (1 + slippageMultiplier * 0.5) // Tighter slippage for GTC
-          : bestPrice * (1 - slippageMultiplier * 0.5);
+      // Compute GTC price with reduced slippage (half of FOK slippage)
+      const gtcPriceResult = computeExecutionLimitPrice({
+        bestBid: bestBid!,
+        bestAsk: bestAsk!,
+        side: side === "LONG" ? "BUY" : "SELL",
+        slippageFrac: slippageFrac * 0.5, // Tighter slippage for GTC
+        tokenIdPrefix: tokenId.slice(0, 12),
+      });
 
-      // CRITICAL: Clamp GTC price to valid bounds too
-      const gtcPrice =
-        side === "LONG"
-          ? Math.min(rawGtcPrice, MAX_PRICE)
-          : Math.max(rawGtcPrice, MIN_PRICE);
-
-      if (gtcPrice !== rawGtcPrice) {
+      // GTC price computation - if it fails, skip GTC fallback
+      if (!gtcPriceResult.success) {
         console.warn(
-          `⚠️ [GTC] Price clamped: ${rawGtcPrice.toFixed(4)} → ${gtcPrice.toFixed(4)} (${side})`,
+          `⚠️ [GTC] Price computation failed: ${gtcPriceResult.rejectionReason}`,
         );
-      }
+      } else {
+        const gtcPrice = gtcPriceResult.limitPrice;
 
-      try {
-        const gtcOrder = await this.client.createOrder({
-          side: side === "LONG" ? Side.BUY : Side.SELL,
-          tokenID: tokenId,
-          size: shares,
-          price: gtcPrice,
-        });
+        try {
+          const gtcOrder = await this.client.createOrder({
+            side: side === "LONG" ? Side.BUY : Side.SELL,
+            tokenID: tokenId,
+            size: shares,
+            price: gtcPrice,
+          });
 
-        const gtcResponse = await this.client.postOrder(
-          gtcOrder,
-          OrderType.GTC,
-        );
-
-        if (gtcResponse.success) {
-          // GTC order posted - it will sit on the book until filled
-          console.log(
-            `📋 GTC order posted @ ${(gtcPrice * 100).toFixed(1)}¢ - waiting for fill...`,
+          const gtcResponse = await this.client.postOrder(
+            gtcOrder,
+            OrderType.GTC,
           );
 
-          // Note: For GTC, we don't immediately open a position
-          // The position will be tracked when the order fills (via on-chain monitor)
-          // For now, return success but note it's pending
-          return {
-            success: true,
-            filledUsd: 0,
-            filledPriceCents: gtcPrice * 100,
-            pending: true,
-          };
+          if (gtcResponse.success) {
+            // GTC order posted - it will sit on the book until filled
+            console.log(
+              `📋 GTC order posted @ ${(gtcPrice * 100).toFixed(1)}¢ - waiting for fill...`,
+            );
+
+            // Note: For GTC, we don't immediately open a position
+            // The position will be tracked when the order fills (via on-chain monitor)
+            // For now, return success but note it's pending
+            return {
+              success: true,
+              filledUsd: 0,
+              filledPriceCents: gtcPrice * 100,
+              pending: true,
+            };
+          }
+        } catch (gtcErr) {
+          console.warn(
+            `⚠️ GTC fallback also failed: ${gtcErr instanceof Error ? gtcErr.message : gtcErr}`,
+          );
         }
-      } catch (gtcErr) {
-        console.warn(
-          `⚠️ GTC fallback also failed: ${gtcErr instanceof Error ? gtcErr.message : gtcErr}`,
-        );
       }
 
       // Both FOK and GTC failed
@@ -1086,9 +1101,11 @@ export class ExecutionEngine {
 
         const rawBestBid = parseFloat(bids[0].price);
         
-        // CRITICAL: Clamp price to valid Polymarket bounds [0.01, 0.99]
-        // MIN_PRICE and MAX_PRICE imported from price-safety module
-        const bestBid = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawBestBid));
+        // HEDGE UNWIND: Use Polymarket API limits (0.01-0.99), not user's price filter
+        // Hedges are a different animal - need to unwind regardless of price filter bounds
+        const HEDGE_MIN = 0.01;
+        const HEDGE_MAX = 0.99;
+        const bestBid = Math.max(HEDGE_MIN, Math.min(HEDGE_MAX, rawBestBid));
         
         if (bestBid !== rawBestBid) {
           console.warn(
