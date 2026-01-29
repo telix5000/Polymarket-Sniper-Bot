@@ -466,10 +466,30 @@ export class ChurnEngine {
           t.toState === "OPEN" &&
           t.reason === "POSITION_OPENED"
         ) {
-          // New position opened - notify via Telegram
+          // New position opened - notify via Telegram with exit strategy
+          const pos = this.positionManager.getPosition(t.positionId);
+          const exitStrategy = pos
+            ? `\n📋 Strategy: TP ${pos.takeProfitPriceCents.toFixed(0)}¢ | Hedge ${pos.hedgeTriggerPriceCents.toFixed(0)}¢ | Stop ${pos.hardExitPriceCents.toFixed(0)}¢`
+            : "";
           sendTelegram(
             "📈 Position Opened",
-            `Bought: ${t.outcomeLabel || "Unknown"}${marketInfo}`,
+            `Bought: ${t.outcomeLabel || "Unknown"}${marketInfo}${exitStrategy}`,
+          ).catch(() => {});
+        } else if (t.toState === "HEDGED" && t.reason === "HEDGE_PLACED") {
+          // Hedge placed - notify via Telegram
+          const pos = this.positionManager.getPosition(t.positionId);
+          const hedgeInfo = pos
+            ? `\nCoverage: ${(pos.totalHedgeRatio * 100).toFixed(0)}%`
+            : "";
+          sendTelegram(
+            "🛡️ Hedge Placed",
+            `Position hedged${outcomeInfo}${marketInfo}${hedgeInfo}\nCurrent P&L: ${t.pnlCents >= 0 ? "+" : ""}${t.pnlCents.toFixed(1)}¢`,
+          ).catch(() => {});
+        } else if (t.toState === "EXITING") {
+          // Position entering exit phase - notify with reason
+          sendTelegram(
+            "🚪 Exiting Position",
+            `Reason: ${t.reason}${outcomeInfo}${marketInfo}\nCurrent P&L: ${t.pnlCents >= 0 ? "+" : ""}${t.pnlCents.toFixed(1)}¢`,
           ).catch(() => {});
         }
       }
@@ -838,7 +858,8 @@ export class ChurnEngine {
         `📦 Positions: ${positions.length} ($${positionValue.toFixed(2)})`,
       );
 
-      // Show each position with P&L info (limit to 5 to avoid message overflow)
+      // Show each position with P&L info and exit strategy (limit to 5 to avoid message overflow)
+      const managedPositions = this.positionManager.getOpenPositions();
       const positionsToShow = positions.slice(0, 5);
       for (const pos of positionsToShow) {
         const pnlSign = pos.pnlPct >= 0 ? "+" : "";
@@ -848,13 +869,37 @@ export class ChurnEngine {
         lines.push(
           `${pnlEmoji} ${pos.outcome}: $${entryCost.toFixed(2)} → $${pos.value.toFixed(2)} (${pnlSign}${pos.pnlPct.toFixed(1)}%)`,
         );
+
+        // Find matching managed position to show exit strategy
+        const managed = managedPositions.find(
+          (mp) => mp.tokenId === pos.tokenId,
+        );
+        if (managed) {
+          const stateEmoji =
+            managed.state === "HEDGED"
+              ? "🛡️"
+              : managed.state === "EXITING"
+                ? "🚪"
+                : "📋";
+          lines.push(
+            `   ${stateEmoji} TP: ${managed.takeProfitPriceCents.toFixed(0)}¢ | Hedge: ${managed.hedgeTriggerPriceCents.toFixed(0)}¢ | Stop: ${managed.hardExitPriceCents.toFixed(0)}¢`,
+          );
+        } else {
+          // For positions without managed tracking, use config defaults
+          const entryPriceCents = pos.avgPrice * 100;
+          const tpCents = entryPriceCents + this.config.tpCents;
+          const hedgeCents = entryPriceCents - this.config.hedgeTriggerCents;
+          const stopCents = entryPriceCents - this.config.maxAdverseCents;
+          lines.push(
+            `   📋 TP: ${tpCents.toFixed(0)}¢ | Hedge: ${hedgeCents.toFixed(0)}¢ | Stop: ${stopCents.toFixed(0)}¢`,
+          );
+        }
       }
       if (positions.length > 5) {
         lines.push(`... +${positions.length - 5} more`);
       }
 
       // Check for hedged positions via the position manager
-      const managedPositions = this.positionManager.getOpenPositions();
       const hedgedCount = managedPositions.filter(
         (mp) => mp.state === "HEDGED" || mp.hedges.length > 0,
       ).length;
