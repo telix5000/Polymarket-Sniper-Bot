@@ -105,13 +105,13 @@ export interface ExecutionOrderbook {
 
 /**
  * Validate orderbook and price conditions before placing an order.
- * 
+ *
  * Enforces invariants:
  * - Book is healthy (not EMPTY/DUST/DEAD/CROSSED)
  * - BUY: limitPrice >= bestAsk (after rounding + must-not-cross)
  * - SELL: limitPrice <= bestBid (after rounding + must-not-cross)
  * - Price is within both HARD and strategy bounds
- * 
+ *
  * @param input - Validation input
  * @returns Validation result with computed limit price if valid
  */
@@ -145,7 +145,10 @@ export function validateBeforePlacement(input: {
   // Check spread
   const spreadCents = (bestAsk - bestBid) * 100;
   if (spreadCents > maxSpreadCents) {
-    return { valid: false, reason: `SPREAD_TOO_WIDE_${spreadCents.toFixed(0)}c` };
+    return {
+      valid: false,
+      reason: `SPREAD_TOO_WIDE_${spreadCents.toFixed(0)}c`,
+    };
   }
 
   // Check strategy bounds
@@ -305,7 +308,7 @@ export async function placeOrderWithFallback(
     if (fokResponse.success) {
       console.log(
         `📥 FOK ${side} $${sizeUsd.toFixed(2)} @ ${(basePrice * 100).toFixed(1)}¢ ` +
-        `(limit=${(fokPrice * 100).toFixed(2)}¢, tick=${tickSize})`,
+          `(limit=${(fokPrice * 100).toFixed(2)}¢, tick=${tickSize})`,
       );
       return {
         success: true,
@@ -401,10 +404,11 @@ export async function placeOrderWithFallback(
       const gtcResponse = await client.postOrder(gtcOrder, OrderType.GTC);
 
       if (gtcResponse.success) {
-        const orderId = (gtcResponse as any).orderId || (gtcResponse as any).orderHashes?.[0];
+        const orderId =
+          (gtcResponse as any).orderId || (gtcResponse as any).orderHashes?.[0];
         console.log(
           `📋 GTC ${side} posted @ ${(gtcPrice * 100).toFixed(1)}¢ ` +
-          `(orderId=${orderId?.slice(0, 12) || "unknown"}...)`,
+            `(orderId=${orderId?.slice(0, 12) || "unknown"}...)`,
         );
         return {
           success: true,
@@ -443,7 +447,8 @@ export async function placeOrderWithFallback(
         diagnostic,
       };
     } catch (gtcErr) {
-      const gtcErrorMsg = gtcErr instanceof Error ? gtcErr.message : String(gtcErr);
+      const gtcErrorMsg =
+        gtcErr instanceof Error ? gtcErr.message : String(gtcErr);
       console.warn(`⚠️ GTC fallback error: ${gtcErrorMsg}`);
 
       const diagnostic = createRejectionDiagnostic({
@@ -473,7 +478,7 @@ export async function placeOrderWithFallback(
     }
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    
+
     const diagnostic = createRejectionDiagnostic({
       tokenId,
       marketId,

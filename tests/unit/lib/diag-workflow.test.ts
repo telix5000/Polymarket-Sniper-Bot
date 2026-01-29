@@ -749,14 +749,26 @@ describe("Candidate Attempt Loop Behavior", () => {
       const tokens = ["token1", "token2", "token3", "token4", "token5"];
 
       for (const token of tokens) {
-        assert.strictEqual(isInCooldown(token), false, `${token} should not be in cooldown initially`);
+        assert.strictEqual(
+          isInCooldown(token),
+          false,
+          `${token} should not be in cooldown initially`,
+        );
         addToCooldown(token, 600);
-        assert.strictEqual(isInCooldown(token), true, `${token} should be in cooldown after adding`);
+        assert.strictEqual(
+          isInCooldown(token),
+          true,
+          `${token} should be in cooldown after adding`,
+        );
       }
 
       // All should still be in cooldown
       for (const token of tokens) {
-        assert.strictEqual(isInCooldown(token), true, `${token} should still be in cooldown`);
+        assert.strictEqual(
+          isInCooldown(token),
+          true,
+          `${token} should still be in cooldown`,
+        );
       }
     });
 
@@ -843,14 +855,18 @@ describe("Candidate Attempt Loop Behavior", () => {
         }
       }
 
-      assert.strictEqual(acceptedIndex, 1, "Second candidate should be accepted");
+      assert.strictEqual(
+        acceptedIndex,
+        1,
+        "Second candidate should be accepted",
+      );
     });
 
     test("simulates loop: all candidates fail", () => {
       const candidates = [
         { bid: 0.01, ask: 0.99 }, // empty_book
         { bid: 0.02, ask: 0.98 }, // dead_book
-        { bid: 0.9, ask: 0.96 },  // ask_too_high
+        { bid: 0.9, ask: 0.96 }, // ask_too_high
       ];
 
       let acceptedIndex = -1;
@@ -869,7 +885,11 @@ describe("Candidate Attempt Loop Behavior", () => {
       }
 
       assert.strictEqual(acceptedIndex, -1, "No candidate should be accepted");
-      assert.strictEqual(lastRule, "ask_too_high", "Last rejection should be ask_too_high");
+      assert.strictEqual(
+        lastRule,
+        "ask_too_high",
+        "Last rejection should be ask_too_high",
+      );
     });
 
     test("maxCandidateAttempts limits iteration", () => {
@@ -884,7 +904,11 @@ describe("Candidate Attempt Loop Behavior", () => {
 
       let attemptCount = 0;
       let acceptedIndex = -1;
-      for (let i = 0; i < candidates.length && attemptCount < maxAttempts; i++) {
+      for (
+        let i = 0;
+        i < candidates.length && attemptCount < maxAttempts;
+        i++
+      ) {
         attemptCount++;
         const result = performBookSanityCheck(
           candidates[i].bid,
@@ -897,8 +921,16 @@ describe("Candidate Attempt Loop Behavior", () => {
         }
       }
 
-      assert.strictEqual(attemptCount, maxAttempts, "Should stop at maxAttempts");
-      assert.strictEqual(acceptedIndex, -1, "Should not accept any (max reached before healthy)");
+      assert.strictEqual(
+        attemptCount,
+        maxAttempts,
+        "Should stop at maxAttempts",
+      );
+      assert.strictEqual(
+        acceptedIndex,
+        -1,
+        "Should not accept any (max reached before healthy)",
+      );
     });
   });
 });
