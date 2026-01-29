@@ -2451,6 +2451,7 @@ export class ChurnEngine {
    * Deduplicates in-flight requests to prevent race conditions
    */
   private async fetchMarketId(tokenId: string): Promise<string | null> {
+    const startTime = performance.now();
     const now = Date.now();
     
     // Check cache first
@@ -2464,6 +2465,18 @@ export class ChurnEngine {
           : this.MARKET_ID_CACHE_TTL_MS;        // Longer TTL for success
         
         if (now - cachedTimestamp < ttl) {
+          const latencyMs = performance.now() - startTime;
+          // Structured debug log: cache hit
+          this.deps.debug(
+            JSON.stringify({
+              event: "MARKETID_RESOLUTION",
+              tokenIdPrefix: tokenId.slice(0, 12),
+              marketId: cached ?? undefined,
+              source: "cache",
+              latencyMs: latencyMs.toFixed(2),
+              cacheAgeMs: now - cachedTimestamp,
+            }),
+          );
           return cached;
         }
       }
@@ -2472,7 +2485,19 @@ export class ChurnEngine {
     // Check if there's already an in-flight request for this tokenId
     const inFlight = this.marketIdInFlightRequests.get(tokenId);
     if (inFlight) {
-      return inFlight;
+      const result = await inFlight;
+      const latencyMs = performance.now() - startTime;
+      // Structured debug log: in-flight dedupe
+      this.deps.debug(
+        JSON.stringify({
+          event: "MARKETID_RESOLUTION",
+          tokenIdPrefix: tokenId.slice(0, 12),
+          marketId: result ?? undefined,
+          source: "inflight-dedupe",
+          latencyMs: latencyMs.toFixed(2),
+        }),
+      );
+      return result;
     }
 
     // Create and store the in-flight request promise
@@ -2481,6 +2506,17 @@ export class ChurnEngine {
 
     try {
       const result = await requestPromise;
+      const latencyMs = performance.now() - startTime;
+      // Structured debug log: fresh API fetch
+      this.deps.debug(
+        JSON.stringify({
+          event: "MARKETID_RESOLUTION",
+          tokenIdPrefix: tokenId.slice(0, 12),
+          marketId: result ?? undefined,
+          source: "gamma-api",
+          latencyMs: latencyMs.toFixed(2),
+        }),
+      );
       return result;
     } finally {
       // Clean up in-flight request
@@ -2503,6 +2539,18 @@ export class ChurnEngine {
       this.tokenMarketIdCache.set(tokenId, marketId);
       this.marketIdCacheTimestamps.set(tokenId, now);
       
+      if (marketId === null) {
+        // API returned no marketId (404 or market not found)
+        this.deps.debug(
+          JSON.stringify({
+            event: "MARKETID_NOT_FOUND",
+            tokenIdPrefix: tokenId.slice(0, 12),
+            endpoint: "fetchMarketByTokenId",
+            reason: "API returned null/undefined marketId",
+          }),
+        );
+      }
+      
       return marketId;
     } catch (err) {
       // On error, cache null with shorter TTL to allow retry
@@ -2510,9 +2558,22 @@ export class ChurnEngine {
       this.marketIdCacheTimestamps.set(tokenId, now);
       
       const errMsg = err instanceof Error ? err.message : String(err);
+      const statusCode = (err as any)?.response?.status ?? 
+                         (err as any)?.statusCode ?? 
+                         (err as any)?.code ?? 
+                         "unknown";
+      
+      // Structured error log with details
       this.deps.debug(
-        `[MarketId] Failed to fetch marketId for ${tokenId.slice(0, 12)}...: ${errMsg}`,
+        JSON.stringify({
+          event: "MARKETID_FETCH_ERROR",
+          tokenIdPrefix: tokenId.slice(0, 12),
+          endpoint: "fetchMarketByTokenId",
+          error: errMsg.slice(0, 200), // Truncate long error messages
+          statusCode,
+        }),
       );
+      
       return null;
     }
   }

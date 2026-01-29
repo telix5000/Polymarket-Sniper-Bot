@@ -368,10 +368,15 @@ export class ExecutionEngine {
     referencePriceCents: number,
     biasDirection: BiasDirection,
   ): Promise<ExecutionResult> {
-    // Log warning if marketId is missing
+    // Log info if marketId is missing - marketId is NOT required for order placement,
+    // only used for diagnostics and issue reporting. Orders use tokenId only.
     if (!marketId) {
-      console.warn(
-        `⚠️ [ENTRY] marketId is undefined for token ${tokenId.slice(0, 16)}... - proceeding with order but diagnostics may be limited`,
+      console.log(
+        JSON.stringify({
+          event: "MARKETID_MISSING_AT_EXECUTION",
+          tokenIdPrefix: tokenId.slice(0, 16),
+          note: "marketId undefined - proceeding with order (not required for placement, only for diagnostics)",
+        }),
       );
     }
 
