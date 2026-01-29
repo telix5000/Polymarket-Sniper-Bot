@@ -30,7 +30,18 @@
 import { isGitHubActions, ghWarning, ghError } from "./diag-mode";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONSTANTS - Profit Law defaults (configurable via ENV)
+// CONSTANTS - Two-layer bounds system
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// HARD API BOUNDS: 0.01-0.99 (Polymarket API limits, always enforced)
+// STRATEGY BOUNDS: 0.35-0.65 (user's configured willingness to trade)
+//
+// The execution flow is:
+// 1. Check if base price is within STRATEGY bounds (skip if not)
+// 2. Apply slippage
+// 3. Clamp to STRATEGY bounds (never below ask for BUY, never above bid for SELL)
+// 4. Clamp to HARD API bounds
+// 5. Round to tick size
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Helper to read numeric env vars
@@ -42,26 +53,28 @@ const envNum = (key: string, defaultValue: number): number => {
 };
 
 /**
- * Minimum valid price for orders (candidate selection AND execution).
- * Default: 0.35 (35¢) - "Profit Law" minimum (matches preferredEntryLowCents)
- * Override via ORDER_MIN_PRICE env var.
- *
- * This is used for:
- * 1. Filtering whale trades/scan candidates by price range
- * 2. Clamping execution limit prices (user doesn't want to trade below this)
+ * HARD API BOUNDS - Polymarket API limits (always enforced)
+ * These are the absolute minimum/maximum prices the API accepts.
  */
-export const MIN_PRICE = envNum("ORDER_MIN_PRICE", 0.35);
+export const HARD_MIN_PRICE = 0.01;
+export const HARD_MAX_PRICE = 0.99;
 
 /**
- * Maximum valid price for orders (candidate selection AND execution).
- * Default: 0.65 (65¢) - "Profit Law" maximum (matches preferredEntryHighCents)
- * Override via ORDER_MAX_PRICE env var.
+ * STRATEGY BOUNDS - User's configured willingness to trade
+ * Default: 0.35-0.65 (35¢-65¢) - "Profit Law" sweet spot
+ * Override via ORDER_MIN_PRICE / ORDER_MAX_PRICE env vars
  *
- * This is used for:
+ * Used for:
  * 1. Filtering whale trades/scan candidates by price range
- * 2. Clamping execution limit prices (user doesn't want to trade above this)
+ * 2. Determining if base price is acceptable (skip if outside bounds)
+ * 3. Clamping slippage-adjusted prices
  */
-export const MAX_PRICE = envNum("ORDER_MAX_PRICE", 0.65);
+export const STRATEGY_MIN_PRICE = envNum("ORDER_MIN_PRICE", 0.35);
+export const STRATEGY_MAX_PRICE = envNum("ORDER_MAX_PRICE", 0.65);
+
+// Aliases for backward compatibility
+export const MIN_PRICE = STRATEGY_MIN_PRICE;
+export const MAX_PRICE = STRATEGY_MAX_PRICE;
 
 /**
  * Default tick size for Polymarket markets.
@@ -896,11 +909,14 @@ export function isBookHealthyForExecution(
 /**
  * Compute an execution limit price for order submission.
  * 
- * KEY PRINCIPLE: The bot should NEVER grab prices outside user's configured bounds.
- * If bestAsk > MAX_PRICE for BUY → reject (too expensive, won't pay that)
- * If bestBid < MIN_PRICE for SELL → reject (too cheap, won't sell at that)
+ * TWO-LAYER BOUNDS SYSTEM:
+ * 1. STRATEGY bounds (STRATEGY_MIN_PRICE/STRATEGY_MAX_PRICE, default 0.35-0.65)
+ *    - If base price is outside strategy bounds → SKIP (don't try)
+ *    - Clamp slippage-adjusted price to strategy bounds
+ *    - BUY: clamp to [bestAsk, STRATEGY_MAX] (never below ask)
+ *    - SELL: clamp to [STRATEGY_MIN, bestBid] (never above bid)
  * 
- * There's no point computing slippage on a price we won't trade at!
+ * 2. HARD API bounds (0.01-0.99) - always enforced after strategy bounds
  * 
  * @param input - Execution price computation input
  * @returns Result with limitPrice and diagnostics
@@ -925,7 +941,7 @@ export function computeExecutionLimitPrice(
     );
   }
 
-  // Step 1: Validate book health - REJECT if unhealthy (don't default to 0.99!)
+  // Step 1: Validate book health - REJECT if unhealthy (dust/empty/crossed)
   const healthCheck = isBookHealthyForExecution(bestBid, bestAsk);
   if (!healthCheck.healthy) {
     console.log(
@@ -937,8 +953,10 @@ export function computeExecutionLimitPrice(
         side,
         bestBid: bestBid?.toFixed?.(4) ?? "null",
         bestAsk: bestAsk?.toFixed?.(4) ?? "null",
-        minPrice: MIN_PRICE,
-        maxPrice: MAX_PRICE,
+        strategyMin: STRATEGY_MIN_PRICE,
+        strategyMax: STRATEGY_MAX_PRICE,
+        hardMin: HARD_MIN_PRICE,
+        hardMax: HARD_MAX_PRICE,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -959,21 +977,20 @@ export function computeExecutionLimitPrice(
   // SELL: we receive the bid price (buyer's price)
   const basePrice = side === "BUY" ? bestAsk : bestBid;
 
-  // Step 3: CRITICAL - Check if base price is within user's bounds BEFORE computing anything
-  // Why grab a price outside bounds? The bot won't pay that!
-  if (side === "BUY" && basePrice > MAX_PRICE) {
+  // Step 3: Check if base price is within STRATEGY bounds - SKIP if not (don't clamp and try)
+  if (side === "BUY" && basePrice > STRATEGY_MAX_PRICE) {
     console.log(
       JSON.stringify({
         event: "ORDER_PRICE_DEBUG",
         result: "REJECTED",
-        reason: "ASK_ABOVE_MAX",
+        reason: "ASK_ABOVE_STRATEGY_MAX",
         tokenIdPrefix,
         side,
         bestAsk: bestAsk.toFixed(4),
         bestAskCents: (bestAsk * 100).toFixed(2),
-        maxPrice: MAX_PRICE,
-        maxPriceCents: (MAX_PRICE * 100).toFixed(2),
-        message: `bestAsk ${(bestAsk * 100).toFixed(1)}¢ > MAX_PRICE ${(MAX_PRICE * 100).toFixed(1)}¢ - won't pay that`,
+        strategyMax: STRATEGY_MAX_PRICE,
+        strategyMaxCents: (STRATEGY_MAX_PRICE * 100).toFixed(2),
+        message: `bestAsk ${(bestAsk * 100).toFixed(1)}¢ > STRATEGY_MAX ${(STRATEGY_MAX_PRICE * 100).toFixed(1)}¢ - SKIP`,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -989,19 +1006,19 @@ export function computeExecutionLimitPrice(
     };
   }
 
-  if (side === "SELL" && basePrice < MIN_PRICE) {
+  if (side === "SELL" && basePrice < STRATEGY_MIN_PRICE) {
     console.log(
       JSON.stringify({
         event: "ORDER_PRICE_DEBUG",
         result: "REJECTED",
-        reason: "BID_BELOW_MIN",
+        reason: "BID_BELOW_STRATEGY_MIN",
         tokenIdPrefix,
         side,
         bestBid: bestBid.toFixed(4),
         bestBidCents: (bestBid * 100).toFixed(2),
-        minPrice: MIN_PRICE,
-        minPriceCents: (MIN_PRICE * 100).toFixed(2),
-        message: `bestBid ${(bestBid * 100).toFixed(1)}¢ < MIN_PRICE ${(MIN_PRICE * 100).toFixed(1)}¢ - won't sell at that`,
+        strategyMin: STRATEGY_MIN_PRICE,
+        strategyMinCents: (STRATEGY_MIN_PRICE * 100).toFixed(2),
+        message: `bestBid ${(bestBid * 100).toFixed(1)}¢ < STRATEGY_MIN ${(STRATEGY_MIN_PRICE * 100).toFixed(1)}¢ - SKIP`,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -1054,46 +1071,71 @@ export function computeExecutionLimitPrice(
     };
   }
 
-  // Step 5: Clamp slippage-adjusted price to user's bounds
-  // This ensures we never exceed the ceiling or go below the floor
-  let clampedPrice = rawPrice;
-  let wasClamped = false;
-  let clampDirection: "min" | "max" | null = null;
+  // Step 5: Clamp to STRATEGY bounds
+  // BUY: clamp to [bestAsk, STRATEGY_MAX] - never go below ask price
+  // SELL: clamp to [STRATEGY_MIN, bestBid] - never go above bid price
+  let clampedToStrategy = rawPrice;
+  let wasClampedToStrategy = false;
+  let strategyClampDirection: "min" | "max" | null = null;
 
-  if (rawPrice > MAX_PRICE) {
-    clampedPrice = MAX_PRICE;
-    wasClamped = true;
-    clampDirection = "max";
-  } else if (rawPrice < MIN_PRICE) {
-    clampedPrice = MIN_PRICE;
-    wasClamped = true;
-    clampDirection = "min";
+  if (side === "BUY") {
+    // For BUY: limit must be >= bestAsk (we must offer at least the ask)
+    // and <= STRATEGY_MAX (we won't pay more than our max)
+    if (rawPrice < basePrice) {
+      // Can't go below what we need to pay
+      clampedToStrategy = basePrice;
+      wasClampedToStrategy = true;
+      strategyClampDirection = "min";
+    } else if (rawPrice > STRATEGY_MAX_PRICE) {
+      clampedToStrategy = STRATEGY_MAX_PRICE;
+      wasClampedToStrategy = true;
+      strategyClampDirection = "max";
+    }
+  } else {
+    // For SELL: limit must be <= bestBid (we can't ask for more than buyers offer)
+    // and >= STRATEGY_MIN (we won't accept less than our min)
+    if (rawPrice > basePrice) {
+      // Can't go above what buyers are offering
+      clampedToStrategy = basePrice;
+      wasClampedToStrategy = true;
+      strategyClampDirection = "max";
+    } else if (rawPrice < STRATEGY_MIN_PRICE) {
+      clampedToStrategy = STRATEGY_MIN_PRICE;
+      wasClampedToStrategy = true;
+      strategyClampDirection = "min";
+    }
   }
 
-  // Step 6: Round to tick size, then re-clamp to ensure we stay within bounds
-  // This handles edge cases where rounding might push us outside bounds
-  let limitPrice = roundToTick(clampedPrice, tickSize);
-  
-  // Re-clamp after rounding (in case rounding pushed us outside bounds)
-  if (limitPrice > MAX_PRICE) {
-    limitPrice = roundToTick(MAX_PRICE, tickSize);
-    // Round down if at MAX to stay within
-    if (limitPrice > MAX_PRICE) {
-      limitPrice = Math.floor(MAX_PRICE / tickSize) * tickSize;
-    }
-    wasClamped = true;
-    clampDirection = "max";
-  } else if (limitPrice < MIN_PRICE) {
-    limitPrice = roundToTick(MIN_PRICE, tickSize);
-    // Round up if at MIN to stay within
-    if (limitPrice < MIN_PRICE) {
-      limitPrice = Math.ceil(MIN_PRICE / tickSize) * tickSize;
-    }
-    wasClamped = true;
-    clampDirection = "min";
+  // Step 6: Clamp to HARD API bounds (0.01-0.99)
+  let clampedToHard = clampedToStrategy;
+  let wasClampedToHard = false;
+  let hardClampDirection: "min" | "max" | null = null;
+
+  if (clampedToHard > HARD_MAX_PRICE) {
+    clampedToHard = HARD_MAX_PRICE;
+    wasClampedToHard = true;
+    hardClampDirection = "max";
+  } else if (clampedToHard < HARD_MIN_PRICE) {
+    clampedToHard = HARD_MIN_PRICE;
+    wasClampedToHard = true;
+    hardClampDirection = "min";
   }
 
-  // Step 7: Detailed logging
+  // Step 7: Round to tick size
+  let limitPrice = roundToTick(clampedToHard, tickSize);
+
+  // Re-clamp after rounding if needed
+  if (limitPrice > HARD_MAX_PRICE) {
+    limitPrice = Math.floor(HARD_MAX_PRICE / tickSize) * tickSize;
+  } else if (limitPrice < HARD_MIN_PRICE) {
+    limitPrice = Math.ceil(HARD_MIN_PRICE / tickSize) * tickSize;
+  }
+
+  // Overall clamping status
+  const wasClamped = wasClampedToStrategy || wasClampedToHard;
+  const clampDirection = hardClampDirection || strategyClampDirection;
+
+  // Step 8: Detailed logging with all bounds info
   const mid = (bestBid + bestAsk) / 2;
   const spreadCents = (bestAsk - bestBid) * 100;
 
@@ -1118,17 +1160,24 @@ export function computeExecutionLimitPrice(
       slippageFrac: slippageFrac.toFixed(4),
       slippagePct: (slippageFrac * 100).toFixed(2),
       // Computed prices
-      rawPrice: rawPrice.toFixed(6),
-      rawPriceCents: (rawPrice * 100).toFixed(2),
-      clampedPrice: clampedPrice.toFixed(6),
-      finalLimitPrice: limitPrice.toFixed(6),
-      finalLimitPriceCents: (limitPrice * 100).toFixed(2),
+      computed: rawPrice.toFixed(6),
+      computedCents: (rawPrice * 100).toFixed(2),
+      clampedToStrategy: clampedToStrategy.toFixed(6),
+      clampedToStrategyCents: (clampedToStrategy * 100).toFixed(2),
+      clampedToHard: clampedToHard.toFixed(6),
+      clampedToHardCents: (clampedToHard * 100).toFixed(2),
+      final: limitPrice.toFixed(6),
+      finalCents: (limitPrice * 100).toFixed(2),
       // Clamping info
-      wasClamped,
-      clampDirection,
+      wasClampedToStrategy,
+      strategyClampDirection,
+      wasClampedToHard,
+      hardClampDirection,
       // Config values
-      minPrice: MIN_PRICE,
-      maxPrice: MAX_PRICE,
+      strategyMin: STRATEGY_MIN_PRICE,
+      strategyMax: STRATEGY_MAX_PRICE,
+      hardMin: HARD_MIN_PRICE,
+      hardMax: HARD_MAX_PRICE,
       tickSize,
       units: "dollars",
       timestamp: new Date().toISOString(),
@@ -1137,9 +1186,10 @@ export function computeExecutionLimitPrice(
 
   // Log warning if clamped
   if (wasClamped) {
+    const clampType = wasClampedToHard ? "HARD" : "STRATEGY";
     console.warn(
-      `⚠️ [EXEC_PRICE] Slippage-adjusted price clamped to ${clampDirection === "max" ? "MAX_PRICE" : "MIN_PRICE"}: ` +
-        `${rawPrice.toFixed(4)} → ${limitPrice.toFixed(4)} ` +
+      `⚠️ [EXEC_PRICE] Price clamped to ${clampType} bounds: ` +
+        `raw=${rawPrice.toFixed(4)} → strategy=${clampedToStrategy.toFixed(4)} → hard=${clampedToHard.toFixed(4)} → final=${limitPrice.toFixed(4)} ` +
         `(${side}, basePrice=${basePrice.toFixed(4)}, slippage=${(slippageFrac * 100).toFixed(2)}%)`,
     );
   }

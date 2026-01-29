@@ -19,6 +19,8 @@ import type { Position } from "../models";
 import {
   MIN_PRICE,
   MAX_PRICE,
+  HARD_MIN_PRICE,
+  HARD_MAX_PRICE,
   computeExecutionLimitPrice,
   isBookHealthyForExecution,
 } from "../lib/price-safety";
@@ -1100,15 +1102,13 @@ export class ExecutionEngine {
 
         const rawBestBid = parseFloat(bids[0].price);
         
-        // HEDGE UNWIND: Use Polymarket API limits (0.01-0.99), not user's price filter
-        // Hedges are a different animal - need to unwind regardless of price filter bounds
-        const HEDGE_MIN = 0.01;
-        const HEDGE_MAX = 0.99;
-        const bestBid = Math.max(HEDGE_MIN, Math.min(HEDGE_MAX, rawBestBid));
+        // HEDGE UNWIND: Use HARD API bounds (0.01-0.99), not user's strategy bounds
+        // Hedges need to unwind regardless of user's price filter
+        const bestBid = Math.max(HARD_MIN_PRICE, Math.min(HARD_MAX_PRICE, rawBestBid));
         
         if (bestBid !== rawBestBid) {
           console.warn(
-            `⚠️ [HEDGE UNWIND] Price clamped: ${rawBestBid.toFixed(4)} → ${bestBid.toFixed(4)}`,
+            `⚠️ [HEDGE UNWIND] Price clamped to HARD bounds: ${rawBestBid.toFixed(4)} → ${bestBid.toFixed(4)}`,
           );
         }
 

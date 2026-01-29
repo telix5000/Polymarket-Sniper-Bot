@@ -23,7 +23,7 @@ import type { OrderSide, OrderOutcome, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
 import { isCloudflareBlock, formatErrorForLog } from "../infra/error-handling";
 import { getBestPricesFromRaw } from "./orderbook-utils";
-import { MIN_PRICE, MAX_PRICE } from "./price-safety";
+import { HARD_MIN_PRICE, HARD_MAX_PRICE } from "./price-safety";
 
 // In-flight tracking to prevent duplicate orders
 const inFlight = new Map<string, number>();
@@ -289,14 +289,13 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       const rawLevelPrice = parseFloat(level.price);
       const levelSize = parseFloat(level.size);
 
-      // Clamp price to user's configured bounds [MIN_PRICE, MAX_PRICE]
-      // User doesn't want to trade outside these bounds
-      const levelPrice = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawLevelPrice));
+      // Clamp price to HARD API bounds (0.01-0.99)
+      const levelPrice = Math.max(HARD_MIN_PRICE, Math.min(HARD_MAX_PRICE, rawLevelPrice));
 
       // Log if price was clamped (shouldn't happen normally, but safety first)
       if (levelPrice !== rawLevelPrice) {
         logger?.warn?.(
-          `⚠️ [ORDER] Price clamped: ${rawLevelPrice.toFixed(4)} → ${levelPrice.toFixed(4)} (${side})`,
+          `⚠️ [ORDER] Price clamped to HARD bounds: ${rawLevelPrice.toFixed(4)} → ${levelPrice.toFixed(4)} (${side})`,
         );
       }
 

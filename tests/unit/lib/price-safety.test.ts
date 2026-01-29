@@ -17,6 +17,10 @@ import {
   computeLimitPrice,
   MIN_PRICE,
   MAX_PRICE,
+  STRATEGY_MIN_PRICE,
+  STRATEGY_MAX_PRICE,
+  HARD_MIN_PRICE,
+  HARD_MAX_PRICE,
 } from "../../../src/lib/price-safety";
 
 describe("Price Safety Module", () => {
@@ -715,11 +719,11 @@ describe("Price Safety Module", () => {
     });
 
     describe("price bounds enforcement", () => {
-      it("should REJECT BUY when bestAsk > MAX_PRICE (won't pay that)", () => {
-        // If MAX_PRICE is 0.65, and bestAsk is 0.70, reject immediately
+      it("should REJECT BUY when bestAsk > STRATEGY_MAX_PRICE (SKIP)", () => {
+        // If STRATEGY_MAX is 0.65, and bestAsk is 0.70, SKIP immediately
         const result = computeExecutionLimitPrice({
           bestBid: 0.68,
-          bestAsk: 0.70, // Above MAX_PRICE (0.65)
+          bestAsk: 0.70, // Above STRATEGY_MAX (0.65)
           side: "BUY",
           slippageFrac: 0.061,
         });
@@ -728,10 +732,10 @@ describe("Price Safety Module", () => {
         assert.strictEqual(result.rejectionReason, "ASK_ABOVE_MAX");
       });
 
-      it("should REJECT SELL when bestBid < MIN_PRICE (won't sell at that)", () => {
-        // If MIN_PRICE is 0.35, and bestBid is 0.30, reject immediately
+      it("should REJECT SELL when bestBid < STRATEGY_MIN_PRICE (SKIP)", () => {
+        // If STRATEGY_MIN is 0.35, and bestBid is 0.30, SKIP immediately
         const result = computeExecutionLimitPrice({
-          bestBid: 0.30, // Below MIN_PRICE (0.35)
+          bestBid: 0.30, // Below STRATEGY_MIN (0.35)
           bestAsk: 0.32,
           side: "SELL",
           slippageFrac: 0.061,
@@ -741,9 +745,9 @@ describe("Price Safety Module", () => {
         assert.strictEqual(result.rejectionReason, "BID_BELOW_MIN");
       });
 
-      it("should clamp slippage-adjusted price to MAX_PRICE for BUY", () => {
+      it("should clamp BUY slippage-adjusted price to STRATEGY_MAX_PRICE", () => {
         // bestAsk=0.62 is within bounds, but with 6.1% slippage:
-        // rawPrice = 0.62 * 1.061 = 0.6578 > MAX_PRICE (0.65)
+        // rawPrice = 0.62 * 1.061 = 0.6578 > STRATEGY_MAX (0.65)
         const result = computeExecutionLimitPrice({
           bestBid: 0.60,
           bestAsk: 0.62,
@@ -753,12 +757,12 @@ describe("Price Safety Module", () => {
         assert.strictEqual(result.success, true);
         assert.strictEqual(result.wasClamped, true);
         assert.strictEqual(result.clampDirection, "max");
-        assert.strictEqual(result.limitPrice, MAX_PRICE);
+        assert.strictEqual(result.limitPrice, STRATEGY_MAX_PRICE);
       });
 
-      it("should clamp slippage-adjusted price to MIN_PRICE for SELL", () => {
+      it("should clamp SELL slippage-adjusted price to STRATEGY_MIN_PRICE", () => {
         // bestBid=0.36 is within bounds, but with 6.1% slippage:
-        // rawPrice = 0.36 * 0.939 = 0.338 < MIN_PRICE (0.35)
+        // rawPrice = 0.36 * 0.939 = 0.338 < STRATEGY_MIN (0.35)
         const result = computeExecutionLimitPrice({
           bestBid: 0.36,
           bestAsk: 0.38,
@@ -770,9 +774,37 @@ describe("Price Safety Module", () => {
         assert.strictEqual(result.clampDirection, "min");
         // Use approximate comparison for floating point
         assert.ok(
-          Math.abs(result.limitPrice - MIN_PRICE) < 0.0001,
-          `limitPrice ${result.limitPrice} should be ~${MIN_PRICE}`,
+          Math.abs(result.limitPrice - STRATEGY_MIN_PRICE) < 0.0001,
+          `limitPrice ${result.limitPrice} should be ~${STRATEGY_MIN_PRICE}`,
         );
+      });
+
+      it("should enforce BUY limit >= bestAsk (never below ask)", () => {
+        // With negative slippage (which shouldn't happen but test the guard)
+        // The limit should never go below bestAsk
+        const result = computeExecutionLimitPrice({
+          bestBid: 0.58,
+          bestAsk: 0.60,
+          side: "BUY",
+          slippageFrac: -0.05, // This would make rawPrice < basePrice
+        });
+        assert.strictEqual(result.success, true);
+        // Should be clamped to at least bestAsk
+        assert.ok(result.limitPrice >= 0.60, `BUY limit ${result.limitPrice} should be >= bestAsk 0.60`);
+      });
+
+      it("should enforce SELL limit <= bestBid (never above bid)", () => {
+        // With negative slippage (which shouldn't happen but test the guard)
+        // The limit should never go above bestBid
+        const result = computeExecutionLimitPrice({
+          bestBid: 0.55,
+          bestAsk: 0.57,
+          side: "SELL",
+          slippageFrac: -0.05, // This would make rawPrice > basePrice
+        });
+        assert.strictEqual(result.success, true);
+        // Should be clamped to at most bestBid
+        assert.ok(result.limitPrice <= 0.55, `SELL limit ${result.limitPrice} should be <= bestBid 0.55`);
       });
     });
 
@@ -793,7 +825,7 @@ describe("Price Safety Module", () => {
           Math.abs(result.rawPrice - 0.6366) < 0.001,
           `rawPrice ${result.rawPrice} should be ~0.6366`,
         );
-        // 0.6366 < MAX_PRICE (0.65), so not clamped
+        // 0.6366 < STRATEGY_MAX (0.65), so not clamped to strategy
         assert.strictEqual(result.wasClamped, false);
         assert.strictEqual(result.limitPrice, 0.64); // rounded to tick
       });
@@ -810,6 +842,24 @@ describe("Price Safety Module", () => {
         assert.strictEqual(result.success, false);
         assert.strictEqual(result.rejectionReason, "EMPTY_BOOK");
         assert.strictEqual(result.limitPrice, 0); // NOT 0.99 or any default!
+      });
+    });
+
+    describe("two-layer bounds system", () => {
+      it("should have HARD bounds at 0.01-0.99", () => {
+        assert.strictEqual(HARD_MIN_PRICE, 0.01);
+        assert.strictEqual(HARD_MAX_PRICE, 0.99);
+      });
+
+      it("should have STRATEGY bounds at default 0.35-0.65", () => {
+        // Unless overridden by env vars
+        assert.strictEqual(STRATEGY_MIN_PRICE, 0.35);
+        assert.strictEqual(STRATEGY_MAX_PRICE, 0.65);
+      });
+
+      it("should maintain backward compatibility aliases", () => {
+        assert.strictEqual(MIN_PRICE, STRATEGY_MIN_PRICE);
+        assert.strictEqual(MAX_PRICE, STRATEGY_MAX_PRICE);
       });
     });
   });
