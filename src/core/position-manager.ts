@@ -473,6 +473,9 @@ export class PositionManager {
       // Include outcome info for Telegram notifications
       outcomeLabel: position.outcomeLabel,
       marketQuestion: position.marketQuestion,
+      // Include entry details for Telegram notifications
+      entrySizeUsd: position.entrySizeUsd,
+      entryPriceCents: position.entryPriceCents,
     };
 
     position.transitions.push(transition);
