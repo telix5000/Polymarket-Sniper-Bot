@@ -27,7 +27,6 @@ import {
   HARD_MAX_PRICE,
   STRATEGY_MIN_PRICE,
   STRATEGY_MAX_PRICE,
-  DEFAULT_TICK_SIZE,
   type ComputeExecutionPriceResult,
   type OrderRejectionDiagnostic,
 } from "./price-safety";
@@ -389,11 +388,13 @@ export async function placeOrderWithFallback(
     }
 
     // Place GTC order
+    // Recalculate shares for GTC price to maintain consistent USD value
+    const gtcShares = sizeUsd / gtcPrice;
     try {
       const gtcOrder = await client.createOrder({
         side: side === "BUY" ? Side.BUY : Side.SELL,
         tokenID: tokenId,
-        size: shares,
+        size: gtcShares,
         price: gtcPrice,
       });
 
@@ -574,12 +575,12 @@ function computeGtcFallbackPrice(input: {
 
   // Apply must-not-cross rule after rounding
   if (side === "BUY" && gtcPrice < bestAsk) {
-    // Bump up to next tick at/above ask
-    gtcPrice = Math.ceil(bestAsk / tickSize) * tickSize;
+    // Bump up to next tick at/above ask using epsilon-adjusted rounding
+    gtcPrice = roundToTick(bestAsk, tickSize, "BUY");
     gtcPrice = Math.min(gtcPrice, HARD_MAX_PRICE);
   } else if (side === "SELL" && gtcPrice > bestBid) {
-    // Bump down to next tick at/below bid
-    gtcPrice = Math.floor(bestBid / tickSize) * tickSize;
+    // Bump down to next tick at/below bid using epsilon-adjusted rounding
+    gtcPrice = roundToTick(bestBid, tickSize, "SELL");
     gtcPrice = Math.max(gtcPrice, HARD_MIN_PRICE);
   }
 

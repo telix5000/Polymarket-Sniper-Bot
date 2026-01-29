@@ -1023,8 +1023,6 @@ describe("Price Safety Module", () => {
     const {
       toApiPriceUnits,
       fromApiPriceUnits,
-      HARD_MIN_PRICE,
-      HARD_MAX_PRICE,
     } = require("../../../src/lib/price-safety");
 
     it("should pass through valid prices", () => {
@@ -1235,7 +1233,7 @@ describe("Price Safety Module", () => {
   });
 
   describe("assertValidLimitPrice", () => {
-    const { assertValidLimitPrice, HARD_MIN_PRICE, HARD_MAX_PRICE } = require("../../../src/lib/price-safety");
+    const { assertValidLimitPrice } = require("../../../src/lib/price-safety");
 
     it("should pass for valid prices within HARD bounds", () => {
       assert.doesNotThrow(() => assertValidLimitPrice(0.50, "BUY"));

@@ -8,7 +8,7 @@
  * 4. GTC fallback pricing respects book
  */
 
-import { describe, it, beforeEach } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert";
 
 describe("Order Execution Module", () => {
@@ -185,7 +185,7 @@ describe("Order Execution Module", () => {
   });
 
   describe("Strategy bounds enforcement", () => {
-    const { computeExecutionLimitPrice, STRATEGY_MIN_PRICE, STRATEGY_MAX_PRICE } = require("../../../src/lib/price-safety");
+    const { computeExecutionLimitPrice, STRATEGY_MAX_PRICE } = require("../../../src/lib/price-safety");
 
     it("rejects BUY when bestAsk > STRATEGY_MAX", () => {
       const result = computeExecutionLimitPrice({

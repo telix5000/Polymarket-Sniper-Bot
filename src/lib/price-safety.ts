@@ -897,8 +897,8 @@ export function roundToTick(
   //
   // Epsilon adjustment ensures floating-point precision errors don't cause
   // incorrect rounding at exact tick boundaries:
-  // - For BUY ceiling: 58.999999999 (from 0.59/0.01) becomes 58.999999998 → ceil → 59
-  // - For SELL floor: 58.999999999 (from 0.59/0.01) becomes 59.000000008 → floor → 59
+  // - For BUY (ceiling): 58.999999999 (from 0.59/0.01) → 58.999999998 (ticks - EPSILON) → ceil → 59
+  // - For SELL (floor): 58.999999999 (from 0.59/0.01) → 59.000000000 (ticks + EPSILON) → floor → 59
   if (side === "BUY") {
     return Math.ceil(ticks - EPSILON) * tickSize;
   } else if (side === "SELL") {
@@ -1485,9 +1485,10 @@ export function classifyRejectionReason(errorMsg: string): RejectionClass {
 
   // Post-only would trade
   if (
-    lower.includes("post only") ||
-    lower.includes("postonly") ||
-    lower.includes("would trade") ||
+    (
+      (lower.includes("post only") || lower.includes("postonly")) &&
+      lower.includes("would trade")
+    ) ||
     lower.includes("taker_not_allowed")
   ) {
     return "POST_ONLY_WOULD_TRADE";
@@ -1543,7 +1544,7 @@ export function classifyRejectionReason(errorMsg: string): RejectionClass {
   // Crossed book
   if (
     lower.includes("crossed") ||
-    lower.includes("cross") ||
+    /\bcross\b/.test(lower) ||
     lower.includes("would cross")
   ) {
     return "CROSSED_BOOK";
