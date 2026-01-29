@@ -33,6 +33,7 @@ function createTestConfig(): ChurnConfig {
   return {
     tradeFraction: 0.01,
     maxTradeUsd: 25,
+    minTradeUsd: 5, // 20% of maxTradeUsd
     maxDeployedFractionTotal: 0.3,
     maxOpenPositionsTotal: 12,
     maxOpenPositionsPerMarket: 1,
@@ -493,10 +494,11 @@ describe("Reserve & Sizing", () => {
   });
 
   describe("Trade sizing", () => {
-    it("uses 1% of effective bankroll", () => {
+    it("uses 1% of effective bankroll when above minTradeUsd", () => {
       const effectiveBankroll = 1000;
       const size = calculateTradeSize(effectiveBankroll, config);
 
+      // 1% of 1000 = 10, which is above minTradeUsd (5), so use 10
       assert.strictEqual(size, 10, "Trade size should be 1% = $10");
     });
 
@@ -509,6 +511,40 @@ describe("Reserve & Sizing", () => {
         config.maxTradeUsd,
         `Trade size should be capped at $${config.maxTradeUsd}`,
       );
+    });
+
+    it("applies minTradeUsd floor for small bankrolls", () => {
+      // With $165 effective bankroll, 1% = $1.65
+      // But minTradeUsd = $5 should kick in
+      const effectiveBankroll = 165;
+      const size = calculateTradeSize(effectiveBankroll, config);
+
+      assert.strictEqual(
+        size,
+        config.minTradeUsd,
+        `Trade size should be floored at minTradeUsd ($${config.minTradeUsd})`,
+      );
+    });
+
+    it("does not exceed effective bankroll even with minTradeUsd", () => {
+      // If bankroll is $3 and minTradeUsd is $5, we can't trade $5
+      // Should use the smaller of minTradeUsd and effectiveBankroll
+      const effectiveBankroll = 3;
+      const size = calculateTradeSize(effectiveBankroll, config);
+
+      assert.strictEqual(
+        size,
+        3,
+        "Trade size should not exceed effective bankroll even with minTradeUsd floor",
+      );
+    });
+
+    it("handles edge case where fractionalSize equals minTradeUsd", () => {
+      // If 1% of bankroll exactly equals minTradeUsd
+      const effectiveBankroll = 500; // 1% = $5 = minTradeUsd
+      const size = calculateTradeSize(effectiveBankroll, config);
+
+      assert.strictEqual(size, 5, "Trade size should be $5 when they're equal");
     });
   });
 
