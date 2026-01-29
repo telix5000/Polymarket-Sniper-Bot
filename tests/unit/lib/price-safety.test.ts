@@ -8,6 +8,10 @@ import {
   clampPrice,
   isLiquidOrderbook,
   isDustBook,
+  isDeadBook,
+  isEmptyBook,
+  checkBookHealth,
+  DEAD_BOOK_THRESHOLDS,
   calculateSafeLimitPrice,
   isWithinEntryBounds,
   MIN_PRICE,
@@ -102,6 +106,124 @@ describe("Price Safety Module", () => {
     it("should return false when only one side is dust", () => {
       assert.strictEqual(isDustBook({ bestBid: 0.01, bestAsk: 0.5 }), false);
       assert.strictEqual(isDustBook({ bestBid: 0.5, bestAsk: 0.99 }), false);
+    });
+  });
+
+  describe("isDeadBook", () => {
+    it("should return true for dead book (bid<=2¢, ask>=98¢)", () => {
+      // Classic dead book scenario (0.01/0.99)
+      assert.strictEqual(isDeadBook(0.01, 0.99), true);
+      // Boundary case
+      assert.strictEqual(isDeadBook(0.02, 0.98), true);
+    });
+
+    it("should return false for normal orderbooks", () => {
+      assert.strictEqual(isDeadBook(0.49, 0.51), false);
+      assert.strictEqual(isDeadBook(0.1, 0.9), false);
+      assert.strictEqual(isDeadBook(0.3, 0.7), false);
+    });
+
+    it("should return false when only one side is at extreme", () => {
+      assert.strictEqual(isDeadBook(0.01, 0.5), false);
+      assert.strictEqual(isDeadBook(0.5, 0.99), false);
+    });
+
+    it("should support custom thresholds", () => {
+      // With custom thresholds (3¢, 97¢)
+      assert.strictEqual(isDeadBook(0.02, 0.98, 3, 97), true);
+      assert.strictEqual(isDeadBook(0.03, 0.97, 3, 97), true);
+      assert.strictEqual(isDeadBook(0.04, 0.96, 3, 97), false);
+    });
+
+    it("should have same behavior as isDustBook for standard thresholds", () => {
+      // Both functions use same 2¢/98¢ thresholds
+      const testCases = [
+        { bid: 0.01, ask: 0.99 },
+        { bid: 0.02, ask: 0.98 },
+        { bid: 0.49, ask: 0.51 },
+        { bid: 0.1, ask: 0.9 },
+      ];
+      for (const tc of testCases) {
+        const dustResult = isDustBook({ bestBid: tc.bid, bestAsk: tc.ask });
+        const deadResult = isDeadBook(tc.bid, tc.ask);
+        assert.strictEqual(
+          dustResult,
+          deadResult,
+          `Mismatch for bid=${tc.bid}, ask=${tc.ask}`,
+        );
+      }
+    });
+  });
+
+  describe("isEmptyBook", () => {
+    it("should return true for empty book (bid<=1¢, ask>=99¢)", () => {
+      // Most extreme case
+      assert.strictEqual(isEmptyBook(0.01, 0.99), true);
+      assert.strictEqual(isEmptyBook(0.005, 0.995), true);
+    });
+
+    it("should return false for dead book that is not empty", () => {
+      // This is dead (2¢/98¢) but not empty (1¢/99¢)
+      assert.strictEqual(isEmptyBook(0.02, 0.98), false);
+    });
+
+    it("should return false for normal orderbooks", () => {
+      assert.strictEqual(isEmptyBook(0.49, 0.51), false);
+      assert.strictEqual(isEmptyBook(0.1, 0.9), false);
+    });
+  });
+
+  describe("checkBookHealth", () => {
+    it("should classify healthy book correctly", () => {
+      const result = checkBookHealth(0.49, 0.51);
+      assert.strictEqual(result.status, "HEALTHY");
+      assert.strictEqual(result.healthy, true);
+      assert.strictEqual(result.reason, undefined);
+    });
+
+    it("should classify dead book correctly", () => {
+      const result = checkBookHealth(0.02, 0.98);
+      assert.strictEqual(result.status, "DEAD_BOOK");
+      assert.strictEqual(result.healthy, false);
+      assert.ok(result.reason?.includes("Dead book"));
+    });
+
+    it("should classify empty book correctly (prioritized over dead)", () => {
+      // Empty book (1¢/99¢) should be classified as EMPTY_BOOK, not DEAD_BOOK
+      const result = checkBookHealth(0.01, 0.99);
+      assert.strictEqual(result.status, "EMPTY_BOOK");
+      assert.strictEqual(result.healthy, false);
+      assert.ok(result.reason?.includes("Empty book"));
+    });
+
+    it("should return correct cents values", () => {
+      const result = checkBookHealth(0.45, 0.55);
+      assert.strictEqual(result.bestBidCents, 45);
+      // Use approximate comparison for floating point
+      assert.ok(
+        Math.abs(result.bestAskCents - 55) < 0.001,
+        `Expected ~55, got ${result.bestAskCents}`,
+      );
+      assert.ok(
+        Math.abs(result.spreadCents - 10) < 0.001,
+        `Expected ~10, got ${result.spreadCents}`,
+      );
+    });
+
+    it("should support custom thresholds", () => {
+      // With looser thresholds, 3¢/97¢ is now considered dead
+      const result = checkBookHealth(0.03, 0.97, {
+        deadBidCents: 5,
+        deadAskCents: 95,
+      });
+      assert.strictEqual(result.status, "DEAD_BOOK");
+    });
+
+    it("should use default thresholds from DEAD_BOOK_THRESHOLDS", () => {
+      assert.strictEqual(DEAD_BOOK_THRESHOLDS.DEAD_BID_CENTS, 2);
+      assert.strictEqual(DEAD_BOOK_THRESHOLDS.DEAD_ASK_CENTS, 98);
+      assert.strictEqual(DEAD_BOOK_THRESHOLDS.EMPTY_BID_CENTS, 1);
+      assert.strictEqual(DEAD_BOOK_THRESHOLDS.EMPTY_ASK_CENTS, 99);
     });
   });
 

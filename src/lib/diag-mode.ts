@@ -94,7 +94,8 @@ export type DiagReason =
 export type BookSanityRule =
   | "ask_too_high" // bestAsk >= BOOK_MAX_ASK
   | "spread_too_wide" // spread >= BOOK_MAX_SPREAD
-  | "empty_book"; // bestBid <= 0.01 && bestAsk >= 0.99
+  | "empty_book" // bestBid <= 0.01 && bestAsk >= 0.99
+  | "dead_book"; // bestBid <= 0.02 && bestAsk >= 0.98 (distinct from empty_book)
 
 /**
  * Trace event emitted during diagnostic workflow
@@ -134,6 +135,10 @@ export interface DiagModeConfig {
   bookMaxSpread: number;
   /** Maximum candidate attempts before giving up (default: 5) */
   maxCandidateAttempts: number;
+  /** Maximum bestBid for dead_book classification (default: 0.02) */
+  deadBookBid: number;
+  /** Minimum bestAsk for dead_book classification (default: 0.98) */
+  deadBookAsk: number;
 }
 
 /**
@@ -436,6 +441,10 @@ export function parseDiagModeConfig(): DiagModeConfig {
     10,
   );
 
+  // Dead book thresholds (distinct from empty_book)
+  const deadBookBid = parseFloat(process.env.DIAG_DEAD_BOOK_BID ?? "0.02");
+  const deadBookAsk = parseFloat(process.env.DIAG_DEAD_BOOK_ASK ?? "0.98");
+
   return {
     enabled,
     whaleTimeoutSec: isNaN(whaleTimeoutSec) ? 60 : whaleTimeoutSec,
@@ -448,6 +457,8 @@ export function parseDiagModeConfig(): DiagModeConfig {
       isNaN(maxCandidateAttempts) || maxCandidateAttempts < 1
         ? 5
         : maxCandidateAttempts,
+    deadBookBid: isNaN(deadBookBid) ? 0.02 : deadBookBid,
+    deadBookAsk: isNaN(deadBookAsk) ? 0.98 : deadBookAsk,
   };
 }
 

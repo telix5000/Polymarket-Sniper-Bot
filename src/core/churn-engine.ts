@@ -58,6 +58,7 @@ import {
   type MarketDataFailureReason,
   shouldApplyLongCooldown,
   smartSell,
+  isDeadBook,
 } from "../lib";
 
 // Direct imports from core modules
@@ -2718,7 +2719,8 @@ export class ChurnEngine {
       }
 
       // Check for dust book (1¢/99¢ spreads - no room to trade)
-      if (bestBid <= 0.02 && bestAsk >= 0.98) {
+      // Uses shared isDeadBook() function from price-safety.ts
+      if (isDeadBook(bestBid, bestAsk)) {
         this.diagnostics.orderbookFetchFailures++;
         return {
           ok: false,

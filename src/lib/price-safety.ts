@@ -175,7 +175,161 @@ export function isLiquidOrderbook(
 }
 
 /**
+ * Default thresholds for dead/empty book detection
+ */
+export const DEAD_BOOK_THRESHOLDS = {
+  /** Maximum bid for dead book classification (default: 2¢) */
+  DEAD_BID_CENTS: 2,
+  /** Minimum ask for dead book classification (default: 98¢) */
+  DEAD_ASK_CENTS: 98,
+  /** Maximum bid for empty book classification (default: 1¢) */
+  EMPTY_BID_CENTS: 1,
+  /** Minimum ask for empty book classification (default: 99¢) */
+  EMPTY_ASK_CENTS: 99,
+} as const;
+
+/**
+ * Book health classification result
+ */
+export type BookHealthStatus =
+  | "HEALTHY" // Book is tradeable
+  | "DEAD_BOOK" // Bid <= 2¢ AND Ask >= 98¢ - market appears resolved but not yet settled
+  | "EMPTY_BOOK" // Bid <= 1¢ AND Ask >= 99¢ - extreme case, completely untradeable
+  | "DUST_BOOK"; // Same as DEAD_BOOK (alias for backward compatibility)
+
+/**
+ * Result of book health check
+ */
+export interface BookHealthResult {
+  status: BookHealthStatus;
+  healthy: boolean;
+  bestBidCents: number;
+  bestAskCents: number;
+  spreadCents: number;
+  reason?: string;
+}
+
+/**
+ * Check if orderbook represents a dead book (essentially resolved market).
+ * A dead book has:
+ * - bestBid <= deadBidCents (default: 2¢)
+ * - bestAsk >= deadAskCents (default: 98¢)
+ *
+ * These markets appear resolved (one outcome near 100%, other near 0%)
+ * but haven't been settled yet. Trading them would result in:
+ * - Buying at ~99¢ for ~1¢ max profit
+ * - Selling at ~1¢ for massive loss
+ *
+ * @param bestBid - Best bid price (0-1 scale)
+ * @param bestAsk - Best ask price (0-1 scale)
+ * @param deadBidCents - Max bid in cents for dead classification (default: 2)
+ * @param deadAskCents - Min ask in cents for dead classification (default: 98)
+ * @returns true if this is a dead book
+ */
+export function isDeadBook(
+  bestBid: number,
+  bestAsk: number,
+  deadBidCents: number = DEAD_BOOK_THRESHOLDS.DEAD_BID_CENTS,
+  deadAskCents: number = DEAD_BOOK_THRESHOLDS.DEAD_ASK_CENTS,
+): boolean {
+  const bidCents = bestBid * 100;
+  const askCents = bestAsk * 100;
+  return bidCents <= deadBidCents && askCents >= deadAskCents;
+}
+
+/**
+ * Check if orderbook represents an empty book (extreme dead book).
+ * An empty book has:
+ * - bestBid <= emptyBidCents (default: 1¢)
+ * - bestAsk >= emptyAskCents (default: 99¢)
+ *
+ * This is a stricter version of dead book - the market is completely untradeable.
+ *
+ * @param bestBid - Best bid price (0-1 scale)
+ * @param bestAsk - Best ask price (0-1 scale)
+ * @param emptyBidCents - Max bid in cents for empty classification (default: 1)
+ * @param emptyAskCents - Min ask in cents for empty classification (default: 99)
+ * @returns true if this is an empty book
+ */
+export function isEmptyBook(
+  bestBid: number,
+  bestAsk: number,
+  emptyBidCents: number = DEAD_BOOK_THRESHOLDS.EMPTY_BID_CENTS,
+  emptyAskCents: number = DEAD_BOOK_THRESHOLDS.EMPTY_ASK_CENTS,
+): boolean {
+  const bidCents = bestBid * 100;
+  const askCents = bestAsk * 100;
+  return bidCents <= emptyBidCents && askCents >= emptyAskCents;
+}
+
+/**
+ * Comprehensive book health check.
+ * Returns detailed classification of orderbook health.
+ *
+ * @param bestBid - Best bid price (0-1 scale)
+ * @param bestAsk - Best ask price (0-1 scale)
+ * @param thresholds - Optional custom thresholds
+ * @returns BookHealthResult with status and details
+ */
+export function checkBookHealth(
+  bestBid: number,
+  bestAsk: number,
+  thresholds?: {
+    deadBidCents?: number;
+    deadAskCents?: number;
+    emptyBidCents?: number;
+    emptyAskCents?: number;
+  },
+): BookHealthResult {
+  const deadBidCents =
+    thresholds?.deadBidCents ?? DEAD_BOOK_THRESHOLDS.DEAD_BID_CENTS;
+  const deadAskCents =
+    thresholds?.deadAskCents ?? DEAD_BOOK_THRESHOLDS.DEAD_ASK_CENTS;
+  const emptyBidCents =
+    thresholds?.emptyBidCents ?? DEAD_BOOK_THRESHOLDS.EMPTY_BID_CENTS;
+  const emptyAskCents =
+    thresholds?.emptyAskCents ?? DEAD_BOOK_THRESHOLDS.EMPTY_ASK_CENTS;
+
+  const bidCents = bestBid * 100;
+  const askCents = bestAsk * 100;
+  const spreadCents = askCents - bidCents;
+
+  // Check for empty book first (stricter)
+  if (bidCents <= emptyBidCents && askCents >= emptyAskCents) {
+    return {
+      status: "EMPTY_BOOK",
+      healthy: false,
+      bestBidCents: bidCents,
+      bestAskCents: askCents,
+      spreadCents,
+      reason: `Empty book: bid ${bidCents.toFixed(1)}¢ <= ${emptyBidCents}¢ AND ask ${askCents.toFixed(1)}¢ >= ${emptyAskCents}¢`,
+    };
+  }
+
+  // Check for dead book
+  if (bidCents <= deadBidCents && askCents >= deadAskCents) {
+    return {
+      status: "DEAD_BOOK",
+      healthy: false,
+      bestBidCents: bidCents,
+      bestAskCents: askCents,
+      spreadCents,
+      reason: `Dead book: bid ${bidCents.toFixed(1)}¢ <= ${deadBidCents}¢ AND ask ${askCents.toFixed(1)}¢ >= ${deadAskCents}¢`,
+    };
+  }
+
+  return {
+    status: "HEALTHY",
+    healthy: true,
+    bestBidCents: bidCents,
+    bestAskCents: askCents,
+    spreadCents,
+  };
+}
+
+/**
  * Check for dust book (bid near 0, ask near 100) which indicates an illiquid/closed market.
+ * This is an alias for isDeadBook() for backward compatibility.
  *
  * @param orderbook - Orderbook snapshot
  * @returns true if this appears to be a dust book

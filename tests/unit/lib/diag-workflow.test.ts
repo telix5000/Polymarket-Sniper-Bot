@@ -567,6 +567,7 @@ describe("Rejection stats", () => {
     assert.strictEqual(stats.byRule.askTooHigh, 0);
     assert.strictEqual(stats.byRule.spreadTooWide, 0);
     assert.strictEqual(stats.byRule.emptyBook, 0);
+    assert.strictEqual(stats.byRule.deadBook, 0);
     assert.deepStrictEqual(stats.sampleRejected, []);
   });
 
@@ -584,5 +585,109 @@ describe("Rejection stats", () => {
     assert.ok(formatted.includes("Skipped (Bad Book)**: 3"));
     assert.ok(formatted.includes("askTooHigh: 2"));
     assert.ok(formatted.includes("spreadTooWide: 1"));
+  });
+
+  test("formatRejectionStatsSummary includes deadBook stat", () => {
+    const stats = createEmptyRejectionStats();
+    stats.byRule.deadBook = 4;
+
+    const formatted = formatRejectionStatsSummary(stats);
+
+    assert.ok(formatted.includes("deadBook: 4"));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Dead Book Classification Tests (uses shared price-safety math)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("Dead Book Classification in performBookSanityCheck", () => {
+  const defaultCfg = {
+    bookMaxAsk: 0.95,
+    bookMaxSpread: 0.2,
+    deadBookBid: 0.02,
+    deadBookAsk: 0.98,
+  };
+
+  test("should classify 0.01/0.99 as empty_book (stricter than dead_book)", () => {
+    // 0.01/0.99 = 1¢/99¢ which is EMPTY_BOOK threshold
+    const result = performBookSanityCheck(0.01, 0.99, defaultCfg);
+
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.rule, "empty_book");
+  });
+
+  test("should classify 0.02/0.98 as dead_book", () => {
+    // 0.02/0.98 = 2¢/98¢ which is DEAD_BOOK threshold
+    const result = performBookSanityCheck(0.02, 0.98, defaultCfg);
+
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.rule, "dead_book");
+  });
+
+  test("should classify 0.015/0.985 as dead_book (within 2¢/98¢ thresholds)", () => {
+    // 1.5¢/98.5¢ - bid < 2¢ and ask > 98¢
+    const result = performBookSanityCheck(0.015, 0.985, defaultCfg);
+
+    assert.strictEqual(result.passed, false);
+    // This should be empty_book since 1.5¢ < 1¢ is false, so it's dead_book
+    assert.strictEqual(result.rule, "dead_book");
+  });
+
+  test("should NOT classify 0.03/0.97 as dead_book (outside thresholds)", () => {
+    // 3¢/97¢ - bid > 2¢ threshold, so not dead
+    const result = performBookSanityCheck(0.03, 0.97, defaultCfg);
+
+    // Should still fail for ask_too_high (0.97 >= 0.95)
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.rule, "ask_too_high");
+  });
+
+  test("should include bookHealth in detail when dead_book detected", () => {
+    const result = performBookSanityCheck(0.02, 0.98, defaultCfg);
+
+    assert.ok(result.detail.bookHealth, "Should include bookHealth");
+    assert.strictEqual(result.detail.bookHealth?.status, "DEAD_BOOK");
+    assert.strictEqual(result.detail.bookHealth?.healthy, false);
+  });
+
+  test("should include dead book thresholds in detail", () => {
+    const result = performBookSanityCheck(0.45, 0.55, defaultCfg);
+
+    assert.strictEqual(result.detail.thresholds.deadBidCents, 2);
+    assert.strictEqual(result.detail.thresholds.deadAskCents, 98);
+    assert.strictEqual(result.detail.thresholds.emptyBidCents, 1);
+    assert.strictEqual(result.detail.thresholds.emptyAskCents, 99);
+  });
+
+  test("should use same math as isDeadBook from price-safety module", async () => {
+    // Import isDeadBook to verify same behavior
+    const { isDeadBook } = await import("../../../src/lib/price-safety");
+
+    const testCases = [
+      { bid: 0.01, ask: 0.99 }, // Empty book
+      { bid: 0.02, ask: 0.98 }, // Dead book
+      { bid: 0.03, ask: 0.97 }, // Not dead
+      { bid: 0.49, ask: 0.51 }, // Healthy
+    ];
+
+    for (const tc of testCases) {
+      const sanityResult = performBookSanityCheck(tc.bid, tc.ask, defaultCfg);
+      const isDeadResult = isDeadBook(tc.bid, tc.ask);
+
+      // If isDeadBook returns true, sanity check should fail with dead_book or empty_book
+      if (isDeadResult) {
+        assert.strictEqual(
+          sanityResult.passed,
+          false,
+          `Expected fail for bid=${tc.bid}, ask=${tc.ask}`,
+        );
+        assert.ok(
+          sanityResult.rule === "dead_book" ||
+            sanityResult.rule === "empty_book",
+          `Expected dead_book or empty_book rule for bid=${tc.bid}, ask=${tc.ask}, got ${sanityResult.rule}`,
+        );
+      }
+    }
   });
 });
