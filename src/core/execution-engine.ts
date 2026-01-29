@@ -1155,8 +1155,8 @@ export class ExecutionEngine {
     if (effectiveBalance === undefined) {
       const balanceCache = getBalanceCache();
       if (balanceCache) {
-        const cachedBalance = balanceCache.getUsdcBalance();
-        if (cachedBalance !== null) {
+        const cachedBalance = balanceCache.getCachedBalances()?.usdc;
+        if (cachedBalance !== undefined) {
           effectiveBalance = cachedBalance;
         }
       }
