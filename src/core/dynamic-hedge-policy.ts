@@ -24,6 +24,7 @@
  */
 
 import type { DynamicEvMetrics } from "./dynamic-ev-engine";
+import type { HedgeRatioRecommendation } from "./historical-trade-snapshot";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // STATIC DEFAULTS
@@ -231,6 +232,18 @@ export interface HedgeDecision {
   hedgeRatio: number;
   reason: string;
   parameters: DynamicHedgeParameters;
+}
+
+/**
+ * Extended hedge decision that includes historical analysis
+ */
+export interface HedgeDecisionWithHistory extends HedgeDecision {
+  /** Whether historical analysis was applied */
+  usedHistoricalAnalysis: boolean;
+  /** Original hedge ratio before historical adjustment */
+  originalHedgeRatio: number;
+  /** Historical recommendation that was applied */
+  historicalRecommendation?: HedgeRatioRecommendation;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -758,6 +771,90 @@ export class DynamicHedgePolicy {
       hedgeRatio: hedgeAmount,
       reason: `HEDGE_TRIGGERED (${adverseMove.toFixed(1)}¢ adverse)`,
       parameters: params,
+    };
+  }
+
+  /**
+   * Evaluate if a hedge should be placed with historical trade snapshot analysis
+   *
+   * This method extends evaluateHedge by incorporating historical performance data
+   * to avoid over-hedging or taking unnecessary risk. The historical recommendation
+   * adjusts the hedge ratio based on:
+   * - Recent win rate trends
+   * - Volatility regime
+   * - Drawdown status
+   * - P&L trends
+   * - Profit factor
+   * - Slippage trends
+   *
+   * Decision Flow:
+   * 1. Get base hedge decision from evaluateHedge()
+   * 2. If no hedge needed, return immediately
+   * 3. Apply historical recommendation adjustment factor
+   * 4. Clamp final ratio to available capacity
+   *
+   * @param currentPnlCents - Current position P&L in cents
+   * @param currentHedgeRatio - Current hedge ratio already applied
+   * @param historicalRecommendation - Recommendation from HistoricalTradeSnapshot
+   * @param evMetrics - Optional EV metrics for additional gating
+   * @returns Extended hedge decision with historical analysis
+   */
+  evaluateHedgeWithHistory(
+    currentPnlCents: number,
+    currentHedgeRatio: number,
+    historicalRecommendation: HedgeRatioRecommendation,
+    evMetrics?: DynamicEvMetrics,
+  ): HedgeDecisionWithHistory {
+    // Get base decision first
+    const baseDecision = this.evaluateHedge(
+      currentPnlCents,
+      currentHedgeRatio,
+      evMetrics,
+    );
+
+    // If no hedge needed, return with historical context but no adjustment
+    if (!baseDecision.shouldHedge) {
+      return {
+        ...baseDecision,
+        usedHistoricalAnalysis: false,
+        originalHedgeRatio: baseDecision.hedgeRatio,
+        historicalRecommendation,
+      };
+    }
+
+    // Apply historical adjustment factor
+    const originalRatio = baseDecision.hedgeRatio;
+    let adjustedRatio =
+      originalRatio * historicalRecommendation.adjustmentFactor;
+    const params = baseDecision.parameters;
+
+    // Clamp to available capacity
+    const availableRatio = params.maxHedgeRatio - currentHedgeRatio;
+    adjustedRatio = Math.max(
+      params.hedgeRatio * 0.5, // Minimum 50% of base ratio to prevent under-hedging
+      Math.min(adjustedRatio, availableRatio),
+    );
+
+    // Build reason string with historical context
+    const historyAction = historicalRecommendation.action;
+    const historyFactor = historicalRecommendation.adjustmentFactor.toFixed(2);
+    const historyConfidence = (
+      historicalRecommendation.confidence * 100
+    ).toFixed(0);
+
+    let reason = baseDecision.reason;
+    if (Math.abs(adjustedRatio - originalRatio) > 0.01) {
+      reason += ` [HISTORY: ${historyAction} ×${historyFactor} @${historyConfidence}%]`;
+    }
+
+    return {
+      shouldHedge: true,
+      hedgeRatio: adjustedRatio,
+      reason,
+      parameters: params,
+      usedHistoricalAnalysis: true,
+      originalHedgeRatio: originalRatio,
+      historicalRecommendation,
     };
   }
 

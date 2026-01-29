@@ -219,7 +219,6 @@ export class SimpleLogger implements ChurnLogger {
   }
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════
 // DEPENDENCIES THAT MUST BE INJECTED
 // ═══════════════════════════════════════════════════════════════════════════
@@ -229,7 +228,9 @@ export class SimpleLogger implements ChurnLogger {
  */
 export interface ChurnEngineDeps {
   loadConfig: () => ChurnConfig;
-  validateConfig: (config: ChurnConfig) => Array<{ field: string; message: string }>;
+  validateConfig: (
+    config: ChurnConfig,
+  ) => Array<{ field: string; message: string }>;
   logConfig: (config: ChurnConfig, log: (msg: string) => void) => void;
   debug: (message: string, ...args: any[]) => void;
   shouldCooldownOnFailure: (reason: string | undefined) => boolean;
@@ -445,7 +446,9 @@ export class ChurnEngine {
    */
   private trackFailureReason(reason: string): void {
     this.diagnostics.entryFailureReasons.push(reason);
-    if (this.diagnostics.entryFailureReasons.length > this.MAX_FAILURE_REASONS) {
+    if (
+      this.diagnostics.entryFailureReasons.length > this.MAX_FAILURE_REASONS
+    ) {
       this.diagnostics.entryFailureReasons.shift();
     }
   }
@@ -1386,7 +1389,9 @@ export class ChurnEngine {
 
     // Debug: show all active biases before filtering
     if (this.deps.isDebugEnabled() && activeBiases.length > 0) {
-      this.deps.debug(`Active biases before cooldown filter: ${activeBiases.length}`);
+      this.deps.debug(
+        `Active biases before cooldown filter: ${activeBiases.length}`,
+      );
       for (const bias of activeBiases.slice(0, 5)) {
         const onCooldown = this.failedEntryCooldowns.has(bias.tokenId);
         this.deps.debug(
