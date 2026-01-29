@@ -285,8 +285,21 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       }
 
       const level = currentLevels[0];
-      const levelPrice = parseFloat(level.price);
+      const rawLevelPrice = parseFloat(level.price);
       const levelSize = parseFloat(level.size);
+
+      // CRITICAL: Clamp price to valid Polymarket bounds [0.01, 0.99]
+      // This prevents "invalid price" errors from the CLOB API
+      const MIN_PRICE = 0.01;
+      const MAX_PRICE = 0.99;
+      const levelPrice = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawLevelPrice));
+
+      // Log if price was clamped (shouldn't happen normally, but safety first)
+      if (levelPrice !== rawLevelPrice) {
+        logger?.warn?.(
+          `⚠️ [ORDER] Price clamped: ${rawLevelPrice.toFixed(4)} → ${levelPrice.toFixed(4)} (${side})`,
+        );
+      }
 
       // Enforce maxAcceptablePrice on each iteration to provide price protection across retries
       if (maxAcceptablePrice !== undefined) {

@@ -386,7 +386,34 @@ export async function smartSell(
     // For GTC: use best bid (limit order waits for this price)
     // Note: FOK uses best bid because the order type itself ensures complete fill
     // The analysis already validated that we can fill within slippage tolerance
-    const orderPrice = analysis.bestBid;
+    //
+    // CRITICAL: Clamp to valid Polymarket bounds [0.01, 0.99]
+    // This ensures we never submit invalid prices to the API
+    const MIN_PRICE = 0.01;
+    const MAX_PRICE = 0.99;
+    const rawOrderPrice = analysis.bestBid;
+    const orderPrice = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawOrderPrice));
+
+    // Log ORDER_PRICE_DEBUG for diagnostics (matches execution-engine format)
+    const priceWasClamped = orderPrice !== rawOrderPrice;
+    console.log(
+      JSON.stringify({
+        event: "ORDER_PRICE_DEBUG",
+        tokenIdPrefix: position.tokenId.slice(0, 12),
+        side: "SELL",
+        bestBid: rawOrderPrice.toFixed(4),
+        bestBidCents: (rawOrderPrice * 100).toFixed(2),
+        orderPrice: orderPrice.toFixed(6),
+        wasClamped: priceWasClamped,
+        units: "dollars",
+      }),
+    );
+
+    if (priceWasClamped) {
+      logger?.warn?.(
+        `⚠️ [SELL] Price clamped: ${rawOrderPrice.toFixed(4)} → ${orderPrice.toFixed(4)}`,
+      );
+    }
 
     logger?.info?.(
       `Sell executing: ${sharesToSell.toFixed(2)} shares @ ${(orderPrice * 100).toFixed(1)}¢ ` +
