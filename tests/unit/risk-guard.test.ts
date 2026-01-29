@@ -2,7 +2,6 @@ import assert from "node:assert";
 import { test, describe, beforeEach } from "node:test";
 import {
   RiskGuard,
-  DEFAULT_RISK_GUARD_CONFIG,
   type RiskGuardConfig,
 } from "../../src/core/risk-guard";
 import type { ManagedPosition } from "../../src/core/decision-engine";
