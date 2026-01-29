@@ -163,8 +163,8 @@ export function validateBeforePlacement(input: {
   }
 
   // Check must-not-cross invariant
-  // Round the limit price to tick first
-  const roundedLimit = roundToTick(limitPrice, tickSize);
+  // Round the limit price to tick first using directional rounding
+  const roundedLimit = roundToTick(limitPrice, tickSize, side);
 
   if (side === "BUY" && roundedLimit < bestAsk) {
     // This shouldn't happen if computeExecutionLimitPrice was used correctly
@@ -513,6 +513,9 @@ export async function placeOrderWithFallback(
  *
  * Then apply HARD clamp, tick rounding, and must-not-cross.
  *
+ * Note: slippageFrac is reserved for future use (e.g., applying additional
+ * slippage to GTC price based on market conditions).
+ *
  * @returns GTC price, or null if market moved outside strategy bounds
  */
 function computeGtcFallbackPrice(input: {
@@ -520,6 +523,7 @@ function computeGtcFallbackPrice(input: {
   bestBid: number;
   bestAsk: number;
   fokLimitPrice: number;
+  /** Reserved for future use - currently GTC uses book-respecting pricing */
   slippageFrac: number;
   strategyMaxPrice: number;
   strategyMinPrice: number;
@@ -530,7 +534,7 @@ function computeGtcFallbackPrice(input: {
     bestBid,
     bestAsk,
     fokLimitPrice,
-    slippageFrac,
+    // slippageFrac reserved for future use
     strategyMaxPrice,
     strategyMinPrice,
     tickSize,

@@ -894,14 +894,14 @@ export function roundToTick(
   // BUY: round UP (ceiling) - we're willing to pay more
   // SELL: round DOWN (floor) - we're willing to accept less
   // No side: round to nearest (legacy behavior)
+  //
+  // Epsilon adjustment ensures floating-point precision errors don't cause
+  // incorrect rounding at exact tick boundaries:
+  // - For BUY ceiling: 58.999999999 (from 0.59/0.01) becomes 58.999999998 → ceil → 59
+  // - For SELL floor: 58.999999999 (from 0.59/0.01) becomes 59.000000008 → floor → 59
   if (side === "BUY") {
-    // For ceiling, subtract epsilon to avoid rounding up exact values
-    // e.g., 59.0 - epsilon = 58.999...9 which ceilings to 59
-    // but 59.00001 - epsilon = 59.00000... which ceilings to 60
     return Math.ceil(ticks - EPSILON) * tickSize;
   } else if (side === "SELL") {
-    // For floor, add epsilon to avoid rounding down exact values
-    // e.g., 58.999...9 + epsilon = 59.0 which floors to 59
     return Math.floor(ticks + EPSILON) * tickSize;
   } else {
     // Legacy: round to nearest
@@ -1598,7 +1598,6 @@ export interface OrderRejectionDiagnostic {
   finalLimitPriceApiUnits: number;
   orderType: "FOK" | "GTC" | "FAK" | "GTD";
   postOnly?: boolean;
-  timeInForce?: string;
   errorCode?: string;
   errorMessage: string;
   rejectionClass: RejectionClass;
