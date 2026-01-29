@@ -226,6 +226,7 @@ export interface DecisionEngineConfig {
   // Capital sizing
   tradeFraction: number;
   maxTradeUsd: number;
+  minTradeUsd: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -496,7 +497,13 @@ export class DecisionEngine {
    */
   private calculateSize(effectiveBankroll: number): number {
     const fractionalSize = effectiveBankroll * this.config.tradeFraction;
-    return Math.min(fractionalSize, this.config.maxTradeUsd);
+    // Apply both min and max bounds:
+    // - First ensure we don't go below minTradeUsd (for small bankrolls)
+    // - Then cap at maxTradeUsd (for large bankrolls)
+    // If effectiveBankroll is too small to meet minTradeUsd, use fractionalSize
+    // to avoid over-leveraging (can't trade more than we can afford)
+    const withMinimum = Math.max(fractionalSize, Math.min(this.config.minTradeUsd, effectiveBankroll));
+    return Math.min(withMinimum, this.config.maxTradeUsd);
   }
 
   /**

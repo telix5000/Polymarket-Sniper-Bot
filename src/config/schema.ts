@@ -33,6 +33,9 @@ export interface TradingConfig {
   /** Maximum trade size in USD */
   maxTradeUsd: number;
 
+  /** Minimum trade size in USD */
+  minTradeUsd: number;
+
   /** Fraction of bankroll per trade (0-1) */
   tradeFraction: number;
 
