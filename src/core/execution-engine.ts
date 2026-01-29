@@ -382,6 +382,18 @@ export class ExecutionEngine {
     referencePriceCents: number,
     biasDirection: BiasDirection,
   ): Promise<ExecutionResult> {
+    // Log info if marketId is missing - marketId is NOT required for order placement,
+    // only used for diagnostics and issue reporting. Orders use tokenId only.
+    if (!marketId) {
+      console.log(
+        JSON.stringify({
+          event: "MARKETID_MISSING_AT_EXECUTION",
+          tokenIdPrefix: tokenId.slice(0, 16),
+          note: "marketId undefined - proceeding with order (not required for placement, only for diagnostics)",
+        }),
+      );
+    }
+
     const evMetrics = this.evTracker.getMetrics();
 
     // Fetch market info for outcome labels (for Telegram/display) and hedging
