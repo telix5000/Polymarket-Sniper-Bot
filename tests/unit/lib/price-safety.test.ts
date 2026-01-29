@@ -646,10 +646,24 @@ describe("Price Safety Module", () => {
     } = require("../../../src/lib/price-safety");
 
     describe("roundToTick", () => {
-      it("should round to nearest tick", () => {
+      it("should round to nearest tick when no side specified (legacy)", () => {
         assert.strictEqual(roundToTick(0.634, 0.01), 0.63);
         assert.strictEqual(roundToTick(0.636, 0.01), 0.64);
         assert.strictEqual(roundToTick(0.635, 0.01), 0.64); // round half up
+      });
+
+      it("should round UP (ceiling) for BUY orders", () => {
+        assert.strictEqual(roundToTick(0.631, 0.01, "BUY"), 0.64); // ceiling
+        assert.strictEqual(roundToTick(0.639, 0.01, "BUY"), 0.64); // ceiling
+        assert.strictEqual(roundToTick(0.640, 0.01, "BUY"), 0.64); // exact
+        assert.strictEqual(roundToTick(0.641, 0.01, "BUY"), 0.65); // ceiling
+      });
+
+      it("should round DOWN (floor) for SELL orders", () => {
+        assert.strictEqual(roundToTick(0.631, 0.01, "SELL"), 0.63); // floor
+        assert.strictEqual(roundToTick(0.639, 0.01, "SELL"), 0.63); // floor
+        assert.strictEqual(roundToTick(0.640, 0.01, "SELL"), 0.64); // exact
+        assert.strictEqual(roundToTick(0.649, 0.01, "SELL"), 0.64); // floor
       });
 
       it("should handle edge cases", () => {
@@ -951,6 +965,292 @@ describe("Price Safety Module", () => {
           `SELL final ${result.limitPrice} must be <= bestBid 0.505`,
         );
       });
+    });
+  });
+
+  describe("getTickSizeForToken", () => {
+    const {
+      getTickSizeForToken,
+      clearTickSizeCache,
+      DEFAULT_TICK_SIZE,
+    } = require("../../../src/lib/price-safety");
+
+    it("should return default tick size when no API tick size provided", () => {
+      clearTickSizeCache();
+      const result = getTickSizeForToken("test-token-123");
+      assert.strictEqual(result.tickSize, DEFAULT_TICK_SIZE);
+      assert.strictEqual(result.isDefault, true);
+    });
+
+    it("should use API-provided tick size when valid", () => {
+      clearTickSizeCache();
+      const result = getTickSizeForToken("test-token-456", 0.001);
+      assert.strictEqual(result.tickSize, 0.001);
+      assert.strictEqual(result.isDefault, false);
+    });
+
+    it("should fall back to default for invalid API tick size", () => {
+      clearTickSizeCache();
+      const result1 = getTickSizeForToken("test-token-789", 0);
+      assert.strictEqual(result1.tickSize, DEFAULT_TICK_SIZE);
+      assert.strictEqual(result1.isDefault, true);
+
+      clearTickSizeCache();
+      const result2 = getTickSizeForToken("test-token-abc", -0.01);
+      assert.strictEqual(result2.tickSize, DEFAULT_TICK_SIZE);
+      assert.strictEqual(result2.isDefault, true);
+
+      clearTickSizeCache();
+      const result3 = getTickSizeForToken("test-token-def", NaN);
+      assert.strictEqual(result3.tickSize, DEFAULT_TICK_SIZE);
+      assert.strictEqual(result3.isDefault, true);
+    });
+
+    it("should cache tick size results", () => {
+      clearTickSizeCache();
+      // First call with API tick size
+      const result1 = getTickSizeForToken("cached-token", 0.005);
+      assert.strictEqual(result1.tickSize, 0.005);
+
+      // Second call without API tick size should use cached value
+      const result2 = getTickSizeForToken("cached-token");
+      assert.strictEqual(result2.tickSize, 0.005);
+      assert.strictEqual(result2.isDefault, false);
+    });
+  });
+
+  describe("toApiPriceUnits and fromApiPriceUnits", () => {
+    const {
+      toApiPriceUnits,
+      fromApiPriceUnits,
+      HARD_MIN_PRICE,
+      HARD_MAX_PRICE,
+    } = require("../../../src/lib/price-safety");
+
+    it("should pass through valid prices", () => {
+      assert.strictEqual(toApiPriceUnits(0.5), 0.5);
+      assert.strictEqual(toApiPriceUnits(0.01), 0.01);
+      assert.strictEqual(toApiPriceUnits(0.99), 0.99);
+    });
+
+    it("should throw for prices outside HARD bounds", () => {
+      assert.throws(() => toApiPriceUnits(0.001), /outside API bounds/);
+      assert.throws(() => toApiPriceUnits(1.0), /outside API bounds/);
+      assert.throws(() => toApiPriceUnits(-0.1), /outside API bounds/);
+    });
+
+    it("should throw for non-finite prices", () => {
+      assert.throws(() => toApiPriceUnits(NaN), /not finite/);
+      assert.throws(() => toApiPriceUnits(Infinity), /not finite/);
+    });
+
+    it("fromApiPriceUnits should be identity for valid prices", () => {
+      assert.strictEqual(fromApiPriceUnits(0.65), 0.65);
+      assert.strictEqual(fromApiPriceUnits(0.35), 0.35);
+    });
+
+    it("fromApiPriceUnits should return 0 for non-finite prices", () => {
+      assert.strictEqual(fromApiPriceUnits(NaN), 0);
+    });
+  });
+
+  describe("classifyRejectionReason", () => {
+    const { classifyRejectionReason } = require("../../../src/lib/price-safety");
+
+    it("should classify price increment errors", () => {
+      assert.strictEqual(
+        classifyRejectionReason("Invalid price increment"),
+        "PRICE_INCREMENT",
+      );
+      assert.strictEqual(
+        classifyRejectionReason("INVALID_TICK size error"),
+        "PRICE_INCREMENT",
+      );
+    });
+
+    it("should classify balance errors", () => {
+      assert.strictEqual(
+        classifyRejectionReason("Insufficient balance to place order"),
+        "INSUFFICIENT_BALANCE",
+      );
+      assert.strictEqual(
+        classifyRejectionReason("not enough balance"),
+        "INSUFFICIENT_BALANCE",
+      );
+    });
+
+    it("should classify allowance errors", () => {
+      assert.strictEqual(
+        classifyRejectionReason("Insufficient allowance"),
+        "INSUFFICIENT_ALLOWANCE",
+      );
+    });
+
+    it("should classify post-only errors", () => {
+      assert.strictEqual(
+        classifyRejectionReason("Post only order would trade"),
+        "POST_ONLY_WOULD_TRADE",
+      );
+      assert.strictEqual(
+        classifyRejectionReason("TAKER_NOT_ALLOWED for postOnly"),
+        "POST_ONLY_WOULD_TRADE",
+      );
+    });
+
+    it("should classify min size errors", () => {
+      assert.strictEqual(
+        classifyRejectionReason("Order size too small"),
+        "MIN_SIZE",
+      );
+      assert.strictEqual(
+        classifyRejectionReason("Below minimum size"),
+        "MIN_SIZE",
+      );
+    });
+
+    it("should classify stale orderbook errors", () => {
+      assert.strictEqual(
+        classifyRejectionReason("Stale nonce"),
+        "STALE_ORDERBOOK",
+      );
+      assert.strictEqual(
+        classifyRejectionReason("Order expired"),
+        "STALE_ORDERBOOK",
+      );
+    });
+
+    it("should classify market closed errors", () => {
+      assert.strictEqual(
+        classifyRejectionReason("Market closed"),
+        "MARKET_CLOSED",
+      );
+      assert.strictEqual(
+        classifyRejectionReason("No orderbook exists"),
+        "MARKET_CLOSED",
+      );
+    });
+
+    it("should return UNKNOWN for unrecognized errors", () => {
+      assert.strictEqual(
+        classifyRejectionReason("Some random error message"),
+        "UNKNOWN",
+      );
+    });
+  });
+
+  describe("roundToTick with non-standard tick sizes (directional)", () => {
+    const { roundToTick } = require("../../../src/lib/price-safety");
+
+    it("should round to 0.001 tick size correctly with BUY (ceiling)", () => {
+      assert.strictEqual(roundToTick(0.6341, 0.001, "BUY"), 0.635); // ceiling
+      assert.strictEqual(roundToTick(0.6349, 0.001, "BUY"), 0.635); // ceiling
+      assert.strictEqual(roundToTick(0.635, 0.001, "BUY"), 0.635); // exact
+    });
+
+    it("should round to 0.001 tick size correctly with SELL (floor)", () => {
+      assert.strictEqual(roundToTick(0.6341, 0.001, "SELL"), 0.634); // floor
+      assert.strictEqual(roundToTick(0.6349, 0.001, "SELL"), 0.634); // floor
+      assert.strictEqual(roundToTick(0.635, 0.001, "SELL"), 0.635); // exact
+    });
+
+    it("should round to 0.005 tick size correctly with BUY (ceiling)", () => {
+      assert.strictEqual(roundToTick(0.631, 0.005, "BUY"), 0.635); // ceiling
+      assert.strictEqual(roundToTick(0.634, 0.005, "BUY"), 0.635); // ceiling
+      assert.strictEqual(roundToTick(0.635, 0.005, "BUY"), 0.635); // exact
+    });
+
+    it("should round to 0.005 tick size correctly with SELL (floor)", () => {
+      assert.strictEqual(roundToTick(0.631, 0.005, "SELL"), 0.630); // floor
+      assert.strictEqual(roundToTick(0.634, 0.005, "SELL"), 0.630); // floor
+      assert.strictEqual(roundToTick(0.635, 0.005, "SELL"), 0.635); // exact
+    });
+
+    it("should round to 0.1 tick size correctly with BUY (ceiling)", () => {
+      // Use approximate comparison for floating point
+      const result1 = roundToTick(0.61, 0.1, "BUY");
+      assert.ok(Math.abs(result1 - 0.7) < 0.0001, `Expected ~0.7, got ${result1}`);
+      const result2 = roundToTick(0.69, 0.1, "BUY");
+      assert.ok(Math.abs(result2 - 0.7) < 0.0001, `Expected ~0.7, got ${result2}`);
+    });
+
+    it("should round to 0.1 tick size correctly with SELL (floor)", () => {
+      // Use approximate comparison for floating point
+      const result1 = roundToTick(0.61, 0.1, "SELL");
+      assert.ok(Math.abs(result1 - 0.6) < 0.0001, `Expected ~0.6, got ${result1}`);
+      const result2 = roundToTick(0.69, 0.1, "SELL");
+      assert.ok(Math.abs(result2 - 0.6) < 0.0001, `Expected ~0.6, got ${result2}`);
+    });
+  });
+
+  describe("computeExecutionLimitPrice with custom tick size", () => {
+    const { computeExecutionLimitPrice } = require("../../../src/lib/price-safety");
+
+    it("should apply non-0.01 tick size correctly for BUY (ceiling)", () => {
+      const result = computeExecutionLimitPrice({
+        bestBid: 0.59,
+        bestAsk: 0.60,
+        side: "BUY",
+        slippageFrac: 0.05, // 5% → 0.60 * 1.05 = 0.63
+        tickSize: 0.005,
+      });
+      assert.strictEqual(result.success, true);
+      // 0.63 is exact with 0.005 tick, but BUY uses ceiling so 0.63 stays 0.63
+      assert.strictEqual(result.limitPrice, 0.63);
+    });
+
+    it("should apply non-0.01 tick size correctly for SELL (floor)", () => {
+      const result = computeExecutionLimitPrice({
+        bestBid: 0.50,
+        bestAsk: 0.52,
+        side: "SELL",
+        slippageFrac: 0.05, // 5% → 0.50 * 0.95 = 0.475
+        tickSize: 0.005,
+      });
+      assert.strictEqual(result.success, true);
+      // 0.475 is exact with 0.005 tick for SELL (floor)
+      // Use approximate comparison for floating point
+      assert.ok(
+        Math.abs(result.limitPrice - 0.475) < 0.0001,
+        `Expected ~0.475, got ${result.limitPrice}`,
+      );
+    });
+
+    it("should bump to tick boundary for must-not-cross rule (BUY)", () => {
+      // Edge case: bestAsk=0.603 with tiny slippage, tick=0.005
+      const result = computeExecutionLimitPrice({
+        bestBid: 0.59,
+        bestAsk: 0.603,
+        side: "BUY",
+        slippageFrac: 0.001, // 0.1% → 0.603 * 1.001 = 0.603603
+        tickSize: 0.005,
+      });
+      assert.strictEqual(result.success, true);
+      // 0.603603 with BUY ceiling rounds to 0.605
+      // Must be >= bestAsk (0.603)
+      assert.ok(
+        result.limitPrice >= 0.603,
+        `BUY limit ${result.limitPrice} must be >= bestAsk 0.603`,
+      );
+    });
+  });
+
+  describe("assertValidLimitPrice", () => {
+    const { assertValidLimitPrice, HARD_MIN_PRICE, HARD_MAX_PRICE } = require("../../../src/lib/price-safety");
+
+    it("should pass for valid prices within HARD bounds", () => {
+      assert.doesNotThrow(() => assertValidLimitPrice(0.50, "BUY"));
+      assert.doesNotThrow(() => assertValidLimitPrice(0.01, "SELL"));
+      assert.doesNotThrow(() => assertValidLimitPrice(0.99, "BUY"));
+    });
+
+    it("should throw for prices outside HARD bounds", () => {
+      assert.throws(() => assertValidLimitPrice(0.001, "BUY"), /outside HARD bounds/);
+      assert.throws(() => assertValidLimitPrice(1.0, "SELL"), /outside HARD bounds/);
+    });
+
+    it("should throw for non-finite prices", () => {
+      assert.throws(() => assertValidLimitPrice(NaN, "BUY"), /not finite/);
+      assert.throws(() => assertValidLimitPrice(Infinity, "SELL"), /not finite/);
     });
   });
 });

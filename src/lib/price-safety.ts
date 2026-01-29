@@ -847,13 +847,30 @@ export interface ComputeExecutionPriceResult {
 }
 
 /**
- * Round a price to the nearest valid tick size.
+ * Round a price to a valid tick size.
+ * 
+ * DIRECTIONAL ROUNDING:
+ * - BUY orders: round UP (ceiling) to ensure we don't offer less than the ask
+ * - SELL orders: round DOWN (floor) to ensure we don't ask more than the bid
+ * - If side not specified: round to nearest (legacy behavior)
+ * 
+ * This prevents "crossing book" issues where rounding causes the limit price
+ * to be worse than the best price on the opposite side.
+ * 
+ * NOTE: Uses epsilon-adjusted rounding to handle floating point precision issues.
+ * For example, 0.59 / 0.01 = 58.99999999999999 in JS, which would floor to 58.
+ * We add a small epsilon before flooring/ceiling to handle this.
  * 
  * @param price - The price to round (in dollars, 0-1 scale)
  * @param tickSize - The tick size (default: 0.01)
+ * @param side - Optional order side for directional rounding ("BUY" = ceiling, "SELL" = floor)
  * @returns The rounded price
  */
-export function roundToTick(price: number, tickSize: number = DEFAULT_TICK_SIZE): number {
+export function roundToTick(
+  price: number, 
+  tickSize: number = DEFAULT_TICK_SIZE,
+  side?: "BUY" | "SELL",
+): number {
   if (!Number.isFinite(price) || !Number.isFinite(tickSize)) {
     return price;
   }
@@ -868,8 +885,28 @@ export function roundToTick(price: number, tickSize: number = DEFAULT_TICK_SIZE)
     return price;
   }
 
-  // Round to nearest tick
-  return Math.round(price / tickSize) * tickSize;
+  // Use epsilon to handle floating point precision issues
+  // e.g., 0.59 / 0.01 = 58.99999999999999, not 59
+  const EPSILON = 1e-9;
+  const ticks = price / tickSize;
+
+  // Directional rounding based on order side
+  // BUY: round UP (ceiling) - we're willing to pay more
+  // SELL: round DOWN (floor) - we're willing to accept less
+  // No side: round to nearest (legacy behavior)
+  if (side === "BUY") {
+    // For ceiling, subtract epsilon to avoid rounding up exact values
+    // e.g., 59.0 - epsilon = 58.999...9 which ceilings to 59
+    // but 59.00001 - epsilon = 59.00000... which ceilings to 60
+    return Math.ceil(ticks - EPSILON) * tickSize;
+  } else if (side === "SELL") {
+    // For floor, add epsilon to avoid rounding down exact values
+    // e.g., 58.999...9 + epsilon = 59.0 which floors to 59
+    return Math.floor(ticks + EPSILON) * tickSize;
+  } else {
+    // Legacy: round to nearest
+    return Math.round(ticks) * tickSize;
+  }
 }
 
 /**
@@ -1127,8 +1164,10 @@ export function computeExecutionLimitPrice(
     hardClampDirection = clampedToStrategy < HARD_MIN_PRICE ? "min" : "max";
   }
 
-  // Step 7: Round to tick size
-  let roundedFinal = roundToTick(clampedToHard, tickSize);
+  // Step 7: Round to tick size with DIRECTIONAL rounding
+  // BUY: round UP (ceiling) - we're willing to pay more
+  // SELL: round DOWN (floor) - we're willing to accept less
+  let roundedFinal = roundToTick(clampedToHard, tickSize, side);
 
   // Step 8: Re-assert "must not cross" rule after rounding
   // BUY: if final < bestAsk after rounding → bump up to next tick at/above ask
@@ -1238,4 +1277,360 @@ export function computeExecutionLimitPrice(
     wasClamped,
     clampDirection,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TICK SIZE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Tick size cache for markets
+ * Key: tokenId or marketId
+ * Value: { tickSize: number, isDefault: boolean, fetchedAt: number }
+ */
+const tickSizeCache = new Map<string, { tickSize: number; isDefault: boolean; fetchedAt: number }>();
+
+/** Cache TTL for tick sizes (5 minutes) */
+const TICK_SIZE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Get the tick size for a token/market.
+ * 
+ * Currently returns the default tick size (0.01) for all markets since
+ * Polymarket markets consistently use 1¢ ticks. This function provides
+ * a single point for future customization if markets with different tick
+ * sizes are introduced.
+ * 
+ * @param tokenIdOrMarketId - Token ID or Market ID to get tick size for
+ * @param apiTickSize - Optional API-provided tick size (if available from market metadata)
+ * @returns Object with tickSize and whether it's the default
+ */
+export function getTickSizeForToken(
+  tokenIdOrMarketId: string,
+  apiTickSize?: number,
+): { tickSize: number; isDefault: boolean } {
+  // Check cache first
+  const cached = tickSizeCache.get(tokenIdOrMarketId);
+  if (cached && Date.now() - cached.fetchedAt < TICK_SIZE_CACHE_TTL_MS) {
+    return { tickSize: cached.tickSize, isDefault: cached.isDefault };
+  }
+
+  // Use API-provided tick size if valid
+  if (apiTickSize !== undefined && Number.isFinite(apiTickSize) && apiTickSize > 0) {
+    const entry = { tickSize: apiTickSize, isDefault: false, fetchedAt: Date.now() };
+    tickSizeCache.set(tokenIdOrMarketId, entry);
+    return { tickSize: apiTickSize, isDefault: false };
+  }
+
+  // Fall back to default and log when we're using default
+  // Only log once per token to avoid spam
+  if (!cached) {
+    console.log(
+      `ℹ️ [TICK_SIZE] Using default tick size ${DEFAULT_TICK_SIZE} for ${tokenIdOrMarketId.slice(0, 12)}... (no API tick size provided)`,
+    );
+  }
+
+  const entry = { tickSize: DEFAULT_TICK_SIZE, isDefault: true, fetchedAt: Date.now() };
+  tickSizeCache.set(tokenIdOrMarketId, entry);
+  return { tickSize: DEFAULT_TICK_SIZE, isDefault: true };
+}
+
+/**
+ * Clear the tick size cache (for testing)
+ */
+export function clearTickSizeCache(): void {
+  tickSizeCache.clear();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PRICE UNIT CONVERSION HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Convert a price in dollars to API units.
+ * 
+ * Polymarket CLOB API expects prices in the range [0.01, 0.99] representing
+ * probability/price in dollars (e.g., 0.65 = 65¢).
+ * 
+ * This function is an identity transform but provides documentation and
+ * validation that the price is in the expected format.
+ * 
+ * @param priceDollars - Price in dollars (0.01-0.99 range)
+ * @returns Price in API units (same as input, validates range)
+ * @throws Error if price is outside valid range
+ */
+export function toApiPriceUnits(priceDollars: number): number {
+  if (!Number.isFinite(priceDollars)) {
+    throw new Error(`toApiPriceUnits: invalid price ${priceDollars} (not finite)`);
+  }
+  if (priceDollars < HARD_MIN_PRICE || priceDollars > HARD_MAX_PRICE) {
+    throw new Error(
+      `toApiPriceUnits: price ${priceDollars} outside API bounds [${HARD_MIN_PRICE}, ${HARD_MAX_PRICE}]`,
+    );
+  }
+  return priceDollars;
+}
+
+/**
+ * Convert a price from API units to dollars.
+ * 
+ * This is an identity transform since API already uses dollars, but provides
+ * clear documentation that the conversion is intentional.
+ * 
+ * @param apiPrice - Price from API response (0.01-0.99 range)
+ * @returns Price in dollars (same as input)
+ */
+export function fromApiPriceUnits(apiPrice: number): number {
+  if (!Number.isFinite(apiPrice)) {
+    console.warn(`fromApiPriceUnits: received non-finite price ${apiPrice}`);
+    return 0;
+  }
+  return apiPrice;
+}
+
+/**
+ * Assert that a final limit price is within both HARD bounds and strategy bounds.
+ * 
+ * @param limitPrice - The computed limit price to validate
+ * @param side - Order side ("BUY" or "SELL")
+ * @param context - Optional context for error messages
+ * @returns true if valid
+ * @throws Error if price is invalid
+ */
+export function assertValidLimitPrice(
+  limitPrice: number,
+  side: "BUY" | "SELL",
+  context?: string,
+): boolean {
+  const ctx = context ? ` (${context})` : "";
+
+  if (!Number.isFinite(limitPrice)) {
+    throw new Error(`Invalid limit price: ${limitPrice} is not finite${ctx}`);
+  }
+
+  if (limitPrice < HARD_MIN_PRICE || limitPrice > HARD_MAX_PRICE) {
+    throw new Error(
+      `Invalid limit price: ${limitPrice} outside HARD bounds [${HARD_MIN_PRICE}, ${HARD_MAX_PRICE}]${ctx}`,
+    );
+  }
+
+  // Strategy bounds check (warning, not error - already clamped)
+  if (side === "BUY" && limitPrice > STRATEGY_MAX_PRICE) {
+    console.warn(
+      `⚠️ BUY limit price ${limitPrice} > STRATEGY_MAX ${STRATEGY_MAX_PRICE}${ctx}`,
+    );
+  }
+  if (side === "SELL" && limitPrice < STRATEGY_MIN_PRICE) {
+    console.warn(
+      `⚠️ SELL limit price ${limitPrice} < STRATEGY_MIN ${STRATEGY_MIN_PRICE}${ctx}`,
+    );
+  }
+
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ORDER REJECTION CLASSIFICATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Classification of order rejection reasons
+ */
+export type RejectionClass =
+  | "PRICE_INCREMENT"      // Invalid tick/price increment
+  | "INVALID_PRICE_UNITS"  // Price format/units issue
+  | "POST_ONLY_WOULD_TRADE" // postOnly order would immediately trade
+  | "INSUFFICIENT_BALANCE" // Not enough USDC balance
+  | "INSUFFICIENT_ALLOWANCE" // Not enough token allowance
+  | "MIN_SIZE"             // Order size below minimum
+  | "PRECISION"            // Too many decimal places
+  | "STALE_ORDERBOOK"      // Stale nonce or orderbook data
+  | "CROSSED_BOOK"         // Limit price crosses the book incorrectly
+  | "MARKET_CLOSED"        // Market is resolved/closed
+  | "RATE_LIMITED"         // API rate limit hit
+  | "NETWORK_ERROR"        // Network/connection issue
+  | "UNKNOWN";             // Unclassified error
+
+/**
+ * Classify a rejection reason from an error message.
+ * 
+ * Maps common CLOB API error messages to standardized rejection classes.
+ * This helps with diagnostics and automated error handling.
+ * 
+ * @param errorMsg - Error message from API or order rejection
+ * @returns Classified rejection reason
+ */
+export function classifyRejectionReason(errorMsg: string): RejectionClass {
+  const lower = errorMsg.toLowerCase();
+
+  // Price increment / tick errors
+  if (
+    lower.includes("price increment") ||
+    lower.includes("invalid tick") ||
+    lower.includes("tick size") ||
+    lower.includes("price_increment")
+  ) {
+    return "PRICE_INCREMENT";
+  }
+
+  // Price units errors
+  if (
+    lower.includes("invalid price") ||
+    lower.includes("price units") ||
+    lower.includes("price format") ||
+    lower.includes("price must be")
+  ) {
+    return "INVALID_PRICE_UNITS";
+  }
+
+  // Post-only would trade
+  if (
+    lower.includes("post only") ||
+    lower.includes("postonly") ||
+    lower.includes("would trade") ||
+    lower.includes("taker_not_allowed")
+  ) {
+    return "POST_ONLY_WOULD_TRADE";
+  }
+
+  // Balance issues
+  if (
+    lower.includes("insufficient balance") ||
+    lower.includes("not enough balance") ||
+    lower.includes("balance too low")
+  ) {
+    return "INSUFFICIENT_BALANCE";
+  }
+
+  // Allowance issues
+  if (
+    lower.includes("insufficient allowance") ||
+    lower.includes("not enough allowance") ||
+    lower.includes("allowance too low")
+  ) {
+    return "INSUFFICIENT_ALLOWANCE";
+  }
+
+  // Min size errors
+  if (
+    lower.includes("min size") ||
+    lower.includes("minimum size") ||
+    lower.includes("order too small") ||
+    lower.includes("size too small")
+  ) {
+    return "MIN_SIZE";
+  }
+
+  // Precision errors
+  if (
+    lower.includes("precision") ||
+    lower.includes("decimal") ||
+    lower.includes("too many decimals")
+  ) {
+    return "PRECISION";
+  }
+
+  // Stale data
+  if (
+    lower.includes("stale") ||
+    lower.includes("nonce") ||
+    lower.includes("expired") ||
+    lower.includes("outdated")
+  ) {
+    return "STALE_ORDERBOOK";
+  }
+
+  // Crossed book
+  if (
+    lower.includes("crossed") ||
+    lower.includes("cross") ||
+    lower.includes("would cross")
+  ) {
+    return "CROSSED_BOOK";
+  }
+
+  // Market closed
+  if (
+    lower.includes("market closed") ||
+    lower.includes("market resolved") ||
+    lower.includes("no orderbook") ||
+    lower.includes("market not found")
+  ) {
+    return "MARKET_CLOSED";
+  }
+
+  // Rate limiting
+  if (
+    lower.includes("rate limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("429")
+  ) {
+    return "RATE_LIMITED";
+  }
+
+  // Network errors
+  if (
+    lower.includes("network") ||
+    lower.includes("connection") ||
+    lower.includes("timeout") ||
+    lower.includes("econnrefused")
+  ) {
+    return "NETWORK_ERROR";
+  }
+
+  return "UNKNOWN";
+}
+
+/**
+ * Diagnostic info for order rejection logging
+ */
+export interface OrderRejectionDiagnostic {
+  tokenId: string;
+  marketId?: string;
+  side: "BUY" | "SELL";
+  sizeUsd?: number;
+  shares?: number;
+  bestBid?: number;
+  bestAsk?: number;
+  tickSize: number;
+  tickSizeIsDefault: boolean;
+  finalLimitPriceDollars: number;
+  finalLimitPriceApiUnits: number;
+  orderType: "FOK" | "GTC" | "FAK" | "GTD";
+  postOnly?: boolean;
+  timeInForce?: string;
+  errorCode?: string;
+  errorMessage: string;
+  rejectionClass: RejectionClass;
+  timestamp: string;
+}
+
+/**
+ * Log comprehensive order rejection diagnostic.
+ * 
+ * Produces a structured JSON log with all relevant context for debugging
+ * ORDER_REJECTED errors.
+ * 
+ * @param diag - Diagnostic info to log
+ */
+export function logOrderRejection(diag: OrderRejectionDiagnostic): void {
+  // Structured JSON log for machine parsing
+  console.log(
+    JSON.stringify({
+      event: "ORDER_REJECTED_DIAGNOSTIC",
+      ...diag,
+    }),
+  );
+
+  // Human-readable summary
+  console.error(
+    `❌ [ORDER_REJECTED] ${diag.side} ${diag.sizeUsd?.toFixed(2) ?? "?"} USD | ` +
+    `token=${diag.tokenId.slice(0, 12)}... | ` +
+    `limit=${(diag.finalLimitPriceDollars * 100).toFixed(2)}¢ | ` +
+    `bid=${diag.bestBid ? (diag.bestBid * 100).toFixed(2) : "?"}¢ ask=${diag.bestAsk ? (diag.bestAsk * 100).toFixed(2) : "?"}¢ | ` +
+    `tick=${diag.tickSize}${diag.tickSizeIsDefault ? "(default)" : ""} | ` +
+    `type=${diag.orderType} | ` +
+    `class=${diag.rejectionClass} | ` +
+    `error="${diag.errorMessage}"`,
+  );
 }
