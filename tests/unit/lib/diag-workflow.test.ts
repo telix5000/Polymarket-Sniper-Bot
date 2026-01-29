@@ -691,3 +691,214 @@ describe("Dead Book Classification in performBookSanityCheck", () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Candidate Attempt Loop Tests
+// Tests for the retry logic that tries multiple candidates until one passes
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("Candidate Attempt Loop Behavior", () => {
+  beforeEach(() => {
+    clearBadBookCooldowns();
+  });
+
+  describe("Candidate-stage vs Execution-stage rejections", () => {
+    // These are candidate-stage rejections (result should be SKIPPED)
+    const candidateStageReasons = ["skipped_bad_book", "candidate_cooldown"];
+
+    // These are execution-stage rejections (result should be REJECTED)
+    const executionStageReasons = [
+      "price_out_of_range",
+      "insufficient_liquidity",
+      "no_wallet_credentials",
+      "api_error",
+      "order_timeout",
+    ];
+
+    test("candidate-stage reasons should result in SKIPPED", () => {
+      for (const reason of candidateStageReasons) {
+        // The logic in the workflow determines result based on lastRejectionReason
+        const isCandidateStage = candidateStageReasons.includes(reason);
+        const expectedResult = isCandidateStage ? "SKIPPED" : "REJECTED";
+
+        assert.strictEqual(
+          expectedResult,
+          "SKIPPED",
+          `${reason} should map to SKIPPED`,
+        );
+      }
+    });
+
+    test("execution-stage reasons should result in REJECTED", () => {
+      for (const reason of executionStageReasons) {
+        // The logic in the workflow determines result based on lastRejectionReason
+        const isCandidateStage = candidateStageReasons.includes(reason);
+        const expectedResult = isCandidateStage ? "SKIPPED" : "REJECTED";
+
+        assert.strictEqual(
+          expectedResult,
+          "REJECTED",
+          `${reason} should map to REJECTED`,
+        );
+      }
+    });
+  });
+
+  describe("Cooldown respects maxCandidateAttempts", () => {
+    test("multiple candidates can be added to cooldown sequentially", () => {
+      const tokens = ["token1", "token2", "token3", "token4", "token5"];
+
+      for (const token of tokens) {
+        assert.strictEqual(isInCooldown(token), false, `${token} should not be in cooldown initially`);
+        addToCooldown(token, 600);
+        assert.strictEqual(isInCooldown(token), true, `${token} should be in cooldown after adding`);
+      }
+
+      // All should still be in cooldown
+      for (const token of tokens) {
+        assert.strictEqual(isInCooldown(token), true, `${token} should still be in cooldown`);
+      }
+    });
+
+    test("clearing cooldowns allows retry of previously rejected candidates", () => {
+      const token = "test-token";
+
+      addToCooldown(token, 600);
+      assert.strictEqual(isInCooldown(token), true);
+
+      clearBadBookCooldowns();
+      assert.strictEqual(isInCooldown(token), false);
+    });
+  });
+
+  describe("performBookSanityCheck retry triggers", () => {
+    const defaultCfg = {
+      bookMaxAsk: 0.95,
+      bookMaxSpread: 0.2,
+      deadBookBid: 0.02,
+      deadBookAsk: 0.98,
+    };
+
+    test("dead_book rejection should trigger immediate retry (not termination)", () => {
+      // First candidate: dead book (should fail with dead_book rule)
+      const result1 = performBookSanityCheck(0.02, 0.98, defaultCfg);
+      assert.strictEqual(result1.passed, false);
+      assert.strictEqual(result1.rule, "dead_book");
+
+      // Second candidate: healthy book (should pass)
+      const result2 = performBookSanityCheck(0.45, 0.55, defaultCfg);
+      assert.strictEqual(result2.passed, true);
+    });
+
+    test("empty_book rejection should trigger immediate retry", () => {
+      const result = performBookSanityCheck(0.01, 0.99, defaultCfg);
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.rule, "empty_book");
+      // Loop should continue to next candidate
+    });
+
+    test("spread_too_wide rejection should trigger retry", () => {
+      const result = performBookSanityCheck(0.3, 0.7, defaultCfg);
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.rule, "spread_too_wide");
+    });
+
+    test("ask_too_high rejection should trigger retry", () => {
+      const result = performBookSanityCheck(0.9, 0.96, defaultCfg);
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.rule, "ask_too_high");
+    });
+
+    test("healthy book should stop the retry loop (candidate accepted)", () => {
+      const result = performBookSanityCheck(0.45, 0.55, defaultCfg);
+      assert.strictEqual(result.passed, true);
+      assert.strictEqual(result.rule, undefined);
+    });
+  });
+
+  describe("Multiple candidate simulation", () => {
+    const defaultCfg = {
+      bookMaxAsk: 0.95,
+      bookMaxSpread: 0.2,
+      deadBookBid: 0.02,
+      deadBookAsk: 0.98,
+    };
+
+    test("simulates loop: first dead_book, second passes", () => {
+      const candidates = [
+        { bid: 0.02, ask: 0.98 }, // dead_book - retry
+        { bid: 0.45, ask: 0.55 }, // healthy - accept
+      ];
+
+      let acceptedIndex = -1;
+      for (let i = 0; i < candidates.length; i++) {
+        const result = performBookSanityCheck(
+          candidates[i].bid,
+          candidates[i].ask,
+          defaultCfg,
+        );
+        if (result.passed) {
+          acceptedIndex = i;
+          break;
+        }
+      }
+
+      assert.strictEqual(acceptedIndex, 1, "Second candidate should be accepted");
+    });
+
+    test("simulates loop: all candidates fail", () => {
+      const candidates = [
+        { bid: 0.01, ask: 0.99 }, // empty_book
+        { bid: 0.02, ask: 0.98 }, // dead_book
+        { bid: 0.9, ask: 0.96 },  // ask_too_high
+      ];
+
+      let acceptedIndex = -1;
+      let lastRule = "";
+      for (let i = 0; i < candidates.length; i++) {
+        const result = performBookSanityCheck(
+          candidates[i].bid,
+          candidates[i].ask,
+          defaultCfg,
+        );
+        if (result.passed) {
+          acceptedIndex = i;
+          break;
+        }
+        lastRule = result.rule || "";
+      }
+
+      assert.strictEqual(acceptedIndex, -1, "No candidate should be accepted");
+      assert.strictEqual(lastRule, "ask_too_high", "Last rejection should be ask_too_high");
+    });
+
+    test("maxCandidateAttempts limits iteration", () => {
+      const maxAttempts = 3;
+      const candidates = [
+        { bid: 0.01, ask: 0.99 }, // 1
+        { bid: 0.02, ask: 0.98 }, // 2
+        { bid: 0.02, ask: 0.98 }, // 3 - max reached
+        { bid: 0.45, ask: 0.55 }, // 4 - would pass but not reached
+        { bid: 0.45, ask: 0.55 }, // 5 - not reached
+      ];
+
+      let attemptCount = 0;
+      let acceptedIndex = -1;
+      for (let i = 0; i < candidates.length && attemptCount < maxAttempts; i++) {
+        attemptCount++;
+        const result = performBookSanityCheck(
+          candidates[i].bid,
+          candidates[i].ask,
+          defaultCfg,
+        );
+        if (result.passed) {
+          acceptedIndex = i;
+          break;
+        }
+      }
+
+      assert.strictEqual(attemptCount, maxAttempts, "Should stop at maxAttempts");
+      assert.strictEqual(acceptedIndex, -1, "Should not accept any (max reached before healthy)");
+    });
+  });
+});

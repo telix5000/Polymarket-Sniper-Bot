@@ -38,7 +38,6 @@ import {
   isDeadBook,
   isEmptyBook,
   checkBookHealth,
-  isLiquidOrderbook,
   DEAD_BOOK_THRESHOLDS,
   type BookHealthResult,
 } from "./price-safety";
@@ -618,11 +617,21 @@ async function runWhaleBuyStep(
 
     // ─────────────────────────────────────────────────────────────────────────
     // ALL CANDIDATES EXHAUSTED
+    // Determine if this was a candidate-stage skip or execution-stage rejection
     // ─────────────────────────────────────────────────────────────────────────
+    const candidateStageReasons: DiagReason[] = [
+      "skipped_bad_book",
+      "candidate_cooldown",
+    ];
+    const wasExecutionStageRejection =
+      lastRejectionReason &&
+      !candidateStageReasons.includes(lastRejectionReason);
+    const finalResult = wasExecutionStageRejection ? "REJECTED" : "SKIPPED";
+
     tracer.trace({
       step,
       action: "all_candidates_exhausted",
-      result: "SKIPPED",
+      result: finalResult,
       reason: lastRejectionReason ?? "unknown_error",
       marketId: lastRejectedCandidate?.marketId,
       tokenId: lastRejectedCandidate?.tokenId,
@@ -631,6 +640,7 @@ async function runWhaleBuyStep(
         maxAttempts: cfg.maxCandidateAttempts,
         candidatesAvailable: candidates.length,
         lastRejectionReason,
+        wasExecutionStageRejection,
       },
     });
 
@@ -641,7 +651,7 @@ async function runWhaleBuyStep(
     ghEndGroup();
     return {
       step,
-      result: "SKIPPED",
+      result: finalResult,
       reason: lastRejectionReason ?? "unknown_error",
       marketId: lastRejectedCandidate?.marketId,
       tokenId: lastRejectedCandidate?.tokenId,
@@ -649,6 +659,7 @@ async function runWhaleBuyStep(
         totalAttempts: attemptCount,
         candidatesAvailable: candidates.length,
         lastRejectionReason,
+        wasExecutionStageRejection,
       },
       traceEvents: tracer.getStepEvents(step),
     };
@@ -1088,11 +1099,21 @@ async function runScanBuyStep(
 
     // ─────────────────────────────────────────────────────────────────────────
     // ALL CANDIDATES EXHAUSTED
+    // Determine if this was a candidate-stage skip or execution-stage rejection
     // ─────────────────────────────────────────────────────────────────────────
+    const candidateStageReasons: DiagReason[] = [
+      "skipped_bad_book",
+      "candidate_cooldown",
+    ];
+    const wasExecutionStageRejection =
+      lastRejectionReason &&
+      !candidateStageReasons.includes(lastRejectionReason);
+    const finalResult = wasExecutionStageRejection ? "REJECTED" : "SKIPPED";
+
     tracer.trace({
       step,
       action: "all_candidates_exhausted",
-      result: "SKIPPED",
+      result: finalResult,
       reason: lastRejectionReason ?? "unknown_error",
       marketId: lastRejectedCandidate?.marketId,
       tokenId: lastRejectedCandidate?.tokenId,
@@ -1101,6 +1122,7 @@ async function runScanBuyStep(
         maxAttempts: cfg.maxCandidateAttempts,
         candidatesAvailable: candidates.length,
         lastRejectionReason,
+        wasExecutionStageRejection,
       },
     });
 
@@ -1111,7 +1133,7 @@ async function runScanBuyStep(
     ghEndGroup();
     return {
       step,
-      result: "SKIPPED",
+      result: finalResult,
       reason: lastRejectionReason ?? "unknown_error",
       marketId: lastRejectedCandidate?.marketId,
       tokenId: lastRejectedCandidate?.tokenId,
@@ -1119,6 +1141,7 @@ async function runScanBuyStep(
         totalAttempts: attemptCount,
         candidatesAvailable: candidates.length,
         lastRejectionReason,
+        wasExecutionStageRejection,
       },
       traceEvents: tracer.getStepEvents(step),
     };

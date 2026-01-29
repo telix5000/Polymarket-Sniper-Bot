@@ -335,11 +335,8 @@ export function checkBookHealth(
  * @returns true if this appears to be a dust book
  */
 export function isDustBook(orderbook: PriceOrderbookSnapshot): boolean {
-  const bidCents = orderbook.bestBid * 100;
-  const askCents = orderbook.bestAsk * 100;
-
-  // Dust book: bid <= 2¢ AND ask >= 98¢
-  return bidCents <= 2 && askCents >= 98;
+  // Delegate to isDeadBook() to maintain single source of truth
+  return isDeadBook(orderbook.bestBid, orderbook.bestAsk);
 }
 
 /**
