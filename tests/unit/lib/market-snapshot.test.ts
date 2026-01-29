@@ -488,6 +488,61 @@ describe("Snapshot Health Check", () => {
     });
     assert.strictEqual(isSnapshotHealthy(snapshot), false);
   });
+
+  it("should use snapshot bookStatus, not re-read from cache (KEY TEST)", () => {
+    // This is THE KEY TEST: health check must use snapshot's bookStatus,
+    // not read "current" cache which may have been updated to dust/empty
+
+    const store = initMarketDataStore({ maxTokens: 100, staleMs: 5000 });
+
+    // Create a HEALTHY snapshot (bid=47¢, ask=49¢)
+    const healthySnapshot = createMarketSnapshot({
+      tokenId: "test-health-from-snapshot",
+      bestBid: 0.47,
+      bestAsk: 0.49,
+      source: "WS_CACHE",
+    });
+
+    // Verify snapshot is healthy at creation
+    assert.strictEqual(isSnapshotHealthy(healthySnapshot), true, "Snapshot should be HEALTHY at creation");
+    assert.strictEqual(healthySnapshot.bookStatus, "HEALTHY", "bookStatus should be HEALTHY");
+
+    // NOW: Simulate cache being updated to dust AFTER snapshot was created
+    // This simulates the race condition where WS pushes dust data during execution
+    store.updateFromWs(
+      "test-health-from-snapshot",
+      [{ price: 0.01, size: 1 }], // Dust bid
+      [{ price: 0.99, size: 1 }], // Dust ask
+    );
+
+    // Verify cache now has dust values
+    const cacheData = store.get("test-health-from-snapshot");
+    assert.strictEqual(cacheData?.bestBid, 0.01, "Cache should have dust bid");
+    assert.strictEqual(cacheData?.bestAsk, 0.99, "Cache should have dust ask");
+
+    // CRITICAL: isSnapshotHealthy MUST still return true because it uses
+    // the snapshot's bookStatus, NOT the current cache values
+    assert.strictEqual(
+      isSnapshotHealthy(healthySnapshot),
+      true,
+      "isSnapshotHealthy MUST use snapshot.bookStatus, NOT current cache"
+    );
+    assert.strictEqual(
+      healthySnapshot.bookStatus,
+      "HEALTHY",
+      "Snapshot bookStatus MUST remain HEALTHY regardless of cache updates"
+    );
+    assert.strictEqual(
+      healthySnapshot.bestBid,
+      0.47,
+      "Snapshot bestBid MUST remain 0.47 regardless of cache updates"
+    );
+    assert.strictEqual(
+      healthySnapshot.bestAsk,
+      0.49,
+      "Snapshot bestAsk MUST remain 0.49 regardless of cache updates"
+    );
+  });
 });
 
 // ============================================================================
