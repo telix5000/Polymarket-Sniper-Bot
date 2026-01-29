@@ -13,7 +13,11 @@
  * an additional layer of protection beyond individual position limits.
  */
 
-import type { ManagedPosition, BiasDirection, EvMetrics } from "./decision-engine";
+import type {
+  ManagedPosition,
+  BiasDirection,
+  EvMetrics,
+} from "./decision-engine";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -183,7 +187,12 @@ export class RiskGuard {
     totalDeployedUsd: number;
   }): EntryValidation {
     const warnings: string[] = [];
-    const { proposedSizeUsd, walletBalanceUsd, currentPositions, totalDeployedUsd } = params;
+    const {
+      proposedSizeUsd,
+      walletBalanceUsd,
+      currentPositions,
+      totalDeployedUsd,
+    } = params;
 
     // 1. Check if wallet would fall below minimum
     const projectedBalance = walletBalanceUsd - proposedSizeUsd;
@@ -200,8 +209,12 @@ export class RiskGuard {
     const projectedDeploymentFraction = projectedDeployment / walletBalanceUsd;
     if (projectedDeploymentFraction > this.config.maxTotalDeploymentFraction) {
       // Calculate maximum allowed entry size
-      const maxAllowedDeployment = walletBalanceUsd * this.config.maxTotalDeploymentFraction;
-      const maxAllowedEntry = Math.max(0, maxAllowedDeployment - totalDeployedUsd);
+      const maxAllowedDeployment =
+        walletBalanceUsd * this.config.maxTotalDeploymentFraction;
+      const maxAllowedEntry = Math.max(
+        0,
+        maxAllowedDeployment - totalDeployedUsd,
+      );
 
       if (maxAllowedEntry <= 0) {
         return {
@@ -212,7 +225,9 @@ export class RiskGuard {
       }
 
       // Allow with reduced size
-      warnings.push(`Entry size reduced to stay within deployment limits: $${maxAllowedEntry.toFixed(2)}`);
+      warnings.push(
+        `Entry size reduced to stay within deployment limits: $${maxAllowedEntry.toFixed(2)}`,
+      );
       return {
         allowed: true,
         adjustedSizeUsd: maxAllowedEntry,
@@ -221,16 +236,24 @@ export class RiskGuard {
     }
 
     // 3. Check portfolio-wide unrealized loss
-    const portfolioUnrealizedPnlUsd = this.calculatePortfolioUnrealizedPnl(currentPositions);
-    if (portfolioUnrealizedPnlUsd < -this.config.maxPortfolioUnrealizedLossUsd) {
-      warnings.push(`Portfolio in drawdown: $${portfolioUnrealizedPnlUsd.toFixed(2)}`);
+    const portfolioUnrealizedPnlUsd =
+      this.calculatePortfolioUnrealizedPnl(currentPositions);
+    if (
+      portfolioUnrealizedPnlUsd < -this.config.maxPortfolioUnrealizedLossUsd
+    ) {
+      warnings.push(
+        `Portfolio in drawdown: $${portfolioUnrealizedPnlUsd.toFixed(2)}`,
+      );
       // Allow but flag - we don't block entries due to current losses (might be recovery opportunity)
     }
 
     // 4. Check global hedge exposure - if too high, warn
-    const globalHedgeExposure = this.calculateGlobalHedgeExposure(currentPositions);
+    const globalHedgeExposure =
+      this.calculateGlobalHedgeExposure(currentPositions);
     if (globalHedgeExposure > this.config.maxGlobalHedgeExposure * 0.8) {
-      warnings.push(`High global hedge exposure: ${(globalHedgeExposure * 100).toFixed(1)}%`);
+      warnings.push(
+        `High global hedge exposure: ${(globalHedgeExposure * 100).toFixed(1)}%`,
+      );
     }
 
     return {
@@ -251,7 +274,13 @@ export class RiskGuard {
     walletBalanceUsd: number;
     currentPositions: ManagedPosition[];
   }): HedgeValidation {
-    const { positionId, position, proposedHedgeSizeUsd, walletBalanceUsd, currentPositions } = params;
+    const {
+      positionId,
+      position,
+      proposedHedgeSizeUsd,
+      walletBalanceUsd,
+      currentPositions,
+    } = params;
 
     // 1. Check hedge cooldown
     const cooldownUntil = this.hedgeCooldowns.get(positionId) || 0;
@@ -263,9 +292,14 @@ export class RiskGuard {
     }
 
     // 2. Check maximum hedged positions count
-    const hedgedPositionCount = currentPositions.filter(p => p.hedges.length > 0).length;
+    const hedgedPositionCount = currentPositions.filter(
+      (p) => p.hedges.length > 0,
+    ).length;
     const isAlreadyHedged = position.hedges.length > 0;
-    if (!isAlreadyHedged && hedgedPositionCount >= this.config.maxHedgedPositionsCount) {
+    if (
+      !isAlreadyHedged &&
+      hedgedPositionCount >= this.config.maxHedgedPositionsCount
+    ) {
       return {
         allowed: false,
         reason: `Max hedged positions reached (${hedgedPositionCount}/${this.config.maxHedgedPositionsCount})`,
@@ -276,7 +310,10 @@ export class RiskGuard {
     const currentTotalHedgeUsd = this.calculateTotalHedgeUsd(currentPositions);
     const projectedTotalHedgeUsd = currentTotalHedgeUsd + proposedHedgeSizeUsd;
     if (projectedTotalHedgeUsd > this.config.maxTotalHedgeUsd) {
-      const maxAllowedHedge = Math.max(0, this.config.maxTotalHedgeUsd - currentTotalHedgeUsd);
+      const maxAllowedHedge = Math.max(
+        0,
+        this.config.maxTotalHedgeUsd - currentTotalHedgeUsd,
+      );
       if (maxAllowedHedge <= 0) {
         return {
           allowed: false,
@@ -290,7 +327,8 @@ export class RiskGuard {
     }
 
     // 4. Check global hedge exposure
-    const currentGlobalExposure = this.calculateGlobalHedgeExposure(currentPositions);
+    const currentGlobalExposure =
+      this.calculateGlobalHedgeExposure(currentPositions);
     if (currentGlobalExposure >= this.config.maxGlobalHedgeExposure) {
       return {
         allowed: false,
@@ -301,7 +339,10 @@ export class RiskGuard {
     // 5. Check if hedge would deplete wallet below minimum
     const projectedBalance = walletBalanceUsd - proposedHedgeSizeUsd;
     if (projectedBalance < this.config.minWalletBalanceUsd) {
-      const maxAllowedHedge = Math.max(0, walletBalanceUsd - this.config.minWalletBalanceUsd);
+      const maxAllowedHedge = Math.max(
+        0,
+        walletBalanceUsd - this.config.minWalletBalanceUsd,
+      );
       if (maxAllowedHedge <= 0) {
         return {
           allowed: false,
@@ -324,7 +365,10 @@ export class RiskGuard {
    * Record that a hedge was placed (for cooldown tracking)
    */
   recordHedgePlaced(positionId: string): void {
-    this.hedgeCooldowns.set(positionId, Date.now() + this.config.hedgeCooldownMs);
+    this.hedgeCooldowns.set(
+      positionId,
+      Date.now() + this.config.hedgeCooldownMs,
+    );
   }
 
   /**
@@ -342,15 +386,23 @@ export class RiskGuard {
     const recommendations: string[] = [];
 
     // Calculate metrics
-    const openPositions = currentPositions.filter(p => p.state !== "CLOSED").length;
-    const hedgedPositions = currentPositions.filter(p => p.hedges.length > 0 && p.state !== "CLOSED").length;
+    const openPositions = currentPositions.filter(
+      (p) => p.state !== "CLOSED",
+    ).length;
+    const hedgedPositions = currentPositions.filter(
+      (p) => p.hedges.length > 0 && p.state !== "CLOSED",
+    ).length;
     const totalHedgeUsd = this.calculateTotalHedgeUsd(currentPositions);
-    const globalHedgeExposure = this.calculateGlobalHedgeExposure(currentPositions);
-    const portfolioUnrealizedPnlUsd = this.calculatePortfolioUnrealizedPnl(currentPositions);
+    const globalHedgeExposure =
+      this.calculateGlobalHedgeExposure(currentPositions);
+    const portfolioUnrealizedPnlUsd =
+      this.calculatePortfolioUnrealizedPnl(currentPositions);
 
     // Check for stale positions
     const stalePositions = currentPositions.filter(
-      p => p.state !== "CLOSED" && (now - p.lastUpdateTime) > this.config.positionStaleThresholdMs
+      (p) =>
+        p.state !== "CLOSED" &&
+        now - p.lastUpdateTime > this.config.positionStaleThresholdMs,
     );
     const stalePositionCount = stalePositions.length;
 
@@ -358,21 +410,32 @@ export class RiskGuard {
     let status: "HEALTHY" | "CAUTION" | "CRITICAL" = "HEALTHY";
 
     // Critical conditions
-    if (portfolioUnrealizedPnlUsd < -this.config.maxPortfolioUnrealizedLossUsd) {
+    if (
+      portfolioUnrealizedPnlUsd < -this.config.maxPortfolioUnrealizedLossUsd
+    ) {
       status = "CRITICAL";
-      issues.push(`Portfolio drawdown exceeds limit: $${portfolioUnrealizedPnlUsd.toFixed(2)}`);
+      issues.push(
+        `Portfolio drawdown exceeds limit: $${portfolioUnrealizedPnlUsd.toFixed(2)}`,
+      );
       recommendations.push("Consider exiting worst-performing positions");
     }
 
     if (globalHedgeExposure > this.config.maxGlobalHedgeExposure) {
       status = "CRITICAL";
-      issues.push(`Global hedge exposure too high: ${(globalHedgeExposure * 100).toFixed(1)}%`);
+      issues.push(
+        `Global hedge exposure too high: ${(globalHedgeExposure * 100).toFixed(1)}%`,
+      );
       recommendations.push("Stop adding hedges, consider unwinding some");
     }
 
-    if (totalDeployedUsd / walletBalanceUsd > this.config.maxTotalDeploymentFraction) {
+    if (
+      totalDeployedUsd / walletBalanceUsd >
+      this.config.maxTotalDeploymentFraction
+    ) {
       if (status !== "CRITICAL") status = "CAUTION";
-      issues.push(`Over-deployed: ${((totalDeployedUsd / walletBalanceUsd) * 100).toFixed(1)}%`);
+      issues.push(
+        `Over-deployed: ${((totalDeployedUsd / walletBalanceUsd) * 100).toFixed(1)}%`,
+      );
       recommendations.push("Reduce position count or sizes");
     }
 
@@ -396,9 +459,13 @@ export class RiskGuard {
     // Check for positions requiring action
     for (const pos of currentPositions) {
       if (pos.state === "CLOSED") continue;
-      if (pos.unrealizedPnlCents < -this.config.maxUnrealizedLossPerPositionCents) {
+      if (
+        pos.unrealizedPnlCents < -this.config.maxUnrealizedLossPerPositionCents
+      ) {
         if (status === "HEALTHY") status = "CAUTION";
-        issues.push(`Position ${pos.id.slice(0, 8)}... has large loss: ${pos.unrealizedPnlCents}¢`);
+        issues.push(
+          `Position ${pos.id.slice(0, 8)}... has large loss: ${pos.unrealizedPnlCents}¢`,
+        );
       }
     }
 
@@ -429,16 +496,18 @@ export class RiskGuard {
 
     // Calculate metrics
     const holdTimeSeconds = (now - position.entryTime) / 1000;
-    const isStale = (now - position.lastUpdateTime) > this.config.positionStaleThresholdMs;
+    const isStale =
+      now - position.lastUpdateTime > this.config.positionStaleThresholdMs;
 
     // Determine if position can be actioned quickly
     // A position can sell quickly if it's not already exiting
-    const canSellQuickly = position.state !== "EXITING" && position.state !== "CLOSED";
-    
+    const canSellQuickly =
+      position.state !== "EXITING" && position.state !== "CLOSED";
+
     // A position can hedge quickly if it hasn't reached max hedge ratio
     // and isn't on hedge cooldown
     const cooldownUntil = this.hedgeCooldowns.get(position.id) || 0;
-    const canHedgeQuickly = 
+    const canHedgeQuickly =
       position.state === "OPEN" &&
       position.totalHedgeRatio < 0.7 && // Default max hedge ratio
       Date.now() >= cooldownUntil;
@@ -446,7 +515,10 @@ export class RiskGuard {
     // Determine status
     let status: PositionHealth["status"] = "HEALTHY";
 
-    if (position.unrealizedPnlCents < -this.config.maxUnrealizedLossPerPositionCents) {
+    if (
+      position.unrealizedPnlCents <
+      -this.config.maxUnrealizedLossPerPositionCents
+    ) {
       status = "CRITICAL";
       issues.push(`Large unrealized loss: ${position.unrealizedPnlCents}¢`);
     }
@@ -464,9 +536,10 @@ export class RiskGuard {
     // Near hedge trigger should be monitored
     if (position.state === "OPEN") {
       const distanceToHedgeTrigger = Math.abs(
-        position.currentPriceCents - position.hedgeTriggerPriceCents
+        position.currentPriceCents - position.hedgeTriggerPriceCents,
       );
-      if (distanceToHedgeTrigger < 3) { // Within 3 cents of trigger
+      if (distanceToHedgeTrigger < 3) {
+        // Within 3 cents of trigger
         if (status === "HEALTHY") status = "MONITORING";
         issues.push("Approaching hedge trigger");
       }
@@ -495,7 +568,7 @@ export class RiskGuard {
     totalDeployedUsd: number;
   }): { active: boolean; reason?: string } {
     const health = this.getPortfolioHealth(params);
-    
+
     if (health.status === "CRITICAL") {
       return {
         active: true,
@@ -517,11 +590,13 @@ export class RiskGuard {
   /**
    * Get positions that require immediate action (for monitoring dashboard)
    */
-  getPositionsRequiringAction(currentPositions: ManagedPosition[]): PositionHealth[] {
+  getPositionsRequiringAction(
+    currentPositions: ManagedPosition[],
+  ): PositionHealth[] {
     return currentPositions
-      .filter(p => p.state !== "CLOSED")
-      .map(p => this.getPositionHealth(p))
-      .filter(h => h.status === "ACTION_REQUIRED" || h.status === "CRITICAL");
+      .filter((p) => p.state !== "CLOSED")
+      .map((p) => this.getPositionHealth(p))
+      .filter((h) => h.status === "ACTION_REQUIRED" || h.status === "CRITICAL");
   }
 
   /**
@@ -544,25 +619,30 @@ export class RiskGuard {
   // ─────────────────────────────────────────────────────────────────────────
 
   private calculateGlobalHedgeExposure(positions: ManagedPosition[]): number {
-    const openPositions = positions.filter(p => p.state !== "CLOSED");
+    const openPositions = positions.filter((p) => p.state !== "CLOSED");
     if (openPositions.length === 0) return 0;
 
-    const totalHedgeRatio = openPositions.reduce((sum, p) => sum + p.totalHedgeRatio, 0);
+    const totalHedgeRatio = openPositions.reduce(
+      (sum, p) => sum + p.totalHedgeRatio,
+      0,
+    );
     return totalHedgeRatio / openPositions.length;
   }
 
   private calculateTotalHedgeUsd(positions: ManagedPosition[]): number {
     return positions
-      .filter(p => p.state !== "CLOSED")
+      .filter((p) => p.state !== "CLOSED")
       .reduce((sum, p) => {
         const hedgeUsd = p.hedges.reduce((hSum, h) => hSum + h.sizeUsd, 0);
         return sum + hedgeUsd;
       }, 0);
   }
 
-  private calculatePortfolioUnrealizedPnl(positions: ManagedPosition[]): number {
+  private calculatePortfolioUnrealizedPnl(
+    positions: ManagedPosition[],
+  ): number {
     return positions
-      .filter(p => p.state !== "CLOSED")
+      .filter((p) => p.state !== "CLOSED")
       .reduce((sum, p) => sum + p.unrealizedPnlUsd, 0);
   }
 

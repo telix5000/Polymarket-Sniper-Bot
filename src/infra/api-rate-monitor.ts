@@ -16,7 +16,14 @@ import { reportError } from "./github-reporter";
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type ApiProvider = "infura" | "polymarket_clob" | "polymarket_data" | "polymarket_gamma" | "github" | "telegram" | "other";
+export type ApiProvider =
+  | "infura"
+  | "polymarket_clob"
+  | "polymarket_data"
+  | "polymarket_gamma"
+  | "github"
+  | "telegram"
+  | "other";
 
 export type TradeType = "BUY" | "SELL" | "HEDGE";
 
@@ -94,11 +101,11 @@ const DEFAULT_LIMITS: Record<ApiProvider, RateLimitConfig> = {
   // Infura free tier: ~10 req/sec, 100k/day
   // These are conservative defaults - adjusted based on INFURA_TIER
   infura: {
-    warningPerMinute: 300,      // 5 req/sec
-    criticalPerMinute: 500,     // ~8 req/sec
+    warningPerMinute: 300, // 5 req/sec
+    criticalPerMinute: 500, // ~8 req/sec
     warningPerHour: 10000,
     criticalPerHour: 15000,
-    dailyLimit: 100000,         // Free tier
+    dailyLimit: 100000, // Free tier
   },
   // Polymarket CLOB API - order submission
   polymarket_clob: {
@@ -148,8 +155,8 @@ const DEFAULT_CONFIG: ApiRateMonitorConfig = {
   enabled: true,
   limits: DEFAULT_LIMITS,
   missedTradeWindowMs: 60 * 60 * 1000, // 1 hour
-  missedTradeAlertThreshold: 5,         // 5 consecutive misses
-  alertCooldownMs: 30 * 60 * 1000,      // 30 minutes between same alerts
+  missedTradeAlertThreshold: 5, // 5 consecutive misses
+  alertCooldownMs: 30 * 60 * 1000, // 30 minutes between same alerts
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -167,7 +174,7 @@ export class ApiRateMonitor {
   constructor(config: Partial<ApiRateMonitorConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.dayStartTimestamp = this.getDayStart();
-    
+
     // Adjust Infura limits based on tier
     this.adjustInfuraLimits();
   }
@@ -177,7 +184,7 @@ export class ApiRateMonitor {
    */
   private adjustInfuraLimits(): void {
     const tier = (process.env.INFURA_TIER || "core").toLowerCase();
-    
+
     switch (tier) {
       case "developer":
         this.config.limits.infura = {
@@ -286,21 +293,29 @@ export class ApiRateMonitor {
 
     return providers.map((provider) => {
       const providerCalls = this.calls.filter((c) => c.provider === provider);
-      const callsLastMinute = providerCalls.filter((c) => c.timestamp >= oneMinuteAgo).length;
-      const callsLastHour = providerCalls.filter((c) => c.timestamp >= oneHourAgo).length;
-      const callsToday = providerCalls.filter((c) => c.timestamp >= this.dayStartTimestamp).length;
+      const callsLastMinute = providerCalls.filter(
+        (c) => c.timestamp >= oneMinuteAgo,
+      ).length;
+      const callsLastHour = providerCalls.filter(
+        (c) => c.timestamp >= oneHourAgo,
+      ).length;
+      const callsToday = providerCalls.filter(
+        (c) => c.timestamp >= this.dayStartTimestamp,
+      ).length;
 
       const successfulCalls = providerCalls.filter((c) => c.success);
-      const successRate = providerCalls.length > 0
-        ? (successfulCalls.length / providerCalls.length) * 100
-        : 100;
+      const successRate =
+        providerCalls.length > 0
+          ? (successfulCalls.length / providerCalls.length) * 100
+          : 100;
 
       const latencies = providerCalls
         .filter((c) => c.latencyMs !== undefined)
         .map((c) => c.latencyMs!);
-      const avgLatencyMs = latencies.length > 0
-        ? latencies.reduce((a, b) => a + b, 0) / latencies.length
-        : 0;
+      const avgLatencyMs =
+        latencies.length > 0
+          ? latencies.reduce((a, b) => a + b, 0) / latencies.length
+          : 0;
 
       const limits = this.config.limits[provider];
       let status: "OK" | "WARNING" | "CRITICAL" = "OK";
@@ -350,7 +365,7 @@ export class ApiRateMonitor {
 
     return types.map((type) => {
       const typeMisses = this.missedTrades.filter(
-        (m) => m.type === type && m.timestamp >= oneHourAgo
+        (m) => m.type === type && m.timestamp >= oneHourAgo,
       );
       const consecutiveCount = this.consecutiveMissedByType.get(type) || 0;
       const lastMiss = typeMisses[typeMisses.length - 1];
@@ -358,7 +373,9 @@ export class ApiRateMonitor {
       let status: "OK" | "WARNING" | "CRITICAL" = "OK";
       if (consecutiveCount >= this.config.missedTradeAlertThreshold) {
         status = "CRITICAL";
-      } else if (consecutiveCount >= Math.ceil(this.config.missedTradeAlertThreshold / 2)) {
+      } else if (
+        consecutiveCount >= Math.ceil(this.config.missedTradeAlertThreshold / 2)
+      ) {
         status = "WARNING";
       }
 
@@ -403,10 +420,14 @@ export class ApiRateMonitor {
     for (const stat of tradeStats) {
       if (stat.status === "CRITICAL") {
         tradeStatus = "CRITICAL";
-        issues.push(`Missed ${stat.type}s: ${stat.consecutiveCount} consecutive (${stat.lastReason})`);
+        issues.push(
+          `Missed ${stat.type}s: ${stat.consecutiveCount} consecutive (${stat.lastReason})`,
+        );
       } else if (stat.status === "WARNING" && tradeStatus !== "CRITICAL") {
         tradeStatus = "WARNING";
-        issues.push(`Missed ${stat.type}s: ${stat.consecutiveCount} consecutive`);
+        issues.push(
+          `Missed ${stat.type}s: ${stat.consecutiveCount} consecutive`,
+        );
       }
     }
 
@@ -417,8 +438,11 @@ export class ApiRateMonitor {
       apiStatus,
       tradeStatus,
       issues,
-      totalCallsLastHour: this.calls.filter((c) => c.timestamp >= oneHourAgo).length,
-      totalMissedTradesLastHour: this.missedTrades.filter((m) => m.timestamp >= oneHourAgo).length,
+      totalCallsLastHour: this.calls.filter((c) => c.timestamp >= oneHourAgo)
+        .length,
+      totalMissedTradesLastHour: this.missedTrades.filter(
+        (m) => m.timestamp >= oneHourAgo,
+      ).length,
     };
   }
 
@@ -433,9 +457,10 @@ export class ApiRateMonitor {
     console.log("═".repeat(50));
 
     for (const stat of apiStats) {
-      const statusIcon = stat.status === "OK" ? "✅" : stat.status === "WARNING" ? "⚠️" : "🚨";
+      const statusIcon =
+        stat.status === "OK" ? "✅" : stat.status === "WARNING" ? "⚠️" : "🚨";
       console.log(
-        `${statusIcon} ${stat.provider}: ${stat.callsLastMinute}/min, ${stat.callsLastHour}/hr, ${stat.callsToday} today`
+        `${statusIcon} ${stat.provider}: ${stat.callsLastMinute}/min, ${stat.callsLastHour}/hr, ${stat.callsToday} today`,
       );
       if (stat.message) {
         console.log(`   └─ ${stat.message}`);
@@ -445,9 +470,10 @@ export class ApiRateMonitor {
     const tradeStats = this.getMissedTradeStats();
     console.log("\n📈 Trade Execution Status:");
     for (const stat of tradeStats) {
-      const statusIcon = stat.status === "OK" ? "✅" : stat.status === "WARNING" ? "⚠️" : "🚨";
+      const statusIcon =
+        stat.status === "OK" ? "✅" : stat.status === "WARNING" ? "⚠️" : "🚨";
       console.log(
-        `${statusIcon} ${stat.type}: ${stat.countLastHour} missed/hr, ${stat.consecutiveCount} consecutive`
+        `${statusIcon} ${stat.type}: ${stat.countLastHour} missed/hr, ${stat.consecutiveCount} consecutive`,
       );
     }
 
@@ -471,9 +497,15 @@ export class ApiRateMonitor {
     const oneHourAgo = now - 60 * 60 * 1000;
 
     const providerCalls = this.calls.filter((c) => c.provider === provider);
-    const callsLastMinute = providerCalls.filter((c) => c.timestamp >= oneMinuteAgo).length;
-    const callsLastHour = providerCalls.filter((c) => c.timestamp >= oneHourAgo).length;
-    const callsToday = providerCalls.filter((c) => c.timestamp >= this.dayStartTimestamp).length;
+    const callsLastMinute = providerCalls.filter(
+      (c) => c.timestamp >= oneMinuteAgo,
+    ).length;
+    const callsLastHour = providerCalls.filter(
+      (c) => c.timestamp >= oneHourAgo,
+    ).length;
+    const callsToday = providerCalls.filter(
+      (c) => c.timestamp >= this.dayStartTimestamp,
+    ).length;
 
     const limits = this.config.limits[provider];
 
@@ -483,23 +515,23 @@ export class ApiRateMonitor {
         `api_rate_critical_${provider}`,
         `🚨 API Rate Limit CRITICAL: ${provider}`,
         `The ${provider} API is being called at a critical rate that may cause failures.\n\n` +
-        `**Current Usage:**\n` +
-        `- Calls/minute: ${callsLastMinute} (limit: ${limits.criticalPerMinute})\n` +
-        `- Calls/hour: ${callsLastHour}\n` +
-        `- Calls today: ${callsToday}\n\n` +
-        `**Action Required:** Review code for unnecessary API calls or increase rate limit tier.`,
-        "critical"
+          `**Current Usage:**\n` +
+          `- Calls/minute: ${callsLastMinute} (limit: ${limits.criticalPerMinute})\n` +
+          `- Calls/hour: ${callsLastHour}\n` +
+          `- Calls today: ${callsToday}\n\n` +
+          `**Action Required:** Review code for unnecessary API calls or increase rate limit tier.`,
+        "critical",
       );
     } else if (callsLastMinute >= limits.warningPerMinute) {
       this.triggerAlert(
         `api_rate_warning_${provider}`,
         `⚠️ API Rate Limit Warning: ${provider}`,
         `The ${provider} API is approaching rate limits.\n\n` +
-        `**Current Usage:**\n` +
-        `- Calls/minute: ${callsLastMinute} (threshold: ${limits.warningPerMinute})\n` +
-        `- Calls/hour: ${callsLastHour}\n\n` +
-        `Consider optimizing API usage or upgrading tier.`,
-        "warning"
+          `**Current Usage:**\n` +
+          `- Calls/minute: ${callsLastMinute} (threshold: ${limits.warningPerMinute})\n` +
+          `- Calls/hour: ${callsLastHour}\n\n` +
+          `Consider optimizing API usage or upgrading tier.`,
+        "warning",
       );
     }
 
@@ -509,16 +541,16 @@ export class ApiRateMonitor {
         `api_daily_limit_${provider}`,
         `🚨 Daily API Limit Critical: ${provider}`,
         `The ${provider} API is at 90%+ of daily limit.\n\n` +
-        `**Usage:** ${callsToday} / ${limits.dailyLimit} (${((callsToday / limits.dailyLimit) * 100).toFixed(1)}%)\n\n` +
-        `**Action Required:** Upgrade API tier or reduce usage immediately.`,
-        "critical"
+          `**Usage:** ${callsToday} / ${limits.dailyLimit} (${((callsToday / limits.dailyLimit) * 100).toFixed(1)}%)\n\n` +
+          `**Action Required:** Upgrade API tier or reduce usage immediately.`,
+        "critical",
       );
     }
   }
 
   private checkMissedTradePattern(type: TradeType): void {
     const consecutiveCount = this.consecutiveMissedByType.get(type) || 0;
-    
+
     if (consecutiveCount >= this.config.missedTradeAlertThreshold) {
       const recentMisses = this.missedTrades
         .filter((m) => m.type === type)
@@ -532,15 +564,15 @@ export class ApiRateMonitor {
         `missed_trades_${type.toLowerCase()}`,
         `🚨 Consecutive Missed ${type}s Detected`,
         `The bot has failed to execute ${consecutiveCount} consecutive ${type} orders.\n\n` +
-        `**Failure Reasons:**\n${uniqueReasons.map((r) => `- ${r}`).join("\n")}\n\n` +
-        `**Affected Tokens:**\n${tokenIds.map((t) => `- ${t}`).join("\n")}\n\n` +
-        `**Possible Causes:**\n` +
-        `- Insufficient liquidity\n` +
-        `- API connectivity issues\n` +
-        `- Rate limiting\n` +
-        `- Price movement too fast\n\n` +
-        `**Action Required:** Review logs and market conditions.`,
-        "critical"
+          `**Failure Reasons:**\n${uniqueReasons.map((r) => `- ${r}`).join("\n")}\n\n` +
+          `**Affected Tokens:**\n${tokenIds.map((t) => `- ${t}`).join("\n")}\n\n` +
+          `**Possible Causes:**\n` +
+          `- Insufficient liquidity\n` +
+          `- API connectivity issues\n` +
+          `- Rate limiting\n` +
+          `- Price movement too fast\n\n` +
+          `**Action Required:** Review logs and market conditions.`,
+        "critical",
       );
     }
   }
@@ -549,7 +581,7 @@ export class ApiRateMonitor {
     alertKey: string,
     title: string,
     body: string,
-    severity: "warning" | "critical"
+    severity: "warning" | "critical",
   ): void {
     const now = Date.now();
     const lastAlert = this.lastAlerts.get(alertKey) || 0;
@@ -617,7 +649,9 @@ let instance: ApiRateMonitor | null = null;
 /**
  * Initialize the global API rate monitor
  */
-export function initApiRateMonitor(config?: Partial<ApiRateMonitorConfig>): ApiRateMonitor {
+export function initApiRateMonitor(
+  config?: Partial<ApiRateMonitorConfig>,
+): ApiRateMonitor {
   instance = new ApiRateMonitor(config);
   return instance;
 }
@@ -669,15 +703,16 @@ export function detectProvider(url: string): ApiProvider {
   try {
     const parsedUrl = new URL(url);
     const hostname = parsedUrl.hostname.toLowerCase();
-    
+
     // Check exact hostname or if it ends with the expected domain
-    if (hostname === "infura.io" || hostname.endsWith(".infura.io")) return "infura";
+    if (hostname === "infura.io" || hostname.endsWith(".infura.io"))
+      return "infura";
     if (hostname === "clob.polymarket.com") return "polymarket_clob";
     if (hostname === "data-api.polymarket.com") return "polymarket_data";
     if (hostname === "gamma-api.polymarket.com") return "polymarket_gamma";
     if (hostname === "api.github.com") return "github";
     if (hostname === "api.telegram.org") return "telegram";
-    
+
     return "other";
   } catch {
     // If URL parsing fails, return "other" as a safe fallback

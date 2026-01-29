@@ -44,14 +44,27 @@ export interface OrderBookSnapshot {
   rawShape?: string;
   /** Error message if fetch failed */
   error?: string;
+  /** Timestamp when this snapshot was fetched (ms since epoch) */
+  fetchedAtMs?: number;
+  /** Correlation ID for this entry attempt - used to trace logs */
+  attemptId?: string;
+  /**
+   * Whether fetch itself failed (threw/timed-out/invalid shape).
+   * If true, bids/asks may be empty but this is NOT an EMPTY_BOOK - it's BOOK_FETCH_FAILED.
+   */
+  fetchFailed?: boolean;
 }
 
 /**
  * Book health status enumeration for BookResolver
- * 
+ *
  * Note: This is distinct from BookHealthStatus in price-safety.ts which uses
  * different values ("HEALTHY", "DEAD_BOOK"). This type is specific to the
  * BookResolver module and includes more granular status values.
+ *
+ * BOOK_FETCH_FAILED: The fetch threw/timed-out/returned invalid shape.
+ *                    This is distinct from EMPTY_BOOK which means we GOT a
+ *                    valid response but the book is genuinely empty (bid<=1¢, ask>=99¢).
  */
 export type BookResolverHealthStatus =
   | "OK"
@@ -60,7 +73,8 @@ export type BookResolverHealthStatus =
   | "WIDE_SPREAD"
   | "ASK_TOO_HIGH"
   | "NO_DATA"
-  | "PARSE_ERROR";
+  | "PARSE_ERROR"
+  | "BOOK_FETCH_FAILED";
 
 /**
  * Book health evaluation result
@@ -100,6 +114,8 @@ export interface ResolveBookParams {
   flow: "whale" | "scan";
   /** Optional maximum spread in cents to consider healthy */
   maxSpreadCents?: number;
+  /** Optional correlation ID for tracing logs through the entry attempt */
+  attemptId?: string;
 }
 
 /**
@@ -118,18 +134,23 @@ export interface ResolveBookResult {
   crossCheckSource?: "WS_CACHE" | "ALT_REST";
   /** Cross-check result if performed */
   crossCheckHealth?: BookHealth;
+  /** Correlation ID used for this resolution attempt */
+  attemptId?: string;
 }
 
 // ============================================================================
 // Thresholds (Re-export from price-safety for consistency)
 // ============================================================================
 
-import { DEAD_BOOK_THRESHOLDS, DEFAULT_MAX_SPREAD_CENTS } from "../lib/price-safety";
+import {
+  DEAD_BOOK_THRESHOLDS,
+  DEFAULT_MAX_SPREAD_CENTS,
+} from "../lib/price-safety";
 
 /**
  * Unified thresholds for book health evaluation
  * Both WHALE and SCAN flows use these same thresholds
- * 
+ *
  * Re-exports from price-safety.ts to maintain single source of truth
  */
 export const BOOK_THRESHOLDS = {

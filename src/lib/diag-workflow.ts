@@ -472,7 +472,9 @@ async function runWhaleBuyStep(
         orderbook = await deps.client.getOrderBook(signal.tokenId);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        console.warn(`   ⚠️ Could not fetch orderbook for pre-filter: ${errMsg}`);
+        console.warn(
+          `   ⚠️ Could not fetch orderbook for pre-filter: ${errMsg}`,
+        );
         orderbookFetchFailed = true;
       }
 
@@ -948,7 +950,9 @@ async function runScanBuyStep(
         orderbook = await deps.client.getOrderBook(scanResult.tokenId);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        console.warn(`   ⚠️ Could not fetch orderbook for pre-filter: ${errMsg}`);
+        console.warn(
+          `   ⚠️ Could not fetch orderbook for pre-filter: ${errMsg}`,
+        );
         orderbookFetchFailed = true;
       }
 

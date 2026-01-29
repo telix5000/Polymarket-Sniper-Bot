@@ -22,10 +22,7 @@
 import WebSocket from "ws";
 import { POLYMARKET_WS, getMarketWsUrl } from "./constants";
 import { getMarketDataStore, type OrderbookLevel } from "./market-data-store";
-import {
-  sortBidsDescending,
-  sortAsksAscending,
-} from "./orderbook-utils";
+import { sortBidsDescending, sortAsksAscending } from "./orderbook-utils";
 
 // ============================================================================
 // Types

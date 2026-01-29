@@ -64,12 +64,7 @@ import {
 } from "../lib";
 
 // Import BookResolver for unified book handling
-import {
-  initBookResolver,
-  type BookResolver,
-  type BookHealth,
-  type ResolveBookResult,
-} from "../book";
+import { initBookResolver, type BookResolver } from "../book";
 
 // Direct imports from core modules
 import {
@@ -2190,7 +2185,8 @@ export class ChurnEngine {
       }
 
       // Use normalizeRestOrderbook to get sorted levels (avoids redundant parsing)
-      const { bids: sortedBids, asks: sortedAsks } = normalizeRestOrderbook(orderbook);
+      const { bids: sortedBids, asks: sortedAsks } =
+        normalizeRestOrderbook(orderbook);
       if (sortedBids.length === 0 || sortedAsks.length === 0) {
         return null;
       }
@@ -2536,13 +2532,15 @@ export class ChurnEngine {
         this.diagnostics.orderbookFetchFailures++;
 
         // Map BookHealthStatus to MarketDataFailureReason
+        // BOOK_FETCH_FAILED is mapped to NETWORK_ERROR (transient) rather than DUST_BOOK (permanent)
         const reasonMap: Record<string, MarketDataFailureReason> = {
-          EMPTY_BOOK: "DUST_BOOK", // Treat EMPTY_BOOK as DUST_BOOK
-          DUST_BOOK: "DUST_BOOK",
+          EMPTY_BOOK: "DUST_BOOK", // Treat EMPTY_BOOK as DUST_BOOK (permanent)
+          DUST_BOOK: "DUST_BOOK", // Permanent market condition
           WIDE_SPREAD: "INVALID_LIQUIDITY",
           ASK_TOO_HIGH: "INVALID_LIQUIDITY",
           NO_DATA: "NO_ORDERBOOK",
           PARSE_ERROR: "PARSE_ERROR",
+          BOOK_FETCH_FAILED: "NETWORK_ERROR", // Transient - retry later
           OK: "NETWORK_ERROR", // Should not happen
         };
 
@@ -2551,9 +2549,9 @@ export class ChurnEngine {
           ? `${result.health.reason} (cross-checked: ${result.crossCheckSource} ${result.crossCheckHealth?.status || "N/A"})`
           : result.health.reason;
 
-        // Log the rejection with flow info
+        // Log the rejection with flow info and attemptId for correlation
         console.log(
-          `❌ [BOOK_REJECTED] flow=${flow} | ${tokenId.slice(0, 12)}... | ` +
+          `❌ [BOOK_REJECTED] attemptId=${result.attemptId || "none"} | flow=${flow} | ${tokenId.slice(0, 12)}... | ` +
             `status=${result.health.status} | bid=${result.health.bestBidCents.toFixed(1)}¢ ask=${result.health.bestAskCents.toFixed(1)}¢ | ` +
             `crossChecked=${result.crossChecked}`,
         );
@@ -2586,10 +2584,11 @@ export class ChurnEngine {
         lastUpdateTime: Date.now(),
       };
 
+      // Log accepted book with attemptId for correlation
       console.log(
-        `✅ [BOOK_ACCEPTED] flow=${flow} | ${tokenId.slice(0, 12)}... | ` +
+        `✅ [BOOK_ACCEPTED] attemptId=${result.attemptId || "none"} | flow=${flow} | ${tokenId.slice(0, 12)}... | ` +
           `source=${snapshot.source} | bid=${health.bestBidCents.toFixed(1)}¢ ask=${health.bestAskCents.toFixed(1)}¢ spread=${health.spreadCents.toFixed(1)}¢ | ` +
-          `bids=${health.bidsLen} asks=${health.asksLen}`,
+          `bids=${health.bidsLen} asks=${health.asksLen} | fetchedAtMs=${snapshot.fetchedAtMs || "unknown"}`,
       );
 
       return {
@@ -2734,7 +2733,8 @@ export class ChurnEngine {
               const restOrderbook = await this.client!.getOrderBook(tokenId);
               if (restOrderbook?.bids?.length && restOrderbook?.asks?.length) {
                 // Use normalized prices (sorted correctly)
-                const { bestBidCents: restBid, bestAskCents: restAsk } = getBestPricesFromRaw(restOrderbook);
+                const { bestBidCents: restBid, bestAskCents: restAsk } =
+                  getBestPricesFromRaw(restOrderbook);
 
                 console.log(
                   `📡 [REST_VERIFY] ${tokenId.slice(0, 12)}... | REST result: bid=${restBid.toFixed(1)}¢ ask=${restAsk.toFixed(1)}¢`,
@@ -2752,7 +2752,10 @@ export class ChurnEngine {
                         siblingOrderbook?.asks?.length
                       ) {
                         // Use normalized prices for sibling too
-                        const { bestBidCents: siblingBid, bestAskCents: siblingAsk } = getBestPricesFromRaw(siblingOrderbook);
+                        const {
+                          bestBidCents: siblingBid,
+                          bestAskCents: siblingAsk,
+                        } = getBestPricesFromRaw(siblingOrderbook);
                         console.log(
                           `📡 [SIBLING_CHECK] ${siblingTokenId.slice(0, 12)}... | sibling book: bid=${siblingBid.toFixed(1)}¢ ask=${siblingAsk.toFixed(1)}¢`,
                         );
@@ -2906,7 +2909,12 @@ export class ChurnEngine {
       // Use normalized prices (sorted correctly)
       const { bestBid, bestAsk } = getBestPricesFromRaw(orderbook);
 
-      if (bestBid === null || bestAsk === null || isNaN(bestBid) || isNaN(bestAsk)) {
+      if (
+        bestBid === null ||
+        bestAsk === null ||
+        isNaN(bestBid) ||
+        isNaN(bestAsk)
+      ) {
         this.diagnostics.orderbookFetchFailures++;
         return {
           ok: false,

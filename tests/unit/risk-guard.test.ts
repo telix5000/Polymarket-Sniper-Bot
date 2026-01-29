@@ -1,9 +1,6 @@
 import assert from "node:assert";
 import { test, describe, beforeEach } from "node:test";
-import {
-  RiskGuard,
-  type RiskGuardConfig,
-} from "../../src/core/risk-guard";
+import { RiskGuard, type RiskGuardConfig } from "../../src/core/risk-guard";
 import type { ManagedPosition } from "../../src/core/decision-engine";
 
 /**

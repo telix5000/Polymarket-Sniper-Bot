@@ -13,7 +13,10 @@ import { invalidatePositions } from "../lib/positions";
 import { getOppositeTokenId, getMarketTokenPair } from "../lib/market";
 import { reportError } from "../infra/github-reporter";
 import { getLatencyMonitor } from "../infra/latency-monitor";
-import { recordMissedTrade, recordSuccessfulTrade } from "../infra/api-rate-monitor";
+import {
+  recordMissedTrade,
+  recordSuccessfulTrade,
+} from "../infra/api-rate-monitor";
 import { smartSell } from "./smart-sell";
 import type { Position } from "../models";
 import {
@@ -253,7 +256,10 @@ export class ExecutionEngine {
       this.logger.warn(
         `🛡️ [RISK GUARD] Entry blocked - protective mode: ${protectiveMode.reason}`,
       );
-      return { success: false, reason: `PROTECTIVE_MODE: ${protectiveMode.reason}` };
+      return {
+        success: false,
+        reason: `PROTECTIVE_MODE: ${protectiveMode.reason}`,
+      };
     }
 
     // Determine effective bias direction:
@@ -318,7 +324,10 @@ export class ExecutionEngine {
         reason: `RISK_GUARD: ${entryValidation.reason}`,
         sizeUsd: decision.sizeUsd,
       });
-      return { success: false, reason: `RISK_GUARD: ${entryValidation.reason}` };
+      return {
+        success: false,
+        reason: `RISK_GUARD: ${entryValidation.reason}`,
+      };
     }
 
     // Log any warnings from risk guard
@@ -529,11 +538,11 @@ export class ExecutionEngine {
       }
 
       const orderBook = await this.client.getOrderBook(tokenId);
-      
+
       // Extract BOTH bid and ask from orderbook - needed for proper price selection
       const asks = orderBook?.asks;
       const bids = orderBook?.bids;
-      
+
       if (!asks?.length && !bids?.length) {
         return { success: false, reason: "NO_LIQUIDITY" };
       }
@@ -549,7 +558,10 @@ export class ExecutionEngine {
           `⚠️ [ENTRY] Book unhealthy for ${tokenId.slice(0, 12)}...: ${bookHealth.reason} ` +
             `(bid=${bestBid?.toFixed(4) ?? "null"}, ask=${bestAsk?.toFixed(4) ?? "null"})`,
         );
-        return { success: false, reason: `UNHEALTHY_BOOK_${bookHealth.reason}` };
+        return {
+          success: false,
+          reason: `UNHEALTHY_BOOK_${bookHealth.reason}`,
+        };
       }
 
       // For BUY (LONG): We need bestAsk (price we pay to buy)
@@ -579,7 +591,10 @@ export class ExecutionEngine {
         console.warn(
           `⚠️ [ENTRY] Price computation failed for ${tokenId.slice(0, 12)}...: ${fokPriceResult.rejectionReason}`,
         );
-        return { success: false, reason: `PRICE_COMPUTE_FAIL_${fokPriceResult.rejectionReason}` };
+        return {
+          success: false,
+          reason: `PRICE_COMPUTE_FAIL_${fokPriceResult.rejectionReason}`,
+        };
       }
 
       const fokPrice = fokPriceResult.limitPrice;
@@ -1099,11 +1114,14 @@ export class ExecutionEngine {
         }
 
         const rawBestBid = parseFloat(bids[0].price);
-        
+
         // HEDGE UNWIND: Use HARD API bounds (0.01-0.99), not user's strategy bounds
         // Hedges need to unwind regardless of user's price filter
-        const bestBid = Math.max(HARD_MIN_PRICE, Math.min(HARD_MAX_PRICE, rawBestBid));
-        
+        const bestBid = Math.max(
+          HARD_MIN_PRICE,
+          Math.min(HARD_MAX_PRICE, rawBestBid),
+        );
+
         if (bestBid !== rawBestBid) {
           console.warn(
             `⚠️ [HEDGE UNWIND] Price clamped to HARD bounds: ${rawBestBid.toFixed(4)} → ${bestBid.toFixed(4)}`,
@@ -1234,7 +1252,7 @@ export class ExecutionEngine {
     // This prevents financial bleed from too many hedge positions
     // ═══════════════════════════════════════════════════════════════════════
     const currentPositions = this.positionManager.getOpenPositions();
-    
+
     // Get actual wallet balance - use provided value, or fetch from cache, or use conservative fallback
     let effectiveBalance = walletBalanceUsd;
     if (effectiveBalance === undefined) {
@@ -1250,7 +1268,9 @@ export class ExecutionEngine {
     if (effectiveBalance === undefined) {
       const totalDeployed = this.positionManager.getTotalDeployedUsd();
       effectiveBalance = totalDeployed * 2; // Assume we have at least 2x deployed as total
-      console.warn(`⚠️ [HEDGE] Using estimated balance: $${effectiveBalance.toFixed(2)} (no cache available)`);
+      console.warn(
+        `⚠️ [HEDGE] Using estimated balance: $${effectiveBalance.toFixed(2)} (no cache available)`,
+      );
     }
 
     const hedgeValidation = this.riskGuard.validateHedge({
@@ -1272,7 +1292,10 @@ export class ExecutionEngine {
         reason: `RISK_GUARD: ${hedgeValidation.reason}`,
         sizeUsd: hedgeSize,
       });
-      return { success: false, reason: `RISK_GUARD: ${hedgeValidation.reason}` };
+      return {
+        success: false,
+        reason: `RISK_GUARD: ${hedgeValidation.reason}`,
+      };
     }
 
     // Use adjusted size if RiskGuard reduced it
