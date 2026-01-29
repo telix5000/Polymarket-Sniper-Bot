@@ -464,13 +464,17 @@ async function runWhaleBuyStep(
 
       // ─────────────────────────────────────────────────────────────────────────
       // BOOK SANITY PRE-FILTER: Fetch orderbook and check book health
+      // Note: If orderbook fetch fails, we proceed to attemptDiagBuy which has
+      // its own orderbook fetch and validation. This is intentional fallback.
       // ─────────────────────────────────────────────────────────────────────────
       let orderbook: OrderbookData | null = null;
+      let orderbookFetchFailed = false;
       try {
         orderbook = await deps.client.getOrderBook(signal.tokenId);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        console.warn(`   ⚠️ Could not fetch orderbook: ${errMsg}`);
+        console.warn(`   ⚠️ Could not fetch orderbook for pre-filter: ${errMsg}`);
+        orderbookFetchFailed = true;
       }
 
       if (orderbook?.asks?.length && orderbook?.bids?.length) {
@@ -538,10 +542,17 @@ async function runWhaleBuyStep(
           lastRejectedCandidate = signal;
           continue; // Try next candidate (dead_book triggers immediate retry)
         }
+      } else if (orderbookFetchFailed) {
+        // Pre-filter couldn't run due to orderbook fetch failure
+        // attemptDiagBuy will re-fetch and handle validation
+        console.log(
+          `   ⚠️ Pre-filter skipped (orderbook unavailable), proceeding to buy attempt...`,
+        );
       }
 
       // ─────────────────────────────────────────────────────────────────────────
-      // BOOK SANITY PASSED - Attempt BUY order
+      // BOOK SANITY PASSED (or skipped) - Attempt BUY order
+      // Note: attemptDiagBuy has its own orderbook fetch and validation
       // ─────────────────────────────────────────────────────────────────────────
       console.log(`   ✅ Book sanity passed, attempting BUY...`);
 
@@ -917,13 +928,17 @@ async function runScanBuyStep(
       // ─────────────────────────────────────────────────────────────────────────
       // BOOK SANITY PRE-FILTER: Fetch orderbook and check book health
       // Uses same math as normal trading (via price-safety.ts)
+      // Note: If orderbook fetch fails, we proceed to attemptDiagBuy which has
+      // its own orderbook fetch and validation. This is intentional fallback.
       // ─────────────────────────────────────────────────────────────────────────
       let orderbook: OrderbookData | null = null;
+      let orderbookFetchFailed = false;
       try {
         orderbook = await deps.client.getOrderBook(scanResult.tokenId);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        console.warn(`   ⚠️ Could not fetch orderbook: ${errMsg}`);
+        console.warn(`   ⚠️ Could not fetch orderbook for pre-filter: ${errMsg}`);
+        orderbookFetchFailed = true;
       }
 
       if (orderbook?.asks?.length && orderbook?.bids?.length) {
@@ -991,10 +1006,17 @@ async function runScanBuyStep(
           lastRejectedCandidate = scanResult;
           continue; // Try next candidate (dead_book triggers immediate retry)
         }
+      } else if (orderbookFetchFailed) {
+        // Pre-filter couldn't run due to orderbook fetch failure
+        // attemptDiagBuy will re-fetch and handle validation
+        console.log(
+          `   ⚠️ Pre-filter skipped (orderbook unavailable), proceeding to buy attempt...`,
+        );
       }
 
       // ─────────────────────────────────────────────────────────────────────────
-      // BOOK SANITY PASSED - Attempt BUY order
+      // BOOK SANITY PASSED (or skipped) - Attempt BUY order
+      // Note: attemptDiagBuy has its own orderbook fetch and validation
       // ─────────────────────────────────────────────────────────────────────────
       console.log(`   ✅ Book sanity passed, attempting BUY...`);
 

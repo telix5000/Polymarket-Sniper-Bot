@@ -2718,7 +2718,7 @@ export class ChurnEngine {
         };
       }
 
-      // Check for dust book (1¢/99¢ spreads - no room to trade)
+      // Check for dust book (2¢/98¢ spreads - no room to trade)
       // Uses shared isDeadBook() function from price-safety.ts
       if (isDeadBook(bestBid, bestAsk)) {
         this.diagnostics.orderbookFetchFailures++;

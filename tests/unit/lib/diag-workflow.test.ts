@@ -626,11 +626,11 @@ describe("Dead Book Classification in performBookSanityCheck", () => {
   });
 
   test("should classify 0.015/0.985 as dead_book (within 2¢/98¢ thresholds)", () => {
-    // 1.5¢/98.5¢ - bid < 2¢ and ask > 98¢
+    // 1.5¢/98.5¢ - bid (1.5¢) < 2¢ threshold and ask (98.5¢) > 98¢ threshold
+    // This is dead_book (not empty_book since 1.5¢ > 1¢)
     const result = performBookSanityCheck(0.015, 0.985, defaultCfg);
 
     assert.strictEqual(result.passed, false);
-    // This should be empty_book since 1.5¢ < 1¢ is false, so it's dead_book
     assert.strictEqual(result.rule, "dead_book");
   });
 
