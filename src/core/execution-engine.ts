@@ -17,8 +17,6 @@ import { recordMissedTrade, recordSuccessfulTrade } from "../infra/api-rate-moni
 import { smartSell } from "./smart-sell";
 import type { Position } from "../models";
 import {
-  MIN_PRICE,
-  MAX_PRICE,
   HARD_MIN_PRICE,
   HARD_MAX_PRICE,
   computeExecutionLimitPrice,

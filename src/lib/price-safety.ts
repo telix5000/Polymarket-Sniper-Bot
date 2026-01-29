@@ -42,6 +42,8 @@ import { isGitHubActions, ghWarning, ghError } from "./diag-mode";
 // 3. Clamp to STRATEGY bounds (never below ask for BUY, never above bid for SELL)
 // 4. Clamp to HARD API bounds
 // 5. Round to tick size
+// 6. Apply "must not cross" rule (bump prices after tick rounding to avoid crossing the book)
+// 7. Final HARD API bounds clamp
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Helper to read numeric env vars
@@ -830,7 +832,7 @@ export interface ComputeExecutionPriceInput {
 export interface ComputeExecutionPriceResult {
   /** Whether computation succeeded (book is healthy) */
   success: boolean;
-  /** The computed execution limit price (clamped to [MIN_PRICE, MAX_PRICE], rounded to tick) */
+  /** The computed execution limit price (clamped to STRATEGY bounds respecting "never cross" rule, then HARD API bounds [0.01, 0.99], rounded to tick) */
   limitPrice: number;
   /** The base price used (bestAsk for BUY, bestBid for SELL) */
   basePrice: number;
@@ -852,9 +854,20 @@ export interface ComputeExecutionPriceResult {
  * @returns The rounded price
  */
 export function roundToTick(price: number, tickSize: number = DEFAULT_TICK_SIZE): number {
-  if (!Number.isFinite(price) || !Number.isFinite(tickSize) || tickSize <= 0) {
+  if (!Number.isFinite(price) || !Number.isFinite(tickSize)) {
     return price;
   }
+
+  if (tickSize <= 0) {
+    const message = `roundToTick: received non-positive tickSize (${tickSize}); returning unrounded price ${price}.`;
+    if (isGitHubActions()) {
+      ghWarning(message);
+    } else {
+      console.warn(message);
+    }
+    return price;
+  }
+
   // Round to nearest tick
   return Math.round(price / tickSize) * tickSize;
 }
@@ -1124,20 +1137,44 @@ export function computeExecutionLimitPrice(
   
   if (side === "BUY" && roundedFinal < basePrice) {
     wouldCrossBookAfterRounding = true;
-    // Bump up to next tick at/above ask
-    roundedFinal = Math.ceil(basePrice / tickSize) * tickSize;
+    // Bump up to next tick at/above ask, but never above HARD_MAX_PRICE
+    const bumped = Math.ceil(basePrice / tickSize) * tickSize;
+    const hardSafeBumped = Math.min(bumped, HARD_MAX_PRICE);
+    if (hardSafeBumped !== bumped) {
+      wasClampedToHard = true;
+      hardClampDirection = "max";
+    }
+    roundedFinal = hardSafeBumped;
   } else if (side === "SELL" && roundedFinal > basePrice) {
     wouldCrossBookAfterRounding = true;
-    // Bump down to next tick at/below bid
-    roundedFinal = Math.floor(basePrice / tickSize) * tickSize;
+    // Bump down to next tick at/below bid, but never below HARD_MIN_PRICE
+    const bumped = Math.floor(basePrice / tickSize) * tickSize;
+    const hardSafeBumped = Math.max(bumped, HARD_MIN_PRICE);
+    if (hardSafeBumped !== bumped) {
+      wasClampedToHard = true;
+      hardClampDirection = "min";
+    }
+    roundedFinal = hardSafeBumped;
   }
 
   // Final safety: ensure within HARD bounds after all adjustments
   const limitPrice = clamp(roundedFinal, HARD_MIN_PRICE, HARD_MAX_PRICE);
 
+  // Track if final HARD clamp changed the price after rounding / "must not cross" bump
+  const hardClampAppliedAfterBump = limitPrice !== roundedFinal;
+  const finalClampDirection =
+    hardClampAppliedAfterBump
+      ? (limitPrice === HARD_MIN_PRICE ? "min" : "max")
+      : null;
+
   // Overall clamping status
-  const wasClamped = wasClampedToStrategy || wasClampedToHard || wouldCrossBookAfterRounding;
-  const clampDirection = hardClampDirection || strategyClampDirection;
+  const wasClamped =
+    wasClampedToStrategy ||
+    wasClampedToHard ||
+    wouldCrossBookAfterRounding ||
+    hardClampAppliedAfterBump;
+  const clampDirection =
+    finalClampDirection || hardClampDirection || strategyClampDirection;
 
   // Step 9: Detailed logging with all bounds info
   const mid = (bestBid + bestAsk) / 2;
