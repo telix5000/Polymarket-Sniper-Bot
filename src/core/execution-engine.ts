@@ -1149,7 +1149,24 @@ export class ExecutionEngine {
     // This prevents financial bleed from too many hedge positions
     // ═══════════════════════════════════════════════════════════════════════
     const currentPositions = this.positionManager.getOpenPositions();
-    const effectiveBalance = walletBalanceUsd ?? 1000; // Fallback for simulation mode
+    
+    // Get actual wallet balance - use provided value, or fetch from cache, or use conservative fallback
+    let effectiveBalance = walletBalanceUsd;
+    if (effectiveBalance === undefined) {
+      const balanceCache = getBalanceCache();
+      if (balanceCache) {
+        const cachedBalance = balanceCache.getUsdcBalance();
+        if (cachedBalance !== null) {
+          effectiveBalance = cachedBalance;
+        }
+      }
+    }
+    // Conservative fallback: if we still don't have balance, use total deployed + reserve as estimate
+    if (effectiveBalance === undefined) {
+      const totalDeployed = this.positionManager.getTotalDeployedUsd();
+      effectiveBalance = totalDeployed * 2; // Assume we have at least 2x deployed as total
+      console.warn(`⚠️ [HEDGE] Using estimated balance: $${effectiveBalance.toFixed(2)} (no cache available)`);
+    }
 
     const hedgeValidation = this.riskGuard.validateHedge({
       positionId: position.id,

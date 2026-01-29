@@ -662,14 +662,25 @@ export function recordSuccessfulTrade(type: TradeType): void {
 }
 
 /**
- * Detect provider from URL
+ * Detect provider from URL using proper hostname extraction.
+ * This uses URL parsing to safely check the hostname rather than substring matching.
  */
 export function detectProvider(url: string): ApiProvider {
-  if (url.includes("infura.io")) return "infura";
-  if (url.includes("clob.polymarket.com")) return "polymarket_clob";
-  if (url.includes("data-api.polymarket.com")) return "polymarket_data";
-  if (url.includes("gamma-api.polymarket.com")) return "polymarket_gamma";
-  if (url.includes("api.github.com")) return "github";
-  if (url.includes("api.telegram.org")) return "telegram";
-  return "other";
+  try {
+    const parsedUrl = new URL(url);
+    const hostname = parsedUrl.hostname.toLowerCase();
+    
+    // Check exact hostname or if it ends with the expected domain
+    if (hostname === "infura.io" || hostname.endsWith(".infura.io")) return "infura";
+    if (hostname === "clob.polymarket.com") return "polymarket_clob";
+    if (hostname === "data-api.polymarket.com") return "polymarket_data";
+    if (hostname === "gamma-api.polymarket.com") return "polymarket_gamma";
+    if (hostname === "api.github.com") return "github";
+    if (hostname === "api.telegram.org") return "telegram";
+    
+    return "other";
+  } catch {
+    // If URL parsing fails, return "other" as a safe fallback
+    return "other";
+  }
 }
