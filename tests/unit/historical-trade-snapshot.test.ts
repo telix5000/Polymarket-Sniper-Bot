@@ -11,7 +11,6 @@ import { describe, it, beforeEach } from "node:test";
 import {
   HistoricalTradeSnapshot,
   createHistoricalTradeSnapshot,
-  DEFAULT_HISTORICAL_SNAPSHOT_CONFIG,
   type ExecutedTradeRecord,
   type HistoricalSnapshotConfig,
 } from "../../src/core/historical-trade-snapshot";
@@ -94,7 +93,8 @@ describe("HistoricalTradeSnapshot", () => {
       const state = snapshot.getSnapshot();
 
       assert.strictEqual(state.tradeCount, 0);
-      assert.strictEqual(state.realizedPnlUsd, 0);
+      assert.strictEqual(state.cumulativePnlUsd, 0);
+      assert.strictEqual(state.weightedAvgPnlUsd, 0);
       assert.strictEqual(state.winRate, 0);
     });
 
@@ -147,8 +147,10 @@ describe("HistoricalTradeSnapshot", () => {
       snapshot.recordTrade(createLosingTrade({ realizedPnlUsd: -20 }));
 
       const state = snapshot.getSnapshot();
+      // Cumulative P&L should be 50 - 20 = 30
+      assert.strictEqual(state.cumulativePnlUsd, 30);
       // Weighted average P&L should be positive
-      assert(state.avgPnlPerTradeUsd !== 0);
+      assert(state.weightedAvgPnlUsd !== 0);
     });
 
     it("should use convenience method correctly", () => {

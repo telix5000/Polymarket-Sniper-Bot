@@ -10,10 +10,10 @@
  * historical behavior.
  *
  * Key Metrics Captured:
- * - Realized P&L (per trade and cumulative)
+ * - Realized P&L: both cumulative total and time-weighted average per trade
  * - Exposure by asset (position sizes and direction)
  * - Trade frequency (trades per time window)
- * - Slippage (expected vs executed price)
+ * - Slippage (expected vs executed price, with configurable thresholds)
  * - Volatility (rolling standard deviation of returns)
  * - Drawdown (peak-to-trough decline)
  *
@@ -163,9 +163,14 @@ export interface HistoricalSnapshot {
   timestamp: number;
 
   // P&L metrics
-  realizedPnlUsd: number;
-  realizedPnlCents: number;
-  avgPnlPerTradeUsd: number;
+  /** Cumulative total P&L in USD for all trades in window (not weighted) */
+  cumulativePnlUsd: number;
+  /** Time-weighted average P&L per trade in USD (recent trades weighted more) */
+  weightedAvgPnlUsd: number;
+  /** Cumulative total P&L in cents for all trades in window (not weighted) */
+  cumulativePnlCents: number;
+  /** Time-weighted average P&L per trade in cents (recent trades weighted more) */
+  weightedAvgPnlCents: number;
   winRate: number;
   profitFactor: number;
 
@@ -498,9 +503,10 @@ export class HistoricalTradeSnapshot {
 
     return {
       timestamp: now,
-      realizedPnlUsd: this.calculateRealizedPnlUsd(),
-      realizedPnlCents: this.calculateRealizedPnlCents(),
-      avgPnlPerTradeUsd: this.calculateAvgPnlPerTrade(),
+      cumulativePnlUsd: this.calculateCumulativePnlUsd(),
+      weightedAvgPnlUsd: this.calculateWeightedAvgPnlUsd(),
+      cumulativePnlCents: this.calculateCumulativePnlCents(),
+      weightedAvgPnlCents: this.calculateWeightedAvgPnlCents(),
       winRate: this.calculateWinRate(),
       profitFactor: this.calculateProfitFactor(),
       totalExposureUsd: this.calculateTotalExposure(),
@@ -517,9 +523,23 @@ export class HistoricalTradeSnapshot {
   }
 
   /**
-   * Calculate time-weighted realized P&L in USD
+   * Calculate cumulative (total) P&L in USD for all trades in window
    */
-  private calculateRealizedPnlUsd(): number {
+  private calculateCumulativePnlUsd(): number {
+    return this.trades.reduce((sum, t) => sum + t.realizedPnlUsd, 0);
+  }
+
+  /**
+   * Calculate cumulative (total) P&L in cents for all trades in window
+   */
+  private calculateCumulativePnlCents(): number {
+    return this.trades.reduce((sum, t) => sum + t.realizedPnlCents, 0);
+  }
+
+  /**
+   * Calculate time-weighted average P&L per trade in USD
+   */
+  private calculateWeightedAvgPnlUsd(): number {
     return this.weightedAverage(
       this.trades.map((t) => ({
         value: t.realizedPnlUsd,
@@ -529,23 +549,15 @@ export class HistoricalTradeSnapshot {
   }
 
   /**
-   * Calculate time-weighted realized P&L in cents
+   * Calculate time-weighted average P&L per trade in cents
    */
-  private calculateRealizedPnlCents(): number {
+  private calculateWeightedAvgPnlCents(): number {
     return this.weightedAverage(
       this.trades.map((t) => ({
         value: t.realizedPnlCents,
         timestamp: t.timestamp,
       })),
     );
-  }
-
-  /**
-   * Calculate average P&L per trade with decay weighting
-   */
-  private calculateAvgPnlPerTrade(): number {
-    if (this.trades.length === 0) return 0;
-    return this.calculateRealizedPnlUsd();
   }
 
   /**
@@ -920,16 +932,16 @@ export class HistoricalTradeSnapshot {
       );
     }
 
-    // Factor 4: P&L Trend
-    if (snapshot.avgPnlPerTradeUsd > 0) {
+    // Factor 4: P&L Trend (using time-weighted average)
+    if (snapshot.weightedAvgPnlUsd > 0) {
       reduceScore += 1;
       reasons.push(
-        `Positive avg P&L: $${snapshot.avgPnlPerTradeUsd.toFixed(2)}/trade`,
+        `Positive avg P&L: $${snapshot.weightedAvgPnlUsd.toFixed(2)}/trade`,
       );
-    } else if (snapshot.avgPnlPerTradeUsd < 0) {
+    } else if (snapshot.weightedAvgPnlUsd < 0) {
       increaseScore += 1;
       reasons.push(
-        `Negative avg P&L: $${snapshot.avgPnlPerTradeUsd.toFixed(2)}/trade`,
+        `Negative avg P&L: $${snapshot.weightedAvgPnlUsd.toFixed(2)}/trade`,
       );
     }
 
@@ -952,6 +964,21 @@ export class HistoricalTradeSnapshot {
     } else if (snapshot.slippage.slippageTrend === "IMPROVING") {
       reduceScore += 1;
       reasons.push("Improving slippage trend");
+    }
+
+    // Factor 7: Absolute Slippage Level (using configured thresholds)
+    if (snapshot.slippage.avgSlippageCents >= this.config.highSlippageCents) {
+      increaseScore += 2;
+      reasons.push(
+        `High slippage: ${snapshot.slippage.avgSlippageCents.toFixed(1)}¢ >= ${this.config.highSlippageCents}¢`,
+      );
+    } else if (
+      snapshot.slippage.avgSlippageCents <= this.config.acceptableSlippageCents
+    ) {
+      reduceScore += 1;
+      reasons.push(
+        `Low slippage: ${snapshot.slippage.avgSlippageCents.toFixed(1)}¢ <= ${this.config.acceptableSlippageCents}¢`,
+      );
     }
 
     // Determine action and adjustment factor
@@ -1043,8 +1070,8 @@ export class HistoricalTradeSnapshot {
       tradeCount: snapshot.tradeCount,
       windowSizeMs: snapshot.windowSizeMs,
       metrics: {
-        realizedPnlUsd: parseFloat(snapshot.realizedPnlUsd.toFixed(2)),
-        avgPnlPerTradeUsd: parseFloat(snapshot.avgPnlPerTradeUsd.toFixed(2)),
+        cumulativePnlUsd: parseFloat(snapshot.cumulativePnlUsd.toFixed(2)),
+        weightedAvgPnlUsd: parseFloat(snapshot.weightedAvgPnlUsd.toFixed(2)),
         winRate: parseFloat(snapshot.winRate.toFixed(4)),
         profitFactor: Number.isFinite(snapshot.profitFactor)
           ? parseFloat(snapshot.profitFactor.toFixed(2))
