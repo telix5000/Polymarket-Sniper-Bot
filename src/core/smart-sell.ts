@@ -23,7 +23,7 @@ import { SELL, ORDER } from "../lib/constants";
 import type { Position, OrderResult, Logger } from "../lib/types";
 import { isLiveTradingEnabled } from "../lib/auth";
 import { isCloudflareBlock, formatErrorForLog } from "../infra/error-handling";
-import { MIN_PRICE, MAX_PRICE } from "../lib/price-safety";
+import { HARD_MIN_PRICE, HARD_MAX_PRICE } from "../lib/price-safety";
 
 // ============================================================================
 // TYPES
@@ -315,16 +315,15 @@ async function fastSellAtBestBid(
       return { success: false, reason: "NO_BIDS" };
     }
 
-    // Get best bid and clamp to valid bounds
-    // MIN_PRICE and MAX_PRICE imported from price-safety module
+    // Get best bid and clamp to HARD API bounds (selling uses API limits, not strategy bounds)
     const rawBestBid = parseFloat(orderBook.bids[0].price);
-    const bestBid = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawBestBid));
+    const bestBid = Math.max(HARD_MIN_PRICE, Math.min(HARD_MAX_PRICE, rawBestBid));
     const priceWasClamped = bestBid !== rawBestBid;
 
     // Warn if price was clamped (shouldn't happen normally)
     if (priceWasClamped) {
       logger?.warn?.(
-        `⚠️ [FAST_SELL] Price clamped: ${rawBestBid.toFixed(4)} → ${bestBid.toFixed(4)}`,
+        `⚠️ [FAST_SELL] Price clamped to HARD bounds: ${rawBestBid.toFixed(4)} → ${bestBid.toFixed(4)}`,
       );
     }
 
@@ -506,10 +505,9 @@ export async function smartSell(
     // Note: FOK uses best bid because the order type itself ensures complete fill
     // The analysis already validated that we can fill within slippage tolerance
     //
-    // CRITICAL: Clamp to valid Polymarket bounds [0.01, 0.99]
-    // MIN_PRICE and MAX_PRICE imported from price-safety module
+    // Clamp to HARD API bounds (selling uses API limits, not strategy bounds)
     const rawOrderPrice = analysis.bestBid;
-    const orderPrice = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawOrderPrice));
+    const orderPrice = Math.max(HARD_MIN_PRICE, Math.min(HARD_MAX_PRICE, rawOrderPrice));
 
     // Log ORDER_PRICE_DEBUG for diagnostics (matches execution-engine format)
     const priceWasClamped = orderPrice !== rawOrderPrice;
@@ -522,6 +520,8 @@ export async function smartSell(
         bestBidCents: (rawOrderPrice * 100).toFixed(2),
         orderPrice: orderPrice.toFixed(6),
         wasClamped: priceWasClamped,
+        hardMin: HARD_MIN_PRICE,
+        hardMax: HARD_MAX_PRICE,
         units: "dollars",
       }),
     );
