@@ -296,6 +296,7 @@ export class ChurnEngine {
   private tokenMarketIdCache = new Map<string, string | null>();
   private readonly MARKET_ID_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour for success
   private readonly MARKET_ID_ERROR_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for errors
+  private readonly MARKET_ID_CACHE_MAX_SIZE = 10000; // Max cache entries before cleanup
   private marketIdCacheTimestamps = new Map<string, number>();
   // In-flight requests to prevent race conditions
   private marketIdInFlightRequests = new Map<string, Promise<string | null>>();
@@ -2454,7 +2455,7 @@ export class ChurnEngine {
     const startTime = performance.now();
     const now = Date.now();
     
-    // Check cache first
+    // Check cache first and evict expired entries to prevent unbounded growth
     const cachedTimestamp = this.marketIdCacheTimestamps.get(tokenId);
     if (cachedTimestamp) {
       const cached = this.tokenMarketIdCache.get(tokenId);
@@ -2478,8 +2479,18 @@ export class ChurnEngine {
             }),
           );
           return cached;
+        } else {
+          // Entry expired, remove it to prevent unbounded growth
+          this.tokenMarketIdCache.delete(tokenId);
+          this.marketIdCacheTimestamps.delete(tokenId);
         }
       }
+    }
+    
+    // Periodic cleanup to prevent unbounded cache growth
+    // When cache exceeds max size, remove oldest 20% of entries
+    if (this.tokenMarketIdCache.size >= this.MARKET_ID_CACHE_MAX_SIZE) {
+      this.cleanupMarketIdCache();
     }
 
     // Check if there's already an in-flight request for this tokenId
@@ -2522,6 +2533,28 @@ export class ChurnEngine {
       // Clean up in-flight request
       this.marketIdInFlightRequests.delete(tokenId);
     }
+  }
+  
+  /**
+   * Clean up oldest entries from marketId cache to prevent unbounded growth
+   * Removes the oldest 20% of cache entries when max size is reached
+   */
+  private cleanupMarketIdCache(): void {
+    const entries = Array.from(this.marketIdCacheTimestamps.entries());
+    // Sort by timestamp (oldest first)
+    entries.sort((a, b) => a[1] - b[1]);
+    
+    // Remove oldest 20%
+    const removeCount = Math.floor(entries.length * 0.2);
+    for (let i = 0; i < removeCount; i++) {
+      const tokenId = entries[i][0];
+      this.tokenMarketIdCache.delete(tokenId);
+      this.marketIdCacheTimestamps.delete(tokenId);
+    }
+    
+    this.deps.debug(
+      `[MarketId] Cache cleanup: removed ${removeCount} oldest entries (was ${entries.length}, now ${this.tokenMarketIdCache.size})`,
+    );
   }
 
   /**

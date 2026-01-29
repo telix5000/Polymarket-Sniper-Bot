@@ -1,10 +1,10 @@
 # ✅ MarketId Fix - Complete Implementation
 
 ## Summary
-Fixed the issue where `marketId` was `undefined` when creating orders, causing all FOK and GTC orders to be rejected.
+Fixed the issue where `marketId` was `undefined` in error reporting and diagnostics. Note: `marketId` is **optional** and **not required** for order placement - orders use `tokenID` only. The undefined `marketId` was appearing in error logs but was not the actual cause of order rejections.
 
 ## Root Cause
-The `TokenMarketData` interface defined `marketId` as optional, but it was never populated when creating these objects in `fetchTokenMarketDataWithReason()`.
+The `TokenMarketData` interface defined `marketId` as optional, but it was never populated when creating these objects in `fetchTokenMarketDataWithReason()`. This made diagnostics and error reporting less useful, but did not affect order execution since order APIs only use `tokenID`.
 
 ## Solution Highlights
 
