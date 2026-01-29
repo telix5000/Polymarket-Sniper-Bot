@@ -13,6 +13,7 @@ import { invalidatePositions } from "../lib/positions";
 import { getOppositeTokenId, getMarketTokenPair } from "../lib/market";
 import { reportError } from "../infra/github-reporter";
 import { getLatencyMonitor } from "../infra/latency-monitor";
+import { recordMissedTrade, recordSuccessfulTrade } from "../infra/api-rate-monitor";
 import { smartSell } from "./smart-sell";
 import type { Position } from "../models";
 import {
@@ -31,6 +32,7 @@ import {
   type ExitReason,
   type BiasDirection,
 } from "./decision-engine";
+import { RiskGuard, type RiskGuardConfig } from "./risk-guard";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -162,6 +164,7 @@ export class ExecutionEngine {
   private logger: ChurnLogger;
   private client: ClobClient | null = null;
   private cooldowns: Map<string, number> = new Map();
+  private riskGuard: RiskGuard;
 
   constructor(
     config: ExecutionEngineConfig,
@@ -170,6 +173,7 @@ export class ExecutionEngine {
     positionManager: PositionManagerInterface,
     decisionEngine: DecisionEngine,
     logger: ChurnLogger,
+    riskGuardConfig?: Partial<RiskGuardConfig>,
   ) {
     this.config = config;
     this.evTracker = evTracker;
@@ -177,10 +181,18 @@ export class ExecutionEngine {
     this.positionManager = positionManager;
     this.decisionEngine = decisionEngine;
     this.logger = logger;
+    this.riskGuard = new RiskGuard(riskGuardConfig);
   }
 
   setClient(client: ClobClient): void {
     this.client = client;
+  }
+
+  /**
+   * Get the RiskGuard instance for external health checks
+   */
+  getRiskGuard(): RiskGuard {
+    return this.riskGuard;
   }
 
   getEffectiveBankroll(balance: number): {
@@ -218,6 +230,26 @@ export class ExecutionEngine {
       return { success: false, reason: "NO_BANKROLL" };
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // RISK GUARD: Check if system is in protective mode
+    // This prevents new entries when portfolio is under stress
+    // ═══════════════════════════════════════════════════════════════════════
+    const currentPositions = this.positionManager.getOpenPositions();
+    const totalDeployedUsd = this.positionManager.getTotalDeployedUsd();
+
+    const protectiveMode = this.riskGuard.isProtectiveModeActive({
+      currentPositions,
+      walletBalanceUsd: balance,
+      totalDeployedUsd,
+    });
+
+    if (protectiveMode.active) {
+      this.logger.warn(
+        `🛡️ [RISK GUARD] Entry blocked - protective mode: ${protectiveMode.reason}`,
+      );
+      return { success: false, reason: `PROTECTIVE_MODE: ${protectiveMode.reason}` };
+    }
+
     // Determine effective bias direction:
     // 1. skipBiasCheck (scanner entries): use LONG
     // 2. copyAnyWhaleBuy mode: treat any non-stale token with 1+ whale buy as LONG
@@ -249,14 +281,47 @@ export class ExecutionEngine {
       referencePriceCents: marketData.referencePriceCents,
       evMetrics: this.evTracker.getMetrics(),
       evAllowed,
-      currentPositions: this.positionManager.getOpenPositions(),
+      currentPositions,
       effectiveBankroll,
-      totalDeployedUsd: this.positionManager.getTotalDeployedUsd(),
+      totalDeployedUsd,
     });
 
     if (!decision.allowed) {
       return { success: false, reason: decision.reason };
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // RISK GUARD: Validate entry size doesn't cause financial bleed
+    // This is an additional layer of protection beyond position limits
+    // ═══════════════════════════════════════════════════════════════════════
+    const entryValidation = this.riskGuard.validateEntry({
+      proposedSizeUsd: decision.sizeUsd!,
+      walletBalanceUsd: balance,
+      currentPositions,
+      totalDeployedUsd,
+    });
+
+    if (!entryValidation.allowed) {
+      this.logger.warn(
+        `🛡️ [RISK GUARD] Entry blocked: ${entryValidation.reason}`,
+      );
+      // Record missed buy for monitoring
+      recordMissedTrade({
+        type: "BUY",
+        tokenId,
+        reason: `RISK_GUARD: ${entryValidation.reason}`,
+        sizeUsd: decision.sizeUsd,
+      });
+      return { success: false, reason: `RISK_GUARD: ${entryValidation.reason}` };
+    }
+
+    // Log any warnings from risk guard
+    for (const warning of entryValidation.warnings) {
+      this.logger.warn(`🛡️ [RISK GUARD] ${warning}`);
+    }
+
+    // Use adjusted size if RiskGuard reduced it
+    const finalSizeUsd = entryValidation.adjustedSizeUsd ?? decision.sizeUsd!;
 
     // Execute
     const result = await this.executeEntry(
@@ -264,7 +329,7 @@ export class ExecutionEngine {
       marketData.marketId,
       decision.side!,
       decision.priceCents!,
-      decision.sizeUsd!,
+      finalSizeUsd,
       marketData.referencePriceCents,
       effectiveBias,
     );
@@ -278,6 +343,16 @@ export class ExecutionEngine {
       getBalanceCache()
         ?.forceRefresh()
         .catch(() => {});
+      // Record successful buy for monitoring
+      recordSuccessfulTrade("BUY");
+    } else {
+      // Record missed buy for monitoring
+      recordMissedTrade({
+        type: "BUY",
+        tokenId,
+        reason: result.reason || "UNKNOWN",
+        sizeUsd: finalSizeUsd,
+      });
     }
 
     return result;
@@ -823,6 +898,8 @@ export class ExecutionEngine {
         invalidatePositions();
       }
 
+      // Record successful sell for monitoring
+      recordSuccessfulTrade("SELL");
       return this.closeAndLog(position, exitPrice, reason, biasDirection, "");
     }
 
@@ -846,6 +923,8 @@ export class ExecutionEngine {
           invalidatePositions();
         }
 
+        // Record successful sell for monitoring
+        recordSuccessfulTrade("SELL");
         return this.closeAndLog(
           position,
           exitPrice,
@@ -855,6 +934,14 @@ export class ExecutionEngine {
         );
       }
     }
+
+    // Record missed sell for monitoring
+    recordMissedTrade({
+      type: "SELL",
+      tokenId: position.tokenId,
+      reason: result.reason || "UNKNOWN",
+      sizeUsd: position.entrySizeUsd,
+    });
 
     console.log(`❌ Sell failed: ${result.reason}`);
     return { success: false, reason: result.reason };
@@ -1036,11 +1123,13 @@ export class ExecutionEngine {
    * @param position - The position to hedge
    * @param biasDirection - Current bias direction
    * @param prefetchedOppositeOrderbook - Optional pre-fetched opposite orderbook (for proactive monitoring)
+   * @param walletBalanceUsd - Current wallet balance for risk validation
    */
   private async executeHedge(
     position: ManagedPosition,
     biasDirection: BiasDirection,
     prefetchedOppositeOrderbook?: OrderbookState,
+    walletBalanceUsd?: number,
   ): Promise<ExecutionResult> {
     const hedgeSize = this.decisionEngine.calculateHedgeSize(position);
     const evMetrics = this.evTracker.getMetrics();
@@ -1055,6 +1144,55 @@ export class ExecutionEngine {
       return { success: false, reason: "NO_OPPOSITE_TOKEN" };
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // RISK GUARD: Validate hedge to prevent excessive reverse hedging
+    // This prevents financial bleed from too many hedge positions
+    // ═══════════════════════════════════════════════════════════════════════
+    const currentPositions = this.positionManager.getOpenPositions();
+    
+    // Get actual wallet balance - use provided value, or fetch from cache, or use conservative fallback
+    let effectiveBalance = walletBalanceUsd;
+    if (effectiveBalance === undefined) {
+      const balanceCache = getBalanceCache();
+      if (balanceCache) {
+        const cachedBalance = balanceCache.getUsdcBalance();
+        if (cachedBalance !== null) {
+          effectiveBalance = cachedBalance;
+        }
+      }
+    }
+    // Conservative fallback: if we still don't have balance, use total deployed + reserve as estimate
+    if (effectiveBalance === undefined) {
+      const totalDeployed = this.positionManager.getTotalDeployedUsd();
+      effectiveBalance = totalDeployed * 2; // Assume we have at least 2x deployed as total
+      console.warn(`⚠️ [HEDGE] Using estimated balance: $${effectiveBalance.toFixed(2)} (no cache available)`);
+    }
+
+    const hedgeValidation = this.riskGuard.validateHedge({
+      positionId: position.id,
+      position,
+      proposedHedgeSizeUsd: hedgeSize,
+      walletBalanceUsd: effectiveBalance,
+      currentPositions,
+    });
+
+    if (!hedgeValidation.allowed) {
+      this.logger.warn(
+        `🛡️ [RISK GUARD] Hedge blocked for ${position.id.slice(0, 16)}...: ${hedgeValidation.reason}`,
+      );
+      // Record missed hedge for monitoring
+      recordMissedTrade({
+        type: "HEDGE",
+        tokenId: position.tokenId,
+        reason: `RISK_GUARD: ${hedgeValidation.reason}`,
+        sizeUsd: hedgeSize,
+      });
+      return { success: false, reason: `RISK_GUARD: ${hedgeValidation.reason}` };
+    }
+
+    // Use adjusted size if RiskGuard reduced it
+    const finalHedgeSize = hedgeValidation.adjustedSizeUsd ?? hedgeSize;
+
     // Simulation mode - just record the hedge
     if (!this.config.liveTradingEnabled) {
       // Use pre-fetched price if available, otherwise use position's current price as estimate
@@ -1066,7 +1204,7 @@ export class ExecutionEngine {
         position.id,
         {
           tokenId: oppositeTokenId, // Use REAL opposite token ID!
-          sizeUsd: hedgeSize,
+          sizeUsd: finalHedgeSize,
           entryPriceCents: hedgePrice,
           entryTime: Date.now(),
         },
@@ -1074,16 +1212,29 @@ export class ExecutionEngine {
         biasDirection,
       );
 
+      // Record hedge placement for cooldown
+      this.riskGuard.recordHedgePlaced(position.id);
+
+      // Record successful hedge for monitoring
+      recordSuccessfulTrade("HEDGE");
+
       const proactiveTag = prefetchedOppositeOrderbook ? " [PROACTIVE]" : "";
       console.log(
-        `🛡️ [SIM]${proactiveTag} Hedged $${hedgeSize.toFixed(2)} by buying opposite @ ${hedgePrice.toFixed(1)}¢`,
+        `🛡️ [SIM]${proactiveTag} Hedged $${finalHedgeSize.toFixed(2)} by buying opposite @ ${hedgePrice.toFixed(1)}¢`,
       );
-      return { success: true, filledUsd: hedgeSize };
+      return { success: true, filledUsd: finalHedgeSize };
     }
 
     // Live trading mode - actually place the hedge order!
     if (!this.client) {
       console.error(`❌ [HEDGE] No CLOB client available`);
+      // Record missed hedge for monitoring
+      recordMissedTrade({
+        type: "HEDGE",
+        tokenId: position.tokenId,
+        reason: "NO_CLIENT",
+        sizeUsd: finalHedgeSize,
+      });
       return { success: false, reason: "NO_CLIENT" };
     }
 
@@ -1129,7 +1280,7 @@ export class ExecutionEngine {
         return { success: false, reason: "PRICE_TOO_LOW" };
       }
 
-      const shares = hedgeSize / price;
+      const shares = finalHedgeSize / price;
 
       // Validate shares is above minimum threshold
       const MIN_SHARES = 0.0001;
@@ -1165,7 +1316,7 @@ export class ExecutionEngine {
           position.id,
           {
             tokenId: oppositeTokenId,
-            sizeUsd: hedgeSize,
+            sizeUsd: finalHedgeSize,
             entryPriceCents: fillPriceCents,
             entryTime: Date.now(),
           },
@@ -1173,23 +1324,43 @@ export class ExecutionEngine {
           biasDirection,
         );
 
+        // Record hedge placement for cooldown
+        this.riskGuard.recordHedgePlaced(position.id);
+
+        // Record successful hedge for monitoring
+        recordSuccessfulTrade("HEDGE");
+
         console.log(
-          `✅ [HEDGE] Successfully hedged $${hedgeSize.toFixed(2)} @ ${fillPriceCents.toFixed(1)}¢`,
+          `✅ [HEDGE] Successfully hedged $${finalHedgeSize.toFixed(2)} @ ${fillPriceCents.toFixed(1)}¢`,
         );
         return {
           success: true,
-          filledUsd: hedgeSize,
+          filledUsd: finalHedgeSize,
           filledPriceCents: fillPriceCents,
         };
       } else {
         console.warn(
           `⚠️ [HEDGE] Hedge order rejected: ${response.errorMsg || "unknown reason"}`,
         );
+        // Record missed hedge for monitoring
+        recordMissedTrade({
+          type: "HEDGE",
+          tokenId: position.tokenId,
+          reason: "ORDER_REJECTED",
+          sizeUsd: finalHedgeSize,
+        });
         return { success: false, reason: "ORDER_REJECTED" };
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`❌ [HEDGE] Hedge order failed: ${errorMsg}`);
+      // Record missed hedge for monitoring
+      recordMissedTrade({
+        type: "HEDGE",
+        tokenId: position.tokenId,
+        reason: errorMsg,
+        sizeUsd: finalHedgeSize,
+      });
       return { success: false, reason: errorMsg };
     }
   }
@@ -1200,6 +1371,7 @@ export class ExecutionEngine {
 
   getSummary() {
     const ev = this.evTracker.getMetrics();
+    const portfolioHealth = this.riskGuard.getLastHealthCheck();
     return {
       positions: this.positionManager.getOpenPositions().length,
       deployed: this.positionManager.getTotalDeployedUsd(),
@@ -1207,6 +1379,7 @@ export class ExecutionEngine {
       winRate: ev.winRate,
       evCents: ev.evCents,
       pnl: ev.totalPnlUsd,
+      portfolioHealth: portfolioHealth?.status || "UNKNOWN",
     };
   }
 }
