@@ -97,9 +97,11 @@ export class BookResolver {
       if (!retrySnapshot.fetchFailed) {
         // Retry succeeded - use the retry snapshot
         primarySnapshot = retrySnapshot;
+        const bidCents = retrySnapshot.bestBid !== undefined ? (retrySnapshot.bestBid * 100).toFixed(1) : "N/A";
+        const askCents = retrySnapshot.bestAsk !== undefined ? (retrySnapshot.bestAsk * 100).toFixed(1) : "N/A";
         console.log(
           `✅ [BOOK_FETCH_RETRY_SUCCESS] attemptId=${attemptId} | flow=${flow} | ${tokenId.slice(0, 12)}... | ` +
-            `bid=${(retrySnapshot.bestBid! * 100).toFixed(1)}¢ ask=${(retrySnapshot.bestAsk! * 100).toFixed(1)}¢`,
+            `bid=${bidCents}¢ ask=${askCents}¢`,
         );
       } else {
         // Retry also failed - return BOOK_FETCH_FAILED
