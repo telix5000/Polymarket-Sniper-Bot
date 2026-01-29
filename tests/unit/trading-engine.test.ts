@@ -33,7 +33,7 @@ function createTestConfig(): ChurnConfig {
   return {
     tradeFraction: 0.01,
     maxTradeUsd: 25,
-    minTradeUsd: 5, // 20% of maxTradeUsd
+    minTradeUsd: 25, // Same as maxTradeUsd by default
     maxDeployedFractionTotal: 0.3,
     maxOpenPositionsTotal: 12,
     maxOpenPositionsPerMarket: 1,
@@ -494,12 +494,12 @@ describe("Reserve & Sizing", () => {
   });
 
   describe("Trade sizing", () => {
-    it("uses 1% of effective bankroll when above minTradeUsd", () => {
+    it("uses minTradeUsd when 1% is below it", () => {
       const effectiveBankroll = 1000;
       const size = calculateTradeSize(effectiveBankroll, config);
 
-      // 1% of 1000 = 10, which is above minTradeUsd (5), so use 10
-      assert.strictEqual(size, 10, "Trade size should be 1% = $10");
+      // 1% of 1000 = 10, but minTradeUsd = 25, so use 25
+      assert.strictEqual(size, 25, "Trade size should be minTradeUsd = $25");
     });
 
     it("caps at MAX_TRADE_USD", () => {
@@ -515,19 +515,19 @@ describe("Reserve & Sizing", () => {
 
     it("applies minTradeUsd floor for small bankrolls", () => {
       // With $165 effective bankroll, 1% = $1.65
-      // But minTradeUsd = $5 should kick in
+      // minTradeUsd = $25 should kick in, but capped at effectiveBankroll
       const effectiveBankroll = 165;
       const size = calculateTradeSize(effectiveBankroll, config);
 
       assert.strictEqual(
         size,
         config.minTradeUsd,
-        `Trade size should be floored at minTradeUsd ($${config.minTradeUsd})`,
+        `Trade size should be minTradeUsd ($${config.minTradeUsd})`,
       );
     });
 
     it("does not exceed effective bankroll even with minTradeUsd", () => {
-      // If bankroll is $3 and minTradeUsd is $5, we can't trade $5
+      // If bankroll is $3 and minTradeUsd is $25, we can't trade $25
       // Should use the smaller of minTradeUsd and effectiveBankroll
       const effectiveBankroll = 3;
       const size = calculateTradeSize(effectiveBankroll, config);
@@ -539,12 +539,14 @@ describe("Reserve & Sizing", () => {
       );
     });
 
-    it("handles edge case where fractionalSize equals minTradeUsd", () => {
-      // If 1% of bankroll exactly equals minTradeUsd
-      const effectiveBankroll = 500; // 1% = $5 = minTradeUsd
-      const size = calculateTradeSize(effectiveBankroll, config);
+    it("handles custom minTradeUsd lower than maxTradeUsd", () => {
+      // Create a config with minTradeUsd < maxTradeUsd
+      const customConfig = { ...config, minTradeUsd: 5 };
+      const effectiveBankroll = 1000; // 1% = $10
 
-      assert.strictEqual(size, 5, "Trade size should be $5 when they're equal");
+      const size = calculateTradeSize(effectiveBankroll, customConfig);
+      // 1% of 1000 = 10, which is above minTradeUsd (5), so use 10
+      assert.strictEqual(size, 10, "Trade size should be 1% = $10 when above custom minTradeUsd");
     });
   });
 

@@ -52,7 +52,7 @@ function createTestConfig(): DecisionEngineConfig {
     maxDeployedFractionTotal: 0.3,
     tradeFraction: 0.01,
     maxTradeUsd: 25,
-    minTradeUsd: 5,
+    minTradeUsd: 25, // Same as maxTradeUsd by default
   };
 }
 

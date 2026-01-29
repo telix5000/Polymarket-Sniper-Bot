@@ -275,16 +275,16 @@ function parseOptionalFloatWithDefault(
 
 function loadConfig(): ChurnConfig {
   const maxTradeUsd = envNum("MAX_TRADE_USD", 25); // 💰 Your max bet size (default: $25)
-  // Default minTradeUsd to 20% of maxTradeUsd if not specified
-  // This ensures trade size doesn't become too small for low bankrolls
-  const minTradeUsd = envNum("MIN_TRADE_USD", maxTradeUsd * 0.2);
+  // Default minTradeUsd to maxTradeUsd if not specified
+  // This ensures the bot trades at the max amount by default
+  const minTradeUsd = envNum("MIN_TRADE_USD", maxTradeUsd);
   
   return {
     // ═══════════════════════════════════════════════════════════════════════
     // USER CONFIGURABLE - This is the ONLY thing you should change
     // ═══════════════════════════════════════════════════════════════════════
     maxTradeUsd, // 💰 Your max bet size (default: $25)
-    minTradeUsd, // 💰 Your min bet size (default: 20% of maxTradeUsd)
+    minTradeUsd, // 💰 Your min bet size (default: same as maxTradeUsd)
 
     // ═══════════════════════════════════════════════════════════════════════
     // FIXED BY THE MATH - Do NOT change these values

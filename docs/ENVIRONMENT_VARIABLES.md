@@ -42,21 +42,28 @@ These must be set for the bot to function:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MAX_TRADE_USD` | `25` | Maximum trade size per position in USD |
-| `MIN_TRADE_USD` | `20% of MAX_TRADE_USD` | Minimum trade size per position in USD |
+| `MIN_TRADE_USD` | `same as MAX_TRADE_USD` | Minimum trade size per position in USD |
 
 **How Position Sizing Works:**
 
 The bot calculates trade size as follows:
 1. Calculate 1% of your effective bankroll (balance minus reserve)
-2. Apply the minimum floor (`MIN_TRADE_USD`) - ensures trades don't become too small
+2. Apply the minimum floor (`MIN_TRADE_USD`) - ensures trades are at least this size
 3. Apply the maximum cap (`MAX_TRADE_USD`) - limits risk per trade
 
-For example, with `MAX_TRADE_USD=5`:
-- Default `MIN_TRADE_USD` = $1 (20% of $5)
+By default, `MIN_TRADE_USD` equals `MAX_TRADE_USD`, so the bot trades at your configured max amount.
+
+For example, with `MAX_TRADE_USD=5` (and no `MIN_TRADE_USD` set):
+- Default `MIN_TRADE_USD` = $5 (same as MAX_TRADE_USD)
 - With $165 balance and 25% reserve ($41), effective bankroll = $124
 - 1% of $124 = $1.24
-- Since $1.24 > $1 (minTradeUsd), trade size = $1.24
-- If you want larger trades, set `MIN_TRADE_USD=5` to trade at exactly $5
+- Since $1.24 < $5 (minTradeUsd), trade size = $5 (up to effective bankroll)
+
+If you want smaller trades based on bankroll %, set `MIN_TRADE_USD` lower:
+```env
+MAX_TRADE_USD=25
+MIN_TRADE_USD=1   # Allows 1% sizing to work for small bankrolls
+```
 
 **Guidance:**
 - **Conservative**: $10-25 per trade
