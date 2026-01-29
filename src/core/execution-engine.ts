@@ -13,7 +13,10 @@ import { invalidatePositions } from "../lib/positions";
 import { getOppositeTokenId, getMarketTokenPair } from "../lib/market";
 import { reportError } from "../infra/github-reporter";
 import { getLatencyMonitor } from "../infra/latency-monitor";
-import { recordMissedTrade, recordSuccessfulTrade } from "../infra/api-rate-monitor";
+import {
+  recordMissedTrade,
+  recordSuccessfulTrade,
+} from "../infra/api-rate-monitor";
 import { smartSell } from "./smart-sell";
 import type { Position } from "../models";
 import {
@@ -33,6 +36,7 @@ import {
   type BiasDirection,
 } from "./decision-engine";
 import { RiskGuard, type RiskGuardConfig } from "./risk-guard";
+import { clampPrice, MIN_PRICE, MAX_PRICE } from "../lib/price-safety";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -247,7 +251,10 @@ export class ExecutionEngine {
       this.logger.warn(
         `🛡️ [RISK GUARD] Entry blocked - protective mode: ${protectiveMode.reason}`,
       );
-      return { success: false, reason: `PROTECTIVE_MODE: ${protectiveMode.reason}` };
+      return {
+        success: false,
+        reason: `PROTECTIVE_MODE: ${protectiveMode.reason}`,
+      };
     }
 
     // Determine effective bias direction:
@@ -312,7 +319,10 @@ export class ExecutionEngine {
         reason: `RISK_GUARD: ${entryValidation.reason}`,
         sizeUsd: decision.sizeUsd,
       });
-      return { success: false, reason: `RISK_GUARD: ${entryValidation.reason}` };
+      return {
+        success: false,
+        reason: `RISK_GUARD: ${entryValidation.reason}`,
+      };
     }
 
     // Log any warnings from risk guard
@@ -532,10 +542,23 @@ export class ExecutionEngine {
       // For BUY: We're willing to pay MORE (price + slippage) to ensure fill
       // For SELL: We're willing to accept LESS (price - slippage) to ensure fill
       const slippageMultiplier = dynamicSlippagePct / 100;
-      const fokPrice =
+      const rawFokPrice =
         side === "LONG"
           ? bestPrice * (1 + slippageMultiplier) // BUY: pay up to X% more
           : bestPrice * (1 - slippageMultiplier); // SELL: accept X% less
+
+      // CRITICAL: Clamp price to valid range [MIN_PRICE, MAX_PRICE] to prevent CLOB rejection
+      // Polymarket requires prices in range [0.01, 0.99]. If slippage pushes price outside
+      // this range, the order will be rejected with "invalid price" error.
+      const fokPrice = clampPrice(rawFokPrice, MIN_PRICE, MAX_PRICE);
+
+      // Log if price was clamped (indicates high slippage or extreme market conditions)
+      if (fokPrice !== rawFokPrice) {
+        console.warn(
+          `⚠️ Price clamped: ${(rawFokPrice * 100).toFixed(2)}¢ → ${(fokPrice * 100).toFixed(2)}¢ ` +
+            `(slippage: ${dynamicSlippagePct.toFixed(1)}%, side: ${side})`,
+        );
+      }
 
       // CRITICAL FIX (Clause 2.2): Entry sizing must use worst-case (slippage-adjusted)
       // limit price, not best price. This prevents overspending notional when slippage
@@ -1149,7 +1172,7 @@ export class ExecutionEngine {
     // This prevents financial bleed from too many hedge positions
     // ═══════════════════════════════════════════════════════════════════════
     const currentPositions = this.positionManager.getOpenPositions();
-    
+
     // Get actual wallet balance - use provided value, or fetch from cache, or use conservative fallback
     let effectiveBalance = walletBalanceUsd;
     if (effectiveBalance === undefined) {
@@ -1165,7 +1188,9 @@ export class ExecutionEngine {
     if (effectiveBalance === undefined) {
       const totalDeployed = this.positionManager.getTotalDeployedUsd();
       effectiveBalance = totalDeployed * 2; // Assume we have at least 2x deployed as total
-      console.warn(`⚠️ [HEDGE] Using estimated balance: $${effectiveBalance.toFixed(2)} (no cache available)`);
+      console.warn(
+        `⚠️ [HEDGE] Using estimated balance: $${effectiveBalance.toFixed(2)} (no cache available)`,
+      );
     }
 
     const hedgeValidation = this.riskGuard.validateHedge({
@@ -1187,7 +1212,10 @@ export class ExecutionEngine {
         reason: `RISK_GUARD: ${hedgeValidation.reason}`,
         sizeUsd: hedgeSize,
       });
-      return { success: false, reason: `RISK_GUARD: ${hedgeValidation.reason}` };
+      return {
+        success: false,
+        reason: `RISK_GUARD: ${hedgeValidation.reason}`,
+      };
     }
 
     // Use adjusted size if RiskGuard reduced it
@@ -1278,6 +1306,17 @@ export class ExecutionEngine {
       if (!price || price <= MIN_TRADEABLE_PRICE) {
         console.warn(`⚠️ [HEDGE] Price ${price} is too low for hedge order`);
         return { success: false, reason: "PRICE_TOO_LOW" };
+      }
+
+      // CRITICAL: Clamp price to valid range [MIN_PRICE, MAX_PRICE] to prevent CLOB rejection
+      // This is defensive - hedge prices should already be valid orderbook prices, but we
+      // clamp to ensure no edge cases cause order rejection.
+      const clampedPrice = clampPrice(price, MIN_PRICE, MAX_PRICE);
+      if (clampedPrice !== price) {
+        console.warn(
+          `⚠️ [HEDGE] Price clamped: ${(price * 100).toFixed(2)}¢ → ${(clampedPrice * 100).toFixed(2)}¢`,
+        );
+        price = clampedPrice;
       }
 
       const shares = finalHedgeSize / price;

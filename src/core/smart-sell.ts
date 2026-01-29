@@ -23,6 +23,7 @@ import { SELL, ORDER } from "../lib/constants";
 import type { Position, OrderResult, Logger } from "../lib/types";
 import { isLiveTradingEnabled } from "../lib/auth";
 import { isCloudflareBlock, formatErrorForLog } from "../infra/error-handling";
+import { clampPrice, MIN_PRICE, MAX_PRICE } from "../lib/price-safety";
 
 // ============================================================================
 // TYPES
@@ -386,7 +387,18 @@ export async function smartSell(
     // For GTC: use best bid (limit order waits for this price)
     // Note: FOK uses best bid because the order type itself ensures complete fill
     // The analysis already validated that we can fill within slippage tolerance
-    const orderPrice = analysis.bestBid;
+    let orderPrice = analysis.bestBid;
+
+    // CRITICAL: Clamp price to valid range [MIN_PRICE, MAX_PRICE] to prevent CLOB rejection
+    // This is defensive - bestBid from orderbook should already be valid, but we
+    // clamp to ensure no edge cases cause order rejection.
+    const clampedPrice = clampPrice(orderPrice, MIN_PRICE, MAX_PRICE);
+    if (clampedPrice !== orderPrice) {
+      logger?.warn?.(
+        `⚠️ [SELL] Price clamped: ${(orderPrice * 100).toFixed(2)}¢ → ${(clampedPrice * 100).toFixed(2)}¢`,
+      );
+      orderPrice = clampedPrice;
+    }
 
     logger?.info?.(
       `Sell executing: ${sharesToSell.toFixed(2)} shares @ ${(orderPrice * 100).toFixed(1)}¢ ` +

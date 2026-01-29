@@ -24,10 +24,7 @@ import {
   type OrderbookLevel,
 } from "../lib/market-data-store";
 import { POLYMARKET_API } from "../lib/constants";
-import {
-  sortBidsDescending,
-  sortAsksAscending,
-} from "../lib/orderbook-utils";
+import { sortBidsDescending, sortAsksAscending } from "../lib/orderbook-utils";
 import {
   type NormalizedLevel,
   type OrderBookSnapshot,
@@ -58,8 +55,14 @@ export class BookResolver {
    * This is the MAIN method both WHALE and SCAN flows should use.
    * It handles fetching, validation, and cross-checking in a unified way.
    */
-  async resolveHealthyBook(params: ResolveBookParams): Promise<ResolveBookResult> {
-    const { tokenId, flow, maxSpreadCents = BOOK_THRESHOLDS.DEFAULT_MAX_SPREAD_CENTS } = params;
+  async resolveHealthyBook(
+    params: ResolveBookParams,
+  ): Promise<ResolveBookResult> {
+    const {
+      tokenId,
+      flow,
+      maxSpreadCents = BOOK_THRESHOLDS.DEFAULT_MAX_SPREAD_CENTS,
+    } = params;
     const startTime = Date.now();
 
     // Try primary source first (WS cache, then REST)
@@ -305,8 +308,8 @@ export class BookResolver {
 
         console.log(
           `🔍 [DUST_CROSS_CHECK] flow=${flow} | ${tokenId.slice(0, 12)}... | ` +
-            `PRIMARY(${primarySnapshot.source}): bid=${(primaryHealth.bestBidCents).toFixed(1)}¢ ask=${(primaryHealth.bestAskCents).toFixed(1)}¢ | ` +
-            `CONFIRM(WS_CACHE): bid=${(wsHealth.bestBidCents).toFixed(1)}¢ ask=${(wsHealth.bestAskCents).toFixed(1)}¢ | ` +
+            `PRIMARY(${primarySnapshot.source}): bid=${primaryHealth.bestBidCents.toFixed(1)}¢ ask=${primaryHealth.bestAskCents.toFixed(1)}¢ | ` +
+            `CONFIRM(WS_CACHE): bid=${wsHealth.bestBidCents.toFixed(1)}¢ ask=${wsHealth.bestAskCents.toFixed(1)}¢ | ` +
             `match=${primaryHealth.status === wsHealth.status ? "YES" : "NO"}`,
         );
 
@@ -345,8 +348,8 @@ export class BookResolver {
 
       console.log(
         `🔍 [DUST_CROSS_CHECK] flow=${flow} | ${tokenId.slice(0, 12)}... | ` +
-          `PRIMARY(${primarySnapshot.source}): bid=${(primaryHealth.bestBidCents).toFixed(1)}¢ ask=${(primaryHealth.bestAskCents).toFixed(1)}¢ | ` +
-          `CONFIRM(REST): bid=${(restHealth.bestBidCents).toFixed(1)}¢ ask=${(restHealth.bestAskCents).toFixed(1)}¢ | ` +
+          `PRIMARY(${primarySnapshot.source}): bid=${primaryHealth.bestBidCents.toFixed(1)}¢ ask=${primaryHealth.bestAskCents.toFixed(1)}¢ | ` +
+          `CONFIRM(REST): bid=${restHealth.bestBidCents.toFixed(1)}¢ ask=${restHealth.bestAskCents.toFixed(1)}¢ | ` +
           `match=${primaryHealth.status === restHealth.status ? "YES" : "NO"}`,
       );
 
@@ -397,9 +400,16 @@ export class BookResolver {
    * This is the SINGLE source of truth for dust/empty/health classification.
    * Both WHALE and SCAN flows use these same thresholds.
    */
-  evaluateHealth(snapshot: OrderBookSnapshot, maxSpreadCents: number = BOOK_THRESHOLDS.DEFAULT_MAX_SPREAD_CENTS): BookHealth {
+  evaluateHealth(
+    snapshot: OrderBookSnapshot,
+    maxSpreadCents: number = BOOK_THRESHOLDS.DEFAULT_MAX_SPREAD_CENTS,
+  ): BookHealth {
     // No data
-    if (!snapshot.parsedOk || snapshot.bids.length === 0 || snapshot.asks.length === 0) {
+    if (
+      !snapshot.parsedOk ||
+      snapshot.bids.length === 0 ||
+      snapshot.asks.length === 0
+    ) {
       return {
         healthy: false,
         status: snapshot.error ? "PARSE_ERROR" : "NO_DATA",
@@ -517,8 +527,7 @@ export class BookResolver {
         size: parseFloat(l.size),
       }))
       .filter(
-        (l: NormalizedLevel) =>
-          !isNaN(l.price) && !isNaN(l.size) && l.size > 0,
+        (l: NormalizedLevel) => !isNaN(l.price) && !isNaN(l.size) && l.size > 0,
       );
   }
 
@@ -601,7 +610,9 @@ let globalResolver: BookResolver | null = null;
 export function getBookResolver(client?: ClobClient): BookResolver {
   if (!globalResolver) {
     if (!client) {
-      throw new Error("BookResolver requires ClobClient on first initialization");
+      throw new Error(
+        "BookResolver requires ClobClient on first initialization",
+      );
     }
     globalResolver = new BookResolver(client);
   }

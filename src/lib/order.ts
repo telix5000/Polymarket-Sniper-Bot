@@ -23,6 +23,7 @@ import type { OrderSide, OrderOutcome, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
 import { isCloudflareBlock, formatErrorForLog } from "../infra/error-handling";
 import { getBestPricesFromRaw } from "./orderbook-utils";
+import { clampPrice, MIN_PRICE, MAX_PRICE } from "./price-safety";
 
 // In-flight tracking to prevent duplicate orders
 const inFlight = new Map<string, number>();
@@ -203,7 +204,8 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     // Validate orderbook sanity - best ask should be >= best bid
     // Use normalized prices (sorted correctly) instead of raw [0] index
     if (orderBook.asks?.length && orderBook.bids?.length) {
-      const { bestBid: normalizedBid, bestAsk: normalizedAsk } = getBestPricesFromRaw(orderBook);
+      const { bestBid: normalizedBid, bestAsk: normalizedAsk } =
+        getBestPricesFromRaw(orderBook);
       if (
         normalizedBid !== null &&
         normalizedAsk !== null &&
@@ -285,8 +287,19 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       }
 
       const level = currentLevels[0];
-      const levelPrice = parseFloat(level.price);
+      let levelPrice = parseFloat(level.price);
       const levelSize = parseFloat(level.size);
+
+      // CRITICAL: Clamp price to valid range [MIN_PRICE, MAX_PRICE] to prevent CLOB rejection
+      // This is defensive - orderbook prices should already be valid, but we
+      // clamp to ensure no edge cases cause order rejection.
+      const clampedLevelPrice = clampPrice(levelPrice, MIN_PRICE, MAX_PRICE);
+      if (clampedLevelPrice !== levelPrice) {
+        logger?.warn?.(
+          `Order price clamped: ${(levelPrice * 100).toFixed(2)}¢ → ${(clampedLevelPrice * 100).toFixed(2)}¢`,
+        );
+        levelPrice = clampedLevelPrice;
+      }
 
       // Enforce maxAcceptablePrice on each iteration to provide price protection across retries
       if (maxAcceptablePrice !== undefined) {

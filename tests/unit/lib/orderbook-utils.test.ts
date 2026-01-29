@@ -18,16 +18,27 @@ describe("Orderbook Utils", () => {
         { price: 0.3, size: 50 },
       ];
       const sorted = sortBidsDescending(bids);
-      assert.strictEqual(sorted[0].price, 0.7, "Best bid (highest) should be first");
+      assert.strictEqual(
+        sorted[0].price,
+        0.7,
+        "Best bid (highest) should be first",
+      );
       assert.strictEqual(sorted[1].price, 0.5, "Second bid should be 0.5");
       assert.strictEqual(sorted[2].price, 0.3, "Lowest bid should be last");
     });
 
     it("should not mutate original array", () => {
-      const bids = [{ price: 0.5, size: 100 }, { price: 0.7, size: 200 }];
+      const bids = [
+        { price: 0.5, size: 100 },
+        { price: 0.7, size: 200 },
+      ];
       const original = [...bids];
       sortBidsDescending(bids);
-      assert.deepStrictEqual(bids, original, "Original array should not be modified");
+      assert.deepStrictEqual(
+        bids,
+        original,
+        "Original array should not be modified",
+      );
     });
   });
 
@@ -39,7 +50,11 @@ describe("Orderbook Utils", () => {
         { price: 0.9, size: 50 },
       ];
       const sorted = sortAsksAscending(asks);
-      assert.strictEqual(sorted[0].price, 0.6, "Best ask (lowest) should be first");
+      assert.strictEqual(
+        sorted[0].price,
+        0.6,
+        "Best ask (lowest) should be first",
+      );
       assert.strictEqual(sorted[1].price, 0.8, "Second ask should be 0.8");
       assert.strictEqual(sorted[2].price, 0.9, "Highest ask should be last");
     });
@@ -95,9 +110,17 @@ describe("Orderbook Utils", () => {
 
       // After normalization: bids descending (best first), asks ascending (best first)
       assert.strictEqual(bids[0].price, 0.68, "Best bid should be 0.68");
-      assert.strictEqual(bids[bids.length - 1].price, 0.001, "Worst bid should be 0.001");
+      assert.strictEqual(
+        bids[bids.length - 1].price,
+        0.001,
+        "Worst bid should be 0.001",
+      );
       assert.strictEqual(asks[0].price, 0.72, "Best ask should be 0.72");
-      assert.strictEqual(asks[asks.length - 1].price, 0.999, "Worst ask should be 0.999");
+      assert.strictEqual(
+        asks[asks.length - 1].price,
+        0.999,
+        "Worst ask should be 0.999",
+      );
     });
   });
 
@@ -125,8 +148,16 @@ describe("Orderbook Utils", () => {
 
       assert.strictEqual(result.bestBid, 0.682, "Best bid should be 0.682");
       assert.strictEqual(result.bestAsk, 0.684, "Best ask should be 0.684");
-      assert.strictEqual(result.bestBidCents, 68.2, "Best bid cents should be 68.2");
-      assert.strictEqual(result.bestAskCents, 68.4, "Best ask cents should be 68.4");
+      assert.strictEqual(
+        result.bestBidCents,
+        68.2,
+        "Best bid cents should be 68.2",
+      );
+      assert.strictEqual(
+        result.bestAskCents,
+        68.4,
+        "Best ask cents should be 68.4",
+      );
     });
 
     it("should NOT return dust prices for active market", () => {
@@ -146,8 +177,16 @@ describe("Orderbook Utils", () => {
       const result = getBestPricesFromRaw(rawOrderbook);
 
       // Should NOT be dust prices
-      assert.notStrictEqual(result.bestBid, 0.001, "Best bid should NOT be 0.001");
-      assert.notStrictEqual(result.bestAsk, 0.999, "Best ask should NOT be 0.999");
+      assert.notStrictEqual(
+        result.bestBid,
+        0.001,
+        "Best bid should NOT be 0.001",
+      );
+      assert.notStrictEqual(
+        result.bestAsk,
+        0.999,
+        "Best ask should NOT be 0.999",
+      );
 
       // Should be the actual best prices
       assert.strictEqual(result.bestBid, 0.5, "Best bid should be 0.5");
@@ -155,7 +194,11 @@ describe("Orderbook Utils", () => {
 
       // Should NOT trigger dust book detection
       const isDustBook = result.bestBidCents <= 2 && result.bestAskCents >= 98;
-      assert.strictEqual(isDustBook, false, "Should NOT be detected as dust book");
+      assert.strictEqual(
+        isDustBook,
+        false,
+        "Should NOT be detected as dust book",
+      );
     });
 
     it("should handle empty orderbook", () => {

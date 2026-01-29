@@ -48,7 +48,7 @@ export interface OrderBookSnapshot {
 
 /**
  * Book health status enumeration for BookResolver
- * 
+ *
  * Note: This is distinct from BookHealthStatus in price-safety.ts which uses
  * different values ("HEALTHY", "DEAD_BOOK"). This type is specific to the
  * BookResolver module and includes more granular status values.
@@ -124,12 +124,15 @@ export interface ResolveBookResult {
 // Thresholds (Re-export from price-safety for consistency)
 // ============================================================================
 
-import { DEAD_BOOK_THRESHOLDS, DEFAULT_MAX_SPREAD_CENTS } from "../lib/price-safety";
+import {
+  DEAD_BOOK_THRESHOLDS,
+  DEFAULT_MAX_SPREAD_CENTS,
+} from "../lib/price-safety";
 
 /**
  * Unified thresholds for book health evaluation
  * Both WHALE and SCAN flows use these same thresholds
- * 
+ *
  * Re-exports from price-safety.ts to maintain single source of truth
  */
 export const BOOK_THRESHOLDS = {

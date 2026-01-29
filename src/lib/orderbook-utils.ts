@@ -140,7 +140,12 @@ export function getBestPrices(
 export function getBestPricesFromRaw(orderbook: {
   bids?: Array<{ price: string; size: string }>;
   asks?: Array<{ price: string; size: string }>;
-}): { bestBid: number | null; bestAsk: number | null; bestBidCents: number; bestAskCents: number } {
+}): {
+  bestBid: number | null;
+  bestAsk: number | null;
+  bestBidCents: number;
+  bestAskCents: number;
+} {
   const { bids, asks } = normalizeRestOrderbook(orderbook);
 
   const bestBid = bids.length > 0 ? bids[0].price : null;
@@ -163,8 +168,14 @@ export function logOrderbookDiagnostic(
   bids: OrderbookLevel[],
   asks: OrderbookLevel[],
 ): void {
-  const bidPreview = bids.slice(0, 3).map((l) => `${(l.price * 100).toFixed(1)}¢`).join(", ");
-  const askPreview = asks.slice(0, 3).map((l) => `${(l.price * 100).toFixed(1)}¢`).join(", ");
+  const bidPreview = bids
+    .slice(0, 3)
+    .map((l) => `${(l.price * 100).toFixed(1)}¢`)
+    .join(", ");
+  const askPreview = asks
+    .slice(0, 3)
+    .map((l) => `${(l.price * 100).toFixed(1)}¢`)
+    .join(", ");
   const bestBid = bids[0]?.price ?? 0;
   const bestAsk = asks[0]?.price ?? 0;
 
@@ -196,14 +207,14 @@ export interface QuickPriceCheck {
 
 /**
  * Fast-path price check using lightweight /price endpoint
- * 
+ *
  * Use this BEFORE fetching full orderbook to quickly reject markets that:
  * - Have dust book prices (bid <= 2¢, ask >= 98¢)
  * - Have spreads too wide for trading
  * - Are outside our price range
- * 
+ *
  * This saves API resources by avoiding full orderbook fetches for bad markets.
- * 
+ *
  * @param clobBaseUrl - Base URL for CLOB API (e.g., "https://clob.polymarket.com")
  * @param tokenId - The token ID to check
  * @param maxSpreadCents - Maximum acceptable spread in cents (default: 50)
@@ -215,7 +226,7 @@ export async function quickPriceCheck(
   maxSpreadCents: number = 50,
 ): Promise<QuickPriceCheck> {
   const startTime = Date.now();
-  
+
   try {
     // Fetch best bid and ask prices in parallel (very lightweight calls)
     const [bidResponse, askResponse] = await Promise.all([
@@ -298,7 +309,7 @@ export async function quickPriceCheck(
 
 /**
  * Check if a market passes basic price filters using fast-path
- * 
+ *
  * @param clobBaseUrl - Base URL for CLOB API
  * @param tokenId - Token ID to check
  * @param minPriceCents - Minimum acceptable price (default: 5¢)
@@ -324,15 +335,27 @@ export async function quickFilterCheck(
   }
 
   if (!check.isValidSpread) {
-    return { passes: false, reason: `WIDE_SPREAD_${check.spreadCents.toFixed(0)}c`, check };
+    return {
+      passes: false,
+      reason: `WIDE_SPREAD_${check.spreadCents.toFixed(0)}c`,
+      check,
+    };
   }
 
   if (check.bestAskCents < minPriceCents) {
-    return { passes: false, reason: `PRICE_TOO_LOW_${check.bestAskCents.toFixed(0)}c`, check };
+    return {
+      passes: false,
+      reason: `PRICE_TOO_LOW_${check.bestAskCents.toFixed(0)}c`,
+      check,
+    };
   }
 
   if (check.bestAskCents > maxPriceCents) {
-    return { passes: false, reason: `PRICE_TOO_HIGH_${check.bestAskCents.toFixed(0)}c`, check };
+    return {
+      passes: false,
+      reason: `PRICE_TOO_HIGH_${check.bestAskCents.toFixed(0)}c`,
+      check,
+    };
   }
 
   return { passes: true, check };

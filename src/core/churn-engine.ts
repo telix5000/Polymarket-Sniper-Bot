@@ -2190,7 +2190,8 @@ export class ChurnEngine {
       }
 
       // Use normalizeRestOrderbook to get sorted levels (avoids redundant parsing)
-      const { bids: sortedBids, asks: sortedAsks } = normalizeRestOrderbook(orderbook);
+      const { bids: sortedBids, asks: sortedAsks } =
+        normalizeRestOrderbook(orderbook);
       if (sortedBids.length === 0 || sortedAsks.length === 0) {
         return null;
       }
@@ -2734,7 +2735,8 @@ export class ChurnEngine {
               const restOrderbook = await this.client!.getOrderBook(tokenId);
               if (restOrderbook?.bids?.length && restOrderbook?.asks?.length) {
                 // Use normalized prices (sorted correctly)
-                const { bestBidCents: restBid, bestAskCents: restAsk } = getBestPricesFromRaw(restOrderbook);
+                const { bestBidCents: restBid, bestAskCents: restAsk } =
+                  getBestPricesFromRaw(restOrderbook);
 
                 console.log(
                   `📡 [REST_VERIFY] ${tokenId.slice(0, 12)}... | REST result: bid=${restBid.toFixed(1)}¢ ask=${restAsk.toFixed(1)}¢`,
@@ -2752,7 +2754,10 @@ export class ChurnEngine {
                         siblingOrderbook?.asks?.length
                       ) {
                         // Use normalized prices for sibling too
-                        const { bestBidCents: siblingBid, bestAskCents: siblingAsk } = getBestPricesFromRaw(siblingOrderbook);
+                        const {
+                          bestBidCents: siblingBid,
+                          bestAskCents: siblingAsk,
+                        } = getBestPricesFromRaw(siblingOrderbook);
                         console.log(
                           `📡 [SIBLING_CHECK] ${siblingTokenId.slice(0, 12)}... | sibling book: bid=${siblingBid.toFixed(1)}¢ ask=${siblingAsk.toFixed(1)}¢`,
                         );
@@ -2906,7 +2911,12 @@ export class ChurnEngine {
       // Use normalized prices (sorted correctly)
       const { bestBid, bestAsk } = getBestPricesFromRaw(orderbook);
 
-      if (bestBid === null || bestAsk === null || isNaN(bestBid) || isNaN(bestAsk)) {
+      if (
+        bestBid === null ||
+        bestAsk === null ||
+        isNaN(bestBid) ||
+        isNaN(bestAsk)
+      ) {
         this.diagnostics.orderbookFetchFailures++;
         return {
           ok: false,
