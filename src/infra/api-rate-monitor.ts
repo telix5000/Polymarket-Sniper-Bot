@@ -10,7 +10,7 @@
  * This provides visibility into API usage and prevents unexpected rate limiting.
  */
 
-import { reportError, getGitHubReporter } from "./github-reporter";
+import { reportError } from "./github-reporter";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
