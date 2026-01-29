@@ -173,3 +173,17 @@ export {
   type EntryValidation,
   type HedgeValidation,
 } from "./risk-guard";
+
+// Exit Engine - manages exits for all open positions
+export {
+  ExitEngine,
+  DEFAULT_EXIT_ENGINE_CONFIG,
+  type ExitState,
+  type ExitStateReason,
+  type ExitEngineConfig,
+  type PositionExitState,
+  type ExitDecisionResult,
+  type ExitOrderResult,
+  type ExitMarketData,
+  type ExitEngineLogger,
+} from "./exit-engine";

@@ -504,8 +504,16 @@ describe("Snapshot Health Check", () => {
     });
 
     // Verify snapshot is healthy at creation
-    assert.strictEqual(isSnapshotHealthy(healthySnapshot), true, "Snapshot should be HEALTHY at creation");
-    assert.strictEqual(healthySnapshot.bookStatus, "HEALTHY", "bookStatus should be HEALTHY");
+    assert.strictEqual(
+      isSnapshotHealthy(healthySnapshot),
+      true,
+      "Snapshot should be HEALTHY at creation",
+    );
+    assert.strictEqual(
+      healthySnapshot.bookStatus,
+      "HEALTHY",
+      "bookStatus should be HEALTHY",
+    );
 
     // NOW: Simulate cache being updated to dust AFTER snapshot was created
     // This simulates the race condition where WS pushes dust data during execution
@@ -525,22 +533,22 @@ describe("Snapshot Health Check", () => {
     assert.strictEqual(
       isSnapshotHealthy(healthySnapshot),
       true,
-      "isSnapshotHealthy MUST use snapshot.bookStatus, NOT current cache"
+      "isSnapshotHealthy MUST use snapshot.bookStatus, NOT current cache",
     );
     assert.strictEqual(
       healthySnapshot.bookStatus,
       "HEALTHY",
-      "Snapshot bookStatus MUST remain HEALTHY regardless of cache updates"
+      "Snapshot bookStatus MUST remain HEALTHY regardless of cache updates",
     );
     assert.strictEqual(
       healthySnapshot.bestBid,
       0.47,
-      "Snapshot bestBid MUST remain 0.47 regardless of cache updates"
+      "Snapshot bestBid MUST remain 0.47 regardless of cache updates",
     );
     assert.strictEqual(
       healthySnapshot.bestAsk,
       0.49,
-      "Snapshot bestAsk MUST remain 0.49 regardless of cache updates"
+      "Snapshot bestAsk MUST remain 0.49 regardless of cache updates",
     );
   });
 });
