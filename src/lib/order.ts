@@ -23,6 +23,7 @@ import type { OrderSide, OrderOutcome, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
 import { isCloudflareBlock, formatErrorForLog } from "../infra/error-handling";
 import { getBestPricesFromRaw } from "./orderbook-utils";
+import { MIN_PRICE, MAX_PRICE } from "./price-safety";
 
 // In-flight tracking to prevent duplicate orders
 const inFlight = new Map<string, number>();
@@ -285,8 +286,19 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       }
 
       const level = currentLevels[0];
-      const levelPrice = parseFloat(level.price);
+      const rawLevelPrice = parseFloat(level.price);
       const levelSize = parseFloat(level.size);
+
+      // CRITICAL: Clamp price to valid Polymarket bounds [0.01, 0.99]
+      // MIN_PRICE and MAX_PRICE imported from price-safety module
+      const levelPrice = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawLevelPrice));
+
+      // Log if price was clamped (shouldn't happen normally, but safety first)
+      if (levelPrice !== rawLevelPrice) {
+        logger?.warn?.(
+          `⚠️ [ORDER] Price clamped: ${rawLevelPrice.toFixed(4)} → ${levelPrice.toFixed(4)} (${side})`,
+        );
+      }
 
       // Enforce maxAcceptablePrice on each iteration to provide price protection across retries
       if (maxAcceptablePrice !== undefined) {

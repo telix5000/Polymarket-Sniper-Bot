@@ -14,6 +14,7 @@ import {
   DEAD_BOOK_THRESHOLDS,
   calculateSafeLimitPrice,
   isWithinEntryBounds,
+  computeLimitPrice,
   MIN_PRICE,
   MAX_PRICE,
 } from "../../../src/lib/price-safety";
@@ -439,6 +440,196 @@ describe("Price Safety Module", () => {
           );
         }
       }
+    });
+  });
+
+  describe("computeLimitPrice", () => {
+    describe("BUY orders", () => {
+      it("should compute correct BUY price with 5.9% slippage for bestAsk=0.60", () => {
+        const result = computeLimitPrice({
+          bestBid: 0.59,
+          bestAsk: 0.60,
+          side: "BUY",
+          slippageFrac: 0.059, // 5.9%
+        });
+
+        // Expected: 0.60 * 1.059 = 0.6354
+        assert.ok(
+          result.limitPrice <= MAX_PRICE,
+          `BUY price ${result.limitPrice} should be <= ${MAX_PRICE}`,
+        );
+        assert.ok(
+          Math.abs(result.limitPrice - 0.6354) < 0.001,
+          `BUY price ${result.limitPrice} should be ~0.6354`,
+        );
+        assert.strictEqual(result.wasClamped, false);
+      });
+
+      it("should compute correct BUY price with 5.9% slippage for bestAsk=0.46", () => {
+        const result = computeLimitPrice({
+          bestBid: 0.43,
+          bestAsk: 0.46,
+          side: "BUY",
+          slippageFrac: 0.059, // 5.9%
+        });
+
+        // Expected: 0.46 * 1.059 = 0.48714
+        assert.ok(
+          result.limitPrice <= MAX_PRICE,
+          `BUY price ${result.limitPrice} should be <= ${MAX_PRICE}`,
+        );
+        assert.ok(
+          Math.abs(result.limitPrice - 0.48714) < 0.001,
+          `BUY price ${result.limitPrice} should be ~0.4871`,
+        );
+        assert.strictEqual(result.wasClamped, false);
+      });
+
+      it("should clamp BUY price to MAX_PRICE when slippage would exceed 0.99", () => {
+        const result = computeLimitPrice({
+          bestBid: 0.94,
+          bestAsk: 0.95,
+          side: "BUY",
+          slippageFrac: 0.059, // 5.9% → 0.95 * 1.059 = 1.006 > 0.99
+        });
+
+        assert.strictEqual(
+          result.limitPrice,
+          MAX_PRICE,
+          `BUY price should be clamped to ${MAX_PRICE}`,
+        );
+        assert.strictEqual(result.wasClamped, true);
+        assert.strictEqual(result.clampDirection, "max");
+        assert.ok(
+          result.rawPrice > MAX_PRICE,
+          `Raw price ${result.rawPrice} should exceed MAX_PRICE`,
+        );
+      });
+
+      it("should never exceed 0.99 for any valid bestAsk + slippage", () => {
+        const testCases = [
+          { bestAsk: 0.99, slippage: 0.01 }, // Edge case
+          { bestAsk: 0.98, slippage: 0.05 },
+          { bestAsk: 0.95, slippage: 0.10 },
+          { bestAsk: 0.90, slippage: 0.15 },
+        ];
+
+        for (const tc of testCases) {
+          const result = computeLimitPrice({
+            bestBid: tc.bestAsk - 0.02,
+            bestAsk: tc.bestAsk,
+            side: "BUY",
+            slippageFrac: tc.slippage,
+          });
+
+          assert.ok(
+            result.limitPrice <= MAX_PRICE,
+            `BUY @ bestAsk=${tc.bestAsk}, slippage=${tc.slippage} → ${result.limitPrice} should be <= ${MAX_PRICE}`,
+          );
+        }
+      });
+    });
+
+    describe("SELL orders", () => {
+      it("should compute correct SELL price with 5.9% slippage for bestBid=0.59", () => {
+        const result = computeLimitPrice({
+          bestBid: 0.59,
+          bestAsk: 0.60,
+          side: "SELL",
+          slippageFrac: 0.059, // 5.9%
+        });
+
+        // Expected: 0.59 * 0.941 = 0.55519
+        assert.ok(
+          result.limitPrice >= MIN_PRICE,
+          `SELL price ${result.limitPrice} should be >= ${MIN_PRICE}`,
+        );
+        assert.ok(
+          Math.abs(result.limitPrice - 0.55519) < 0.001,
+          `SELL price ${result.limitPrice} should be ~0.5552`,
+        );
+        assert.strictEqual(result.wasClamped, false);
+      });
+
+      it("should clamp SELL price to MIN_PRICE when slippage would go below 0.01", () => {
+        const result = computeLimitPrice({
+          bestBid: 0.02,
+          bestAsk: 0.05,
+          side: "SELL",
+          slippageFrac: 0.60, // 60% → 0.02 * 0.40 = 0.008 < 0.01
+        });
+
+        assert.strictEqual(
+          result.limitPrice,
+          MIN_PRICE,
+          `SELL price should be clamped to ${MIN_PRICE}`,
+        );
+        assert.strictEqual(result.wasClamped, true);
+        assert.strictEqual(result.clampDirection, "min");
+        assert.ok(
+          result.rawPrice < MIN_PRICE,
+          `Raw price ${result.rawPrice} should be below MIN_PRICE`,
+        );
+      });
+
+      it("should never go below 0.01 for any valid bestBid + slippage", () => {
+        const testCases = [
+          { bestBid: 0.01, slippage: 0.01 }, // Edge case
+          { bestBid: 0.02, slippage: 0.50 },
+          { bestBid: 0.05, slippage: 0.80 },
+          { bestBid: 0.10, slippage: 0.95 },
+        ];
+
+        for (const tc of testCases) {
+          const result = computeLimitPrice({
+            bestBid: tc.bestBid,
+            bestAsk: tc.bestBid + 0.02,
+            side: "SELL",
+            slippageFrac: tc.slippage,
+          });
+
+          assert.ok(
+            result.limitPrice >= MIN_PRICE,
+            `SELL @ bestBid=${tc.bestBid}, slippage=${tc.slippage} → ${result.limitPrice} should be >= ${MIN_PRICE}`,
+          );
+        }
+      });
+    });
+
+    describe("Edge cases", () => {
+      it("should handle slippageFrac that looks like percentage (warn but still work)", () => {
+        // If someone passes 5.9 instead of 0.059, it should still clamp
+        const result = computeLimitPrice({
+          bestBid: 0.50,
+          bestAsk: 0.51,
+          side: "BUY",
+          slippageFrac: 5.9, // WRONG - this is percentage, not fraction
+        });
+
+        // 0.51 * 6.9 = 3.519, should clamp to 0.99
+        assert.strictEqual(result.limitPrice, MAX_PRICE);
+        assert.strictEqual(result.wasClamped, true);
+      });
+
+      it("should handle zero slippage (use best price directly)", () => {
+        const resultBuy = computeLimitPrice({
+          bestBid: 0.50,
+          bestAsk: 0.51,
+          side: "BUY",
+          slippageFrac: 0,
+        });
+        assert.strictEqual(resultBuy.limitPrice, 0.51);
+        assert.strictEqual(resultBuy.wasClamped, false);
+
+        const resultSell = computeLimitPrice({
+          bestBid: 0.50,
+          bestAsk: 0.51,
+          side: "SELL",
+          slippageFrac: 0,
+        });
+        assert.strictEqual(resultSell.limitPrice, 0.50);
+        assert.strictEqual(resultSell.wasClamped, false);
+      });
     });
   });
 });

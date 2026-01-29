@@ -16,6 +16,7 @@ import { getLatencyMonitor } from "../infra/latency-monitor";
 import { recordMissedTrade, recordSuccessfulTrade } from "../infra/api-rate-monitor";
 import { smartSell } from "./smart-sell";
 import type { Position } from "../models";
+import { MIN_PRICE, MAX_PRICE } from "../lib/price-safety";
 import {
   EvTracker,
   type TradeResult,
@@ -532,10 +533,44 @@ export class ExecutionEngine {
       // For BUY: We're willing to pay MORE (price + slippage) to ensure fill
       // For SELL: We're willing to accept LESS (price - slippage) to ensure fill
       const slippageMultiplier = dynamicSlippagePct / 100;
-      const fokPrice =
+
+      // CRITICAL FIX: Clamp price to valid Polymarket bounds [0.01, 0.99]
+      // Without clamping, high prices + slippage can exceed 1.0 and cause "invalid price" errors
+      // MIN_PRICE and MAX_PRICE imported from price-safety module
+
+      const rawFokPrice =
         side === "LONG"
           ? bestPrice * (1 + slippageMultiplier) // BUY: pay up to X% more
           : bestPrice * (1 - slippageMultiplier); // SELL: accept X% less
+
+      // Clamp to valid bounds
+      const fokPrice =
+        side === "LONG"
+          ? Math.min(rawFokPrice, MAX_PRICE) // BUY: never exceed MAX_PRICE
+          : Math.max(rawFokPrice, MIN_PRICE); // SELL: never go below MIN_PRICE
+
+      // Log ORDER_PRICE_DEBUG for diagnostics
+      const priceWasClamped = fokPrice !== rawFokPrice;
+      console.log(
+        JSON.stringify({
+          event: "ORDER_PRICE_DEBUG",
+          tokenIdPrefix: tokenId.slice(0, 12),
+          side: side === "LONG" ? "BUY" : "SELL",
+          bestPrice: bestPrice.toFixed(4),
+          bestPriceCents: (bestPrice * 100).toFixed(2),
+          slippagePct: dynamicSlippagePct.toFixed(2),
+          rawFokPrice: rawFokPrice.toFixed(6),
+          fokPrice: fokPrice.toFixed(6),
+          wasClamped: priceWasClamped,
+          units: "dollars",
+        }),
+      );
+
+      if (priceWasClamped) {
+        console.warn(
+          `⚠️ [ENTRY] Price clamped: ${rawFokPrice.toFixed(4)} → ${fokPrice.toFixed(4)} (${side})`,
+        );
+      }
 
       // CRITICAL FIX (Clause 2.2): Entry sizing must use worst-case (slippage-adjusted)
       // limit price, not best price. This prevents overspending notional when slippage
@@ -607,10 +642,22 @@ export class ExecutionEngine {
       // Use a tighter price for GTC - we're willing to wait for a better fill
       console.log(`⏳ FOK missed, trying GTC limit order...`);
 
-      const gtcPrice =
+      const rawGtcPrice =
         side === "LONG"
           ? bestPrice * (1 + slippageMultiplier * 0.5) // Tighter slippage for GTC
           : bestPrice * (1 - slippageMultiplier * 0.5);
+
+      // CRITICAL: Clamp GTC price to valid bounds too
+      const gtcPrice =
+        side === "LONG"
+          ? Math.min(rawGtcPrice, MAX_PRICE)
+          : Math.max(rawGtcPrice, MIN_PRICE);
+
+      if (gtcPrice !== rawGtcPrice) {
+        console.warn(
+          `⚠️ [GTC] Price clamped: ${rawGtcPrice.toFixed(4)} → ${gtcPrice.toFixed(4)} (${side})`,
+        );
+      }
 
       try {
         const gtcOrder = await this.client.createOrder({
@@ -1037,12 +1084,36 @@ export class ExecutionEngine {
           continue;
         }
 
-        const bestBid = parseFloat(bids[0].price);
+        const rawBestBid = parseFloat(bids[0].price);
+        
+        // CRITICAL: Clamp price to valid Polymarket bounds [0.01, 0.99]
+        // MIN_PRICE and MAX_PRICE imported from price-safety module
+        const bestBid = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawBestBid));
+        
+        if (bestBid !== rawBestBid) {
+          console.warn(
+            `⚠️ [HEDGE UNWIND] Price clamped: ${rawBestBid.toFixed(4)} → ${bestBid.toFixed(4)}`,
+          );
+        }
+
         // NOTE: We estimate shares using the hedge entry price. If the hedge filled at a different
         // price due to slippage, this may be slightly inaccurate. For improved accuracy, consider
         // tracking actual filled shares when hedges are created. This conservative approach errs
         // on the side of attempting to sell the estimated amount, which FOK will reject if too large.
         const shares = hedge.sizeUsd / (hedge.entryPriceCents / 100);
+
+        // Log ORDER_PRICE_DEBUG for consistency
+        console.log(
+          JSON.stringify({
+            event: "ORDER_PRICE_DEBUG",
+            mode: "HEDGE_UNWIND",
+            tokenIdPrefix: hedge.tokenId.slice(0, 12),
+            side: "SELL",
+            bestBid: bestBid.toFixed(4),
+            shares: shares.toFixed(4),
+            units: "dollars",
+          }),
+        );
 
         // Create sell order with FOK to ensure confirmed fill
         const { Side, OrderType } = await import("@polymarket/clob-client");

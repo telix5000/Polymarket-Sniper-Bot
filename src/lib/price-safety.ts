@@ -2,26 +2,58 @@
  * Price Safety Module
  *
  * Ensures price formation is safe and cannot result in invalid prices.
- * In prediction markets, prices must be in (0, 1) range, typically clamped to [0.01, 0.99].
+ * In prediction markets, prices must be in (0, 1) range.
  *
  * Key safety features:
  * - Clamps all limit prices to safe bounds [MIN_PRICE, MAX_PRICE]
  * - Detects spread-too-wide conditions (illiquid markets)
  * - Validates orderbook sanity
  * - Logs price formation decisions for diagnostics
+ *
+ * PRICE BOUNDS - The Profit Law (35¢ - 65¢):
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Default bounds follow the "profit law" - the sweet spot for profitable trades:
+ *
+ *   MIN_PRICE = 0.35 (35 cents) - Below this, risk/reward unfavorable
+ *   MAX_PRICE = 0.65 (65 cents) - Above this, limited upside potential
+ *
+ * This matches preferredEntryLowCents (35) and preferredEntryHighCents (65).
+ *
+ * Override via environment variables:
+ *   ORDER_MIN_PRICE - Minimum price bound (default: 0.35)
+ *   ORDER_MAX_PRICE - Maximum price bound (default: 0.65)
+ *
+ * Note: Polymarket API accepts 0.01-0.99, but we follow the profit law.
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import { isGitHubActions, ghWarning, ghError } from "./diag-mode";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONSTANTS
+// CONSTANTS - Profit Law defaults (configurable via ENV)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Minimum valid price in prediction markets (1¢) */
-export const MIN_PRICE = 0.01;
+// Helper to read numeric env vars
+const envNum = (key: string, defaultValue: number): number => {
+  const value = process.env[key];
+  if (value === undefined) return defaultValue;
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? defaultValue : parsed;
+};
 
-/** Maximum valid price in prediction markets (99¢) */
-export const MAX_PRICE = 0.99;
+/**
+ * Minimum valid price for orders.
+ * Default: 0.35 (35¢) - "Profit Law" minimum (matches preferredEntryLowCents)
+ * Override via ORDER_MIN_PRICE env var.
+ */
+export const MIN_PRICE = envNum("ORDER_MIN_PRICE", 0.35);
+
+/**
+ * Maximum valid price for orders.
+ * Default: 0.65 (65¢) - "Profit Law" maximum (matches preferredEntryHighCents)
+ * Override via ORDER_MAX_PRICE env var.
+ */
+export const MAX_PRICE = envNum("ORDER_MAX_PRICE", 0.65);
 
 /** Default maximum acceptable spread in cents for liquid markets */
 export const DEFAULT_MAX_SPREAD_CENTS = 50;
@@ -597,4 +629,145 @@ export function isWithinEntryBounds(
 ): boolean {
   const priceCents = price * 100;
   return priceCents >= minEntryCents && priceCents <= maxEntryCents;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SHARED LIMIT PRICE COMPUTATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Input for computing a limit price
+ */
+export interface ComputeLimitPriceInput {
+  /** Best bid price in dollars (0-1 scale) */
+  bestBid: number;
+  /** Best ask price in dollars (0-1 scale) */
+  bestAsk: number;
+  /** Order side: "BUY" or "SELL" */
+  side: "BUY" | "SELL";
+  /** Slippage as a fraction (e.g., 0.059 for 5.9%) */
+  slippageFrac: number;
+  /** Token ID prefix for logging (optional) */
+  tokenIdPrefix?: string;
+}
+
+/**
+ * Result from computing a limit price
+ */
+export interface ComputeLimitPriceResult {
+  /** The computed and clamped limit price (always in [MIN_PRICE, MAX_PRICE]) */
+  limitPrice: number;
+  /** The raw computed price before clamping */
+  rawPrice: number;
+  /** Whether the price was clamped */
+  wasClamped: boolean;
+  /** Direction of clamping: "min", "max", or null */
+  clampDirection: "min" | "max" | null;
+}
+
+/**
+ * Compute a safe limit price for order submission.
+ *
+ * This utility function encapsulates the price clamping logic for convenience.
+ * It can be used by any order submission path that needs to compute a safe limit price.
+ *
+ * Policy:
+ * - For BUY: limitPrice = min(MAX_PRICE, bestAsk * (1 + slippageFrac))
+ * - For SELL: limitPrice = max(MIN_PRICE, bestBid * (1 - slippageFrac))
+ *
+ * The slippageFrac parameter MUST be a fraction (0.059 for 5.9%), NOT a percentage (5.9).
+ * If you have a percentage, convert it first: slippageFrac = slippagePct / 100
+ *
+ * CRITICAL: This function ALWAYS clamps the result to [MIN_PRICE, MAX_PRICE].
+ * This prevents "invalid price" errors from the CLOB API.
+ *
+ * @param input - Price computation input
+ * @returns Computed limit price result with diagnostics
+ */
+export function computeLimitPrice(
+  input: ComputeLimitPriceInput,
+): ComputeLimitPriceResult {
+  const { bestBid, bestAsk, side, slippageFrac, tokenIdPrefix } = input;
+
+  // Validate slippageFrac is a fraction, not a percentage
+  // If slippageFrac > 1, it's likely a percentage and should be divided by 100
+  if (slippageFrac > 1) {
+    console.warn(
+      `⚠️ [PRICE_SAFETY] slippageFrac=${slippageFrac} appears to be a percentage, not a fraction. ` +
+        `Expected value like 0.059 for 5.9%, not ${slippageFrac}. This may cause invalid prices!`,
+    );
+  }
+
+  // Compute raw price based on side
+  let rawPrice: number;
+
+  if (side === "BUY") {
+    // For BUY: We're willing to pay UP TO (bestAsk * (1 + slippageFrac))
+    rawPrice = bestAsk * (1 + slippageFrac);
+  } else {
+    // For SELL: We accept as low as (bestBid * (1 - slippageFrac))
+    rawPrice = bestBid * (1 - slippageFrac);
+  }
+
+  // Handle NaN or invalid prices
+  if (!Number.isFinite(rawPrice) || rawPrice <= 0) {
+    console.warn(
+      `⚠️ [PRICE_SAFETY] Invalid raw price: ${rawPrice} for ${side}. ` +
+        `bestBid=${bestBid}, bestAsk=${bestAsk}, slippageFrac=${slippageFrac}. Clamping to bounds.`,
+    );
+    rawPrice = side === "BUY" ? MAX_PRICE : MIN_PRICE;
+  }
+
+  // CRITICAL: Clamp to safe bounds [MIN_PRICE, MAX_PRICE]
+  let limitPrice = rawPrice;
+  let wasClamped = false;
+  let clampDirection: "min" | "max" | null = null;
+
+  if (rawPrice > MAX_PRICE) {
+    limitPrice = MAX_PRICE;
+    wasClamped = true;
+    clampDirection = "max";
+    console.warn(
+      `⚠️ [PRICE_SAFETY] Price clamped to MAX: ${rawPrice.toFixed(6)} → ${MAX_PRICE} ` +
+        `(${side}, bestAsk=${bestAsk}, slippageFrac=${slippageFrac})`,
+    );
+  } else if (rawPrice < MIN_PRICE) {
+    limitPrice = MIN_PRICE;
+    wasClamped = true;
+    clampDirection = "min";
+    console.warn(
+      `⚠️ [PRICE_SAFETY] Price clamped to MIN: ${rawPrice.toFixed(6)} → ${MIN_PRICE} ` +
+        `(${side}, bestBid=${bestBid}, slippageFrac=${slippageFrac})`,
+    );
+  }
+
+  // Log ORDER_PRICE_DEBUG for diagnostics (always, not just when clamped)
+  const mid = (bestBid + bestAsk) / 2;
+  const debugLog = {
+    event: "ORDER_PRICE_DEBUG",
+    tokenIdPrefix: tokenIdPrefix || "unknown",
+    side,
+    bestBid: bestBid.toFixed(4),
+    bestBidCents: (bestBid * 100).toFixed(2),
+    bestAsk: bestAsk.toFixed(4),
+    bestAskCents: (bestAsk * 100).toFixed(2),
+    mid: mid.toFixed(4),
+    slippagePct: (slippageFrac * 100).toFixed(2),
+    slippageFrac: slippageFrac.toFixed(4),
+    rawPrice: rawPrice.toFixed(6),
+    computedLimitPrice: limitPrice.toFixed(6),
+    wasClamped,
+    clampDirection,
+    units: "dollars",
+    timestamp: new Date().toISOString(),
+  };
+
+  console.log(JSON.stringify(debugLog));
+
+  return {
+    limitPrice,
+    rawPrice,
+    wasClamped,
+    clampDirection,
+  };
 }
