@@ -88,7 +88,8 @@ export interface SmartSellResult extends OrderResult {
 
 /**
  * Parse orderbook levels into a clean format
- * Filters out invalid entries (NaN, negative, zero values)
+ * Filters out invalid entries (NaN, Infinity, negative, zero values)
+ * Number.isFinite already handles NaN, Infinity, and -Infinity
  */
 function parseOrderBookLevels(levels: any[]): OrderBookLevel[] {
   if (!levels || !Array.isArray(levels)) return [];
@@ -99,12 +100,10 @@ function parseOrderBookLevels(levels: any[]): OrderBookLevel[] {
     }))
     .filter(
       (l) =>
-        !isNaN(l.price) &&
-        !isNaN(l.size) &&
-        l.price > 0 &&
-        l.size > 0 &&
         Number.isFinite(l.price) &&
-        Number.isFinite(l.size),
+        Number.isFinite(l.size) &&
+        l.price > 0 &&
+        l.size > 0,
     );
 }
 

@@ -272,8 +272,11 @@ export class EvTracker {
       };
     }
 
-    // Check profit factor
-    if (metrics.profitFactor < this.config.minProfitFactor) {
+    // Check profit factor - Infinity means all wins (no losses), which is always allowed
+    if (
+      Number.isFinite(metrics.profitFactor) &&
+      metrics.profitFactor < this.config.minProfitFactor
+    ) {
       return {
         allowed: false,
         reason: `Profit factor too low (${metrics.profitFactor.toFixed(2)} < ${this.config.minProfitFactor})`,
@@ -344,7 +347,12 @@ export class EvTracker {
         avgWinCents: parseFloat(metrics.avgWinCents.toFixed(2)),
         avgLossCents: parseFloat(metrics.avgLossCents.toFixed(2)),
         evCents: parseFloat(metrics.evCents.toFixed(2)),
-        profitFactor: parseFloat(metrics.profitFactor.toFixed(2)),
+        // Handle Infinity profit factor for JSON serialization
+        profitFactor: Number.isFinite(metrics.profitFactor)
+          ? parseFloat(metrics.profitFactor.toFixed(2))
+          : metrics.profitFactor > 0
+            ? 999999
+            : 0,
         totalPnlUsd: parseFloat(metrics.totalPnlUsd.toFixed(2)),
       },
       tradingAllowed: tradingStatus.allowed,
