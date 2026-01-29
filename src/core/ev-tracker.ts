@@ -217,7 +217,15 @@ export class EvTracker {
       this.config.churnCostCentsEstimate;
 
     // Profit factor = avg_win / avg_loss
-    const profitFactor = avgLossCents > 0 ? avgWinCents / avgLossCents : 0;
+    // Note: If no losses yet (avgLossCents = 0) but have wins, return Infinity
+    // This indicates all trades are wins which is a positive signal.
+    // If no wins and no losses, return 0 (no meaningful data).
+    const profitFactor =
+      avgLossCents > 0
+        ? avgWinCents / avgLossCents
+        : avgWinCents > 0
+          ? Infinity
+          : 0;
 
     // Total P&L
     const totalPnlUsd = this.trades.reduce((sum, t) => sum + t.pnlUsd, 0);
@@ -264,8 +272,11 @@ export class EvTracker {
       };
     }
 
-    // Check profit factor
-    if (metrics.profitFactor < this.config.minProfitFactor) {
+    // Check profit factor - Infinity means all wins (no losses), which is always allowed
+    if (
+      Number.isFinite(metrics.profitFactor) &&
+      metrics.profitFactor < this.config.minProfitFactor
+    ) {
       return {
         allowed: false,
         reason: `Profit factor too low (${metrics.profitFactor.toFixed(2)} < ${this.config.minProfitFactor})`,
@@ -336,7 +347,12 @@ export class EvTracker {
         avgWinCents: parseFloat(metrics.avgWinCents.toFixed(2)),
         avgLossCents: parseFloat(metrics.avgLossCents.toFixed(2)),
         evCents: parseFloat(metrics.evCents.toFixed(2)),
-        profitFactor: parseFloat(metrics.profitFactor.toFixed(2)),
+        // Handle Infinity profit factor for JSON serialization
+        profitFactor: Number.isFinite(metrics.profitFactor)
+          ? parseFloat(metrics.profitFactor.toFixed(2))
+          : metrics.profitFactor > 0
+            ? 999999
+            : 0,
         totalPnlUsd: parseFloat(metrics.totalPnlUsd.toFixed(2)),
       },
       tradingAllowed: tradingStatus.allowed,

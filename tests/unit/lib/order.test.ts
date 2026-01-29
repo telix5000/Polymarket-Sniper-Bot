@@ -1,6 +1,10 @@
 import assert from "node:assert";
 import { describe, it, beforeEach, afterEach, mock } from "node:test";
-import { postOrder, clearCooldowns } from "../../../src/lib/order";
+import {
+  postOrder,
+  clearCooldowns,
+  GtcOrderTracker,
+} from "../../../src/lib/order";
 import { ORDER } from "../../../src/lib/constants";
 
 // Mock ClobClient
@@ -183,6 +187,46 @@ describe("postOrder", () => {
 
       assert.strictEqual(result.success, false);
       assert.strictEqual(result.reason, "ZERO_PRICE");
+    });
+
+    it("rejects invalid price (NaN)", async () => {
+      const client = createMockClient({
+        orderBook: {
+          asks: [{ price: "invalid", size: "100" }],
+          bids: [{ price: "0.48", size: "100" }],
+        },
+      });
+
+      const result = await postOrder({
+        client: client as any,
+        tokenId: "test-token",
+        outcome: "YES",
+        side: "BUY",
+        sizeUsd: 10,
+      });
+
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.reason, "INVALID_PRICE");
+    });
+
+    it("rejects inverted orderbook (bid > ask)", async () => {
+      const client = createMockClient({
+        orderBook: {
+          asks: [{ price: "0.40", size: "100" }],
+          bids: [{ price: "0.50", size: "100" }], // Bid higher than ask = inverted
+        },
+      });
+
+      const result = await postOrder({
+        client: client as any,
+        tokenId: "test-token",
+        outcome: "YES",
+        side: "BUY",
+        sizeUsd: 10,
+      });
+
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.reason, "INVALID_ORDERBOOK");
     });
 
     it("rejects loser positions (price below global minimum for BUY)", async () => {
@@ -483,6 +527,141 @@ describe("postOrder", () => {
         sizeUsd: 10,
       });
       assert.strictEqual(result.success, true);
+    });
+  });
+});
+
+describe("GtcOrderTracker", () => {
+  describe("checkForCancellations - price drift", () => {
+    it("cancels BUY order when price moves UP (away from limit)", () => {
+      const tracker = new GtcOrderTracker({ maxPriceDriftPct: 3 });
+
+      // Track a BUY order at 65¢
+      tracker.track({
+        orderId: "test-buy-order",
+        tokenId: "test-token",
+        side: "BUY",
+        price: 0.65,
+        sizeUsd: 25,
+        shares: 38.46,
+        reason: "test",
+      });
+
+      // Price moved UP to 70¢ (7.7% drift) - bad for BUY, should cancel
+      const currentPrices = new Map([["test-token", 0.7]]);
+      const toCancel = tracker.checkForCancellations(currentPrices);
+
+      assert.strictEqual(toCancel.length, 1);
+      assert.strictEqual(toCancel[0].orderId, "test-buy-order");
+    });
+
+    it("does NOT cancel BUY order when price moves DOWN (toward limit)", () => {
+      const tracker = new GtcOrderTracker({ maxPriceDriftPct: 3 });
+
+      // Track a BUY order at 65¢
+      tracker.track({
+        orderId: "test-buy-order",
+        tokenId: "test-token",
+        side: "BUY",
+        price: 0.65,
+        sizeUsd: 25,
+        shares: 38.46,
+        reason: "test",
+      });
+
+      // Price moved DOWN to 60¢ (7.7% drift) - good for BUY, should NOT cancel
+      const currentPrices = new Map([["test-token", 0.6]]);
+      const toCancel = tracker.checkForCancellations(currentPrices);
+
+      assert.strictEqual(toCancel.length, 0);
+    });
+
+    it("cancels SELL order when price moves DOWN (away from limit)", () => {
+      const tracker = new GtcOrderTracker({ maxPriceDriftPct: 3 });
+
+      // Track a SELL order at 70¢
+      tracker.track({
+        orderId: "test-sell-order",
+        tokenId: "test-token",
+        side: "SELL",
+        price: 0.7,
+        sizeUsd: 25,
+        shares: 35.71,
+        reason: "test",
+      });
+
+      // Price moved DOWN to 65¢ (7.1% drift) - bad for SELL, should cancel
+      const currentPrices = new Map([["test-token", 0.65]]);
+      const toCancel = tracker.checkForCancellations(currentPrices);
+
+      assert.strictEqual(toCancel.length, 1);
+      assert.strictEqual(toCancel[0].orderId, "test-sell-order");
+    });
+
+    it("does NOT cancel SELL order when price moves UP (toward limit)", () => {
+      const tracker = new GtcOrderTracker({ maxPriceDriftPct: 3 });
+
+      // Track a SELL order at 70¢
+      tracker.track({
+        orderId: "test-sell-order",
+        tokenId: "test-token",
+        side: "SELL",
+        price: 0.7,
+        sizeUsd: 25,
+        shares: 35.71,
+        reason: "test",
+      });
+
+      // Price moved UP to 75¢ (7.1% drift) - good for SELL, should NOT cancel
+      const currentPrices = new Map([["test-token", 0.75]]);
+      const toCancel = tracker.checkForCancellations(currentPrices);
+
+      assert.strictEqual(toCancel.length, 0);
+    });
+
+    it("does NOT cancel orders within drift threshold", () => {
+      const tracker = new GtcOrderTracker({ maxPriceDriftPct: 5 });
+
+      // Track a BUY order at 65¢
+      tracker.track({
+        orderId: "test-buy-order",
+        tokenId: "test-token",
+        side: "BUY",
+        price: 0.65,
+        sizeUsd: 25,
+        shares: 38.46,
+        reason: "test",
+      });
+
+      // Price moved UP to 67¢ (3% drift) - below threshold
+      const currentPrices = new Map([["test-token", 0.67]]);
+      const toCancel = tracker.checkForCancellations(currentPrices);
+
+      assert.strictEqual(toCancel.length, 0);
+    });
+  });
+
+  describe("checkForCancellations - time expiry", () => {
+    it("cancels expired orders", () => {
+      const tracker = new GtcOrderTracker({ defaultExpiryMs: 1000 });
+
+      // Track an order that expires immediately
+      tracker.track({
+        orderId: "test-expired-order",
+        tokenId: "test-token",
+        side: "BUY",
+        price: 0.65,
+        sizeUsd: 25,
+        shares: 38.46,
+        reason: "test",
+        expiresAt: Date.now() - 1000, // Already expired
+      });
+
+      const currentPrices = new Map<string, number>();
+      const toCancel = tracker.checkForCancellations(currentPrices);
+
+      assert.strictEqual(toCancel.length, 1);
+      assert.strictEqual(toCancel[0].orderId, "test-expired-order");
     });
   });
 });
