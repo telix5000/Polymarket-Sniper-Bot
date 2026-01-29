@@ -466,11 +466,13 @@ export class DynamicEvEngine {
     const evCents = pWin * avgWinCents - pLoss * avgLossCents - churnCostCents;
 
     // Calculate break-even win rate: (avg_loss + churn) / (avg_win + avg_loss)
+    // This represents the minimum win rate needed to achieve EV = 0
     const denom = avgWinCents + avgLossCents;
     let breakEvenWinRate: number = EV_DEFAULTS.BREAK_EVEN_WIN_RATE;
     if (denom > 0 && Number.isFinite(denom)) {
       const candidate = (avgLossCents + churnCostCents) / denom;
-      if (Number.isFinite(candidate)) {
+      // Validate that break-even rate is a valid probability [0, 1]
+      if (Number.isFinite(candidate) && candidate >= 0 && candidate <= 1) {
         breakEvenWinRate = candidate;
       }
     }

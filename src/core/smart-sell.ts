@@ -88,6 +88,7 @@ export interface SmartSellResult extends OrderResult {
 
 /**
  * Parse orderbook levels into a clean format
+ * Filters out invalid entries (NaN, negative, zero values)
  */
 function parseOrderBookLevels(levels: any[]): OrderBookLevel[] {
   if (!levels || !Array.isArray(levels)) return [];
@@ -96,35 +97,70 @@ function parseOrderBookLevels(levels: any[]): OrderBookLevel[] {
       price: parseFloat(l.price),
       size: parseFloat(l.size),
     }))
-    .filter((l) => !isNaN(l.price) && !isNaN(l.size) && l.size > 0);
+    .filter(
+      (l) =>
+        !isNaN(l.price) &&
+        !isNaN(l.size) &&
+        l.price > 0 &&
+        l.size > 0 &&
+        Number.isFinite(l.price) &&
+        Number.isFinite(l.size),
+    );
 }
+
+/** Empty liquidity analysis result */
+const EMPTY_LIQUIDITY_ANALYSIS: LiquidityAnalysis = {
+  bestBid: 0,
+  liquidityAtSlippage: 0,
+  liquidityAtBestBid: 0,
+  expectedAvgPrice: 0,
+  expectedSlippagePct: 100,
+  canFill: false,
+  levelsNeeded: 0,
+  levels: [],
+};
 
 /**
  * Analyze orderbook liquidity to determine expected fill
  *
  * This is the KEY function that prevents bad sells - it calculates
  * exactly what price you'll get BEFORE you execute the order.
+ *
+ * Input validation:
+ * - Filters invalid price/size values
+ * - Returns empty analysis if no valid bids
+ * - Sorts bids by price descending (best prices first)
  */
 export function analyzeLiquidity(
   bids: OrderBookLevel[],
   sharesToSell: number,
   maxSlippagePct: number,
 ): LiquidityAnalysis {
-  if (!bids || bids.length === 0) {
-    return {
-      bestBid: 0,
-      liquidityAtSlippage: 0,
-      liquidityAtBestBid: 0,
-      expectedAvgPrice: 0,
-      expectedSlippagePct: 100,
-      canFill: false,
-      levelsNeeded: 0,
-      levels: [],
-    };
+  // Validate inputs
+  if (!bids || bids.length === 0 || sharesToSell <= 0) {
+    return EMPTY_LIQUIDITY_ANALYSIS;
+  }
+
+  // Filter to only valid bids (positive price and size, finite values)
+  const validBids = bids.filter(
+    (b) =>
+      b.price > 0 &&
+      b.size > 0 &&
+      Number.isFinite(b.price) &&
+      Number.isFinite(b.size),
+  );
+
+  if (validBids.length === 0) {
+    return EMPTY_LIQUIDITY_ANALYSIS;
   }
 
   // Sort bids by price descending (best prices first)
-  const sortedBids = [...bids].sort((a, b) => b.price - a.price);
+  // Use stable sort: at same price, prefer larger size
+  const sortedBids = [...validBids].sort((a, b) => {
+    if (b.price !== a.price) return b.price - a.price;
+    return b.size - a.size; // Same price: larger size first
+  });
+
   const bestBid = sortedBids[0].price;
   const minAcceptablePrice = bestBid * (1 - maxSlippagePct / 100);
 

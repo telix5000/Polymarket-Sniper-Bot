@@ -217,7 +217,15 @@ export class EvTracker {
       this.config.churnCostCentsEstimate;
 
     // Profit factor = avg_win / avg_loss
-    const profitFactor = avgLossCents > 0 ? avgWinCents / avgLossCents : 0;
+    // Note: If no losses yet (avgLossCents = 0) but have wins, return Infinity
+    // This indicates all trades are wins which is a positive signal.
+    // If no wins and no losses, return 0 (no meaningful data).
+    const profitFactor =
+      avgLossCents > 0
+        ? avgWinCents / avgLossCents
+        : avgWinCents > 0
+          ? Infinity
+          : 0;
 
     // Total P&L
     const totalPnlUsd = this.trades.reduce((sum, t) => sum + t.pnlUsd, 0);

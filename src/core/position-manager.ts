@@ -269,7 +269,12 @@ export class PositionManager {
         position.entryPriceCents - currentPriceCents;
     }
 
-    const shares = position.entrySizeUsd / (position.entryPriceCents / 100);
+    // Guard against division by zero when calculating shares
+    // An entryPriceCents of 0 would cause Infinity/NaN propagation
+    const shares =
+      position.entryPriceCents > 0
+        ? position.entrySizeUsd / (position.entryPriceCents / 100)
+        : 0;
     position.unrealizedPnlUsd = (position.unrealizedPnlCents / 100) * shares;
 
     // Check exit conditions (ANY triggers exit)
@@ -403,7 +408,11 @@ export class PositionManager {
       position.unrealizedPnlCents = position.entryPriceCents - exitPriceCents;
     }
 
-    const shares = position.entrySizeUsd / (position.entryPriceCents / 100);
+    // Guard against division by zero when calculating shares
+    const shares =
+      position.entryPriceCents > 0
+        ? position.entrySizeUsd / (position.entryPriceCents / 100)
+        : 0;
     position.unrealizedPnlUsd = (position.unrealizedPnlCents / 100) * shares;
     position.currentPriceCents = exitPriceCents;
 

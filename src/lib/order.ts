@@ -191,6 +191,30 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
 
     const bestPrice = parseFloat(levels[0].price);
 
+    // Validate price is a finite positive number
+    if (!Number.isFinite(bestPrice) || bestPrice <= 0) {
+      logger?.debug?.(
+        `Order rejected: INVALID_PRICE (${bestPrice} is not a valid price)`,
+      );
+      return { success: false, reason: "INVALID_PRICE" };
+    }
+
+    // Validate orderbook sanity - best ask should be >= best bid
+    if (orderBook.asks?.length && orderBook.bids?.length) {
+      const bestAsk = parseFloat(orderBook.asks[0].price);
+      const bestBid = parseFloat(orderBook.bids[0].price);
+      if (
+        Number.isFinite(bestAsk) &&
+        Number.isFinite(bestBid) &&
+        bestBid > bestAsk
+      ) {
+        logger?.error?.(
+          `Order rejected: INVALID_ORDERBOOK (bid ${bestBid} > ask ${bestAsk})`,
+        );
+        return { success: false, reason: "INVALID_ORDERBOOK" };
+      }
+    }
+
     // Price validation
     if (bestPrice <= ORDER.MIN_TRADEABLE_PRICE) {
       logger?.debug?.(
@@ -610,23 +634,27 @@ export class GtcOrderTracker {
       }
 
       // Check 2: Price drift - cancel if market moved AWAY from our order
-      // BUY order at 65¢: cancel if price went DOWN (now 60¢) - order won't fill, market moved away
-      // SELL order at 70¢: cancel if price went UP (now 75¢) - order won't fill, market moved away
+      // For limit orders, we want the market to move TOWARD our price to fill us.
       //
-      // Note: If price moves TOWARD our order, that's GOOD - it will fill at our target price
+      // BUY order at 65¢: We want price to go DOWN toward 65¢ to fill
+      //   - If price goes UP (now 70¢), market moved AWAY, cancel (won't fill)
+      // SELL order at 70¢: We want price to go UP toward 70¢ to fill
+      //   - If price goes DOWN (now 65¢), market moved AWAY, cancel (won't fill)
+      //
+      // CRITICAL: The logic checks if market moved unfavorably for our order filling
       const currentPrice = currentPrices.get(order.tokenId);
       if (currentPrice !== undefined) {
         const driftPct =
           Math.abs((currentPrice - order.price) / order.price) * 100;
 
         if (driftPct > this.maxPriceDriftPct) {
-          // For BUY orders: cancel if price went DOWN (market moved away, order won't fill)
-          // For SELL orders: cancel if price went UP (market moved away, order won't fill)
-          const priceWentDown = currentPrice < order.price;
+          // For BUY orders: cancel if price went UP (market moved away, won't fill)
+          // For SELL orders: cancel if price went DOWN (market moved away, won't fill)
           const priceWentUp = currentPrice > order.price;
+          const priceWentDown = currentPrice < order.price;
           const shouldCancel =
-            (order.side === "BUY" && priceWentDown) ||
-            (order.side === "SELL" && priceWentUp);
+            (order.side === "BUY" && priceWentUp) ||
+            (order.side === "SELL" && priceWentDown);
 
           if (shouldCancel) {
             console.log(
