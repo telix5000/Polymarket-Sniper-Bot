@@ -17,7 +17,7 @@ import type {
   ManagedPosition,
 } from "./decision-engine";
 
-import { getOppositeTokenId } from "../lib";
+import { getOppositeTokenId } from "../lib/market";
 import type { Position } from "../models";
 
 // ═══════════════════════════════════════════════════════════════════════════

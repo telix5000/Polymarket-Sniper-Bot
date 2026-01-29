@@ -8,16 +8,20 @@
  */
 
 import type { ClobClient } from "@polymarket/clob-client";
+import { getBalanceCache } from "../lib/balance";
+import { invalidatePositions } from "../lib/positions";
+import { getOppositeTokenId } from "../lib/market";
+import { reportError } from "../infra/github-reporter";
+import { getLatencyMonitor } from "../infra/latency-monitor";
+import { smartSell } from "./smart-sell";
+import type { Position } from "../models";
 import {
-  getBalanceCache,
-  invalidatePositions,
-  reportError,
-  smartSell,
-  getOppositeTokenId,
-  getLatencyMonitor,
-  type Position,
-} from "../lib";
-import { EvTracker, type TradeResult } from "./ev-tracker";
+  EvTracker,
+  type TradeResult,
+  calculatePnlCents,
+  calculatePnlUsd,
+  createTradeResult,
+} from "./ev-tracker";
 import {
   DecisionEngine,
   type EvMetrics,
@@ -79,7 +83,7 @@ export interface ExecutionEngineConfig {
 }
 
 /**
- * Interface for BiasAccumulator (stays in start.ts)
+ * Interface for BiasAccumulator (extracted to lib/bias-accumulator.ts)
  */
 export interface BiasAccumulatorInterface {
   getBias(tokenId: string): {
@@ -90,7 +94,7 @@ export interface BiasAccumulatorInterface {
 }
 
 /**
- * Interface for PositionManager (stays in start.ts)
+ * Interface for PositionManager (extracted to core/position-manager.ts)
  */
 export interface PositionManagerInterface {
   getOpenPositions(): ManagedPosition[];
@@ -135,54 +139,6 @@ export interface PositionManagerInterface {
     evMetrics: EvMetrics,
     biasDirection: BiasDirection,
   ): void;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Helper Functions
-// ═══════════════════════════════════════════════════════════════════════════
-
-function calculatePnlCents(
-  side: "LONG" | "SHORT",
-  entryPriceCents: number,
-  exitPriceCents: number,
-): number {
-  if (side === "LONG") {
-    return exitPriceCents - entryPriceCents;
-  } else {
-    return entryPriceCents - exitPriceCents;
-  }
-}
-
-function calculatePnlUsd(
-  pnlCents: number,
-  sizeUsd: number,
-  entryPriceCents: number,
-): number {
-  if (entryPriceCents === 0) return 0;
-  const shares = sizeUsd / (entryPriceCents / 100);
-  return (pnlCents / 100) * shares;
-}
-
-function createTradeResult(
-  tokenId: string,
-  side: "LONG" | "SHORT",
-  entryPriceCents: number,
-  exitPriceCents: number,
-  sizeUsd: number,
-): TradeResult {
-  const pnlCents = calculatePnlCents(side, entryPriceCents, exitPriceCents);
-  const pnlUsd = calculatePnlUsd(pnlCents, sizeUsd, entryPriceCents);
-  return {
-    tokenId,
-    side,
-    entryPriceCents,
-    exitPriceCents,
-    sizeUsd,
-    timestamp: Date.now(),
-    pnlCents,
-    pnlUsd,
-    isWin: pnlCents > 0,
-  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

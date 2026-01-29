@@ -532,10 +532,11 @@ export class BiasAccumulator {
 
   /**
    * Add trades and maintain window
-   * Deduplicates by txHash+tokenId+wallet to prevent counting the same trade twice
-   * (e.g., from both on-chain events and API polling)
+   * Deduplicates trades per token by (wallet, sizeUsd, timestamp window)
+   * to prevent counting the same whale trade twice when seen from multiple
+   * sources (e.g., from both on-chain events and API polling).
    *
-   * Also applies price-range filtering if WHALE_PRICE_MIN/MAX are configured
+   * Also applies price-range filtering if WHALE_PRICE_MIN/MAX are configured.
    */
   private addTrades(trades: LeaderboardTrade[]): void {
     const now = Date.now();
