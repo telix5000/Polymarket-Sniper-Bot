@@ -42,6 +42,28 @@ These must be set for the bot to function:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MAX_TRADE_USD` | `25` | Maximum trade size per position in USD |
+| `MIN_TRADE_USD` | `same as MAX_TRADE_USD` | Minimum trade size per position in USD |
+
+**How Position Sizing Works:**
+
+The bot calculates trade size as follows:
+1. Calculate 1% of your effective bankroll (balance minus reserve)
+2. Apply the minimum floor (`MIN_TRADE_USD`) - ensures trades are at least this size
+3. Apply the maximum cap (`MAX_TRADE_USD`) - limits risk per trade
+
+By default, `MIN_TRADE_USD` equals `MAX_TRADE_USD`, so the bot trades at your configured max amount.
+
+For example, with `MAX_TRADE_USD=5` (and no `MIN_TRADE_USD` set):
+- Default `MIN_TRADE_USD` = $5 (same as MAX_TRADE_USD)
+- With $165 balance and 25% reserve ($41), effective bankroll = $124
+- 1% of $124 = $1.24
+- Since $1.24 < $5 (minTradeUsd), trade size = $5 (up to effective bankroll)
+
+If you want smaller trades based on bankroll %, set `MIN_TRADE_USD` lower:
+```env
+MAX_TRADE_USD=25
+MIN_TRADE_USD=1   # Allows 1% sizing to work for small bankrolls
+```
 
 **Guidance:**
 - **Conservative**: $10-25 per trade
@@ -584,7 +606,7 @@ For fork PRs, issue creation may not be allowed due to security restrictions.
 
 | Category | Key Variables |
 |----------|--------------|
-| **Getting Started** | `PRIVATE_KEY`, `LIVE_TRADING`, `MAX_TRADE_USD` |
+| **Getting Started** | `PRIVATE_KEY`, `LIVE_TRADING`, `MAX_TRADE_USD`, `MIN_TRADE_USD` |
 | **Whale Tracking** | `WHALE_TRADE_USD`, `COPY_ANY_WHALE_BUY` |
 | **Market Scanner** | `SCAN_ACTIVE_MARKETS`, `SCAN_MIN_VOLUME_USD` |
 | **Reserves** | `DYNAMIC_RESERVES_ENABLED`, `MAX_RESERVE_FRACTION` |

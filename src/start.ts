@@ -274,11 +274,17 @@ function parseOptionalFloatWithDefault(
 // ChurnConfig interface imported from ./core
 
 function loadConfig(): ChurnConfig {
+  const maxTradeUsd = envNum("MAX_TRADE_USD", 25); // 💰 Your max bet size (default: $25)
+  // Default minTradeUsd to maxTradeUsd if not specified
+  // This ensures the bot trades at the max amount by default
+  const minTradeUsd = envNum("MIN_TRADE_USD", maxTradeUsd);
+  
   return {
     // ═══════════════════════════════════════════════════════════════════════
     // USER CONFIGURABLE - This is the ONLY thing you should change
     // ═══════════════════════════════════════════════════════════════════════
-    maxTradeUsd: envNum("MAX_TRADE_USD", 25), // 💰 Your bet size (default: $25)
+    maxTradeUsd, // 💰 Your max bet size (default: $25)
+    minTradeUsd, // 💰 Your min bet size (default: same as maxTradeUsd)
 
     // ═══════════════════════════════════════════════════════════════════════
     // FIXED BY THE MATH - Do NOT change these values
@@ -502,6 +508,16 @@ function validateConfig(config: ChurnConfig): ValidationError[] {
     errors.push({ field: "MAX_TRADE_USD", message: "Must be positive" });
   }
 
+  // User-configurable: min bet size must be positive
+  if (config.minTradeUsd <= 0) {
+    errors.push({ field: "MIN_TRADE_USD", message: "Must be positive" });
+  }
+
+  // Min trade should not exceed max trade
+  if (config.minTradeUsd > config.maxTradeUsd) {
+    errors.push({ field: "MIN_TRADE_USD", message: "Must not exceed MAX_TRADE_USD" });
+  }
+
   return errors;
 }
 
@@ -511,7 +527,7 @@ function logConfig(config: ChurnConfig, log: (msg: string) => void): void {
   log("═".repeat(50));
   log("");
   log("💰 YOUR SETTINGS:");
-  log(`   Bet size: $${config.maxTradeUsd} per trade`);
+  log(`   Bet size: $${config.minTradeUsd}-$${config.maxTradeUsd} per trade`);
   log(
     `   Live trading: ${config.liveTradingEnabled ? "✅ ENABLED" : "⚠️ SIMULATION"}`,
   );
@@ -599,7 +615,13 @@ function calculateTradeSize(
   config: ChurnConfig,
 ): number {
   const fractionalSize = effectiveBankroll * config.tradeFraction;
-  return Math.min(fractionalSize, config.maxTradeUsd);
+  // Apply both min and max bounds:
+  // - First ensure we don't go below minTradeUsd (for small bankrolls)
+  // - Then cap at maxTradeUsd (for large bankrolls)
+  // If effectiveBankroll is too small to meet minTradeUsd, use fractionalSize
+  // to avoid over-leveraging (can't trade more than we can afford)
+  const withMinimum = Math.max(fractionalSize, Math.min(config.minTradeUsd, effectiveBankroll));
+  return Math.min(withMinimum, config.maxTradeUsd);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
