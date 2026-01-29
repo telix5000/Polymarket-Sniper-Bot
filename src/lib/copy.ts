@@ -53,22 +53,21 @@ function generateTradeKey(trade: {
   const txHash = trade.transactionHash || trade.id || "";
   const conditionId = trade.conditionId || "";
 
-  // Normalize outcome to outcomeIndex
+  // Normalize outcome to outcomeIndex for the key
   // IMPORTANT: Supports ANY outcome label, not just YES/NO
   let outcomeIndex: number;
   if (typeof trade.outcomeIndex === "number") {
     outcomeIndex = trade.outcomeIndex;
   } else if (trade.outcome) {
     const upperOutcome = trade.outcome.toUpperCase();
-    // Map YES/NO to indices for backward compat, but accept any outcome
+    // Map YES/NO to indices for backward compat
     if (upperOutcome === "NO") {
       outcomeIndex = 1;
     } else if (upperOutcome === "YES") {
       outcomeIndex = 0;
     } else {
-      // Non-YES/NO outcome (e.g., team names) - use hash for unique dedup
-      // This ensures different outcomes like "Lakers" vs "Celtics" don't collide
-      outcomeIndex = hashString(trade.outcome) % 1000000;
+      // Non-YES/NO outcome - use sentinel since we include outcome string in key
+      outcomeIndex = -2;
     }
   } else {
     // Both outcomeIndex and outcome missing - use sentinel to indicate incomplete data
@@ -76,26 +75,15 @@ function generateTradeKey(trade: {
   }
 
   const side = (trade.side || "BUY").toUpperCase();
+  const outcome = trade.outcome || "";
 
   // Use sentinel value (-1) for missing/invalid size to avoid incorrect deduplication
   const parsedSize = Number(trade.size);
   const size = Number.isFinite(parsedSize) ? parsedSize : -1;
 
-  // Use higher precision (6 decimals) to avoid collisions with similar-sized trades
-  return `${txHash}:${conditionId}:${outcomeIndex}:${side}:${size.toFixed(6)}`;
-}
-
-/**
- * Simple string hash function for non-YES/NO outcomes
- */
-function hashString(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return Math.abs(hash);
+  // Include outcome string directly in the key to prevent collisions between different outcomes
+  // e.g., "Lakers" vs "Celtics" will have different keys even if outcomeIndex is -2
+  return `${txHash}:${conditionId}:${outcomeIndex}:${outcome}:${side}:${size.toFixed(6)}`;
 }
 
 // Deduplication set with composite keys

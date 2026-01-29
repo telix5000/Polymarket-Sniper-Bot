@@ -23,34 +23,11 @@
 
 import { BaseStore, type BaseStoreMetrics } from "./base-store";
 import type { HealthStatus } from "./types";
+// Import types from lib/market.ts to ensure consistency
+import type { MarketTokenPair, OutcomeToken } from "../../lib/market";
 
-// ============================================================================
-// Types
-// ============================================================================
-
-/** Token info for a single outcome */
-export interface OutcomeToken {
-  tokenId: string;
-  outcomeIndex: 1 | 2; // 1-based index
-  outcomeLabel: string;
-}
-
-/** Market token pair data - supports ANY 2-outcome market */
-export interface MarketTokenPair {
-  /** @deprecated Use tokens[0].tokenId */
-  yesTokenId: string;
-  /** @deprecated Use tokens[1].tokenId */
-  noTokenId: string;
-  /** All tokens with their outcomeIndex and label */
-  tokens?: OutcomeToken[];
-  /** Outcome labels in order */
-  outcomeLabels?: string[];
-  conditionId: string;
-  marketId: string;
-  question?: string;
-  endDate?: string;
-  active?: boolean;
-}
+// Re-export for consumers of this module
+export type { MarketTokenPair, OutcomeToken };
 
 /** Extended metrics for MarketCache */
 export interface MarketCacheMetrics extends BaseStoreMetrics {

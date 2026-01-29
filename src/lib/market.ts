@@ -101,17 +101,11 @@ function isCacheValid(key: string): boolean {
 function cacheMarket(market: MarketTokenPair): void {
   const now = Date.now();
 
-  // Cache by both token IDs
+  // Cache by all token IDs from tokens array
   for (const token of market.tokens) {
     tokenToMarketCache.set(token.tokenId, market);
     cacheTimestamps.set(token.tokenId, now);
   }
-
-  // Also cache by legacy yesTokenId/noTokenId for backward compat
-  tokenToMarketCache.set(market.yesTokenId, market);
-  cacheTimestamps.set(market.yesTokenId, now);
-  tokenToMarketCache.set(market.noTokenId, market);
-  cacheTimestamps.set(market.noTokenId, now);
 
   // Cache by condition ID
   conditionToMarketCache.set(market.conditionId, market);
