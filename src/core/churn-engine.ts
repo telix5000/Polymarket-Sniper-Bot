@@ -2190,20 +2190,32 @@ export class ChurnEngine {
         return null;
       }
 
-      // Use normalized prices (sorted correctly)
+      // Use normalized prices (sorted correctly) and get sorted levels for depth calc
       const { bestBid, bestAsk } = getBestPricesFromRaw(orderbook);
       if (bestBid === null || bestAsk === null) {
         return null;
       }
 
-      // Sum up depth (use normalized ordering for top 5 levels)
+      // For depth calculation, use sorted levels (best prices first)
+      // Note: We only need approximate depth, so we can use the sorted levels
+      // Parse and sort bids (descending) and asks (ascending) for proper top-5 depth
+      const sortedBids = orderbook.bids
+        .map((l: any) => ({ price: parseFloat(l.price), size: parseFloat(l.size) }))
+        .filter((l: any) => !isNaN(l.price) && !isNaN(l.size) && l.size > 0)
+        .sort((a: any, b: any) => b.price - a.price);
+      const sortedAsks = orderbook.asks
+        .map((l: any) => ({ price: parseFloat(l.price), size: parseFloat(l.size) }))
+        .filter((l: any) => !isNaN(l.price) && !isNaN(l.size) && l.size > 0)
+        .sort((a: any, b: any) => a.price - b.price);
+
+      // Sum up depth from top 5 levels (now properly sorted)
       let bidDepth = 0,
         askDepth = 0;
-      for (const level of orderbook.bids.slice(0, 5)) {
-        bidDepth += parseFloat(level.size) * parseFloat(level.price);
+      for (const level of sortedBids.slice(0, 5)) {
+        bidDepth += level.size * level.price;
       }
-      for (const level of orderbook.asks.slice(0, 5)) {
-        askDepth += parseFloat(level.size) * parseFloat(level.price);
+      for (const level of sortedAsks.slice(0, 5)) {
+        askDepth += level.size * level.price;
       }
 
       return {

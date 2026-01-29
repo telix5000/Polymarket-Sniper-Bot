@@ -174,3 +174,166 @@ export function logOrderbookDiagnostic(
       `bids[${bids.length}]: [${bidPreview}] | asks[${asks.length}]: [${askPreview}]`,
   );
 }
+
+// ============================================================================
+// Fast-Path Price Check (API-level filtering)
+// ============================================================================
+
+/**
+ * Quick price check result from /price endpoint
+ */
+export interface QuickPriceCheck {
+  bestBid: number | null;
+  bestAsk: number | null;
+  bestBidCents: number;
+  bestAskCents: number;
+  spreadCents: number;
+  midCents: number;
+  isDustBook: boolean;
+  isValidSpread: boolean;
+  latencyMs: number;
+}
+
+/**
+ * Fast-path price check using lightweight /price endpoint
+ * 
+ * Use this BEFORE fetching full orderbook to quickly reject markets that:
+ * - Have dust book prices (bid <= 2¢, ask >= 98¢)
+ * - Have spreads too wide for trading
+ * - Are outside our price range
+ * 
+ * This saves API resources by avoiding full orderbook fetches for bad markets.
+ * 
+ * @param clobBaseUrl - Base URL for CLOB API (e.g., "https://clob.polymarket.com")
+ * @param tokenId - The token ID to check
+ * @param maxSpreadCents - Maximum acceptable spread in cents (default: 50)
+ * @returns Quick price check result
+ */
+export async function quickPriceCheck(
+  clobBaseUrl: string,
+  tokenId: string,
+  maxSpreadCents: number = 50,
+): Promise<QuickPriceCheck> {
+  const startTime = Date.now();
+  
+  try {
+    // Fetch best bid and ask prices in parallel (very lightweight calls)
+    const [bidResponse, askResponse] = await Promise.all([
+      fetch(`${clobBaseUrl}/price?token_id=${tokenId}&side=sell`),
+      fetch(`${clobBaseUrl}/price?token_id=${tokenId}&side=buy`),
+    ]);
+
+    const latencyMs = Date.now() - startTime;
+
+    if (!bidResponse.ok || !askResponse.ok) {
+      return {
+        bestBid: null,
+        bestAsk: null,
+        bestBidCents: 0,
+        bestAskCents: 0,
+        spreadCents: 0,
+        midCents: 0,
+        isDustBook: true,
+        isValidSpread: false,
+        latencyMs,
+      };
+    }
+
+    const bidData = await bidResponse.json();
+    const askData = await askResponse.json();
+
+    const bestBid = parseFloat(bidData.price);
+    const bestAsk = parseFloat(askData.price);
+
+    if (isNaN(bestBid) || isNaN(bestAsk)) {
+      return {
+        bestBid: null,
+        bestAsk: null,
+        bestBidCents: 0,
+        bestAskCents: 0,
+        spreadCents: 0,
+        midCents: 0,
+        isDustBook: true,
+        isValidSpread: false,
+        latencyMs,
+      };
+    }
+
+    const bestBidCents = bestBid * 100;
+    const bestAskCents = bestAsk * 100;
+    const spreadCents = bestAskCents - bestBidCents;
+    const midCents = (bestBidCents + bestAskCents) / 2;
+
+    // Check for dust book (bid <= 2¢ AND ask >= 98¢)
+    const isDustBook = bestBidCents <= 2 && bestAskCents >= 98;
+
+    // Check for valid spread
+    const isValidSpread = spreadCents <= maxSpreadCents && spreadCents >= 0;
+
+    return {
+      bestBid,
+      bestAsk,
+      bestBidCents,
+      bestAskCents,
+      spreadCents,
+      midCents,
+      isDustBook,
+      isValidSpread,
+      latencyMs,
+    };
+  } catch (error) {
+    return {
+      bestBid: null,
+      bestAsk: null,
+      bestBidCents: 0,
+      bestAskCents: 0,
+      spreadCents: 0,
+      midCents: 0,
+      isDustBook: true,
+      isValidSpread: false,
+      latencyMs: Date.now() - startTime,
+    };
+  }
+}
+
+/**
+ * Check if a market passes basic price filters using fast-path
+ * 
+ * @param clobBaseUrl - Base URL for CLOB API
+ * @param tokenId - Token ID to check
+ * @param minPriceCents - Minimum acceptable price (default: 5¢)
+ * @param maxPriceCents - Maximum acceptable price (default: 95¢)
+ * @param maxSpreadCents - Maximum acceptable spread (default: 50¢)
+ * @returns true if market passes filters, false otherwise
+ */
+export async function quickFilterCheck(
+  clobBaseUrl: string,
+  tokenId: string,
+  minPriceCents: number = 5,
+  maxPriceCents: number = 95,
+  maxSpreadCents: number = 50,
+): Promise<{ passes: boolean; reason?: string; check: QuickPriceCheck }> {
+  const check = await quickPriceCheck(clobBaseUrl, tokenId, maxSpreadCents);
+
+  if (check.bestBid === null || check.bestAsk === null) {
+    return { passes: false, reason: "NO_PRICE_DATA", check };
+  }
+
+  if (check.isDustBook) {
+    return { passes: false, reason: "DUST_BOOK", check };
+  }
+
+  if (!check.isValidSpread) {
+    return { passes: false, reason: `WIDE_SPREAD_${check.spreadCents.toFixed(0)}c`, check };
+  }
+
+  if (check.bestAskCents < minPriceCents) {
+    return { passes: false, reason: `PRICE_TOO_LOW_${check.bestAskCents.toFixed(0)}c`, check };
+  }
+
+  if (check.bestAskCents > maxPriceCents) {
+    return { passes: false, reason: `PRICE_TOO_HIGH_${check.bestAskCents.toFixed(0)}c`, check };
+  }
+
+  return { passes: true, check };
+}

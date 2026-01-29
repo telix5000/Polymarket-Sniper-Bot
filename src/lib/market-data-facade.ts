@@ -25,6 +25,8 @@ import { isDeadBook } from "./price-safety";
 import {
   sortBidsDescending,
   sortAsksAscending,
+  quickPriceCheck,
+  type QuickPriceCheck,
 } from "./orderbook-utils";
 
 // ============================================================================
@@ -231,6 +233,15 @@ export class MarketDataFacade {
   private totalResponseTime = 0;
   private totalCalls = 0;
 
+  // Fast-path metrics (API-level filtering)
+  private fastPathChecks = 0;
+  private fastPathRejects = 0;
+  private fastPathPasses = 0;
+  private fastPathErrors = 0;
+  private fastPathTotalLatencyMs = 0;
+  private fastPathSavedFullFetches = 0;
+  private fastPathRejectReasons = new Map<string, number>();
+
   constructor(
     client: ClobClient,
     options?: {
@@ -431,6 +442,169 @@ export class MarketDataFacade {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // Public API - Fast-Path Price Check (API-level filtering)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Fast-path price check using lightweight /price endpoint
+   * 
+   * Use this BEFORE fetching full orderbook to quickly reject markets that:
+   * - Have dust book prices (bid <= 2¢, ask >= 98¢)
+   * - Have spreads too wide for trading
+   * - Are outside our price range
+   * 
+   * This saves API resources by avoiding full orderbook fetches for bad markets.
+   * 
+   * @param tokenId - The token ID to check
+   * @param maxSpreadCents - Maximum acceptable spread in cents (default: 50)
+   * @returns Quick price check result with pass/fail and reason
+   */
+  async fastPathCheck(
+    tokenId: string,
+    maxSpreadCents: number = 50,
+  ): Promise<{
+    passes: boolean;
+    reason?: string;
+    bestBidCents: number;
+    bestAskCents: number;
+    spreadCents: number;
+    latencyMs: number;
+  }> {
+    this.fastPathChecks++;
+    const startTime = Date.now();
+
+    try {
+      const check = await quickPriceCheck(
+        POLYMARKET_API.CLOB,
+        tokenId,
+        maxSpreadCents,
+      );
+
+      this.fastPathTotalLatencyMs += check.latencyMs;
+
+      if (check.bestBid === null || check.bestAsk === null) {
+        this.fastPathErrors++;
+        console.log(
+          `⚡ [FAST_PATH] ${tokenId.slice(0, 12)}... | ❌ NO_PRICE_DATA | latency=${check.latencyMs}ms`,
+        );
+        return {
+          passes: false,
+          reason: "NO_PRICE_DATA",
+          bestBidCents: 0,
+          bestAskCents: 0,
+          spreadCents: 0,
+          latencyMs: check.latencyMs,
+        };
+      }
+
+      // Check for rejection conditions
+      if (check.isDustBook) {
+        this.fastPathRejects++;
+        this.fastPathSavedFullFetches++;
+        this.incrementRejectReason("DUST_BOOK");
+        console.log(
+          `⚡ [FAST_PATH] ${tokenId.slice(0, 12)}... | ❌ DUST_BOOK | ` +
+            `bid=${check.bestBidCents.toFixed(1)}¢ ask=${check.bestAskCents.toFixed(1)}¢ | ` +
+            `latency=${check.latencyMs}ms | SAVED full book fetch`,
+        );
+        return {
+          passes: false,
+          reason: "DUST_BOOK",
+          bestBidCents: check.bestBidCents,
+          bestAskCents: check.bestAskCents,
+          spreadCents: check.spreadCents,
+          latencyMs: check.latencyMs,
+        };
+      }
+
+      if (!check.isValidSpread) {
+        this.fastPathRejects++;
+        this.fastPathSavedFullFetches++;
+        const reason = `WIDE_SPREAD_${check.spreadCents.toFixed(0)}c`;
+        this.incrementRejectReason(reason);
+        console.log(
+          `⚡ [FAST_PATH] ${tokenId.slice(0, 12)}... | ❌ ${reason} | ` +
+            `bid=${check.bestBidCents.toFixed(1)}¢ ask=${check.bestAskCents.toFixed(1)}¢ spread=${check.spreadCents.toFixed(1)}¢ | ` +
+            `latency=${check.latencyMs}ms | SAVED full book fetch`,
+        );
+        return {
+          passes: false,
+          reason,
+          bestBidCents: check.bestBidCents,
+          bestAskCents: check.bestAskCents,
+          spreadCents: check.spreadCents,
+          latencyMs: check.latencyMs,
+        };
+      }
+
+      // Passed fast-path checks
+      this.fastPathPasses++;
+      console.log(
+        `⚡ [FAST_PATH] ${tokenId.slice(0, 12)}... | ✅ PASS | ` +
+          `bid=${check.bestBidCents.toFixed(1)}¢ ask=${check.bestAskCents.toFixed(1)}¢ spread=${check.spreadCents.toFixed(1)}¢ | ` +
+          `latency=${check.latencyMs}ms | proceeding to full book fetch`,
+      );
+
+      return {
+        passes: true,
+        bestBidCents: check.bestBidCents,
+        bestAskCents: check.bestAskCents,
+        spreadCents: check.spreadCents,
+        latencyMs: check.latencyMs,
+      };
+    } catch (error) {
+      this.fastPathErrors++;
+      const latencyMs = Date.now() - startTime;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.log(
+        `⚡ [FAST_PATH] ${tokenId.slice(0, 12)}... | ❌ ERROR: ${errorMsg.slice(0, 50)} | latency=${latencyMs}ms`,
+      );
+      return {
+        passes: false,
+        reason: `ERROR: ${errorMsg.slice(0, 30)}`,
+        bestBidCents: 0,
+        bestAskCents: 0,
+        spreadCents: 0,
+        latencyMs,
+      };
+    }
+  }
+
+  /**
+   * Get orderbook state with optional fast-path pre-check
+   * 
+   * If useFastPath is true, will first check /price endpoint to reject bad markets
+   * before fetching the full orderbook. This saves API resources.
+   */
+  async getOrderbookStateWithFastPath(
+    tokenId: string,
+    options?: {
+      useFastPath?: boolean;
+      maxSpreadCents?: number;
+    },
+  ): Promise<OrderbookState | null> {
+    const useFastPath = options?.useFastPath ?? true;
+    const maxSpreadCents = options?.maxSpreadCents ?? 50;
+
+    // Fast-path check (optional but recommended)
+    if (useFastPath) {
+      const fastCheck = await this.fastPathCheck(tokenId, maxSpreadCents);
+      if (!fastCheck.passes) {
+        // Return null - market rejected at API level
+        return null;
+      }
+    }
+
+    // Passed fast-path, fetch full orderbook
+    return this.getOrderbookState(tokenId);
+  }
+
+  private incrementRejectReason(reason: string): void {
+    const current = this.fastPathRejectReasons.get(reason) ?? 0;
+    this.fastPathRejectReasons.set(reason, current + 1);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // Public API - Metrics
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -445,6 +619,38 @@ export class MarketDataFacade {
       mode: this.getMode(),
       avgResponseTimeMs:
         this.totalCalls > 0 ? this.totalResponseTime / this.totalCalls : 0,
+    };
+  }
+
+  /**
+   * Get fast-path metrics for monitoring effectiveness
+   */
+  getFastPathMetrics(): {
+    totalChecks: number;
+    rejects: number;
+    passes: number;
+    errors: number;
+    savedFetches: number;
+    rejectRate: number;
+    avgLatencyMs: number;
+    rejectReasons: Record<string, number>;
+  } {
+    const rejectRate = this.fastPathChecks > 0
+      ? (this.fastPathRejects / this.fastPathChecks) * 100
+      : 0;
+    const avgLatencyMs = this.fastPathChecks > 0
+      ? this.fastPathTotalLatencyMs / this.fastPathChecks
+      : 0;
+
+    return {
+      totalChecks: this.fastPathChecks,
+      rejects: this.fastPathRejects,
+      passes: this.fastPathPasses,
+      errors: this.fastPathErrors,
+      savedFetches: this.fastPathSavedFullFetches,
+      rejectRate,
+      avgLatencyMs,
+      rejectReasons: Object.fromEntries(this.fastPathRejectReasons),
     };
   }
 
@@ -465,6 +671,37 @@ export class MarketDataFacade {
         `Rate limited: ${m.rateLimitHits} | ` +
         `Avg latency: ${m.avgResponseTimeMs.toFixed(1)}ms`,
     );
+  }
+
+  /**
+   * Log fast-path metrics for debugging API-level filtering effectiveness
+   */
+  logFastPathMetrics(prefix: string = "[FastPath]"): void {
+    const fp = this.getFastPathMetrics();
+
+    if (fp.totalChecks === 0) {
+      console.log(`${prefix} No fast-path checks performed yet`);
+      return;
+    }
+
+    console.log(
+      `${prefix} ⚡ Fast-Path Stats:\n` +
+        `  Total checks: ${fp.totalChecks}\n` +
+        `  ✅ Passed: ${fp.passes} (${((fp.passes / fp.totalChecks) * 100).toFixed(1)}%)\n` +
+        `  ❌ Rejected: ${fp.rejects} (${fp.rejectRate.toFixed(1)}%)\n` +
+        `  ⚠️ Errors: ${fp.errors}\n` +
+        `  💰 Saved full fetches: ${fp.savedFetches}\n` +
+        `  ⏱️ Avg latency: ${fp.avgLatencyMs.toFixed(1)}ms`,
+    );
+
+    // Log reject reasons breakdown
+    if (Object.keys(fp.rejectReasons).length > 0) {
+      console.log(`${prefix} Reject reasons:`);
+      for (const [reason, count] of Object.entries(fp.rejectReasons)) {
+        const pct = ((count / fp.rejects) * 100).toFixed(1);
+        console.log(`    ${reason}: ${count} (${pct}%)`);
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

@@ -419,6 +419,20 @@ export class BookResolver {
     const bestAskCents = bestAsk * 100;
     const spreadCents = bestAskCents - bestBidCents;
 
+    // Check for crossed book (bid > ask) - indicates invalid/corrupted data
+    if (bestBidCents > bestAskCents) {
+      return {
+        healthy: false,
+        status: "PARSE_ERROR",
+        reason: `Crossed book (bid ${bestBidCents.toFixed(1)}¢ > ask ${bestAskCents.toFixed(1)}¢) - invalid orderbook state`,
+        bestBidCents,
+        bestAskCents,
+        spreadCents,
+        bidsLen: snapshot.bids.length,
+        asksLen: snapshot.asks.length,
+      };
+    }
+
     // Check for empty book (strictest - 1¢/99¢)
     if (
       bestBidCents <= BOOK_THRESHOLDS.EMPTY_BID_CENTS &&
