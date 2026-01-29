@@ -452,7 +452,7 @@ describe("Price Safety Module", () => {
       it("should compute correct BUY price with 5.9% slippage for bestAsk=0.60", () => {
         const result = computeLimitPrice({
           bestBid: 0.59,
-          bestAsk: 0.60,
+          bestAsk: 0.6,
           side: "BUY",
           slippageFrac: 0.059, // 5.9%
         });
@@ -514,8 +514,8 @@ describe("Price Safety Module", () => {
         const testCases = [
           { bestAsk: 0.99, slippage: 0.01 }, // Edge case
           { bestAsk: 0.98, slippage: 0.05 },
-          { bestAsk: 0.95, slippage: 0.10 },
-          { bestAsk: 0.90, slippage: 0.15 },
+          { bestAsk: 0.95, slippage: 0.1 },
+          { bestAsk: 0.9, slippage: 0.15 },
         ];
 
         for (const tc of testCases) {
@@ -538,7 +538,7 @@ describe("Price Safety Module", () => {
       it("should compute correct SELL price with 5.9% slippage for bestBid=0.59", () => {
         const result = computeLimitPrice({
           bestBid: 0.59,
-          bestAsk: 0.60,
+          bestAsk: 0.6,
           side: "SELL",
           slippageFrac: 0.059, // 5.9%
         });
@@ -560,7 +560,7 @@ describe("Price Safety Module", () => {
           bestBid: 0.02,
           bestAsk: 0.05,
           side: "SELL",
-          slippageFrac: 0.60, // 60% → 0.02 * 0.40 = 0.008 < 0.01
+          slippageFrac: 0.6, // 60% → 0.02 * 0.40 = 0.008 < 0.01
         });
 
         assert.strictEqual(
@@ -579,9 +579,9 @@ describe("Price Safety Module", () => {
       it("should never go below 0.01 for any valid bestBid + slippage", () => {
         const testCases = [
           { bestBid: 0.01, slippage: 0.01 }, // Edge case
-          { bestBid: 0.02, slippage: 0.50 },
-          { bestBid: 0.05, slippage: 0.80 },
-          { bestBid: 0.10, slippage: 0.95 },
+          { bestBid: 0.02, slippage: 0.5 },
+          { bestBid: 0.05, slippage: 0.8 },
+          { bestBid: 0.1, slippage: 0.95 },
         ];
 
         for (const tc of testCases) {
@@ -604,7 +604,7 @@ describe("Price Safety Module", () => {
       it("should handle slippageFrac that looks like percentage (warn but still work)", () => {
         // If someone passes 5.9 instead of 0.059, it should still clamp
         const result = computeLimitPrice({
-          bestBid: 0.50,
+          bestBid: 0.5,
           bestAsk: 0.51,
           side: "BUY",
           slippageFrac: 5.9, // WRONG - this is percentage, not fraction
@@ -617,7 +617,7 @@ describe("Price Safety Module", () => {
 
       it("should handle zero slippage (use best price directly)", () => {
         const resultBuy = computeLimitPrice({
-          bestBid: 0.50,
+          bestBid: 0.5,
           bestAsk: 0.51,
           side: "BUY",
           slippageFrac: 0,
@@ -626,12 +626,12 @@ describe("Price Safety Module", () => {
         assert.strictEqual(resultBuy.wasClamped, false);
 
         const resultSell = computeLimitPrice({
-          bestBid: 0.50,
+          bestBid: 0.5,
           bestAsk: 0.51,
           side: "SELL",
           slippageFrac: 0,
         });
-        assert.strictEqual(resultSell.limitPrice, 0.50);
+        assert.strictEqual(resultSell.limitPrice, 0.5);
         assert.strictEqual(resultSell.wasClamped, false);
       });
     });
@@ -655,14 +655,14 @@ describe("Price Safety Module", () => {
       it("should round UP (ceiling) for BUY orders", () => {
         assert.strictEqual(roundToTick(0.631, 0.01, "BUY"), 0.64); // ceiling
         assert.strictEqual(roundToTick(0.639, 0.01, "BUY"), 0.64); // ceiling
-        assert.strictEqual(roundToTick(0.640, 0.01, "BUY"), 0.64); // exact
+        assert.strictEqual(roundToTick(0.64, 0.01, "BUY"), 0.64); // exact
         assert.strictEqual(roundToTick(0.641, 0.01, "BUY"), 0.65); // ceiling
       });
 
       it("should round DOWN (floor) for SELL orders", () => {
         assert.strictEqual(roundToTick(0.631, 0.01, "SELL"), 0.63); // floor
         assert.strictEqual(roundToTick(0.639, 0.01, "SELL"), 0.63); // floor
-        assert.strictEqual(roundToTick(0.640, 0.01, "SELL"), 0.64); // exact
+        assert.strictEqual(roundToTick(0.64, 0.01, "SELL"), 0.64); // exact
         assert.strictEqual(roundToTick(0.649, 0.01, "SELL"), 0.64); // floor
       });
 
@@ -675,7 +675,7 @@ describe("Price Safety Module", () => {
 
     describe("isBookHealthyForExecution", () => {
       it("should return healthy for normal book", () => {
-        const result = isBookHealthyForExecution(0.59, 0.60);
+        const result = isBookHealthyForExecution(0.59, 0.6);
         assert.strictEqual(result.healthy, true);
         assert.strictEqual(result.reason, undefined);
       });
@@ -694,13 +694,16 @@ describe("Price Safety Module", () => {
 
       it("should reject invalid book", () => {
         assert.strictEqual(isBookHealthyForExecution(null, 0.5).healthy, false);
-        assert.strictEqual(isBookHealthyForExecution(0.5, undefined).healthy, false);
+        assert.strictEqual(
+          isBookHealthyForExecution(0.5, undefined).healthy,
+          false,
+        );
         assert.strictEqual(isBookHealthyForExecution(0, 0.5).healthy, false);
         assert.strictEqual(isBookHealthyForExecution(NaN, 0.5).healthy, false);
       });
 
       it("should reject crossed book (bid > ask)", () => {
-        const result = isBookHealthyForExecution(0.60, 0.55); // bid > ask
+        const result = isBookHealthyForExecution(0.6, 0.55); // bid > ask
         assert.strictEqual(result.healthy, false);
         assert.strictEqual(result.reason, "CROSSED_BOOK");
       });
@@ -710,19 +713,19 @@ describe("Price Safety Module", () => {
       it("should use bestAsk as base price for BUY", () => {
         const result = computeExecutionLimitPrice({
           bestBid: 0.59,
-          bestAsk: 0.60,
+          bestAsk: 0.6,
           side: "BUY",
           slippageFrac: 0,
         });
         assert.strictEqual(result.success, true);
-        assert.strictEqual(result.basePrice, 0.60);
-        assert.strictEqual(result.limitPrice, 0.60);
+        assert.strictEqual(result.basePrice, 0.6);
+        assert.strictEqual(result.limitPrice, 0.6);
       });
 
       it("should use bestBid as base price for SELL", () => {
         const result = computeExecutionLimitPrice({
           bestBid: 0.59,
-          bestAsk: 0.60,
+          bestAsk: 0.6,
           side: "SELL",
           slippageFrac: 0,
         });
@@ -737,25 +740,25 @@ describe("Price Safety Module", () => {
         // If STRATEGY_MAX is 0.65, and bestAsk is 0.70, SKIP immediately
         const result = computeExecutionLimitPrice({
           bestBid: 0.68,
-          bestAsk: 0.70, // Above STRATEGY_MAX (0.65)
+          bestAsk: 0.7, // Above STRATEGY_MAX (0.65)
           side: "BUY",
           slippageFrac: 0.061,
         });
         assert.strictEqual(result.success, false);
-        assert.strictEqual(result.basePrice, 0.70);
+        assert.strictEqual(result.basePrice, 0.7);
         assert.strictEqual(result.rejectionReason, "ASK_ABOVE_MAX");
       });
 
       it("should REJECT SELL when bestBid < STRATEGY_MIN_PRICE (SKIP)", () => {
         // If STRATEGY_MIN is 0.35, and bestBid is 0.30, SKIP immediately
         const result = computeExecutionLimitPrice({
-          bestBid: 0.30, // Below STRATEGY_MIN (0.35)
+          bestBid: 0.3, // Below STRATEGY_MIN (0.35)
           bestAsk: 0.32,
           side: "SELL",
           slippageFrac: 0.061,
         });
         assert.strictEqual(result.success, false);
-        assert.strictEqual(result.basePrice, 0.30);
+        assert.strictEqual(result.basePrice, 0.3);
         assert.strictEqual(result.rejectionReason, "BID_BELOW_MIN");
       });
 
@@ -763,7 +766,7 @@ describe("Price Safety Module", () => {
         // bestAsk=0.62 is within bounds, but with 6.1% slippage:
         // rawPrice = 0.62 * 1.061 = 0.6578 > STRATEGY_MAX (0.65)
         const result = computeExecutionLimitPrice({
-          bestBid: 0.60,
+          bestBid: 0.6,
           bestAsk: 0.62,
           side: "BUY",
           slippageFrac: 0.061,
@@ -798,13 +801,16 @@ describe("Price Safety Module", () => {
         // The limit should never go below bestAsk
         const result = computeExecutionLimitPrice({
           bestBid: 0.58,
-          bestAsk: 0.60,
+          bestAsk: 0.6,
           side: "BUY",
           slippageFrac: -0.05, // This would make rawPrice < basePrice
         });
         assert.strictEqual(result.success, true);
         // Should be clamped to at least bestAsk
-        assert.ok(result.limitPrice >= 0.60, `BUY limit ${result.limitPrice} should be >= bestAsk 0.60`);
+        assert.ok(
+          result.limitPrice >= 0.6,
+          `BUY limit ${result.limitPrice} should be >= bestAsk 0.60`,
+        );
       });
 
       it("should enforce SELL limit <= bestBid (never above bid)", () => {
@@ -818,7 +824,10 @@ describe("Price Safety Module", () => {
         });
         assert.strictEqual(result.success, true);
         // Should be clamped to at most bestBid
-        assert.ok(result.limitPrice <= 0.55, `SELL limit ${result.limitPrice} should be <= bestBid 0.55`);
+        assert.ok(
+          result.limitPrice <= 0.55,
+          `SELL limit ${result.limitPrice} should be <= bestBid 0.55`,
+        );
       });
     });
 
@@ -827,14 +836,14 @@ describe("Price Safety Module", () => {
         // This is the key test case from the issue
         const result = computeExecutionLimitPrice({
           bestBid: 0.59,
-          bestAsk: 0.60,
+          bestAsk: 0.6,
           side: "BUY",
           slippageFrac: 0.061, // 6.1%
         });
-        
+
         // Expected: 0.60 * 1.061 = 0.6366, rounded to 0.64
         assert.strictEqual(result.success, true);
-        assert.strictEqual(result.basePrice, 0.60); // NOT 0.99!
+        assert.strictEqual(result.basePrice, 0.6); // NOT 0.99!
         assert.ok(
           Math.abs(result.rawPrice - 0.6366) < 0.001,
           `rawPrice ${result.rawPrice} should be ~0.6366`,
@@ -881,7 +890,7 @@ describe("Price Safety Module", () => {
       it("BUY with bestAsk=0.60, strategyMax=0.65, slippage=6% => raw=0.636, final >= 0.60", () => {
         const result = computeExecutionLimitPrice({
           bestBid: 0.58,
-          bestAsk: 0.60,
+          bestAsk: 0.6,
           side: "BUY",
           slippageFrac: 0.06, // 6%
         });
@@ -892,7 +901,10 @@ describe("Price Safety Module", () => {
           `rawPrice ${result.rawPrice} should be ~0.636`,
         );
         // final must be >= bestAsk (0.60) to not guarantee no fill
-        assert.ok(result.limitPrice >= 0.60, `final ${result.limitPrice} should be >= bestAsk 0.60`);
+        assert.ok(
+          result.limitPrice >= 0.6,
+          `final ${result.limitPrice} should be >= bestAsk 0.60`,
+        );
         // final should be 0.64 (rounded to tick)
         assert.strictEqual(result.limitPrice, 0.64);
       });
@@ -900,7 +912,7 @@ describe("Price Safety Module", () => {
       it("BUY with bestAsk=0.70, strategyMax=0.65 => SKIP", () => {
         const result = computeExecutionLimitPrice({
           bestBid: 0.68,
-          bestAsk: 0.70, // Above STRATEGY_MAX (0.65)
+          bestAsk: 0.7, // Above STRATEGY_MAX (0.65)
           side: "BUY",
           slippageFrac: 0.06,
         });
@@ -1053,7 +1065,9 @@ describe("Price Safety Module", () => {
   });
 
   describe("classifyRejectionReason", () => {
-    const { classifyRejectionReason } = require("../../../src/lib/price-safety");
+    const {
+      classifyRejectionReason,
+    } = require("../../../src/lib/price-safety");
 
     it("should classify price increment errors", () => {
       assert.strictEqual(
@@ -1158,35 +1172,49 @@ describe("Price Safety Module", () => {
     });
 
     it("should round to 0.005 tick size correctly with SELL (floor)", () => {
-      assert.strictEqual(roundToTick(0.631, 0.005, "SELL"), 0.630); // floor
-      assert.strictEqual(roundToTick(0.634, 0.005, "SELL"), 0.630); // floor
+      assert.strictEqual(roundToTick(0.631, 0.005, "SELL"), 0.63); // floor
+      assert.strictEqual(roundToTick(0.634, 0.005, "SELL"), 0.63); // floor
       assert.strictEqual(roundToTick(0.635, 0.005, "SELL"), 0.635); // exact
     });
 
     it("should round to 0.1 tick size correctly with BUY (ceiling)", () => {
       // Use approximate comparison for floating point
       const result1 = roundToTick(0.61, 0.1, "BUY");
-      assert.ok(Math.abs(result1 - 0.7) < 0.0001, `Expected ~0.7, got ${result1}`);
+      assert.ok(
+        Math.abs(result1 - 0.7) < 0.0001,
+        `Expected ~0.7, got ${result1}`,
+      );
       const result2 = roundToTick(0.69, 0.1, "BUY");
-      assert.ok(Math.abs(result2 - 0.7) < 0.0001, `Expected ~0.7, got ${result2}`);
+      assert.ok(
+        Math.abs(result2 - 0.7) < 0.0001,
+        `Expected ~0.7, got ${result2}`,
+      );
     });
 
     it("should round to 0.1 tick size correctly with SELL (floor)", () => {
       // Use approximate comparison for floating point
       const result1 = roundToTick(0.61, 0.1, "SELL");
-      assert.ok(Math.abs(result1 - 0.6) < 0.0001, `Expected ~0.6, got ${result1}`);
+      assert.ok(
+        Math.abs(result1 - 0.6) < 0.0001,
+        `Expected ~0.6, got ${result1}`,
+      );
       const result2 = roundToTick(0.69, 0.1, "SELL");
-      assert.ok(Math.abs(result2 - 0.6) < 0.0001, `Expected ~0.6, got ${result2}`);
+      assert.ok(
+        Math.abs(result2 - 0.6) < 0.0001,
+        `Expected ~0.6, got ${result2}`,
+      );
     });
   });
 
   describe("computeExecutionLimitPrice with custom tick size", () => {
-    const { computeExecutionLimitPrice } = require("../../../src/lib/price-safety");
+    const {
+      computeExecutionLimitPrice,
+    } = require("../../../src/lib/price-safety");
 
     it("should apply non-0.01 tick size correctly for BUY (ceiling)", () => {
       const result = computeExecutionLimitPrice({
         bestBid: 0.59,
-        bestAsk: 0.60,
+        bestAsk: 0.6,
         side: "BUY",
         slippageFrac: 0.05, // 5% → 0.60 * 1.05 = 0.63
         tickSize: 0.005,
@@ -1198,7 +1226,7 @@ describe("Price Safety Module", () => {
 
     it("should apply non-0.01 tick size correctly for SELL (floor)", () => {
       const result = computeExecutionLimitPrice({
-        bestBid: 0.50,
+        bestBid: 0.5,
         bestAsk: 0.52,
         side: "SELL",
         slippageFrac: 0.05, // 5% → 0.50 * 0.95 = 0.475
@@ -1236,19 +1264,28 @@ describe("Price Safety Module", () => {
     const { assertValidLimitPrice } = require("../../../src/lib/price-safety");
 
     it("should pass for valid prices within HARD bounds", () => {
-      assert.doesNotThrow(() => assertValidLimitPrice(0.50, "BUY"));
+      assert.doesNotThrow(() => assertValidLimitPrice(0.5, "BUY"));
       assert.doesNotThrow(() => assertValidLimitPrice(0.01, "SELL"));
       assert.doesNotThrow(() => assertValidLimitPrice(0.99, "BUY"));
     });
 
     it("should throw for prices outside HARD bounds", () => {
-      assert.throws(() => assertValidLimitPrice(0.001, "BUY"), /outside HARD bounds/);
-      assert.throws(() => assertValidLimitPrice(1.0, "SELL"), /outside HARD bounds/);
+      assert.throws(
+        () => assertValidLimitPrice(0.001, "BUY"),
+        /outside HARD bounds/,
+      );
+      assert.throws(
+        () => assertValidLimitPrice(1.0, "SELL"),
+        /outside HARD bounds/,
+      );
     });
 
     it("should throw for non-finite prices", () => {
       assert.throws(() => assertValidLimitPrice(NaN, "BUY"), /not finite/);
-      assert.throws(() => assertValidLimitPrice(Infinity, "SELL"), /not finite/);
+      assert.throws(
+        () => assertValidLimitPrice(Infinity, "SELL"),
+        /not finite/,
+      );
     });
   });
 });

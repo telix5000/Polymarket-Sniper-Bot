@@ -843,31 +843,38 @@ export interface ComputeExecutionPriceResult {
   /** Direction of clamping: "min", "max", or null */
   clampDirection: "min" | "max" | null;
   /** Rejection reason if computation failed */
-  rejectionReason?: "INVALID_BOOK" | "DUST_BOOK" | "EMPTY_BOOK" | "PRICE_NAN" | "ASK_ABOVE_MAX" | "BID_BELOW_MIN" | "CROSSED_BOOK";
+  rejectionReason?:
+    | "INVALID_BOOK"
+    | "DUST_BOOK"
+    | "EMPTY_BOOK"
+    | "PRICE_NAN"
+    | "ASK_ABOVE_MAX"
+    | "BID_BELOW_MIN"
+    | "CROSSED_BOOK";
 }
 
 /**
  * Round a price to a valid tick size.
- * 
+ *
  * DIRECTIONAL ROUNDING:
  * - BUY orders: round UP (ceiling) to ensure we don't offer less than the ask
  * - SELL orders: round DOWN (floor) to ensure we don't ask more than the bid
  * - If side not specified: round to nearest (legacy behavior)
- * 
+ *
  * This prevents "crossing book" issues where rounding causes the limit price
  * to be worse than the best price on the opposite side.
- * 
+ *
  * NOTE: Uses epsilon-adjusted rounding to handle floating point precision issues.
  * For example, 0.59 / 0.01 = 58.99999999999999 in JS, which would floor to 58.
  * We add a small epsilon before flooring/ceiling to handle this.
- * 
+ *
  * @param price - The price to round (in dollars, 0-1 scale)
  * @param tickSize - The tick size (default: 0.01)
  * @param side - Optional order side for directional rounding ("BUY" = ceiling, "SELL" = floor)
  * @returns The rounded price
  */
 export function roundToTick(
-  price: number, 
+  price: number,
   tickSize: number = DEFAULT_TICK_SIZE,
   side?: "BUY" | "SELL",
 ): number {
@@ -912,7 +919,7 @@ export function roundToTick(
 /**
  * Check if an orderbook is healthy enough for execution.
  * Returns false for empty/dust books that should be rejected (not defaulted to 0.99).
- * 
+ *
  * @param bestBid - Best bid price (0-1 scale)
  * @param bestAsk - Best ask price (0-1 scale)
  * @returns Object with healthy flag and reason if unhealthy
@@ -920,12 +927,15 @@ export function roundToTick(
 export function isBookHealthyForExecution(
   bestBid: number | undefined | null,
   bestAsk: number | undefined | null,
-): { healthy: boolean; reason?: "INVALID_BOOK" | "DUST_BOOK" | "EMPTY_BOOK" | "CROSSED_BOOK" } {
+): {
+  healthy: boolean;
+  reason?: "INVALID_BOOK" | "DUST_BOOK" | "EMPTY_BOOK" | "CROSSED_BOOK";
+} {
   // Check for invalid/missing prices
   if (
-    bestBid === undefined || 
-    bestBid === null || 
-    bestAsk === undefined || 
+    bestBid === undefined ||
+    bestBid === null ||
+    bestAsk === undefined ||
     bestAsk === null ||
     !Number.isFinite(bestBid) ||
     !Number.isFinite(bestAsk) ||
@@ -943,7 +953,7 @@ export function isBookHealthyForExecution(
   // Check for empty book (bid <= 1¢ AND ask >= 99¢)
   const bidCents = bestBid * 100;
   const askCents = bestAsk * 100;
-  
+
   if (bidCents <= 1 && askCents >= 99) {
     return { healthy: false, reason: "EMPTY_BOOK" };
   }
@@ -958,18 +968,18 @@ export function isBookHealthyForExecution(
 
 /**
  * Compute an execution limit price for order submission.
- * 
+ *
  * TWO-LAYER BOUNDS SYSTEM:
  * 1. STRATEGY bounds (STRATEGY_MIN_PRICE/STRATEGY_MAX_PRICE, default 0.35-0.65)
  *    - If base price is outside strategy bounds → SKIP (don't try)
  *    - Clamp slippage-adjusted price to strategy bounds
  *    - BUY: clamp to [bestAsk, STRATEGY_MAX] (never below ask)
  *    - SELL: clamp to [STRATEGY_MIN, bestBid] (never above bid)
- * 
+ *
  * 2. HARD API bounds (0.01-0.99) - always enforced after strategy bounds
- * 
+ *
  * 3. Tick rounding with "must not cross" rule to avoid missed fills
- * 
+ *
  * @param input - Execution price computation input
  * @returns Result with limitPrice and diagnostics
  */
@@ -1102,9 +1112,10 @@ export function computeExecutionLimitPrice(
   // Step 4: Compute raw limit price with slippage
   // BUY: raw = bestAsk * (1 + slippage)
   // SELL: raw = bestBid * (1 - slippage)
-  const rawPrice = side === "BUY"
-    ? basePrice * (1 + slippageFrac)
-    : basePrice * (1 - slippageFrac);
+  const rawPrice =
+    side === "BUY"
+      ? basePrice * (1 + slippageFrac)
+      : basePrice * (1 - slippageFrac);
 
   // Handle NaN or invalid
   if (!Number.isFinite(rawPrice)) {
@@ -1155,10 +1166,14 @@ export function computeExecutionLimitPrice(
   }
 
   // Step 6: Hard clamp to API bounds [0.01, 0.99]
-  const clampedToHard = clamp(clampedToStrategy, HARD_MIN_PRICE, HARD_MAX_PRICE);
+  const clampedToHard = clamp(
+    clampedToStrategy,
+    HARD_MIN_PRICE,
+    HARD_MAX_PRICE,
+  );
   let wasClampedToHard = false;
   let hardClampDirection: "min" | "max" | null = null;
-  
+
   if (clampedToHard !== clampedToStrategy) {
     wasClampedToHard = true;
     hardClampDirection = clampedToStrategy < HARD_MIN_PRICE ? "min" : "max";
@@ -1173,7 +1188,7 @@ export function computeExecutionLimitPrice(
   // BUY: if final < bestAsk after rounding → bump up to next tick at/above ask
   // SELL: if final > bestBid after rounding → bump down to next tick at/below bid
   let wouldCrossBookAfterRounding = false;
-  
+
   if (side === "BUY" && roundedFinal < basePrice) {
     wouldCrossBookAfterRounding = true;
     // Bump up to next tick at/above ask, but never above HARD_MAX_PRICE
@@ -1201,10 +1216,11 @@ export function computeExecutionLimitPrice(
 
   // Track if final HARD clamp changed the price after rounding / "must not cross" bump
   const hardClampAppliedAfterBump = limitPrice !== roundedFinal;
-  const finalClampDirection =
-    hardClampAppliedAfterBump
-      ? (limitPrice === HARD_MIN_PRICE ? "min" : "max")
-      : null;
+  const finalClampDirection = hardClampAppliedAfterBump
+    ? limitPrice === HARD_MIN_PRICE
+      ? "min"
+      : "max"
+    : null;
 
   // Overall clamping status
   const wasClamped =
@@ -1288,19 +1304,22 @@ export function computeExecutionLimitPrice(
  * Key: tokenId or marketId
  * Value: { tickSize: number, isDefault: boolean, fetchedAt: number }
  */
-const tickSizeCache = new Map<string, { tickSize: number; isDefault: boolean; fetchedAt: number }>();
+const tickSizeCache = new Map<
+  string,
+  { tickSize: number; isDefault: boolean; fetchedAt: number }
+>();
 
 /** Cache TTL for tick sizes (5 minutes) */
 const TICK_SIZE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Get the tick size for a token/market.
- * 
+ *
  * Currently returns the default tick size (0.01) for all markets since
  * Polymarket markets consistently use 1¢ ticks. This function provides
  * a single point for future customization if markets with different tick
  * sizes are introduced.
- * 
+ *
  * @param tokenIdOrMarketId - Token ID or Market ID to get tick size for
  * @param apiTickSize - Optional API-provided tick size (if available from market metadata)
  * @returns Object with tickSize and whether it's the default
@@ -1316,8 +1335,16 @@ export function getTickSizeForToken(
   }
 
   // Use API-provided tick size if valid
-  if (apiTickSize !== undefined && Number.isFinite(apiTickSize) && apiTickSize > 0) {
-    const entry = { tickSize: apiTickSize, isDefault: false, fetchedAt: Date.now() };
+  if (
+    apiTickSize !== undefined &&
+    Number.isFinite(apiTickSize) &&
+    apiTickSize > 0
+  ) {
+    const entry = {
+      tickSize: apiTickSize,
+      isDefault: false,
+      fetchedAt: Date.now(),
+    };
     tickSizeCache.set(tokenIdOrMarketId, entry);
     return { tickSize: apiTickSize, isDefault: false };
   }
@@ -1330,7 +1357,11 @@ export function getTickSizeForToken(
     );
   }
 
-  const entry = { tickSize: DEFAULT_TICK_SIZE, isDefault: true, fetchedAt: Date.now() };
+  const entry = {
+    tickSize: DEFAULT_TICK_SIZE,
+    isDefault: true,
+    fetchedAt: Date.now(),
+  };
   tickSizeCache.set(tokenIdOrMarketId, entry);
   return { tickSize: DEFAULT_TICK_SIZE, isDefault: true };
 }
@@ -1348,20 +1379,22 @@ export function clearTickSizeCache(): void {
 
 /**
  * Convert a price in dollars to API units.
- * 
+ *
  * Polymarket CLOB API expects prices in the range [0.01, 0.99] representing
  * probability/price in dollars (e.g., 0.65 = 65¢).
- * 
+ *
  * This function is an identity transform but provides documentation and
  * validation that the price is in the expected format.
- * 
+ *
  * @param priceDollars - Price in dollars (0.01-0.99 range)
  * @returns Price in API units (same as input, validates range)
  * @throws Error if price is outside valid range
  */
 export function toApiPriceUnits(priceDollars: number): number {
   if (!Number.isFinite(priceDollars)) {
-    throw new Error(`toApiPriceUnits: invalid price ${priceDollars} (not finite)`);
+    throw new Error(
+      `toApiPriceUnits: invalid price ${priceDollars} (not finite)`,
+    );
   }
   if (priceDollars < HARD_MIN_PRICE || priceDollars > HARD_MAX_PRICE) {
     throw new Error(
@@ -1373,10 +1406,10 @@ export function toApiPriceUnits(priceDollars: number): number {
 
 /**
  * Convert a price from API units to dollars.
- * 
+ *
  * This is an identity transform since API already uses dollars, but provides
  * clear documentation that the conversion is intentional.
- * 
+ *
  * @param apiPrice - Price from API response (0.01-0.99 range)
  * @returns Price in dollars (same as input)
  */
@@ -1390,7 +1423,7 @@ export function fromApiPriceUnits(apiPrice: number): number {
 
 /**
  * Assert that a final limit price is within both HARD bounds and strategy bounds.
- * 
+ *
  * @param limitPrice - The computed limit price to validate
  * @param side - Order side ("BUY" or "SELL")
  * @param context - Optional context for error messages
@@ -1437,26 +1470,26 @@ export function assertValidLimitPrice(
  * Classification of order rejection reasons
  */
 export type RejectionClass =
-  | "PRICE_INCREMENT"      // Invalid tick/price increment
-  | "INVALID_PRICE_UNITS"  // Price format/units issue
+  | "PRICE_INCREMENT" // Invalid tick/price increment
+  | "INVALID_PRICE_UNITS" // Price format/units issue
   | "POST_ONLY_WOULD_TRADE" // postOnly order would immediately trade
   | "INSUFFICIENT_BALANCE" // Not enough USDC balance
   | "INSUFFICIENT_ALLOWANCE" // Not enough token allowance
-  | "MIN_SIZE"             // Order size below minimum
-  | "PRECISION"            // Too many decimal places
-  | "STALE_ORDERBOOK"      // Stale nonce or orderbook data
-  | "CROSSED_BOOK"         // Limit price crosses the book incorrectly
-  | "MARKET_CLOSED"        // Market is resolved/closed
-  | "RATE_LIMITED"         // API rate limit hit
-  | "NETWORK_ERROR"        // Network/connection issue
-  | "UNKNOWN";             // Unclassified error
+  | "MIN_SIZE" // Order size below minimum
+  | "PRECISION" // Too many decimal places
+  | "STALE_ORDERBOOK" // Stale nonce or orderbook data
+  | "CROSSED_BOOK" // Limit price crosses the book incorrectly
+  | "MARKET_CLOSED" // Market is resolved/closed
+  | "RATE_LIMITED" // API rate limit hit
+  | "NETWORK_ERROR" // Network/connection issue
+  | "UNKNOWN"; // Unclassified error
 
 /**
  * Classify a rejection reason from an error message.
- * 
+ *
  * Maps common CLOB API error messages to standardized rejection classes.
  * This helps with diagnostics and automated error handling.
- * 
+ *
  * @param errorMsg - Error message from API or order rejection
  * @returns Classified rejection reason
  */
@@ -1485,10 +1518,8 @@ export function classifyRejectionReason(errorMsg: string): RejectionClass {
 
   // Post-only would trade
   if (
-    (
-      (lower.includes("post only") || lower.includes("postonly")) &&
-      lower.includes("would trade")
-    ) ||
+    ((lower.includes("post only") || lower.includes("postonly")) &&
+      lower.includes("would trade")) ||
     lower.includes("taker_not_allowed")
   ) {
     return "POST_ONLY_WOULD_TRADE";
@@ -1607,10 +1638,10 @@ export interface OrderRejectionDiagnostic {
 
 /**
  * Log comprehensive order rejection diagnostic.
- * 
+ *
  * Produces a structured JSON log with all relevant context for debugging
  * ORDER_REJECTED errors.
- * 
+ *
  * @param diag - Diagnostic info to log
  */
 export function logOrderRejection(diag: OrderRejectionDiagnostic): void {
@@ -1625,12 +1656,12 @@ export function logOrderRejection(diag: OrderRejectionDiagnostic): void {
   // Human-readable summary
   console.error(
     `❌ [ORDER_REJECTED] ${diag.side} ${diag.sizeUsd?.toFixed(2) ?? "?"} USD | ` +
-    `token=${diag.tokenId.slice(0, 12)}... | ` +
-    `limit=${(diag.finalLimitPriceDollars * 100).toFixed(2)}¢ | ` +
-    `bid=${diag.bestBid ? (diag.bestBid * 100).toFixed(2) : "?"}¢ ask=${diag.bestAsk ? (diag.bestAsk * 100).toFixed(2) : "?"}¢ | ` +
-    `tick=${diag.tickSize}${diag.tickSizeIsDefault ? "(default)" : ""} | ` +
-    `type=${diag.orderType} | ` +
-    `class=${diag.rejectionClass} | ` +
-    `error="${diag.errorMessage}"`,
+      `token=${diag.tokenId.slice(0, 12)}... | ` +
+      `limit=${(diag.finalLimitPriceDollars * 100).toFixed(2)}¢ | ` +
+      `bid=${diag.bestBid ? (diag.bestBid * 100).toFixed(2) : "?"}¢ ask=${diag.bestAsk ? (diag.bestAsk * 100).toFixed(2) : "?"}¢ | ` +
+      `tick=${diag.tickSize}${diag.tickSizeIsDefault ? "(default)" : ""} | ` +
+      `type=${diag.orderType} | ` +
+      `class=${diag.rejectionClass} | ` +
+      `error="${diag.errorMessage}"`,
   );
 }

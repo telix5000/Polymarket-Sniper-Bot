@@ -204,7 +204,8 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     // Validate orderbook sanity - best ask should be >= best bid
     // Use normalized prices (sorted correctly) instead of raw [0] index
     if (orderBook.asks?.length && orderBook.bids?.length) {
-      const { bestBid: normalizedBid, bestAsk: normalizedAsk } = getBestPricesFromRaw(orderBook);
+      const { bestBid: normalizedBid, bestAsk: normalizedAsk } =
+        getBestPricesFromRaw(orderBook);
       if (
         normalizedBid !== null &&
         normalizedAsk !== null &&
@@ -290,7 +291,10 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
       const levelSize = parseFloat(level.size);
 
       // Clamp price to HARD API bounds (0.01-0.99)
-      const levelPrice = Math.max(HARD_MIN_PRICE, Math.min(HARD_MAX_PRICE, rawLevelPrice));
+      const levelPrice = Math.max(
+        HARD_MIN_PRICE,
+        Math.min(HARD_MAX_PRICE, rawLevelPrice),
+      );
 
       // Log if price was clamped (shouldn't happen normally, but safety first)
       if (levelPrice !== rawLevelPrice) {

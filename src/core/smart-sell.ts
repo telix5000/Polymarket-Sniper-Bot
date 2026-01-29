@@ -67,7 +67,7 @@ export interface SmartSellConfig {
   gtcExpirationSeconds?: number;
   /** Force sell even if conditions aren't ideal (stop-loss scenarios) */
   forceSell?: boolean;
-  /** 
+  /**
    * Fast mode: Skip all analysis, just sell at bestBid with FOK immediately.
    * Use for: hedge unwinding, emergency exits, time-critical sells.
    * HFT best practice: when speed matters more than price optimization.
@@ -290,12 +290,12 @@ export function determineOrderType(
 
 /**
  * Fast sell at best bid - no analysis, immediate FOK execution.
- * 
+ *
  * USE FOR:
  * - Hedge unwinding (need to exit both sides simultaneously)
  * - Emergency exits (stop-loss triggered)
  * - Time-critical sells where speed > price
- * 
+ *
  * HFT BEST PRACTICE: Mirrors the simple BUY approach.
  * When you need to get out, GET OUT. Don't optimize for pennies.
  */
@@ -311,13 +311,18 @@ async function fastSellAtBestBid(
     const orderBook = await client.getOrderBook(position.tokenId);
 
     if (!orderBook?.bids?.length) {
-      logger?.warn?.(`[FAST_SELL] No bids for ${position.tokenId.slice(0, 12)}...`);
+      logger?.warn?.(
+        `[FAST_SELL] No bids for ${position.tokenId.slice(0, 12)}...`,
+      );
       return { success: false, reason: "NO_BIDS" };
     }
 
     // Get best bid and clamp to HARD API bounds (selling uses API limits, not strategy bounds)
     const rawBestBid = parseFloat(orderBook.bids[0].price);
-    const bestBid = Math.max(HARD_MIN_PRICE, Math.min(HARD_MAX_PRICE, rawBestBid));
+    const bestBid = Math.max(
+      HARD_MIN_PRICE,
+      Math.min(HARD_MAX_PRICE, rawBestBid),
+    );
     const priceWasClamped = bestBid !== rawBestBid;
 
     // Warn if price was clamped (shouldn't happen normally)
@@ -363,14 +368,17 @@ async function fastSellAtBestBid(
     }
 
     if (response.success) {
-      logger?.info?.(`[FAST_SELL] ✅ Executed @ ${(bestBid * 100).toFixed(1)}¢`);
+      logger?.info?.(
+        `[FAST_SELL] ✅ Executed @ ${(bestBid * 100).toFixed(1)}¢`,
+      );
       return {
         success: true,
         actualPrice: bestBid,
         orderType: "FOK",
       };
     } else {
-      const errorMsg = (response as any)?.errorMsg || (response as any)?.error || "unknown";
+      const errorMsg =
+        (response as any)?.errorMsg || (response as any)?.error || "unknown";
       logger?.warn?.(`[FAST_SELL] ❌ Failed: ${errorMsg}`);
       return { success: false, reason: errorMsg };
     }
@@ -397,7 +405,7 @@ async function fastSellAtBestBid(
  * 3. Chooses between FOK and GTC order types
  * 4. Executes with retry logic
  * 5. Reports actual vs expected fill
- * 
+ *
  * For urgent exits (hedge unwinding), use config.fastMode = true
  */
 export async function smartSell(
@@ -507,7 +515,10 @@ export async function smartSell(
     //
     // Clamp to HARD API bounds (selling uses API limits, not strategy bounds)
     const rawOrderPrice = analysis.bestBid;
-    const orderPrice = Math.max(HARD_MIN_PRICE, Math.min(HARD_MAX_PRICE, rawOrderPrice));
+    const orderPrice = Math.max(
+      HARD_MIN_PRICE,
+      Math.min(HARD_MAX_PRICE, rawOrderPrice),
+    );
 
     // Log ORDER_PRICE_DEBUG for diagnostics (matches execution-engine format)
     const priceWasClamped = orderPrice !== rawOrderPrice;

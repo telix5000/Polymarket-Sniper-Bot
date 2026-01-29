@@ -218,4 +218,54 @@ If still no trades after 30 minutes:
     - Whales may not be actively trading
     - Try different time of day (US market hours more active)
     - Verify RPC_URL is WebSocket: wss://polygon-mainnet.infura.io/ws/v3/...
+
+
+═══════════════════════════════════════════════════════════════════════════════
+          SNAPSHOT IMMUTABILITY VERIFICATION (Added Jan 2025)
+═══════════════════════════════════════════════════════════════════════════════
+
+PROBLEM SOLVED:
+  Entry attempts were starting with healthy book (bid=47¢ ask=49¢) but later
+  failing with UNHEALTHY_BOOK_EMPTY_BOOK (bid=0.01 ask=0.99) in SAME attempt.
+  This indicated secondary book fetches or cache overwrites during execution.
+
+SOLUTION:
+  Each executeEntry() attempt now uses ONE immutable MarketSnapshot for:
+  - Book health checks
+  - Execution price computation
+  - Order placement + GTC fallback
+
+HOW TO VERIFY CORRECT BEHAVIOR:
+
+1. Look for BOOK_SNAPSHOT_SELECTED log at start of each attempt:
+   {"event":"BOOK_SNAPSHOT_SELECTED","attemptId":"attempt-1706525000000-1",
+    "tokenIdPrefix":"abc123456789","bidCents":"47.00","askCents":"49.00",
+    "source":"WS_CACHE","bookStatus":"HEALTHY",...}
+
+2. Verify NO BUG_BOOK_CHANGED_DURING_ATTEMPT errors appear:
+   If this log appears, it means book data changed mid-execution (BUG!):
+   {"event":"BUG_BOOK_CHANGED_DURING_ATTEMPT","severity":"CRITICAL",
+    "attemptId":"attempt-1706525000000-1","snapshotBid":"47.00",
+    "snapshotAsk":"49.00","currentBid":"1.00","currentAsk":"99.00",...}
+
+3. Look for CACHE_DUST_REJECTED when dust protection works:
+   {"event":"CACHE_DUST_REJECTED","tokenIdPrefix":"abc123456789",
+    "newStatus":"DUST_BOOK","existingBid":"47.0","existingAsk":"49.0",
+    "message":"Dust/empty REST response NOT cached - existing healthy data preserved"}
+
+4. Verify attemptId is consistent throughout single attempt:
+   - BOOK_SNAPSHOT_SELECTED has attemptId
+   - Any later integrity checks use same attemptId
+   - A NEW attemptId means we started a fresh attempt (correct behavior)
+
+HEALTHY EXECUTION LOOKS LIKE:
+   BOOK_SNAPSHOT_SELECTED attemptId=X bid=47¢ ask=49¢ → HEALTHY
+   (compute FOK price using same 47/49)
+   (place FOK order)
+   FOK success: entry complete with attemptId=X
+
+UNHEALTHY EXECUTION (BUG DETECTED):
+   BOOK_SNAPSHOT_SELECTED attemptId=X bid=47¢ ask=49¢ → HEALTHY
+   BUG_BOOK_CHANGED_DURING_ATTEMPT attemptId=X current=1/99 → FAIL FAST
+   Entry aborted: BUG_SNAPSHOT_INTEGRITY_VIOLATION
 ```

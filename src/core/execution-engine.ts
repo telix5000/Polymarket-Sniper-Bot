@@ -13,19 +13,25 @@ import { invalidatePositions } from "../lib/positions";
 import { getOppositeTokenId, getMarketTokenPair } from "../lib/market";
 import { reportError } from "../infra/github-reporter";
 import { getLatencyMonitor } from "../infra/latency-monitor";
-import { recordMissedTrade, recordSuccessfulTrade } from "../infra/api-rate-monitor";
+import {
+  recordMissedTrade,
+  recordSuccessfulTrade,
+} from "../infra/api-rate-monitor";
 import { smartSell } from "./smart-sell";
 import type { Position } from "../models";
 import {
   HARD_MIN_PRICE,
   HARD_MAX_PRICE,
   computeExecutionLimitPrice,
-  isBookHealthyForExecution,
 } from "../lib/price-safety";
 import {
+  fetchMarketSnapshot,
+  isSnapshotHealthy,
+  assertSnapshotIntegrity,
+  generateAttemptId,
+} from "../lib/market-snapshot";
+import {
   EvTracker,
-  type TradeResult,
-  calculatePnlCents,
   calculatePnlUsd,
   createTradeResult,
 } from "./ev-tracker";
@@ -253,7 +259,10 @@ export class ExecutionEngine {
       this.logger.warn(
         `🛡️ [RISK GUARD] Entry blocked - protective mode: ${protectiveMode.reason}`,
       );
-      return { success: false, reason: `PROTECTIVE_MODE: ${protectiveMode.reason}` };
+      return {
+        success: false,
+        reason: `PROTECTIVE_MODE: ${protectiveMode.reason}`,
+      };
     }
 
     // Determine effective bias direction:
@@ -318,7 +327,10 @@ export class ExecutionEngine {
         reason: `RISK_GUARD: ${entryValidation.reason}`,
         sizeUsd: decision.sizeUsd,
       });
-      return { success: false, reason: `RISK_GUARD: ${entryValidation.reason}` };
+      return {
+        success: false,
+        reason: `RISK_GUARD: ${entryValidation.reason}`,
+      };
     }
 
     // Log any warnings from risk guard
@@ -373,6 +385,41 @@ export class ExecutionEngine {
     referencePriceCents: number,
     biasDirection: BiasDirection,
   ): Promise<ExecutionResult> {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ATTEMPT BOUNDARY DOCUMENTATION
+    // ═══════════════════════════════════════════════════════════════════════════
+    //
+    // This function defines an EXECUTION ATTEMPT BOUNDARY. Each call to executeEntry
+    // is ONE attempt with a unique attemptId.
+    //
+    // CRITICAL INVARIANT: One snapshot per attempt
+    // - We fetch MarketSnapshot ONCE at the start of this function (via fetchMarketSnapshot)
+    // - This snapshot is IMMUTABLE (Object.freeze'd) and used for ALL downstream operations
+    // - NO secondary book fetches are allowed during the same attempt
+    //
+    // DOWNSTREAM CALL CHAIN (all use the SAME snapshot):
+    // 1. fetchMarketSnapshot(client, tokenId, marketId, attemptId) - SINGLE FETCH
+    // 2. isSnapshotHealthy(snapshot) - validates book health using snapshot
+    // 3. computeExecutionLimitPrice({bestBid: snapshot.bestBid, bestAsk: snapshot.bestAsk, ...})
+    // 4. assertSnapshotIntegrity(snapshot, bestBid, bestAsk, "PRE_FOK_ORDER") - debug guard
+    // 5. client.createMarketOrder / client.postOrder - order placement
+    // 6. On FOK miss: computeExecutionLimitPrice again with SAME snapshot
+    // 7. assertSnapshotIntegrity(snapshot, bestBid, bestAsk, "PRE_GTC_ORDER") - debug guard
+    // 8. client.createOrder / client.postOrder - GTC fallback
+    //
+    // If we need to retry with fresh book data, we must:
+    // - Exit this function
+    // - Call executeEntry again (which generates a NEW attemptId and NEW snapshot)
+    //
+    // BUG DETECTION:
+    // - assertSnapshotIntegrity() checks that no code path has changed the bid/ask values
+    // - If mismatch detected, logs BUG_BOOK_CHANGED_DURING_ATTEMPT and fails fast
+    //
+    // CACHE SAFETY:
+    // - fetchMarketSnapshot uses updateCacheWithSafety() internally
+    // - Dust/empty REST results do NOT overwrite healthy WS cache entries
+    // ═══════════════════════════════════════════════════════════════════════════
+
     // Log info if marketId is missing - marketId is NOT required for order placement,
     // only used for diagnostics and issue reporting. Orders use tokenId only.
     if (!marketId) {
@@ -540,36 +587,41 @@ export class ExecutionEngine {
         );
       }
 
-      const orderBook = await this.client.getOrderBook(tokenId);
-      
-      // Extract BOTH bid and ask from orderbook - needed for proper price selection
-      const asks = orderBook?.asks;
-      const bids = orderBook?.bids;
-      
-      if (!asks?.length && !bids?.length) {
-        return { success: false, reason: "NO_LIQUIDITY" };
-      }
+      // ═══════════════════════════════════════════════════════════════════════
+      // SNAPSHOT-BASED EXECUTION: Fetch market snapshot ONCE for this attempt
+      // This snapshot is IMMUTABLE and used throughout pricing + order placement.
+      // No secondary book reads are allowed during the same attempt.
+      // ═══════════════════════════════════════════════════════════════════════
+      const attemptId = generateAttemptId();
+      const snapshot = await fetchMarketSnapshot(
+        this.client,
+        tokenId,
+        marketId,
+        attemptId,
+      );
 
-      // Parse best bid and ask prices
-      const bestAsk = asks?.length ? parseFloat(asks[0].price) : undefined;
-      const bestBid = bids?.length ? parseFloat(bids[0].price) : undefined;
-
-      // Validate book health BEFORE attempting order
-      const bookHealth = isBookHealthyForExecution(bestBid, bestAsk);
-      if (!bookHealth.healthy) {
+      // Validate snapshot health BEFORE attempting order
+      if (!isSnapshotHealthy(snapshot)) {
         console.warn(
-          `⚠️ [ENTRY] Book unhealthy for ${tokenId.slice(0, 12)}...: ${bookHealth.reason} ` +
-            `(bid=${bestBid?.toFixed(4) ?? "null"}, ask=${bestAsk?.toFixed(4) ?? "null"})`,
+          `⚠️ [ENTRY] Book unhealthy for ${tokenId.slice(0, 12)}...: ${snapshot.unhealthyReason} ` +
+            `(bid=${snapshot.bestBid.toFixed(4)}, ask=${snapshot.bestAsk.toFixed(4)}, attemptId=${attemptId})`,
         );
-        return { success: false, reason: `UNHEALTHY_BOOK_${bookHealth.reason}` };
+        return {
+          success: false,
+          reason: `UNHEALTHY_BOOK_${snapshot.bookStatus}`,
+        };
       }
+
+      // Use snapshot's bid/ask for all pricing decisions
+      const bestBid = snapshot.bestBid;
+      const bestAsk = snapshot.bestAsk;
 
       // For BUY (LONG): We need bestAsk (price we pay to buy)
       // For SELL (SHORT): We need bestBid (price we receive when selling)
-      if (side === "LONG" && !bestAsk) {
+      if (side === "LONG" && bestAsk <= 0) {
         return { success: false, reason: "NO_ASK_LIQUIDITY" };
       }
-      if (side === "SHORT" && !bestBid) {
+      if (side === "SHORT" && bestBid <= 0) {
         return { success: false, reason: "NO_BID_LIQUIDITY" };
       }
 
@@ -578,9 +630,10 @@ export class ExecutionEngine {
 
       // Compute execution limit price using the new unified function
       // This uses MIN_PRICE/MAX_PRICE (user's bounds, default 0.35-0.65)
+      // CRITICAL: Uses snapshot's bid/ask - no re-fetching allowed!
       const fokPriceResult = computeExecutionLimitPrice({
-        bestBid: bestBid!,
-        bestAsk: bestAsk!,
+        bestBid,
+        bestAsk,
         side: side === "LONG" ? "BUY" : "SELL",
         slippageFrac,
         tokenIdPrefix: tokenId.slice(0, 12),
@@ -589,9 +642,12 @@ export class ExecutionEngine {
       // Check if price computation succeeded
       if (!fokPriceResult.success) {
         console.warn(
-          `⚠️ [ENTRY] Price computation failed for ${tokenId.slice(0, 12)}...: ${fokPriceResult.rejectionReason}`,
+          `⚠️ [ENTRY] Price computation failed for ${tokenId.slice(0, 12)}...: ${fokPriceResult.rejectionReason} (attemptId=${attemptId})`,
         );
-        return { success: false, reason: `PRICE_COMPUTE_FAIL_${fokPriceResult.rejectionReason}` };
+        return {
+          success: false,
+          reason: `PRICE_COMPUTE_FAIL_${fokPriceResult.rejectionReason}`,
+        };
       }
 
       const fokPrice = fokPriceResult.limitPrice;
@@ -614,6 +670,13 @@ export class ExecutionEngine {
       const execStart = performance.now();
 
       // STEP 1: Try FOK (Fill-Or-Kill) first - instant execution
+      // INTEGRITY CHECK: Verify snapshot hasn't been corrupted before order
+      if (
+        !assertSnapshotIntegrity(snapshot, bestBid, bestAsk, "PRE_FOK_ORDER")
+      ) {
+        return { success: false, reason: "BUG_SNAPSHOT_INTEGRITY_VIOLATION" };
+      }
+
       const fokOrder = await this.client.createMarketOrder({
         side: side === "LONG" ? Side.BUY : Side.SELL,
         tokenID: tokenId,
@@ -627,7 +690,7 @@ export class ExecutionEngine {
       // Log execution timing for analysis
       if (execLatencyMs > 500) {
         console.warn(
-          `⏱️ Slow order execution: ${execLatencyMs.toFixed(0)}ms - consider the slippage impact`,
+          `⏱️ Slow order execution: ${execLatencyMs.toFixed(0)}ms - consider the slippage impact (attemptId=${attemptId})`,
         );
       }
 
@@ -654,7 +717,7 @@ export class ExecutionEngine {
           );
         }
         console.log(
-          `📥 FOK ${side} $${sizeUsd.toFixed(2)} @ ${(bestPrice * 100).toFixed(1)}¢${outcomeLabel ? ` on "${outcomeLabel}"` : ""} (slippage: ${dynamicSlippagePct.toFixed(1)}%, exec: ${execLatencyMs.toFixed(0)}ms)`,
+          `📥 FOK ${side} $${sizeUsd.toFixed(2)} @ ${(bestPrice * 100).toFixed(1)}¢${outcomeLabel ? ` on "${outcomeLabel}"` : ""} (slippage: ${dynamicSlippagePct.toFixed(1)}%, exec: ${execLatencyMs.toFixed(0)}ms, attemptId=${attemptId})`,
         );
         return {
           success: true,
@@ -665,12 +728,23 @@ export class ExecutionEngine {
 
       // STEP 2: FOK failed - try GTC (limit order) as fallback
       // Use a tighter price for GTC - we're willing to wait for a better fill
-      console.log(`⏳ FOK missed, trying GTC limit order...`);
+      // CRITICAL: Still use the SAME snapshot - no re-fetching allowed!
+      console.log(
+        `⏳ FOK missed, trying GTC limit order... (attemptId=${attemptId})`,
+      );
+
+      // INTEGRITY CHECK: Verify snapshot is still valid before GTC
+      if (
+        !assertSnapshotIntegrity(snapshot, bestBid, bestAsk, "PRE_GTC_ORDER")
+      ) {
+        return { success: false, reason: "BUG_SNAPSHOT_INTEGRITY_VIOLATION" };
+      }
 
       // Compute GTC price with reduced slippage (half of FOK slippage)
+      // Uses the SAME snapshot bid/ask - no secondary book reads!
       const gtcPriceResult = computeExecutionLimitPrice({
-        bestBid: bestBid!,
-        bestAsk: bestAsk!,
+        bestBid,
+        bestAsk,
         side: side === "LONG" ? "BUY" : "SELL",
         slippageFrac: slippageFrac * 0.5, // Tighter slippage for GTC
         tokenIdPrefix: tokenId.slice(0, 12),
@@ -679,7 +753,7 @@ export class ExecutionEngine {
       // GTC price computation - if it fails, skip GTC fallback
       if (!gtcPriceResult.success) {
         console.warn(
-          `⚠️ [GTC] Price computation failed: ${gtcPriceResult.rejectionReason}`,
+          `⚠️ [GTC] Price computation failed: ${gtcPriceResult.rejectionReason} (attemptId=${attemptId})`,
         );
       } else {
         const gtcPrice = gtcPriceResult.limitPrice;
@@ -700,7 +774,7 @@ export class ExecutionEngine {
           if (gtcResponse.success) {
             // GTC order posted - it will sit on the book until filled
             console.log(
-              `📋 GTC order posted @ ${(gtcPrice * 100).toFixed(1)}¢ - waiting for fill...`,
+              `📋 GTC order posted @ ${(gtcPrice * 100).toFixed(1)}¢ - waiting for fill... (attemptId=${attemptId})`,
             );
 
             // Note: For GTC, we don't immediately open a position
@@ -715,7 +789,7 @@ export class ExecutionEngine {
           }
         } catch (gtcErr) {
           console.warn(
-            `⚠️ GTC fallback also failed: ${gtcErr instanceof Error ? gtcErr.message : gtcErr}`,
+            `⚠️ GTC fallback also failed: ${gtcErr instanceof Error ? gtcErr.message : gtcErr} (attemptId=${attemptId})`,
           );
         }
       }
@@ -733,6 +807,7 @@ export class ExecutionEngine {
           marketId,
           slippagePct: dynamicSlippagePct,
           execLatencyMs,
+          attemptId,
         },
       );
       return { success: false, reason: "ORDER_REJECTED" };
@@ -1111,11 +1186,14 @@ export class ExecutionEngine {
         }
 
         const rawBestBid = parseFloat(bids[0].price);
-        
+
         // HEDGE UNWIND: Use HARD API bounds (0.01-0.99), not user's strategy bounds
         // Hedges need to unwind regardless of user's price filter
-        const bestBid = Math.max(HARD_MIN_PRICE, Math.min(HARD_MAX_PRICE, rawBestBid));
-        
+        const bestBid = Math.max(
+          HARD_MIN_PRICE,
+          Math.min(HARD_MAX_PRICE, rawBestBid),
+        );
+
         if (bestBid !== rawBestBid) {
           console.warn(
             `⚠️ [HEDGE UNWIND] Price clamped to HARD bounds: ${rawBestBid.toFixed(4)} → ${bestBid.toFixed(4)}`,
@@ -1246,7 +1324,7 @@ export class ExecutionEngine {
     // This prevents financial bleed from too many hedge positions
     // ═══════════════════════════════════════════════════════════════════════
     const currentPositions = this.positionManager.getOpenPositions();
-    
+
     // Get actual wallet balance - use provided value, or fetch from cache, or use conservative fallback
     let effectiveBalance = walletBalanceUsd;
     if (effectiveBalance === undefined) {
@@ -1262,7 +1340,9 @@ export class ExecutionEngine {
     if (effectiveBalance === undefined) {
       const totalDeployed = this.positionManager.getTotalDeployedUsd();
       effectiveBalance = totalDeployed * 2; // Assume we have at least 2x deployed as total
-      console.warn(`⚠️ [HEDGE] Using estimated balance: $${effectiveBalance.toFixed(2)} (no cache available)`);
+      console.warn(
+        `⚠️ [HEDGE] Using estimated balance: $${effectiveBalance.toFixed(2)} (no cache available)`,
+      );
     }
 
     const hedgeValidation = this.riskGuard.validateHedge({
@@ -1284,7 +1364,10 @@ export class ExecutionEngine {
         reason: `RISK_GUARD: ${hedgeValidation.reason}`,
         sizeUsd: hedgeSize,
       });
-      return { success: false, reason: `RISK_GUARD: ${hedgeValidation.reason}` };
+      return {
+        success: false,
+        reason: `RISK_GUARD: ${hedgeValidation.reason}`,
+      };
     }
 
     // Use adjusted size if RiskGuard reduced it

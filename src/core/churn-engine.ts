@@ -2198,7 +2198,8 @@ export class ChurnEngine {
       }
 
       // Use normalizeRestOrderbook to get sorted levels (avoids redundant parsing)
-      const { bids: sortedBids, asks: sortedAsks } = normalizeRestOrderbook(orderbook);
+      const { bids: sortedBids, asks: sortedAsks } =
+        normalizeRestOrderbook(orderbook);
       if (sortedBids.length === 0 || sortedAsks.length === 0) {
         return null;
       }
@@ -2454,17 +2455,18 @@ export class ChurnEngine {
   private async fetchMarketId(tokenId: string): Promise<string | null> {
     const startTime = performance.now();
     const now = Date.now();
-    
+
     // Check cache first and evict expired entries to prevent unbounded growth
     const cachedTimestamp = this.marketIdCacheTimestamps.get(tokenId);
     if (cachedTimestamp) {
       const cached = this.tokenMarketIdCache.get(tokenId);
       if (cached !== undefined) {
         // Check if cache is still valid
-        const ttl = cached === null 
-          ? this.MARKET_ID_ERROR_CACHE_TTL_MS  // Shorter TTL for errors
-          : this.MARKET_ID_CACHE_TTL_MS;        // Longer TTL for success
-        
+        const ttl =
+          cached === null
+            ? this.MARKET_ID_ERROR_CACHE_TTL_MS // Shorter TTL for errors
+            : this.MARKET_ID_CACHE_TTL_MS; // Longer TTL for success
+
         if (now - cachedTimestamp < ttl) {
           const latencyMs = performance.now() - startTime;
           // Structured debug log: cache hit
@@ -2486,7 +2488,7 @@ export class ChurnEngine {
         }
       }
     }
-    
+
     // Periodic cleanup to prevent unbounded cache growth
     // When cache exceeds max size, remove oldest 20% of entries
     if (this.tokenMarketIdCache.size >= this.MARKET_ID_CACHE_MAX_SIZE) {
@@ -2534,11 +2536,11 @@ export class ChurnEngine {
       this.marketIdInFlightRequests.delete(tokenId);
     }
   }
-  
+
   /**
    * Clean up oldest entries from marketId cache to prevent unbounded growth
    * Removes the oldest 20% of cache entries when max size is reached
-   * 
+   *
    * Note: This only cleans tokenMarketIdCache and marketIdCacheTimestamps.
    * It does NOT clean marketIdInFlightRequests because:
    * 1. In-flight requests are short-lived (API call duration)
@@ -2549,7 +2551,7 @@ export class ChurnEngine {
     const entries = Array.from(this.marketIdCacheTimestamps.entries());
     // Sort by timestamp (oldest first)
     entries.sort((a, b) => a[1] - b[1]);
-    
+
     // Remove oldest 20%
     const removeCount = Math.floor(entries.length * 0.2);
     for (let i = 0; i < removeCount; i++) {
@@ -2557,7 +2559,7 @@ export class ChurnEngine {
       this.tokenMarketIdCache.delete(tokenId);
       this.marketIdCacheTimestamps.delete(tokenId);
     }
-    
+
     this.deps.debug(
       `[MarketId] Cache cleanup: removed ${removeCount} oldest entries (was ${entries.length}, now ${this.tokenMarketIdCache.size})`,
     );
@@ -2569,15 +2571,15 @@ export class ChurnEngine {
    */
   private async doFetchMarketId(tokenId: string): Promise<string | null> {
     const now = Date.now();
-    
+
     try {
       const marketInfo = await fetchMarketByTokenId(tokenId);
       const marketId = marketInfo?.marketId ?? null;
-      
+
       // Cache the result (successful lookup or null from API)
       this.tokenMarketIdCache.set(tokenId, marketId);
       this.marketIdCacheTimestamps.set(tokenId, now);
-      
+
       if (marketId === null) {
         // API returned no marketId (404 or market not found)
         this.deps.debug(
@@ -2589,28 +2591,29 @@ export class ChurnEngine {
           }),
         );
       }
-      
+
       return marketId;
     } catch (err) {
       // On error, cache null with shorter TTL to allow retry
       this.tokenMarketIdCache.set(tokenId, null);
       this.marketIdCacheTimestamps.set(tokenId, now);
-      
+
       const errMsg = err instanceof Error ? err.message : String(err);
-      
+
       // Safely extract status code from various error formats
       let statusCode = "unknown";
       try {
         if (err && typeof err === "object") {
-          statusCode = (err as any)?.response?.status ?? 
-                       (err as any)?.statusCode ?? 
-                       (err as any)?.code ?? 
-                       "unknown";
+          statusCode =
+            (err as any)?.response?.status ??
+            (err as any)?.statusCode ??
+            (err as any)?.code ??
+            "unknown";
         }
       } catch {
         // If status code extraction fails, keep "unknown"
       }
-      
+
       // Structured error log with details
       this.deps.debug(
         JSON.stringify({
@@ -2621,7 +2624,7 @@ export class ChurnEngine {
           statusCode,
         }),
       );
-      
+
       return null;
     }
   }
@@ -2927,7 +2930,8 @@ export class ChurnEngine {
               const restOrderbook = await this.client!.getOrderBook(tokenId);
               if (restOrderbook?.bids?.length && restOrderbook?.asks?.length) {
                 // Use normalized prices (sorted correctly)
-                const { bestBidCents: restBid, bestAskCents: restAsk } = getBestPricesFromRaw(restOrderbook);
+                const { bestBidCents: restBid, bestAskCents: restAsk } =
+                  getBestPricesFromRaw(restOrderbook);
 
                 console.log(
                   `📡 [REST_VERIFY] ${tokenId.slice(0, 12)}... | REST result: bid=${restBid.toFixed(1)}¢ ask=${restAsk.toFixed(1)}¢`,
@@ -2945,7 +2949,10 @@ export class ChurnEngine {
                         siblingOrderbook?.asks?.length
                       ) {
                         // Use normalized prices for sibling too
-                        const { bestBidCents: siblingBid, bestAskCents: siblingAsk } = getBestPricesFromRaw(siblingOrderbook);
+                        const {
+                          bestBidCents: siblingBid,
+                          bestAskCents: siblingAsk,
+                        } = getBestPricesFromRaw(siblingOrderbook);
                         console.log(
                           `📡 [SIBLING_CHECK] ${siblingTokenId.slice(0, 12)}... | sibling book: bid=${siblingBid.toFixed(1)}¢ ask=${siblingAsk.toFixed(1)}¢`,
                         );
@@ -3103,7 +3110,12 @@ export class ChurnEngine {
       // Use normalized prices (sorted correctly)
       const { bestBid, bestAsk } = getBestPricesFromRaw(orderbook);
 
-      if (bestBid === null || bestAsk === null || isNaN(bestBid) || isNaN(bestAsk)) {
+      if (
+        bestBid === null ||
+        bestAsk === null ||
+        isNaN(bestBid) ||
+        isNaN(bestAsk)
+      ) {
         this.diagnostics.orderbookFetchFailures++;
         return {
           ok: false,

@@ -17,6 +17,65 @@ export interface NormalizedLevel {
 }
 
 /**
+ * Book status for MarketSnapshot
+ * Used to classify the health of the orderbook at fetch time.
+ */
+export type MarketSnapshotStatus =
+  | "HEALTHY"
+  | "EMPTY_BOOK"
+  | "DUST_BOOK"
+  | "DEAD_BOOK"
+  | "WIDE_SPREAD"
+  | "ASK_TOO_HIGH"
+  | "NO_DATA"
+  | "CROSSED_BOOK"
+  | "INVALID_BOOK"
+  | "STALE"
+  | "UNKNOWN";
+
+/**
+ * MarketSnapshot - Immutable snapshot of market state for a single execution attempt
+ *
+ * CRITICAL: Once created, this snapshot MUST NOT be modified. All fields are readonly.
+ * This ensures that pricing and order placement use the same market state throughout
+ * a single execution attempt, preventing bugs where the book changes mid-execution.
+ *
+ * If a retry is needed, create a NEW snapshot with a new attemptId.
+ */
+export interface MarketSnapshot {
+  /** Token ID this snapshot is for */
+  readonly tokenId: string;
+  /** Optional market ID for diagnostics */
+  readonly marketId?: string;
+  /** Best bid price (0-1 scale, decimal) */
+  readonly bestBid: number;
+  /** Best ask price (0-1 scale, decimal) */
+  readonly bestAsk: number;
+  /** Mid price ((bid + ask) / 2) */
+  readonly mid: number;
+  /** Spread in cents */
+  readonly spreadCents: number;
+  /** Health status of the book at fetch time */
+  readonly bookStatus: MarketSnapshotStatus;
+  /** Source of the data */
+  readonly source:
+    | "WS_CACHE"
+    | "REST"
+    | "ALT_REST"
+    | "INJECTED"
+    | "STALE_CACHE"
+    | "RECOVERY";
+  /** Timestamp when this snapshot was fetched (Unix ms) */
+  readonly fetchedAtMs: number;
+  /** Unique attempt ID for correlation logging */
+  readonly attemptId: string;
+  /** Human-readable reason if book is unhealthy */
+  readonly unhealthyReason?: string;
+  /** Tick size for this market (optional, looked up if not provided) */
+  readonly tickSize?: number;
+}
+
+/**
  * Orderbook snapshot with metadata about the fetch
  */
 export interface OrderBookSnapshot {
@@ -48,7 +107,7 @@ export interface OrderBookSnapshot {
 
 /**
  * Book health status enumeration for BookResolver
- * 
+ *
  * Note: This is distinct from BookHealthStatus in price-safety.ts which uses
  * different values ("HEALTHY", "DEAD_BOOK"). This type is specific to the
  * BookResolver module and includes more granular status values.
@@ -124,12 +183,15 @@ export interface ResolveBookResult {
 // Thresholds (Re-export from price-safety for consistency)
 // ============================================================================
 
-import { DEAD_BOOK_THRESHOLDS, DEFAULT_MAX_SPREAD_CENTS } from "../lib/price-safety";
+import {
+  DEAD_BOOK_THRESHOLDS,
+  DEFAULT_MAX_SPREAD_CENTS,
+} from "../lib/price-safety";
 
 /**
  * Unified thresholds for book health evaluation
  * Both WHALE and SCAN flows use these same thresholds
- * 
+ *
  * Re-exports from price-safety.ts to maintain single source of truth
  */
 export const BOOK_THRESHOLDS = {

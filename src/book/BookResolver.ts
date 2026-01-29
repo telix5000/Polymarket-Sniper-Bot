@@ -23,16 +23,15 @@ import {
   getMarketDataStore,
   type OrderbookLevel,
 } from "../lib/market-data-store";
-import { POLYMARKET_API } from "../lib/constants";
+import { sortBidsDescending, sortAsksAscending } from "../lib/orderbook-utils";
 import {
-  sortBidsDescending,
-  sortAsksAscending,
-} from "../lib/orderbook-utils";
+  classifyBookStatus,
+  isDustOrEmptyStatus,
+} from "../lib/market-snapshot";
 import {
   type NormalizedLevel,
   type OrderBookSnapshot,
   type BookHealth,
-  type BookResolverHealthStatus,
   type ResolveBookParams,
   type ResolveBookResult,
   BOOK_THRESHOLDS,
@@ -58,8 +57,14 @@ export class BookResolver {
    * This is the MAIN method both WHALE and SCAN flows should use.
    * It handles fetching, validation, and cross-checking in a unified way.
    */
-  async resolveHealthyBook(params: ResolveBookParams): Promise<ResolveBookResult> {
-    const { tokenId, flow, maxSpreadCents = BOOK_THRESHOLDS.DEFAULT_MAX_SPREAD_CENTS } = params;
+  async resolveHealthyBook(
+    params: ResolveBookParams,
+  ): Promise<ResolveBookResult> {
+    const {
+      tokenId,
+      flow,
+      maxSpreadCents = BOOK_THRESHOLDS.DEFAULT_MAX_SPREAD_CENTS,
+    } = params;
     const startTime = Date.now();
 
     // Try primary source first (WS cache, then REST)
@@ -238,9 +243,50 @@ export class BookResolver {
         };
       }
 
-      // Update the market data store with fresh REST data
-      const store = getMarketDataStore();
-      store.updateFromRest(tokenId, bids, asks);
+      // CACHE SAFETY: Only update cache if book is NOT dust/empty
+      // This prevents healthy WS cache from being overwritten by stale REST dust
+      const bestBid = bids[0].price;
+      const bestAsk = asks[0].price;
+      const { status: bookStatus } = classifyBookStatus(bestBid, bestAsk);
+
+      if (!isDustOrEmptyStatus(bookStatus)) {
+        // Safe to update cache - book is healthy
+        const store = getMarketDataStore();
+        store.updateFromRest(tokenId, bids, asks);
+      } else {
+        // Check if we have existing healthy data before overwriting
+        const store = getMarketDataStore();
+        const existing = store.get(tokenId);
+        if (existing) {
+          const existingStatus = classifyBookStatus(
+            existing.bestBid,
+            existing.bestAsk,
+          );
+          if (existingStatus.status === "HEALTHY") {
+            // DO NOT overwrite healthy cache with dust
+            console.log(
+              JSON.stringify({
+                event: "BOOK_RESOLVER_CACHE_DUST_REJECTED",
+                tokenIdPrefix: tokenId.slice(0, 12),
+                newStatus: bookStatus,
+                newBidCents: (bestBid * 100).toFixed(1),
+                newAskCents: (bestAsk * 100).toFixed(1),
+                existingBidCents: (existing.bestBid * 100).toFixed(1),
+                existingAskCents: (existing.bestAsk * 100).toFixed(1),
+                message:
+                  "Dust REST response NOT cached - existing healthy data preserved",
+                timestamp: new Date().toISOString(),
+              }),
+            );
+          } else {
+            // Both are unhealthy - update cache anyway
+            store.updateFromRest(tokenId, bids, asks);
+          }
+        } else {
+          // No existing data - update cache even with dust (better than nothing)
+          store.updateFromRest(tokenId, bids, asks);
+        }
+      }
 
       return {
         source: "REST",
@@ -305,8 +351,8 @@ export class BookResolver {
 
         console.log(
           `🔍 [DUST_CROSS_CHECK] flow=${flow} | ${tokenId.slice(0, 12)}... | ` +
-            `PRIMARY(${primarySnapshot.source}): bid=${(primaryHealth.bestBidCents).toFixed(1)}¢ ask=${(primaryHealth.bestAskCents).toFixed(1)}¢ | ` +
-            `CONFIRM(WS_CACHE): bid=${(wsHealth.bestBidCents).toFixed(1)}¢ ask=${(wsHealth.bestAskCents).toFixed(1)}¢ | ` +
+            `PRIMARY(${primarySnapshot.source}): bid=${primaryHealth.bestBidCents.toFixed(1)}¢ ask=${primaryHealth.bestAskCents.toFixed(1)}¢ | ` +
+            `CONFIRM(WS_CACHE): bid=${wsHealth.bestBidCents.toFixed(1)}¢ ask=${wsHealth.bestAskCents.toFixed(1)}¢ | ` +
             `match=${primaryHealth.status === wsHealth.status ? "YES" : "NO"}`,
         );
 
@@ -345,8 +391,8 @@ export class BookResolver {
 
       console.log(
         `🔍 [DUST_CROSS_CHECK] flow=${flow} | ${tokenId.slice(0, 12)}... | ` +
-          `PRIMARY(${primarySnapshot.source}): bid=${(primaryHealth.bestBidCents).toFixed(1)}¢ ask=${(primaryHealth.bestAskCents).toFixed(1)}¢ | ` +
-          `CONFIRM(REST): bid=${(restHealth.bestBidCents).toFixed(1)}¢ ask=${(restHealth.bestAskCents).toFixed(1)}¢ | ` +
+          `PRIMARY(${primarySnapshot.source}): bid=${primaryHealth.bestBidCents.toFixed(1)}¢ ask=${primaryHealth.bestAskCents.toFixed(1)}¢ | ` +
+          `CONFIRM(REST): bid=${restHealth.bestBidCents.toFixed(1)}¢ ask=${restHealth.bestAskCents.toFixed(1)}¢ | ` +
           `match=${primaryHealth.status === restHealth.status ? "YES" : "NO"}`,
       );
 
@@ -397,9 +443,16 @@ export class BookResolver {
    * This is the SINGLE source of truth for dust/empty/health classification.
    * Both WHALE and SCAN flows use these same thresholds.
    */
-  evaluateHealth(snapshot: OrderBookSnapshot, maxSpreadCents: number = BOOK_THRESHOLDS.DEFAULT_MAX_SPREAD_CENTS): BookHealth {
+  evaluateHealth(
+    snapshot: OrderBookSnapshot,
+    maxSpreadCents: number = BOOK_THRESHOLDS.DEFAULT_MAX_SPREAD_CENTS,
+  ): BookHealth {
     // No data
-    if (!snapshot.parsedOk || snapshot.bids.length === 0 || snapshot.asks.length === 0) {
+    if (
+      !snapshot.parsedOk ||
+      snapshot.bids.length === 0 ||
+      snapshot.asks.length === 0
+    ) {
       return {
         healthy: false,
         status: snapshot.error ? "PARSE_ERROR" : "NO_DATA",
@@ -517,8 +570,7 @@ export class BookResolver {
         size: parseFloat(l.size),
       }))
       .filter(
-        (l: NormalizedLevel) =>
-          !isNaN(l.price) && !isNaN(l.size) && l.size > 0,
+        (l: NormalizedLevel) => !isNaN(l.price) && !isNaN(l.size) && l.size > 0,
       );
   }
 
@@ -601,7 +653,9 @@ let globalResolver: BookResolver | null = null;
 export function getBookResolver(client?: ClobClient): BookResolver {
   if (!globalResolver) {
     if (!client) {
-      throw new Error("BookResolver requires ClobClient on first initialization");
+      throw new Error(
+        "BookResolver requires ClobClient on first initialization",
+      );
     }
     globalResolver = new BookResolver(client);
   }

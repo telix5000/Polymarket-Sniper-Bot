@@ -447,14 +447,14 @@ export class MarketDataFacade {
 
   /**
    * Fast-path price check using lightweight /price endpoint
-   * 
+   *
    * Use this BEFORE fetching full orderbook to quickly reject markets that:
    * - Have dust book prices (bid <= 2¢, ask >= 98¢)
    * - Have spreads too wide for trading
    * - Are outside our price range
-   * 
+   *
    * This saves API resources by avoiding full orderbook fetches for bad markets.
-   * 
+   *
    * @param tokenId - The token ID to check
    * @param maxSpreadCents - Maximum acceptable spread in cents (default: 50)
    * @returns Quick price check result with pass/fail and reason
@@ -572,7 +572,7 @@ export class MarketDataFacade {
 
   /**
    * Get orderbook state with optional fast-path pre-check
-   * 
+   *
    * If useFastPath is true, will first check /price endpoint to reject bad markets
    * before fetching the full orderbook. This saves API resources.
    */
@@ -635,12 +635,14 @@ export class MarketDataFacade {
     avgLatencyMs: number;
     rejectReasons: Record<string, number>;
   } {
-    const rejectRate = this.fastPathChecks > 0
-      ? (this.fastPathRejects / this.fastPathChecks) * 100
-      : 0;
-    const avgLatencyMs = this.fastPathChecks > 0
-      ? this.fastPathTotalLatencyMs / this.fastPathChecks
-      : 0;
+    const rejectRate =
+      this.fastPathChecks > 0
+        ? (this.fastPathRejects / this.fastPathChecks) * 100
+        : 0;
+    const avgLatencyMs =
+      this.fastPathChecks > 0
+        ? this.fastPathTotalLatencyMs / this.fastPathChecks
+        : 0;
 
     return {
       totalChecks: this.fastPathChecks,
