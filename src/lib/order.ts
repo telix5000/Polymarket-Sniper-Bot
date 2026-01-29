@@ -22,6 +22,7 @@ import { ORDER, BUY, SELL } from "./constants";
 import type { OrderSide, OrderOutcome, OrderResult, Logger } from "./types";
 import { isLiveTradingEnabled } from "./auth";
 import { isCloudflareBlock, formatErrorForLog } from "../infra/error-handling";
+import { getBestPricesFromRaw } from "./orderbook-utils";
 
 // In-flight tracking to prevent duplicate orders
 const inFlight = new Map<string, number>();
@@ -200,16 +201,16 @@ export async function postOrder(input: PostOrderInput): Promise<OrderResult> {
     }
 
     // Validate orderbook sanity - best ask should be >= best bid
+    // Use normalized prices (sorted correctly) instead of raw [0] index
     if (orderBook.asks?.length && orderBook.bids?.length) {
-      const bestAsk = parseFloat(orderBook.asks[0].price);
-      const bestBid = parseFloat(orderBook.bids[0].price);
+      const { bestBid: normalizedBid, bestAsk: normalizedAsk } = getBestPricesFromRaw(orderBook);
       if (
-        Number.isFinite(bestAsk) &&
-        Number.isFinite(bestBid) &&
-        bestBid > bestAsk
+        normalizedBid !== null &&
+        normalizedAsk !== null &&
+        normalizedBid > normalizedAsk
       ) {
         logger?.error?.(
-          `Order rejected: INVALID_ORDERBOOK (bid ${bestBid} > ask ${bestAsk})`,
+          `Order rejected: INVALID_ORDERBOOK (bid ${normalizedBid} > ask ${normalizedAsk})`,
         );
         return { success: false, reason: "INVALID_ORDERBOOK" };
       }

@@ -22,6 +22,10 @@
 import WebSocket from "ws";
 import { POLYMARKET_WS, getMarketWsUrl } from "./constants";
 import { getMarketDataStore, type OrderbookLevel } from "./market-data-store";
+import {
+  sortBidsDescending,
+  sortAsksAscending,
+} from "./orderbook-utils";
 
 // ============================================================================
 // Types
@@ -498,8 +502,14 @@ export class WebSocketMarketClient {
 
     if (update.event_type === "book") {
       // Full orderbook snapshot
-      const bids = this.parseOrderbookLevels(update.bids);
-      const asks = this.parseOrderbookLevels(update.asks);
+      // IMPORTANT: WS L2 returns bids ascending (worst first), asks ascending (best first)
+      // We normalize to: bids descending (best first), asks ascending (best first)
+      const rawBids = this.parseOrderbookLevels(update.bids);
+      const rawAsks = this.parseOrderbookLevels(update.asks);
+
+      // Normalize: sort bids descending, asks ascending so [0] is always best price
+      const bids = sortBidsDescending(rawBids);
+      const asks = sortAsksAscending(rawAsks);
 
       if (bids.length > 0 && asks.length > 0) {
         // Initialize/reset orderbook state

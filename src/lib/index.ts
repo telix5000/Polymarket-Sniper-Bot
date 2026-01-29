@@ -129,3 +129,6 @@ export * from "./volume-scanner";
 
 // Market data cooldown manager (extracted from start.ts)
 export * from "./market-cooldown";
+
+// Orderbook normalization utilities
+export * from "./orderbook-utils";
