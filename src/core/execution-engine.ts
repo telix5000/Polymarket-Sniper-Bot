@@ -532,10 +532,45 @@ export class ExecutionEngine {
       // For BUY: We're willing to pay MORE (price + slippage) to ensure fill
       // For SELL: We're willing to accept LESS (price - slippage) to ensure fill
       const slippageMultiplier = dynamicSlippagePct / 100;
-      const fokPrice =
+
+      // CRITICAL FIX: Clamp price to valid Polymarket bounds [0.01, 0.99]
+      // Without clamping, high prices + slippage can exceed 1.0 and cause "invalid price" errors
+      const MIN_PRICE = 0.01;
+      const MAX_PRICE = 0.99;
+
+      const rawFokPrice =
         side === "LONG"
           ? bestPrice * (1 + slippageMultiplier) // BUY: pay up to X% more
           : bestPrice * (1 - slippageMultiplier); // SELL: accept X% less
+
+      // Clamp to valid bounds
+      const fokPrice =
+        side === "LONG"
+          ? Math.min(rawFokPrice, MAX_PRICE) // BUY: never exceed MAX_PRICE
+          : Math.max(rawFokPrice, MIN_PRICE); // SELL: never go below MIN_PRICE
+
+      // Log ORDER_PRICE_DEBUG for diagnostics
+      const priceWasClamped = fokPrice !== rawFokPrice;
+      console.log(
+        JSON.stringify({
+          event: "ORDER_PRICE_DEBUG",
+          tokenIdPrefix: tokenId.slice(0, 12),
+          side: side === "LONG" ? "BUY" : "SELL",
+          bestPrice: bestPrice.toFixed(4),
+          bestPriceCents: (bestPrice * 100).toFixed(2),
+          slippagePct: dynamicSlippagePct.toFixed(2),
+          rawFokPrice: rawFokPrice.toFixed(6),
+          fokPrice: fokPrice.toFixed(6),
+          wasClamped: priceWasClamped,
+          units: "dollars",
+        }),
+      );
+
+      if (priceWasClamped) {
+        console.warn(
+          `⚠️ [ENTRY] Price clamped: ${rawFokPrice.toFixed(4)} → ${fokPrice.toFixed(4)} (${side})`,
+        );
+      }
 
       // CRITICAL FIX (Clause 2.2): Entry sizing must use worst-case (slippage-adjusted)
       // limit price, not best price. This prevents overspending notional when slippage

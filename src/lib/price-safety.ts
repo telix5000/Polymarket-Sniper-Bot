@@ -598,3 +598,144 @@ export function isWithinEntryBounds(
   const priceCents = price * 100;
   return priceCents >= minEntryCents && priceCents <= maxEntryCents;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SHARED LIMIT PRICE COMPUTATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Input for computing a limit price
+ */
+export interface ComputeLimitPriceInput {
+  /** Best bid price in dollars (0-1 scale) */
+  bestBid: number;
+  /** Best ask price in dollars (0-1 scale) */
+  bestAsk: number;
+  /** Order side: "BUY" or "SELL" */
+  side: "BUY" | "SELL";
+  /** Slippage as a fraction (e.g., 0.059 for 5.9%) */
+  slippageFrac: number;
+  /** Token ID prefix for logging (optional) */
+  tokenIdPrefix?: string;
+}
+
+/**
+ * Result from computing a limit price
+ */
+export interface ComputeLimitPriceResult {
+  /** The computed and clamped limit price (always in [MIN_PRICE, MAX_PRICE]) */
+  limitPrice: number;
+  /** The raw computed price before clamping */
+  rawPrice: number;
+  /** Whether the price was clamped */
+  wasClamped: boolean;
+  /** Direction of clamping: "min", "max", or null */
+  clampDirection: "min" | "max" | null;
+}
+
+/**
+ * Compute a safe limit price for order submission.
+ *
+ * This is the SINGLE SOURCE OF TRUTH for limit price calculation.
+ * Both whale entries and scan entries MUST use this function.
+ *
+ * Policy:
+ * - For BUY: limitPrice = min(MAX_PRICE, bestAsk * (1 + slippageFrac))
+ * - For SELL: limitPrice = max(MIN_PRICE, bestBid * (1 - slippageFrac))
+ *
+ * The slippageFrac parameter MUST be a fraction (0.059 for 5.9%), NOT a percentage (5.9).
+ * If you have a percentage, convert it first: slippageFrac = slippagePct / 100
+ *
+ * CRITICAL: This function ALWAYS clamps the result to [MIN_PRICE, MAX_PRICE].
+ * This prevents "invalid price" errors from the CLOB API.
+ *
+ * @param input - Price computation input
+ * @returns Computed limit price result with diagnostics
+ */
+export function computeLimitPrice(
+  input: ComputeLimitPriceInput,
+): ComputeLimitPriceResult {
+  const { bestBid, bestAsk, side, slippageFrac, tokenIdPrefix } = input;
+
+  // Validate slippageFrac is a fraction, not a percentage
+  // If slippageFrac > 1, it's likely a percentage and should be divided by 100
+  if (slippageFrac > 1) {
+    console.warn(
+      `⚠️ [PRICE_SAFETY] slippageFrac=${slippageFrac} appears to be a percentage, not a fraction. ` +
+        `Expected value like 0.059 for 5.9%, not ${slippageFrac}. This may cause invalid prices!`,
+    );
+  }
+
+  // Compute raw price based on side
+  let rawPrice: number;
+
+  if (side === "BUY") {
+    // For BUY: We're willing to pay UP TO (bestAsk * (1 + slippageFrac))
+    rawPrice = bestAsk * (1 + slippageFrac);
+  } else {
+    // For SELL: We accept as low as (bestBid * (1 - slippageFrac))
+    rawPrice = bestBid * (1 - slippageFrac);
+  }
+
+  // Handle NaN or invalid prices
+  if (!Number.isFinite(rawPrice) || rawPrice <= 0) {
+    console.warn(
+      `⚠️ [PRICE_SAFETY] Invalid raw price: ${rawPrice} for ${side}. ` +
+        `bestBid=${bestBid}, bestAsk=${bestAsk}, slippageFrac=${slippageFrac}. Clamping to bounds.`,
+    );
+    rawPrice = side === "BUY" ? MAX_PRICE : MIN_PRICE;
+  }
+
+  // CRITICAL: Clamp to safe bounds [MIN_PRICE, MAX_PRICE]
+  let limitPrice = rawPrice;
+  let wasClamped = false;
+  let clampDirection: "min" | "max" | null = null;
+
+  if (rawPrice > MAX_PRICE) {
+    limitPrice = MAX_PRICE;
+    wasClamped = true;
+    clampDirection = "max";
+    console.warn(
+      `⚠️ [PRICE_SAFETY] Price clamped to MAX: ${rawPrice.toFixed(6)} → ${MAX_PRICE} ` +
+        `(${side}, bestAsk=${bestAsk}, slippageFrac=${slippageFrac})`,
+    );
+  } else if (rawPrice < MIN_PRICE) {
+    limitPrice = MIN_PRICE;
+    wasClamped = true;
+    clampDirection = "min";
+    console.warn(
+      `⚠️ [PRICE_SAFETY] Price clamped to MIN: ${rawPrice.toFixed(6)} → ${MIN_PRICE} ` +
+        `(${side}, bestBid=${bestBid}, slippageFrac=${slippageFrac})`,
+    );
+  }
+
+  // Log ORDER_PRICE_DEBUG for diagnostics (always, not just when clamped)
+  const mid = (bestBid + bestAsk) / 2;
+  const debugLog = {
+    event: "ORDER_PRICE_DEBUG",
+    tokenIdPrefix: tokenIdPrefix || "unknown",
+    side,
+    bestBid: bestBid.toFixed(4),
+    bestBidCents: (bestBid * 100).toFixed(2),
+    bestAsk: bestAsk.toFixed(4),
+    bestAskCents: (bestAsk * 100).toFixed(2),
+    mid: mid.toFixed(4),
+    slippagePct: (slippageFrac * 100).toFixed(2),
+    slippageFrac: slippageFrac.toFixed(4),
+    rawPrice: rawPrice.toFixed(6),
+    computedLimitPrice: limitPrice.toFixed(6),
+    wasClamped,
+    clampDirection,
+    units: "dollars",
+    timestamp: new Date().toISOString(),
+  };
+
+  console.log(JSON.stringify(debugLog));
+
+  return {
+    limitPrice,
+    rawPrice,
+    wasClamped,
+    clampDirection,
+  };
+}
