@@ -16,6 +16,7 @@ import { getLatencyMonitor } from "../infra/latency-monitor";
 import { recordMissedTrade, recordSuccessfulTrade } from "../infra/api-rate-monitor";
 import { smartSell } from "./smart-sell";
 import type { Position } from "../models";
+import { MIN_PRICE, MAX_PRICE } from "../lib/price-safety";
 import {
   EvTracker,
   type TradeResult,
@@ -535,8 +536,7 @@ export class ExecutionEngine {
 
       // CRITICAL FIX: Clamp price to valid Polymarket bounds [0.01, 0.99]
       // Without clamping, high prices + slippage can exceed 1.0 and cause "invalid price" errors
-      const MIN_PRICE = 0.01;
-      const MAX_PRICE = 0.99;
+      // MIN_PRICE and MAX_PRICE imported from price-safety module
 
       const rawFokPrice =
         side === "LONG"
@@ -642,10 +642,22 @@ export class ExecutionEngine {
       // Use a tighter price for GTC - we're willing to wait for a better fill
       console.log(`⏳ FOK missed, trying GTC limit order...`);
 
-      const gtcPrice =
+      const rawGtcPrice =
         side === "LONG"
           ? bestPrice * (1 + slippageMultiplier * 0.5) // Tighter slippage for GTC
           : bestPrice * (1 - slippageMultiplier * 0.5);
+
+      // CRITICAL: Clamp GTC price to valid bounds too
+      const gtcPrice =
+        side === "LONG"
+          ? Math.min(rawGtcPrice, MAX_PRICE)
+          : Math.max(rawGtcPrice, MIN_PRICE);
+
+      if (gtcPrice !== rawGtcPrice) {
+        console.warn(
+          `⚠️ [GTC] Price clamped: ${rawGtcPrice.toFixed(4)} → ${gtcPrice.toFixed(4)} (${side})`,
+        );
+      }
 
       try {
         const gtcOrder = await this.client.createOrder({
@@ -1075,8 +1087,7 @@ export class ExecutionEngine {
         const rawBestBid = parseFloat(bids[0].price);
         
         // CRITICAL: Clamp price to valid Polymarket bounds [0.01, 0.99]
-        const MIN_PRICE = 0.01;
-        const MAX_PRICE = 0.99;
+        // MIN_PRICE and MAX_PRICE imported from price-safety module
         const bestBid = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawBestBid));
         
         if (bestBid !== rawBestBid) {

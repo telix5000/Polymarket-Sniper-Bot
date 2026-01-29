@@ -23,6 +23,7 @@ import { SELL, ORDER } from "../lib/constants";
 import type { Position, OrderResult, Logger } from "../lib/types";
 import { isLiveTradingEnabled } from "../lib/auth";
 import { isCloudflareBlock, formatErrorForLog } from "../infra/error-handling";
+import { MIN_PRICE, MAX_PRICE } from "../lib/price-safety";
 
 // ============================================================================
 // TYPES
@@ -315,10 +316,17 @@ async function fastSellAtBestBid(
     }
 
     // Get best bid and clamp to valid bounds
-    const MIN_PRICE = 0.01;
-    const MAX_PRICE = 0.99;
+    // MIN_PRICE and MAX_PRICE imported from price-safety module
     const rawBestBid = parseFloat(orderBook.bids[0].price);
     const bestBid = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawBestBid));
+    const priceWasClamped = bestBid !== rawBestBid;
+
+    // Warn if price was clamped (shouldn't happen normally)
+    if (priceWasClamped) {
+      logger?.warn?.(
+        `⚠️ [FAST_SELL] Price clamped: ${rawBestBid.toFixed(4)} → ${bestBid.toFixed(4)}`,
+      );
+    }
 
     // Log ORDER_PRICE_DEBUG for consistency
     console.log(
@@ -327,9 +335,11 @@ async function fastSellAtBestBid(
         mode: "FAST_SELL",
         tokenIdPrefix: position.tokenId.slice(0, 12),
         side: "SELL",
+        rawBestBid: rawBestBid.toFixed(4),
         bestBid: bestBid.toFixed(4),
         bestBidCents: (bestBid * 100).toFixed(2),
         shares: sharesToSell.toFixed(4),
+        wasClamped: priceWasClamped,
         units: "dollars",
       }),
     );
@@ -497,9 +507,7 @@ export async function smartSell(
     // The analysis already validated that we can fill within slippage tolerance
     //
     // CRITICAL: Clamp to valid Polymarket bounds [0.01, 0.99]
-    // This ensures we never submit invalid prices to the API
-    const MIN_PRICE = 0.01;
-    const MAX_PRICE = 0.99;
+    // MIN_PRICE and MAX_PRICE imported from price-safety module
     const rawOrderPrice = analysis.bestBid;
     const orderPrice = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawOrderPrice));
 
