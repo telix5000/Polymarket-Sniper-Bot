@@ -425,14 +425,34 @@ export class ChurnEngine {
       maxSlippagePct: 10,
     });
 
-    // Log position closes
+    // Log position opens and closes via Telegram
     this.positionManager.onTransition((t) => {
-      if (t.toState === "CLOSED" && isTelegramEnabled()) {
-        const emoji = t.pnlCents >= 0 ? "✅" : "❌";
-        sendTelegram(
-          "Position Closed",
-          `${emoji} ${t.reason}\nP&L: ${t.pnlCents >= 0 ? "+" : ""}${t.pnlCents.toFixed(1)}¢ ($${t.pnlUsd.toFixed(2)})`,
-        ).catch(() => {});
+      if (isTelegramEnabled()) {
+        // Include outcome label and market context if available
+        const outcomeInfo = t.outcomeLabel
+          ? `\nOutcome: ${t.outcomeLabel}`
+          : "";
+        const marketInfo = t.marketQuestion
+          ? `\nMarket: ${t.marketQuestion.slice(0, 60)}${t.marketQuestion.length > 60 ? "..." : ""}`
+          : "";
+
+        if (t.toState === "CLOSED") {
+          const emoji = t.pnlCents >= 0 ? "✅" : "❌";
+          sendTelegram(
+            "Position Closed",
+            `${emoji} ${t.reason}${outcomeInfo}${marketInfo}\nP&L: ${t.pnlCents >= 0 ? "+" : ""}${t.pnlCents.toFixed(1)}¢ ($${t.pnlUsd.toFixed(2)})`,
+          ).catch(() => {});
+        } else if (
+          t.fromState === "OPEN" &&
+          t.toState === "OPEN" &&
+          t.reason === "POSITION_OPENED"
+        ) {
+          // New position opened - notify via Telegram
+          sendTelegram(
+            "📈 Position Opened",
+            `Bought: ${t.outcomeLabel || "Unknown"}${marketInfo}`,
+          ).catch(() => {});
+        }
       }
     });
 
@@ -2496,6 +2516,7 @@ export class ChurnEngine {
 
           // Verify tokenId mapping via Gamma API - helps diagnose wrong tokenId issues
           // Use a timeout to prevent blocking the trading loop
+          let siblingTokenId: string | null = null;
           try {
             const mappingPromise = fetchMarketByTokenId(tokenId);
             let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -2516,12 +2537,30 @@ export class ChurnEngine {
                   : marketInfo.active === true
                     ? "active"
                     : "unknown";
-              console.log(
-                `🔍 [MAPPING_VERIFY] ${tokenId.slice(0, 12)}... | conditionId=${marketInfo.conditionId.slice(0, 12)}... | marketId=${marketInfo.marketId.slice(0, 12)}... | YES=${marketInfo.yesTokenId.slice(0, 12)}... | NO=${marketInfo.noTokenId.slice(0, 12)}... | status=${activeStatus}`,
+
+              // Find which token this is and get its info
+              const tokenInfo = marketInfo.tokens?.find(
+                (t) => t.tokenId === tokenId,
               );
+              const siblingInfo = marketInfo.tokens?.find(
+                (t) => t.tokenId !== tokenId,
+              );
+              siblingTokenId = siblingInfo?.tokenId ?? null;
+
+              if (tokenInfo && siblingInfo) {
+                // New outcomeIndex-based logging
+                console.log(
+                  `🔍 [MAPPING_VERIFY] ${tokenId.slice(0, 12)}... | conditionId=${marketInfo.conditionId.slice(0, 12)}... | marketId=${marketInfo.marketId.slice(0, 12)}... | selected: idx=${tokenInfo.outcomeIndex} "${tokenInfo.outcomeLabel}" | sibling: idx=${siblingInfo.outcomeIndex} "${siblingInfo.outcomeLabel}" (${siblingInfo.tokenId.slice(0, 12)}...) | status=${activeStatus}`,
+                );
+              } else {
+                // Fallback to legacy format
+                console.log(
+                  `🔍 [MAPPING_VERIFY] ${tokenId.slice(0, 12)}... | conditionId=${marketInfo.conditionId.slice(0, 12)}... | marketId=${marketInfo.marketId.slice(0, 12)}... | outcomes=[${marketInfo.outcomeLabels?.join(", ") || "unknown"}] | status=${activeStatus}`,
+                );
+              }
             } else {
               console.log(
-                `⚠️ [MAPPING_VERIFY] ${tokenId.slice(0, 12)}... | No market found or timeout (possibly invalid/expired)`,
+                `⚠️ [MAPPING_VERIFY] ${tokenId.slice(0, 12)}... | Gamma API timeout or no data (market may be unlisted)`,
               );
             }
           } catch (mappingErr) {
@@ -2556,6 +2595,33 @@ export class ChurnEngine {
 
                 // Check if REST also shows dust book
                 if (restBid <= 2 && restAsk >= 98) {
+                  // Also check sibling token to see if we're on the wrong side
+                  if (siblingTokenId) {
+                    try {
+                      const siblingOrderbook =
+                        await this.client!.getOrderBook(siblingTokenId);
+                      if (
+                        siblingOrderbook?.bids?.length &&
+                        siblingOrderbook?.asks?.length
+                      ) {
+                        const siblingBid =
+                          parseFloat(siblingOrderbook.bids[0].price) * 100;
+                        const siblingAsk =
+                          parseFloat(siblingOrderbook.asks[0].price) * 100;
+                        console.log(
+                          `📡 [SIBLING_CHECK] ${siblingTokenId.slice(0, 12)}... | sibling book: bid=${siblingBid.toFixed(1)}¢ ask=${siblingAsk.toFixed(1)}¢`,
+                        );
+                        if (siblingBid > 2 || siblingAsk < 98) {
+                          console.log(
+                            `💡 [HINT] Sibling token has valid book - whale may have bought the OTHER outcome!`,
+                          );
+                        }
+                      }
+                    } catch (siblingErr) {
+                      // Ignore sibling fetch errors - it's just diagnostic
+                    }
+                  }
+
                   console.log(
                     `❌ [DUST_BOOK_CONFIRMED] ${tokenId.slice(0, 12)}... | REST confirms dust book`,
                   );

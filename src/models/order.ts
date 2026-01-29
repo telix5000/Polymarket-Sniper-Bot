@@ -12,8 +12,14 @@ export type OrderSide = "BUY" | "SELL";
 
 /**
  * Order outcome - the market outcome being traded
+ * @deprecated For new code, use outcomeLabel (string) to support non-YES/NO markets
  */
 export type OrderOutcome = "YES" | "NO";
+
+/**
+ * Outcome label - supports any 2-outcome market (YES/NO, team names, etc.)
+ */
+export type OutcomeLabel = string;
 
 /**
  * Result of an order execution attempt

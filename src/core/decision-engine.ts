@@ -83,6 +83,9 @@ export interface StateTransition {
   pnlUsd: number;
   evSnapshot: EvMetrics | null;
   biasDirection: BiasDirection;
+  // Outcome info for display (Telegram notifications)
+  outcomeLabel?: string;
+  marketQuestion?: string;
 }
 
 /**
@@ -94,6 +97,12 @@ export interface ManagedPosition {
   marketId?: string;
   side: "LONG" | "SHORT";
   state: PositionState;
+
+  // Outcome info for display (e.g., Telegram notifications)
+  // Supports any 2-outcome market (YES/NO, team names, etc.)
+  outcomeLabel?: string; // The outcome label (e.g., "Lakers", "Yes", "Over")
+  outcomeIndex?: 1 | 2; // 1-based index (1 = first outcome, 2 = second outcome)
+  marketQuestion?: string; // The market question for context
 
   // Entry
   entryPriceCents: number;
@@ -111,9 +120,11 @@ export interface ManagedPosition {
   hardExitPriceCents: number;
 
   // Hedge - including opposite token for proper hedging
+  // Works with ANY 2-outcome market, not just YES/NO
   hedges: HedgeLeg[];
   totalHedgeRatio: number;
-  oppositeTokenId?: string; // The opposite outcome token for hedging (YES↔NO)
+  oppositeTokenId?: string; // The sibling outcome token for hedging (outcomeIndex 1 ↔ 2)
+  oppositeOutcomeLabel?: string; // The opposite outcome label for display
 
   // Reference
   referencePriceCents: number;

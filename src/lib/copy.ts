@@ -53,20 +53,24 @@ function generateTradeKey(trade: {
   const txHash = trade.transactionHash || trade.id || "";
   const conditionId = trade.conditionId || "";
 
-  // Normalize outcome to outcomeIndex (case-insensitive)
+  // Normalize outcome to outcomeIndex for the key
+  // IMPORTANT: Supports ANY outcome label, not just YES/NO
+  // NOTE: This uses the API's 0-indexed convention (YES=0, NO=1) for consistency with
+  // incoming trade data from the Polymarket API. The internal OutcomeToken representation
+  // uses 1-based indices (outcomeIndex: 1|2), but dedup keys match API format.
   let outcomeIndex: number;
   if (typeof trade.outcomeIndex === "number") {
     outcomeIndex = trade.outcomeIndex;
   } else if (trade.outcome) {
     const upperOutcome = trade.outcome.toUpperCase();
+    // Map YES/NO to API's 0-indexed convention for backward compat
     if (upperOutcome === "NO") {
       outcomeIndex = 1;
     } else if (upperOutcome === "YES") {
       outcomeIndex = 0;
     } else {
-      // Unexpected outcome value - use sentinel to avoid incorrect deduplication
-      console.warn(`[copy] Unexpected outcome value: ${trade.outcome}`);
-      outcomeIndex = -1;
+      // Non-YES/NO outcome - use sentinel since we include outcome string in key
+      outcomeIndex = -2;
     }
   } else {
     // Both outcomeIndex and outcome missing - use sentinel to indicate incomplete data
@@ -74,13 +78,15 @@ function generateTradeKey(trade: {
   }
 
   const side = (trade.side || "BUY").toUpperCase();
+  const outcome = trade.outcome || "";
 
   // Use sentinel value (-1) for missing/invalid size to avoid incorrect deduplication
   const parsedSize = Number(trade.size);
   const size = Number.isFinite(parsedSize) ? parsedSize : -1;
 
-  // Use higher precision (6 decimals) to avoid collisions with similar-sized trades
-  return `${txHash}:${conditionId}:${outcomeIndex}:${side}:${size.toFixed(6)}`;
+  // Include outcome string directly in the key to prevent collisions between different outcomes
+  // e.g., "Lakers" vs "Celtics" will have different keys even if outcomeIndex is -2
+  return `${txHash}:${conditionId}:${outcomeIndex}:${outcome}:${side}:${size.toFixed(6)}`;
 }
 
 // Deduplication set with composite keys
@@ -173,31 +179,28 @@ export async function fetchRecentTrades(
           // Track max timestamp for cursor update
           maxTimestamp = Math.max(maxTimestamp, ts);
 
-          // Normalize outcome to "YES" or "NO" (case-insensitive) with explicit validation
-          let normalizedOutcome: "YES" | "NO" | null = null;
-          if (typeof t.outcomeIndex === "number") {
-            normalizedOutcome = t.outcomeIndex === 1 ? "NO" : "YES";
-          } else if (typeof t.outcome === "string") {
-            const upper = t.outcome.toUpperCase();
-            if (upper === "YES" || upper === "NO") {
-              normalizedOutcome = upper as "YES" | "NO";
-            }
-          }
-
-          // Skip trade if outcome cannot be determined reliably
-          if (!normalizedOutcome) {
+          // Accept ANY outcome - not just YES/NO
+          // The tokenId is the canonical identifier for the outcome we want to trade
+          let outcomeLabel: string;
+          if (typeof t.outcome === "string" && t.outcome.trim() !== "") {
+            outcomeLabel = t.outcome;
+          } else if (typeof t.outcomeIndex === "number") {
+            // Fallback to index-based label if no outcome string
+            outcomeLabel = t.outcomeIndex === 0 ? "Outcome1" : "Outcome2";
+          } else {
+            // Skip trade if we can't determine any outcome info
             console.warn(
-              `[copy] Skipping trade with unknown outcome for wallet ${addr.slice(0, 10)}...`,
+              `[copy] Skipping trade with no outcome info for wallet ${addr.slice(0, 10)}...`,
             );
             continue;
           }
 
           walletTrades.push({
-            // tokenId from API (may need resolution if missing)
+            // tokenId from API - this is the ACTUAL token the whale bought
             tokenId: t.asset || t.tokenId || "",
             conditionId: t.conditionId || "",
             marketId: t.marketId || "",
-            outcome: normalizedOutcome,
+            outcome: outcomeLabel, // Use actual outcome label (YES/NO or team name, etc.)
             side: t.side?.toUpperCase() === "SELL" ? "SELL" : "BUY",
             // Calculate USD value
             sizeUsd: Number(t.size) * Number(t.price) || 0,
