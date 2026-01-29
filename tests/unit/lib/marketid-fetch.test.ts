@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { describe, it, beforeEach, mock } from "node:test";
+import { describe, it } from "node:test";
 
 /**
  * Tests for marketId fetching with caching, TTL, and in-flight deduplication
@@ -117,7 +117,7 @@ describe("marketId fetch caching", () => {
     assert.strictEqual(result3, "market-123");
     assert.strictEqual(callCount, 1); // Still cached
     
-    // Fast forward past 1 hour - should fetch again
+    // Fast forward 31 more minutes (total 61 minutes past initial timestamp) - should fetch again
     await cache.fastForwardTime("token-abc", 31 * 60 * 1000);
     const result4 = await cache.fetchMarketId("token-abc");
     assert.strictEqual(result4, "market-123");
@@ -149,7 +149,7 @@ describe("marketId fetch caching", () => {
     assert.strictEqual(result3, null);
     assert.strictEqual(callCount, 1); // Still cached
     
-    // Fast forward past 5 minutes - should fetch again
+    // Fast forward 3 more minutes (total 6 minutes past initial timestamp) - should fetch again
     await cache.fastForwardTime("token-xyz", 3 * 60 * 1000);
     const result4 = await cache.fetchMarketId("token-xyz");
     assert.strictEqual(result4, null);
@@ -162,7 +162,7 @@ describe("marketId in-flight deduplication", () => {
     let apiCallCount = 0;
     const mockFetch = async (tokenId: string) => {
       apiCallCount++;
-      // Simulate slow API call
+      // Simulate slow API call - note: may be flaky on slow systems
       await new Promise(resolve => setTimeout(resolve, 100));
       return `market-${tokenId}`;
     };
@@ -270,14 +270,8 @@ describe("marketId executeEntry behavior", () => {
     let orderPlaced = false;
     
     if (!marketId) {
-      // Log but don't throw - marketId is optional
-      console.log(
-        JSON.stringify({
-          event: "MARKETID_MISSING_AT_EXECUTION",
-          tokenIdPrefix: tokenId.slice(0, 16),
-          note: "proceeding with order",
-        }),
-      );
+      // In real code, this is logged via debug() - no console.log in production
+      // Just verify we don't throw or block execution
     }
     
     // Order placement should proceed (uses tokenId, not marketId)

@@ -2558,10 +2558,19 @@ export class ChurnEngine {
       this.marketIdCacheTimestamps.set(tokenId, now);
       
       const errMsg = err instanceof Error ? err.message : String(err);
-      const statusCode = (err as any)?.response?.status ?? 
-                         (err as any)?.statusCode ?? 
-                         (err as any)?.code ?? 
-                         "unknown";
+      
+      // Safely extract status code from various error formats
+      let statusCode = "unknown";
+      try {
+        if (err && typeof err === "object") {
+          statusCode = (err as any)?.response?.status ?? 
+                       (err as any)?.statusCode ?? 
+                       (err as any)?.code ?? 
+                       "unknown";
+        }
+      } catch {
+        // If status code extraction fails, keep "unknown"
+      }
       
       // Structured error log with details
       this.deps.debug(
