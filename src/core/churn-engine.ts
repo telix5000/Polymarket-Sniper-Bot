@@ -59,6 +59,7 @@ import {
   shouldApplyLongCooldown,
   smartSell,
   isDeadBook,
+  getBestPricesFromRaw,
 } from "../lib";
 
 // Import BookResolver for unified book handling
@@ -2146,7 +2147,9 @@ export class ChurnEngine {
       if (!orderbook?.bids?.length) return null;
 
       // Best bid = what we'd get if we sold right now
-      return parseFloat(orderbook.bids[0].price) * 100;
+      // Use normalized prices (sorted correctly)
+      const { bestBidCents } = getBestPricesFromRaw(orderbook);
+      return bestBidCents;
     } catch {
       return null;
     }
@@ -2187,10 +2190,13 @@ export class ChurnEngine {
         return null;
       }
 
-      const bestBid = parseFloat(orderbook.bids[0].price);
-      const bestAsk = parseFloat(orderbook.asks[0].price);
+      // Use normalized prices (sorted correctly)
+      const { bestBid, bestAsk } = getBestPricesFromRaw(orderbook);
+      if (bestBid === null || bestAsk === null) {
+        return null;
+      }
 
-      // Sum up depth
+      // Sum up depth (use normalized ordering for top 5 levels)
       let bidDepth = 0,
         askDepth = 0;
       for (const level of orderbook.bids.slice(0, 5)) {
@@ -2724,8 +2730,8 @@ export class ChurnEngine {
             try {
               const restOrderbook = await this.client!.getOrderBook(tokenId);
               if (restOrderbook?.bids?.length && restOrderbook?.asks?.length) {
-                const restBid = parseFloat(restOrderbook.bids[0].price) * 100;
-                const restAsk = parseFloat(restOrderbook.asks[0].price) * 100;
+                // Use normalized prices (sorted correctly)
+                const { bestBidCents: restBid, bestAskCents: restAsk } = getBestPricesFromRaw(restOrderbook);
 
                 console.log(
                   `📡 [REST_VERIFY] ${tokenId.slice(0, 12)}... | REST result: bid=${restBid.toFixed(1)}¢ ask=${restAsk.toFixed(1)}¢`,
@@ -2742,10 +2748,8 @@ export class ChurnEngine {
                         siblingOrderbook?.bids?.length &&
                         siblingOrderbook?.asks?.length
                       ) {
-                        const siblingBid =
-                          parseFloat(siblingOrderbook.bids[0].price) * 100;
-                        const siblingAsk =
-                          parseFloat(siblingOrderbook.asks[0].price) * 100;
+                        // Use normalized prices for sibling too
+                        const { bestBidCents: siblingBid, bestAskCents: siblingAsk } = getBestPricesFromRaw(siblingOrderbook);
                         console.log(
                           `📡 [SIBLING_CHECK] ${siblingTokenId.slice(0, 12)}... | sibling book: bid=${siblingBid.toFixed(1)}¢ ask=${siblingAsk.toFixed(1)}¢`,
                         );
@@ -2896,10 +2900,10 @@ export class ChurnEngine {
         };
       }
 
-      const bestBid = parseFloat(orderbook.bids[0].price);
-      const bestAsk = parseFloat(orderbook.asks[0].price);
+      // Use normalized prices (sorted correctly)
+      const { bestBid, bestAsk } = getBestPricesFromRaw(orderbook);
 
-      if (isNaN(bestBid) || isNaN(bestAsk)) {
+      if (bestBid === null || bestAsk === null || isNaN(bestBid) || isNaN(bestAsk)) {
         this.diagnostics.orderbookFetchFailures++;
         return {
           ok: false,

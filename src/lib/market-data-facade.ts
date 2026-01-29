@@ -22,6 +22,10 @@ import {
   type MarketDataMode,
 } from "./market-data-store";
 import { isDeadBook } from "./price-safety";
+import {
+  sortBidsDescending,
+  sortAsksAscending,
+} from "./orderbook-utils";
 
 // ============================================================================
 // Types
@@ -539,8 +543,8 @@ export class MarketDataFacade {
       diagnostic.bidsLen = orderbook.bids.length;
       diagnostic.asksLen = orderbook.asks.length;
 
-      // Parse levels
-      const bids: OrderbookLevel[] = orderbook.bids
+      // Parse levels from raw API response
+      const rawBids: OrderbookLevel[] = orderbook.bids
         .map((l: any) => ({
           price: parseFloat(l.price),
           size: parseFloat(l.size),
@@ -550,7 +554,7 @@ export class MarketDataFacade {
             !isNaN(l.price) && !isNaN(l.size) && l.size > 0,
         );
 
-      const asks: OrderbookLevel[] = orderbook.asks
+      const rawAsks: OrderbookLevel[] = orderbook.asks
         .map((l: any) => ({
           price: parseFloat(l.price),
           size: parseFloat(l.size),
@@ -560,7 +564,13 @@ export class MarketDataFacade {
             !isNaN(l.price) && !isNaN(l.size) && l.size > 0,
         );
 
-      // Capture top 3 levels for diagnostics
+      // CRITICAL: Sort levels so best prices are at index 0
+      // REST API returns levels sorted away from mid (worst prices first)
+      // We need: bids descending (best/highest first), asks ascending (best/lowest first)
+      const bids = sortBidsDescending(rawBids);
+      const asks = sortAsksAscending(rawAsks);
+
+      // Capture top 3 levels for diagnostics (now properly sorted)
       diagnostic.topBids = bids.slice(0, 3).map((l) => ({
         price: l.price,
         size: l.size,
@@ -583,11 +593,11 @@ export class MarketDataFacade {
         return null;
       }
 
-      // Update store
+      // Update store with SORTED levels
       const store = getMarketDataStore();
       store.updateFromRest(tokenId, bids, asks);
 
-      // Compute best prices
+      // Compute best prices (now correctly at index 0 after sorting)
       const bestBid = bids[0].price;
       const bestAsk = asks[0].price;
       diagnostic.computedBestBid = bestBid;

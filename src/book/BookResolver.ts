@@ -25,6 +25,10 @@ import {
 } from "../lib/market-data-store";
 import { POLYMARKET_API } from "../lib/constants";
 import {
+  sortBidsDescending,
+  sortAsksAscending,
+} from "../lib/orderbook-utils";
+import {
   type NormalizedLevel,
   type OrderBookSnapshot,
   type BookHealth,
@@ -208,8 +212,11 @@ export class BookResolver {
       }
 
       // Parse and normalize levels
-      const bids = this.parseLevels(orderbook.bids);
-      const asks = this.parseLevels(orderbook.asks);
+      // CRITICAL: Sort bids descending (best first), asks ascending (best first)
+      const rawBids = this.parseLevels(orderbook.bids);
+      const rawAsks = this.parseLevels(orderbook.asks);
+      const bids = sortBidsDescending(rawBids);
+      const asks = sortAsksAscending(rawAsks);
 
       // Check for parsing failures - DO NOT default
       if (bids.length === 0 || asks.length === 0) {
