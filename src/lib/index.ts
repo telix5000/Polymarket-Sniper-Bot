@@ -120,3 +120,12 @@ export * from "./diag-workflow";
 
 // Price safety
 export * from "./price-safety";
+
+// Bias accumulator (extracted from start.ts)
+export * from "./bias-accumulator";
+
+// Volume scanner (extracted from start.ts MarketScanner)
+export * from "./volume-scanner";
+
+// Market data cooldown manager (extracted from start.ts)
+export * from "./market-cooldown";
