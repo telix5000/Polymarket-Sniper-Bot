@@ -14,13 +14,14 @@
  */
 
 import type { ClobClient } from "@polymarket/clob-client";
-import { POLYMARKET_WS } from "./constants";
+import { POLYMARKET_WS, POLYMARKET_API } from "./constants";
 import {
   getMarketDataStore,
   type TokenMarketData,
   type OrderbookLevel,
   type MarketDataMode,
 } from "./market-data-store";
+import { isDeadBook } from "./price-safety";
 
 // ============================================================================
 // Types
@@ -58,6 +59,33 @@ export interface FacadeMetrics {
   rateLimitHits: number;
   mode: MarketDataMode;
   avgResponseTimeMs: number;
+}
+
+/**
+ * REST orderbook fetch diagnostic log (for debugging dust book false positives)
+ * All prices in decimal format (0-1 scale) for consistency
+ */
+export interface RestFetchDiagnostic {
+  tokenId: string;
+  requestUrl: string; // URL with secrets redacted
+  httpStatus: number | null;
+  latencyMs: number;
+  bidsLen: number;
+  asksLen: number;
+  /** First 3 bid levels [price, size] */
+  topBids: Array<{ price: number; size: number }>;
+  /** First 3 ask levels [price, size] */
+  topAsks: Array<{ price: number; size: number }>;
+  /** Computed best bid (decimal) */
+  computedBestBid: number | null;
+  /** Computed best ask (decimal) */
+  computedBestAsk: number | null;
+  /** Whether this looks like a dust book (bid<=0.02, ask>=0.98) */
+  isDustBook: boolean;
+  /** Error message if fetch failed */
+  error?: string;
+  /** Parse failure details if applicable */
+  parseFailure?: string;
 }
 
 // ============================================================================
@@ -460,14 +488,56 @@ export class MarketDataFacade {
   /**
    * Fetch orderbook from REST API and update store
    * Note: Rate limiting is handled by the caller via tryAcquire/release
+   *
+   * ENHANCED: Includes detailed instrumentation for debugging DUST_BOOK false positives
+   * - Logs request URL, HTTP status, latency
+   * - Logs bid/ask array lengths and top 3 levels
+   * - Logs computed bestBid/bestAsk
+   * - Cross-checks with WS cache when dust book is detected
+   * - NEVER defaults to 0.01/0.99 silently
    */
   private async fetchFromRest(tokenId: string): Promise<OrderbookState | null> {
+    const startTime = Date.now();
+    const requestUrl = `${POLYMARKET_API.CLOB}/book?token_id=${tokenId}`;
+    const redactedUrl = `${POLYMARKET_API.CLOB}/book?token_id=${tokenId.slice(0, 12)}...`;
+
+    // Initialize diagnostic object
+    const diagnostic: RestFetchDiagnostic = {
+      tokenId,
+      requestUrl: redactedUrl,
+      httpStatus: null,
+      latencyMs: 0,
+      bidsLen: 0,
+      asksLen: 0,
+      topBids: [],
+      topAsks: [],
+      computedBestBid: null,
+      computedBestAsk: null,
+      isDustBook: false,
+    };
+
     try {
       const orderbook = await this.client.getOrderBook(tokenId);
+      diagnostic.latencyMs = Date.now() - startTime;
+      diagnostic.httpStatus = 200; // If we get here, request succeeded
 
+      // Check for empty orderbook - DO NOT default to 0.01/0.99
       if (!orderbook?.bids?.length || !orderbook?.asks?.length) {
+        diagnostic.bidsLen = orderbook?.bids?.length ?? 0;
+        diagnostic.asksLen = orderbook?.asks?.length ?? 0;
+        diagnostic.parseFailure = "Empty bids or asks array from API";
+
+        console.log(
+          `📊 [REST_FETCH_EMPTY] ${tokenId.slice(0, 12)}... | ` +
+            `latency=${diagnostic.latencyMs}ms | bidsLen=${diagnostic.bidsLen} asksLen=${diagnostic.asksLen} | ` +
+            `EMPTY_BOOK - NO defaults applied`,
+        );
+        this.logDiagnostic(diagnostic);
         return null;
       }
+
+      diagnostic.bidsLen = orderbook.bids.length;
+      diagnostic.asksLen = orderbook.asks.length;
 
       // Parse levels
       const bids: OrderbookLevel[] = orderbook.bids
@@ -490,7 +560,26 @@ export class MarketDataFacade {
             !isNaN(l.price) && !isNaN(l.size) && l.size > 0,
         );
 
+      // Capture top 3 levels for diagnostics
+      diagnostic.topBids = bids.slice(0, 3).map((l) => ({
+        price: l.price,
+        size: l.size,
+      }));
+      diagnostic.topAsks = asks.slice(0, 3).map((l) => ({
+        price: l.price,
+        size: l.size,
+      }));
+
+      // Check for parsing failures - DO NOT default to 0.01/0.99
       if (bids.length === 0 || asks.length === 0) {
+        diagnostic.parseFailure = `Parsing filtered all levels: rawBids=${orderbook.bids.length} validBids=${bids.length} rawAsks=${orderbook.asks.length} validAsks=${asks.length}`;
+
+        console.log(
+          `📊 [REST_FETCH_PARSE_FAIL] ${tokenId.slice(0, 12)}... | ` +
+            `latency=${diagnostic.latencyMs}ms | ${diagnostic.parseFailure} | ` +
+            `PARSE_FAIL - NO defaults applied`,
+        );
+        this.logDiagnostic(diagnostic);
         return null;
       }
 
@@ -498,11 +587,16 @@ export class MarketDataFacade {
       const store = getMarketDataStore();
       store.updateFromRest(tokenId, bids, asks);
 
-      // Return state
+      // Compute best prices
       const bestBid = bids[0].price;
       const bestAsk = asks[0].price;
-      const mid = (bestBid + bestAsk) / 2;
+      diagnostic.computedBestBid = bestBid;
+      diagnostic.computedBestAsk = bestAsk;
 
+      // Check for dust book condition
+      diagnostic.isDustBook = isDeadBook(bestBid, bestAsk);
+
+      // Compute depth for top 5 levels
       let bidDepth = 0,
         askDepth = 0;
       for (const level of bids.slice(0, 5)) {
@@ -511,6 +605,36 @@ export class MarketDataFacade {
       for (const level of asks.slice(0, 5)) {
         askDepth += level.size * level.price;
       }
+
+      const mid = (bestBid + bestAsk) / 2;
+
+      // Cross-check with WS cache if dust book detected
+      if (diagnostic.isDustBook) {
+        const wsData = store.get(tokenId);
+        const wsOrderbook = store.getOrderbook(tokenId);
+
+        console.log(
+          `⚠️ [DUST_CONFIRM] ${tokenId.slice(0, 12)}... | ` +
+            `REST: bid=${(bestBid * 100).toFixed(1)}¢ ask=${(bestAsk * 100).toFixed(1)}¢ | ` +
+            `WS_CACHE: ${wsData ? `bid=${(wsData.bestBid * 100).toFixed(1)}¢ ask=${(wsData.bestAsk * 100).toFixed(1)}¢ source=${wsData.source} age=${Date.now() - wsData.updatedAt}ms` : "NO_CACHE"} | ` +
+            `bidsLen=${bids.length} asksLen=${asks.length}`,
+        );
+
+        // Log detailed level comparison if WS cache exists
+        if (wsOrderbook && wsOrderbook.bids.length > 0) {
+          const wsBestBid = wsOrderbook.bids[0].price;
+          const wsBestAsk =
+            wsOrderbook.asks.length > 0 ? wsOrderbook.asks[0].price : 0;
+          console.log(
+            `🔍 [DUST_CROSS_CHECK] REST_bid=${(bestBid * 100).toFixed(1)}¢ vs WS_bid=${(wsBestBid * 100).toFixed(1)}¢ | ` +
+              `REST_ask=${(bestAsk * 100).toFixed(1)}¢ vs WS_ask=${(wsBestAsk * 100).toFixed(1)}¢ | ` +
+              `match=${Math.abs(bestBid - wsBestBid) < 0.001 && Math.abs(bestAsk - wsBestAsk) < 0.001 ? "YES" : "NO"}`,
+          );
+        }
+      }
+
+      // Log successful fetch with diagnostic info
+      this.logDiagnostic(diagnostic);
 
       return {
         bestBidCents: bestBid * 100,
@@ -522,14 +646,53 @@ export class MarketDataFacade {
         source: "REST",
       };
     } catch (err) {
+      diagnostic.latencyMs = Date.now() - startTime;
       const msg = err instanceof Error ? err.message : String(err);
+      diagnostic.error = msg;
+
+      // Extract HTTP status from error if available
+      if (msg.includes("404")) {
+        diagnostic.httpStatus = 404;
+      } else if (msg.includes("429")) {
+        diagnostic.httpStatus = 429;
+      } else if (msg.includes("500")) {
+        diagnostic.httpStatus = 500;
+      }
+
       // Don't log 404s (market closed) as errors
       if (!msg.includes("404") && !msg.includes("No orderbook")) {
-        console.warn(
-          `[MarketData] REST fallback failed for ${tokenId.slice(0, 12)}...: ${msg}`,
+        console.log(
+          `📊 [REST_FETCH_ERROR] ${tokenId.slice(0, 12)}... | ` +
+            `latency=${diagnostic.latencyMs}ms | status=${diagnostic.httpStatus ?? "unknown"} | ` +
+            `error=${msg.slice(0, 100)}`,
         );
       }
+
+      this.logDiagnostic(diagnostic);
       return null;
+    }
+  }
+
+  /**
+   * Log REST fetch diagnostic in structured JSON format
+   */
+  private logDiagnostic(diagnostic: RestFetchDiagnostic): void {
+    // Only log detailed diagnostics for dust books or errors
+    if (diagnostic.isDustBook || diagnostic.error || diagnostic.parseFailure) {
+      console.log(
+        JSON.stringify({
+          event: "REST_ORDERBOOK_DIAGNOSTIC",
+          timestamp: new Date().toISOString(),
+          ...diagnostic,
+          // Format prices in cents for readability
+          computedBestBidCents: diagnostic.computedBestBid
+            ? (diagnostic.computedBestBid * 100).toFixed(2)
+            : null,
+          computedBestAskCents: diagnostic.computedBestAsk
+            ? (diagnostic.computedBestAsk * 100).toFixed(2)
+            : null,
+        }),
+      );
     }
   }
 

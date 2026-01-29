@@ -61,6 +61,16 @@ import {
   isDeadBook,
 } from "../lib";
 
+// Import BookResolver for unified book handling
+import {
+  getBookResolver,
+  initBookResolver,
+  type BookResolver,
+  type BookHealth,
+  type ResolveBookResult,
+  BOOK_THRESHOLDS,
+} from "../book";
+
 // Direct imports from core modules
 import {
   DecisionEngine,
@@ -258,6 +268,7 @@ export class ChurnEngine {
   private latencyMonitor: LatencyMonitor;
   private marketDataFacade: MarketDataFacade | null = null;
   private balanceCache: BalanceCache | null = null;
+  private bookResolver: BookResolver | null = null;
 
   private client: ClobClient | null = null;
   private wallet: any = null;
@@ -586,6 +597,9 @@ export class ChurnEngine {
     // Initialize market data store and facade for real-time orderbook streaming
     initMarketDataStore();
     this.marketDataFacade = initMarketDataFacade(this.client);
+
+    // Initialize BookResolver for unified book handling (whale + scan flows)
+    this.bookResolver = initBookResolver(this.client);
 
     // Setup WebSocket bypass (before VPN changes default routes)
     // WebSocket traffic is read-only and doesn't need VPN protection
@@ -2475,6 +2489,130 @@ export class ChurnEngine {
         referencePriceCents: (bestBidCents + bestAskCents) / 2,
       },
     };
+  }
+
+  /**
+   * Unified book fetch for both whale and scan flows using BookResolver
+   *
+   * This method provides a single entry point for both flows:
+   * - Resolves the correct token identifier
+   * - Fetches book from primary source (WS cache or REST)
+   * - Validates without silent fallbacks (no default 0.01/0.99)
+   * - Cross-checks dust/empty before rejection
+   * - Returns structured result compatible with existing flow
+   *
+   * @param tokenId - The token ID to fetch
+   * @param flow - "whale" or "scan" for logging purposes
+   */
+  private async fetchMarketDataWithBookResolver(
+    tokenId: string,
+    flow: "whale" | "scan",
+  ): Promise<FetchMarketDataResult> {
+    // Use BookResolver if available
+    if (!this.bookResolver) {
+      // Fallback to legacy method if resolver not initialized
+      return this.fetchTokenMarketDataWithReason(tokenId);
+    }
+
+    try {
+      // Resolve healthy book using unified BookResolver
+      const result = await this.bookResolver.resolveHealthyBook({
+        tokenId,
+        flow,
+        maxSpreadCents: this.config.minSpreadCents,
+      });
+
+      // Map BookHealth status to FetchMarketDataResult
+      if (!result.success) {
+        this.diagnostics.orderbookFetchFailures++;
+
+        // Map BookHealthStatus to MarketDataFailureReason
+        const reasonMap: Record<string, MarketDataFailureReason> = {
+          EMPTY_BOOK: "DUST_BOOK", // Treat EMPTY_BOOK as DUST_BOOK
+          DUST_BOOK: "DUST_BOOK",
+          WIDE_SPREAD: "INVALID_LIQUIDITY",
+          ASK_TOO_HIGH: "INVALID_LIQUIDITY",
+          NO_DATA: "NO_ORDERBOOK",
+          PARSE_ERROR: "PARSE_ERROR",
+          OK: "NETWORK_ERROR", // Should not happen
+        };
+
+        const reason = reasonMap[result.health.status] || "NETWORK_ERROR";
+        const detail = result.crossChecked
+          ? `${result.health.reason} (cross-checked: ${result.crossCheckSource} ${result.crossCheckHealth?.status || "N/A"})`
+          : result.health.reason;
+
+        // Log the rejection with flow info
+        console.log(
+          `❌ [BOOK_REJECTED] flow=${flow} | ${tokenId.slice(0, 12)}... | ` +
+            `status=${result.health.status} | bid=${result.health.bestBidCents.toFixed(1)}¢ ask=${result.health.bestAskCents.toFixed(1)}¢ | ` +
+            `crossChecked=${result.crossChecked}`,
+        );
+
+        return {
+          ok: false,
+          reason,
+          detail,
+        };
+      }
+
+      // Book is healthy - construct the market data
+      const snapshot = result.snapshot!;
+      const health = result.health;
+
+      // Compute depth from snapshot levels
+      let bidDepth = 0,
+        askDepth = 0;
+      for (const level of snapshot.bids.slice(0, 5)) {
+        bidDepth += level.size * level.price;
+      }
+      for (const level of snapshot.asks.slice(0, 5)) {
+        askDepth += level.size * level.price;
+      }
+
+      const activity: MarketActivity = {
+        tradesInWindow: 15,
+        bookUpdatesInWindow: 25,
+        lastTradeTime: Date.now(),
+        lastUpdateTime: Date.now(),
+      };
+
+      console.log(
+        `✅ [BOOK_ACCEPTED] flow=${flow} | ${tokenId.slice(0, 12)}... | ` +
+          `source=${snapshot.source} | bid=${health.bestBidCents.toFixed(1)}¢ ask=${health.bestAskCents.toFixed(1)}¢ spread=${health.spreadCents.toFixed(1)}¢ | ` +
+          `bids=${health.bidsLen} asks=${health.asksLen}`,
+      );
+
+      return {
+        ok: true,
+        data: {
+          tokenId,
+          orderbook: {
+            bestBidCents: health.bestBidCents,
+            bestAskCents: health.bestAskCents,
+            bidDepthUsd: bidDepth,
+            askDepthUsd: askDepth,
+            spreadCents: health.spreadCents,
+            midPriceCents: (health.bestBidCents + health.bestAskCents) / 2,
+            source: snapshot.source === "WS_CACHE" ? "WS" : "REST",
+          },
+          activity,
+          referencePriceCents: (health.bestBidCents + health.bestAskCents) / 2,
+        },
+      };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.log(
+        `⚠️ [BOOK_ERROR] flow=${flow} | ${tokenId.slice(0, 12)}... | error=${errorMsg.slice(0, 100)}`,
+      );
+
+      this.diagnostics.orderbookFetchFailures++;
+      return {
+        ok: false,
+        reason: "NETWORK_ERROR",
+        detail: errorMsg,
+      };
+    }
   }
 
   /**
