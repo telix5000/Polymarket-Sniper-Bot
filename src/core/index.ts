@@ -107,7 +107,27 @@ export type {
   HedgeOutcome,
   DynamicHedgeParameters,
   HedgeDecision,
+  HedgeDecisionWithHistory,
 } from "./dynamic-hedge-policy";
+
+// Historical Trade Snapshot - rolling window trade analysis for hedge decisions
+export {
+  DEFAULT_HISTORICAL_SNAPSHOT_CONFIG,
+  HistoricalTradeSnapshot,
+  createHistoricalTradeSnapshot,
+} from "./historical-trade-snapshot";
+
+export type {
+  ExecutedTradeRecord,
+  AssetExposure,
+  DrawdownMetrics,
+  VolatilityMetrics,
+  TradeFrequencyMetrics,
+  SlippageMetrics,
+  HistoricalSnapshot,
+  HedgeRatioRecommendation,
+  HistoricalSnapshotConfig,
+} from "./historical-trade-snapshot";
 
 // Execution Engine - order execution for entries and exits (extracted from start.ts)
 export {
