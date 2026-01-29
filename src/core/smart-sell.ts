@@ -66,6 +66,12 @@ export interface SmartSellConfig {
   gtcExpirationSeconds?: number;
   /** Force sell even if conditions aren't ideal (stop-loss scenarios) */
   forceSell?: boolean;
+  /** 
+   * Fast mode: Skip all analysis, just sell at bestBid with FOK immediately.
+   * Use for: hedge unwinding, emergency exits, time-critical sells.
+   * HFT best practice: when speed matters more than price optimization.
+   */
+  fastMode?: boolean;
   /** Logger for detailed output */
   logger?: Logger;
 }
@@ -278,6 +284,98 @@ export function determineOrderType(
 }
 
 // ============================================================================
+// FAST SELL - HFT MODE FOR URGENT EXITS
+// ============================================================================
+
+/**
+ * Fast sell at best bid - no analysis, immediate FOK execution.
+ * 
+ * USE FOR:
+ * - Hedge unwinding (need to exit both sides simultaneously)
+ * - Emergency exits (stop-loss triggered)
+ * - Time-critical sells where speed > price
+ * 
+ * HFT BEST PRACTICE: Mirrors the simple BUY approach.
+ * When you need to get out, GET OUT. Don't optimize for pennies.
+ */
+async function fastSellAtBestBid(
+  client: ClobClient,
+  position: Position,
+  logger?: Logger,
+): Promise<SmartSellResult> {
+  const sharesToSell = position.size;
+
+  try {
+    // Single orderbook fetch - minimal latency
+    const orderBook = await client.getOrderBook(position.tokenId);
+
+    if (!orderBook?.bids?.length) {
+      logger?.warn?.(`[FAST_SELL] No bids for ${position.tokenId.slice(0, 12)}...`);
+      return { success: false, reason: "NO_BIDS" };
+    }
+
+    // Get best bid and clamp to valid bounds
+    const MIN_PRICE = 0.01;
+    const MAX_PRICE = 0.99;
+    const rawBestBid = parseFloat(orderBook.bids[0].price);
+    const bestBid = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawBestBid));
+
+    // Log ORDER_PRICE_DEBUG for consistency
+    console.log(
+      JSON.stringify({
+        event: "ORDER_PRICE_DEBUG",
+        mode: "FAST_SELL",
+        tokenIdPrefix: position.tokenId.slice(0, 12),
+        side: "SELL",
+        bestBid: bestBid.toFixed(4),
+        bestBidCents: (bestBid * 100).toFixed(2),
+        shares: sharesToSell.toFixed(4),
+        units: "dollars",
+      }),
+    );
+
+    logger?.info?.(
+      `[FAST_SELL] ${sharesToSell.toFixed(2)} shares @ ${(bestBid * 100).toFixed(1)}¢ (FOK)`,
+    );
+
+    // Execute immediately with FOK - no waiting
+    const signedOrder = await client.createMarketOrder({
+      side: Side.SELL,
+      tokenID: position.tokenId,
+      amount: sharesToSell,
+      price: bestBid,
+    });
+
+    const response = await client.postOrder(signedOrder, OrderType.FOK);
+
+    if (isCloudflareBlock(response)) {
+      logger?.error?.(`[FAST_SELL] Cloudflare blocked`);
+      return { success: false, reason: "CLOUDFLARE_BLOCKED" };
+    }
+
+    if (response.success) {
+      logger?.info?.(`[FAST_SELL] ✅ Executed @ ${(bestBid * 100).toFixed(1)}¢`);
+      return {
+        success: true,
+        actualPrice: bestBid,
+        orderType: "FOK",
+      };
+    } else {
+      const errorMsg = (response as any)?.errorMsg || (response as any)?.error || "unknown";
+      logger?.warn?.(`[FAST_SELL] ❌ Failed: ${errorMsg}`);
+      return { success: false, reason: errorMsg };
+    }
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    if (errorMessage.includes("No orderbook") || errorMessage.includes("404")) {
+      return { success: false, reason: "MARKET_CLOSED" };
+    }
+    logger?.error?.(`[FAST_SELL] Error: ${errorMessage}`);
+    return { success: false, reason: formatErrorForLog(errorMessage) };
+  }
+}
+
+// ============================================================================
 // SMART SELL EXECUTION
 // ============================================================================
 
@@ -290,6 +388,8 @@ export function determineOrderType(
  * 3. Chooses between FOK and GTC order types
  * 4. Executes with retry logic
  * 5. Reports actual vs expected fill
+ * 
+ * For urgent exits (hedge unwinding), use config.fastMode = true
  */
 export async function smartSell(
   client: ClobClient,
@@ -316,6 +416,15 @@ export async function smartSell(
       `Sell rejected: Position too small (${sharesToSell} shares)`,
     );
     return { success: false, reason: "POSITION_TOO_SMALL" };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FAST MODE: Skip all analysis, sell immediately at best bid with FOK
+  // Use for: hedge unwinding, emergency exits, time-critical sells
+  // HFT best practice: speed > price optimization for urgent exits
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (config?.fastMode) {
+    return fastSellAtBestBid(client, position, logger);
   }
 
   try {

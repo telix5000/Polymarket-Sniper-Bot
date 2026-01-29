@@ -1072,12 +1072,37 @@ export class ExecutionEngine {
           continue;
         }
 
-        const bestBid = parseFloat(bids[0].price);
+        const rawBestBid = parseFloat(bids[0].price);
+        
+        // CRITICAL: Clamp price to valid Polymarket bounds [0.01, 0.99]
+        const MIN_PRICE = 0.01;
+        const MAX_PRICE = 0.99;
+        const bestBid = Math.max(MIN_PRICE, Math.min(MAX_PRICE, rawBestBid));
+        
+        if (bestBid !== rawBestBid) {
+          console.warn(
+            `⚠️ [HEDGE UNWIND] Price clamped: ${rawBestBid.toFixed(4)} → ${bestBid.toFixed(4)}`,
+          );
+        }
+
         // NOTE: We estimate shares using the hedge entry price. If the hedge filled at a different
         // price due to slippage, this may be slightly inaccurate. For improved accuracy, consider
         // tracking actual filled shares when hedges are created. This conservative approach errs
         // on the side of attempting to sell the estimated amount, which FOK will reject if too large.
         const shares = hedge.sizeUsd / (hedge.entryPriceCents / 100);
+
+        // Log ORDER_PRICE_DEBUG for consistency
+        console.log(
+          JSON.stringify({
+            event: "ORDER_PRICE_DEBUG",
+            mode: "HEDGE_UNWIND",
+            tokenIdPrefix: hedge.tokenId.slice(0, 12),
+            side: "SELL",
+            bestBid: bestBid.toFixed(4),
+            shares: shares.toFixed(4),
+            units: "dollars",
+          }),
+        );
 
         // Create sell order with FOK to ensure confirmed fill
         const { Side, OrderType } = await import("@polymarket/clob-client");
