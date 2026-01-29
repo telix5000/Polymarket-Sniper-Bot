@@ -118,3 +118,25 @@ export type {
   ErrorReport,
   GitHubReporterConfig,
 } from "./github-reporter";
+
+// API Rate Monitor - Track API usage and alert on limit violations
+export {
+  ApiRateMonitor,
+  initApiRateMonitor,
+  getApiRateMonitor,
+  recordApiCall,
+  recordMissedTrade,
+  recordSuccessfulTrade,
+  detectProvider,
+} from "./api-rate-monitor";
+
+export type {
+  ApiProvider,
+  TradeType,
+  ApiCallRecord,
+  MissedTradeRecord,
+  RateLimitConfig,
+  ApiRateMonitorConfig,
+  ApiUsageStats,
+  MissedTradeStats,
+} from "./api-rate-monitor";

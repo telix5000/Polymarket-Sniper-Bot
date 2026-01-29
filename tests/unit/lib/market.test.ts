@@ -144,25 +144,27 @@ describe("Market Token Lookup", () => {
   });
 
   describe("getTokenOutcome", () => {
-    test("should return YES for the YES token", async () => {
+    test("should return Yes for the YES token", async () => {
       const originalGet = axios.get;
       axios.get = async () => ({ data: [mockMarketResponse] });
 
       try {
         const outcome = await getTokenOutcome("yes-token-id-12345");
-        assert.strictEqual(outcome, "YES");
+        // Returns the actual outcome label from the API (preserves case)
+        assert.strictEqual(outcome, "Yes");
       } finally {
         axios.get = originalGet;
       }
     });
 
-    test("should return NO for the NO token", async () => {
+    test("should return No for the NO token", async () => {
       const originalGet = axios.get;
       axios.get = async () => ({ data: [mockMarketResponse] });
 
       try {
         const outcome = await getTokenOutcome("no-token-id-67890");
-        assert.strictEqual(outcome, "NO");
+        // Returns the actual outcome label from the API (preserves case)
+        assert.strictEqual(outcome, "No");
       } finally {
         axios.get = originalGet;
       }
@@ -346,16 +348,18 @@ describe("Market Token Lookup", () => {
       }
     });
 
-    test("should return null for non-binary markets (non-YES/NO outcomes)", async () => {
+    test("should return opposite token for non-YES/NO markets (any 2-outcome market)", async () => {
       const originalGet = axios.get;
       axios.get = async () => ({ data: [mockNonBinaryMarketResponse] });
 
       try {
+        // The code supports ANY 2-outcome market, not just YES/NO
+        // For Trump vs Biden market, opposite of trump-token is biden-token
         const result = await getOppositeTokenId("trump-token");
         assert.strictEqual(
           result,
-          null,
-          "Should return null for non-binary markets",
+          "biden-token",
+          "Should return opposite token for any 2-outcome market",
         );
       } finally {
         axios.get = originalGet;
@@ -530,17 +534,19 @@ describe("Market Token Lookup", () => {
 
       try {
         // first-token has outcome "No" at index 0
+        // Returns the actual outcome label from the API (preserves case)
         const outcome1 = await getTokenOutcome("first-token");
-        assert.strictEqual(outcome1, "NO", "first-token should be NO outcome");
+        assert.strictEqual(outcome1, "No", "first-token should be No outcome");
 
         clearMarketCache();
 
         // second-token has outcome "Yes" at index 1
+        // Returns the actual outcome label from the API (preserves case)
         const outcome2 = await getTokenOutcome("second-token");
         assert.strictEqual(
           outcome2,
-          "YES",
-          "second-token should be YES outcome",
+          "Yes",
+          "second-token should be Yes outcome",
         );
       } finally {
         axios.get = originalGet;

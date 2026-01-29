@@ -161,3 +161,15 @@ export {
   type ChurnConfig,
   type ChurnEngineDeps,
 } from "./churn-engine";
+
+// Risk Guard - financial bleed prevention and portfolio protection
+export {
+  RiskGuard,
+  DEFAULT_RISK_GUARD_CONFIG,
+  type RiskGuardConfig,
+  type RiskCheckResult,
+  type PortfolioHealth,
+  type PositionHealth,
+  type EntryValidation,
+  type HedgeValidation,
+} from "./risk-guard";
