@@ -864,9 +864,9 @@ export class OnChainMonitor {
    * Fires when a single token type is transferred
    */
   private async handleTransferSingle(
-    operator: string,
-    from: string,
-    to: string,
+    operator: string | undefined,
+    from: string | undefined,
+    to: string | undefined,
     id: bigint,
     value: bigint,
     event: ethers.EventLog,
@@ -879,9 +879,9 @@ export class OnChainMonitor {
    * Fires when multiple token types are transferred at once
    */
   private async handleTransferBatch(
-    operator: string,
-    from: string,
-    to: string,
+    operator: string | undefined,
+    from: string | undefined,
+    to: string | undefined,
     ids: bigint[],
     values: bigint[],
     event: ethers.EventLog,
@@ -898,8 +898,8 @@ export class OnChainMonitor {
    * Process a position transfer and fire callbacks if it involves our wallet
    */
   private async processPositionTransfer(
-    from: string,
-    to: string,
+    from: string | undefined,
+    to: string | undefined,
     tokenId: bigint,
     amount: bigint,
     event: ethers.EventLog,
@@ -907,6 +907,15 @@ export class OnChainMonitor {
     // Note: With filtered subscriptions, we only receive events for our wallet
     // The filter ensures from==wallet OR to==wallet, so no additional check needed
     if (!this.config.ourWallet) return;
+
+    // Defensive check: skip if from or to is undefined (malformed event)
+    if (!from || !to) {
+      console.warn(
+        `📡 Skipping malformed transfer event: from=${from}, to=${to}, ` +
+          `txHash=${event.transactionHash}, block=${event.blockNumber}, tokenId=${tokenId}`,
+      );
+      return;
+    }
 
     const ourWalletLower = this.config.ourWallet.toLowerCase();
     const fromLower = from.toLowerCase();
