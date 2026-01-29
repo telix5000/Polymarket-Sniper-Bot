@@ -148,7 +148,7 @@ describe("MarketSnapshot Immutability", () => {
     const step1Ask = snapshot.bestAsk;
 
     // "computeExecutionLimitPrice" would use these values
-    const priceCalculation = snapshot.bestAsk * 1.06; // BUY with 6% slippage
+    // BUY with 6% slippage in real execution logic
 
     // "placeOrderWithFallback" would use these values
     const step2Bid = snapshot.bestBid;
