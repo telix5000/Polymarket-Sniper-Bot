@@ -2,7 +2,7 @@
  * Price Safety Module
  *
  * Ensures price formation is safe and cannot result in invalid prices.
- * In prediction markets, prices must be in (0, 1) range, typically clamped to [0.01, 0.99].
+ * In prediction markets, prices must be in (0, 1) range, clamped to [0.01, 0.99].
  *
  * Key safety features:
  * - Clamps all limit prices to safe bounds [MIN_PRICE, MAX_PRICE]
@@ -10,65 +10,35 @@
  * - Validates orderbook sanity
  * - Logs price formation decisions for diagnostics
  *
- * PRICE BOUNDS MATH (Polymarket API constraint):
+ * PRICE BOUNDS - Polymarket API Law:
  * ═══════════════════════════════════════════════════════════════════════════
- * Polymarket's CLOB API accepts prices in the range [0.01, 0.99].
- * - Prices < 0.01 are rejected as "invalid price"
- * - Prices > 0.99 are rejected as "invalid price"
+ * Polymarket's CLOB API error message states: "min: 0.01 - max: 0.99"
  * 
- * Default values:
- *   MIN_PRICE = 0.01 (1 cent) - Polymarket API minimum
- *   MAX_PRICE = 0.99 (99 cents) - Polymarket API maximum
+ * These are HARD LIMITS enforced by the API:
+ *   MIN_PRICE = 0.01 (1 cent)  - API rejects anything below
+ *   MAX_PRICE = 0.99 (99 cents) - API rejects anything above
  *
- * These can be overridden via environment variables:
- *   ORDER_MIN_PRICE - Minimum price bound (default: 0.01)
- *   ORDER_MAX_PRICE - Maximum price bound (default: 0.99)
- *
- * ⚠️ WARNING: Setting values outside [0.01, 0.99] WILL cause API rejections.
- * Only modify these if you understand Polymarket's pricing constraints.
+ * All order prices are clamped to this range before submission.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import { isGitHubActions, ghWarning, ghError } from "./diag-mode";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CONSTANTS - Configurable via ENV (use at your own risk!)
+// CONSTANTS - Polymarket API enforced bounds (not configurable)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Helper to read numeric env vars with bounds validation
-const envNumBounded = (
-  key: string,
-  defaultValue: number,
-  min: number,
-  max: number,
-): number => {
-  const value = process.env[key];
-  if (value === undefined) return defaultValue;
-  const parsed = parseFloat(value);
-  if (isNaN(parsed)) return defaultValue;
-  // Warn if value is outside safe bounds
-  if (parsed < min || parsed > max) {
-    console.warn(
-      `⚠️ [PRICE_SAFETY] ${key}=${parsed} is outside safe bounds [${min}, ${max}]. ` +
-        `This may cause API rejections. Proceeding at your own risk.`,
-    );
-  }
-  return parsed;
-};
+/**
+ * Minimum valid price - Polymarket API minimum.
+ * From API error: "invalid price (...), min: 0.01 - max: 0.99"
+ */
+export const MIN_PRICE = 0.01;
 
 /**
- * Minimum valid price in prediction markets.
- * Default: 0.01 (1¢) - Polymarket API minimum.
- * Override via ORDER_MIN_PRICE env var (not recommended).
+ * Maximum valid price - Polymarket API maximum.
+ * From API error: "invalid price (...), min: 0.01 - max: 0.99"
  */
-export const MIN_PRICE = envNumBounded("ORDER_MIN_PRICE", 0.01, 0.01, 0.50);
-
-/**
- * Maximum valid price in prediction markets.
- * Default: 0.99 (99¢) - Polymarket API maximum.
- * Override via ORDER_MAX_PRICE env var (not recommended).
- */
-export const MAX_PRICE = envNumBounded("ORDER_MAX_PRICE", 0.99, 0.50, 0.99);
+export const MAX_PRICE = 0.99;
 
 /** Default maximum acceptable spread in cents for liquid markets */
 export const DEFAULT_MAX_SPREAD_CENTS = 50;
