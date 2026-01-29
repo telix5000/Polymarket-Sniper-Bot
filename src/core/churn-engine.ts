@@ -98,6 +98,7 @@ import {
 export interface ChurnConfig {
   // USER CONFIGURABLE
   maxTradeUsd: number;
+  minTradeUsd: number;
 
   // Capital & Position Sizing
   tradeFraction: number;
@@ -414,6 +415,7 @@ export class ChurnEngine {
       maxDeployedFractionTotal: this.config.maxDeployedFractionTotal,
       tradeFraction: this.config.tradeFraction,
       maxTradeUsd: this.config.maxTradeUsd,
+      minTradeUsd: this.config.minTradeUsd,
     };
     this.decisionEngine = new DecisionEngine(decisionEngineConfig);
 

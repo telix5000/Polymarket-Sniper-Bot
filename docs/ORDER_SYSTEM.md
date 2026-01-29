@@ -425,6 +425,7 @@ These are fixed by the EV math:
 | Parameter | Value | Description |
 |-----------|-------|-------------|
 | `tradeFraction` | 1% | Per trade as fraction of bankroll |
+| `minTradeUsd` | 20% of maxTradeUsd | Minimum trade size floor |
 | `maxDeployedFractionTotal` | 30% | Max total exposure |
 | `reserveFraction` | 25% | Always keep 25% reserved |
 | `minReserveUsd` | $100 | Minimum reserve |

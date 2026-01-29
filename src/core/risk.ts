@@ -14,6 +14,9 @@ export interface RiskParams {
   /** Maximum trade size in USD */
   maxTradeUsd: number;
 
+  /** Minimum trade size in USD */
+  minTradeUsd: number;
+
   /** Fraction of bankroll per trade (0-1) */
   tradeFraction: number;
 
@@ -56,7 +59,13 @@ export function calculateTradeSize(
   params: RiskParams,
 ): number {
   const fractionalSize = effectiveBankroll * params.tradeFraction;
-  return Math.min(fractionalSize, params.maxTradeUsd);
+  // Apply both min and max bounds:
+  // - First ensure we don't go below minTradeUsd (for small bankrolls)
+  // - Then cap at maxTradeUsd (for large bankrolls)
+  // If effectiveBankroll is too small to meet minTradeUsd, use fractionalSize
+  // to avoid over-leveraging (can't trade more than we can afford)
+  const withMinimum = Math.max(fractionalSize, Math.min(params.minTradeUsd, effectiveBankroll));
+  return Math.min(withMinimum, params.maxTradeUsd);
 }
 
 /**
