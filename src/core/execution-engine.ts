@@ -368,6 +368,13 @@ export class ExecutionEngine {
     referencePriceCents: number,
     biasDirection: BiasDirection,
   ): Promise<ExecutionResult> {
+    // Log warning if marketId is missing
+    if (!marketId) {
+      console.warn(
+        `⚠️ [ENTRY] marketId is undefined for token ${tokenId.slice(0, 16)}... - proceeding with order but diagnostics may be limited`,
+      );
+    }
+
     const evMetrics = this.evTracker.getMetrics();
 
     // Fetch market info for outcome labels (for Telegram/display) and hedging

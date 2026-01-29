@@ -292,6 +292,13 @@ export class ChurnEngine {
   private readonly COOLDOWN_SUMMARY_INTERVAL = 100;
   private dustBookRestVerifyThrottle = new Map<string, number>();
   private readonly DUST_BOOK_VERIFY_THROTTLE_MS = 5 * 60 * 1000;
+  // Cache for tokenId -> marketId mapping (populated on-demand from Gamma API)
+  private tokenMarketIdCache = new Map<string, string | null>();
+  private readonly MARKET_ID_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour for success
+  private readonly MARKET_ID_ERROR_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for errors
+  private marketIdCacheTimestamps = new Map<string, number>();
+  // In-flight requests to prevent race conditions
+  private marketIdInFlightRequests = new Map<string, Promise<string | null>>();
 
   private readonly REDEEM_INTERVAL_MS = 10 * 60 * 1000;
   private readonly SUMMARY_INTERVAL_MS = 5 * 60 * 1000;
@@ -2438,10 +2445,83 @@ export class ChurnEngine {
   }
 
   /**
+   * Fetch marketId for a given tokenId with caching
+   * Returns null if marketId cannot be fetched (e.g., market not found, API error)
+   * Caches results to avoid repeated API calls
+   * Deduplicates in-flight requests to prevent race conditions
+   */
+  private async fetchMarketId(tokenId: string): Promise<string | null> {
+    const now = Date.now();
+    
+    // Check cache first
+    const cachedTimestamp = this.marketIdCacheTimestamps.get(tokenId);
+    if (cachedTimestamp) {
+      const cached = this.tokenMarketIdCache.get(tokenId);
+      if (cached !== undefined) {
+        // Check if cache is still valid
+        const ttl = cached === null 
+          ? this.MARKET_ID_ERROR_CACHE_TTL_MS  // Shorter TTL for errors
+          : this.MARKET_ID_CACHE_TTL_MS;        // Longer TTL for success
+        
+        if (now - cachedTimestamp < ttl) {
+          return cached;
+        }
+      }
+    }
+
+    // Check if there's already an in-flight request for this tokenId
+    const inFlight = this.marketIdInFlightRequests.get(tokenId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    // Create and store the in-flight request promise
+    const requestPromise = this.doFetchMarketId(tokenId);
+    this.marketIdInFlightRequests.set(tokenId, requestPromise);
+
+    try {
+      const result = await requestPromise;
+      return result;
+    } finally {
+      // Clean up in-flight request
+      this.marketIdInFlightRequests.delete(tokenId);
+    }
+  }
+
+  /**
+   * Internal method to actually fetch marketId from Gamma API
+   * Called by fetchMarketId() with deduplication
+   */
+  private async doFetchMarketId(tokenId: string): Promise<string | null> {
+    const now = Date.now();
+    
+    try {
+      const marketInfo = await fetchMarketByTokenId(tokenId);
+      const marketId = marketInfo?.marketId ?? null;
+      
+      // Cache the result (successful lookup or null from API)
+      this.tokenMarketIdCache.set(tokenId, marketId);
+      this.marketIdCacheTimestamps.set(tokenId, now);
+      
+      return marketId;
+    } catch (err) {
+      // On error, cache null with shorter TTL to allow retry
+      this.tokenMarketIdCache.set(tokenId, null);
+      this.marketIdCacheTimestamps.set(tokenId, now);
+      
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.deps.debug(
+        `[MarketId] Failed to fetch marketId for ${tokenId.slice(0, 12)}...: ${errMsg}`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Helper to process a valid REST orderbook into FetchMarketDataResult
    * Used when recovering from stale cache dust books via REST verification
    */
-  private processValidOrderbook(
+  private async processValidOrderbook(
     tokenId: string,
     bestBidCents: number,
     bestAskCents: number,
@@ -2449,7 +2529,7 @@ export class ChurnEngine {
       bids: { price: string; size: string }[];
       asks: { price: string; size: string }[];
     },
-  ): FetchMarketDataResult {
+  ): Promise<FetchMarketDataResult> {
     const bestBid = bestBidCents / 100;
     const bestAsk = bestAskCents / 100;
     const spreadCents = (bestAsk - bestBid) * 100;
@@ -2474,6 +2554,9 @@ export class ChurnEngine {
       askDepth += parseFloat(level.size) * parseFloat(level.price);
     }
 
+    // Fetch marketId (with caching)
+    const marketId = await this.fetchMarketId(tokenId);
+
     const activity: MarketActivity = {
       tradesInWindow: 15,
       bookUpdatesInWindow: 25,
@@ -2485,6 +2568,7 @@ export class ChurnEngine {
       ok: true,
       data: {
         tokenId,
+        marketId: marketId ?? undefined,
         orderbook: {
           bestBidCents,
           bestAskCents,
@@ -2782,7 +2866,7 @@ export class ChurnEngine {
                     `✅ [BOOK_RECOVERED] ${tokenId.slice(0, 12)}... | REST shows valid book, cache was stale`,
                   );
                   // Continue with REST data
-                  return this.processValidOrderbook(
+                  return await this.processValidOrderbook(
                     tokenId,
                     restBid,
                     restAsk,
@@ -2833,6 +2917,9 @@ export class ChurnEngine {
           };
         }
 
+        // Fetch marketId (with caching)
+        const marketId = await this.fetchMarketId(tokenId);
+
         const activity: MarketActivity = {
           tradesInWindow: 15,
           bookUpdatesInWindow: 25,
@@ -2844,6 +2931,7 @@ export class ChurnEngine {
           ok: true,
           data: {
             tokenId,
+            marketId: marketId ?? undefined,
             orderbook: state,
             activity,
             referencePriceCents: state.midPriceCents,
@@ -2961,6 +3049,9 @@ export class ChurnEngine {
         askDepth += parseFloat(level.size) * parseFloat(level.price);
       }
 
+      // Fetch marketId (with caching)
+      const marketId = await this.fetchMarketId(tokenId);
+
       const activity: MarketActivity = {
         tradesInWindow: 15,
         bookUpdatesInWindow: 25,
@@ -2972,6 +3063,7 @@ export class ChurnEngine {
         ok: true,
         data: {
           tokenId,
+          marketId: marketId ?? undefined,
           orderbook: {
             bestBidCents: bestBid * 100,
             bestAskCents: bestAsk * 100,
