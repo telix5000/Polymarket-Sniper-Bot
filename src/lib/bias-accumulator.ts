@@ -441,7 +441,8 @@ export class BiasAccumulator {
           // TASK 4: Validate token ID mapping - add diagnostics
           const tokenId = activity.asset || activity.tokenId;
           const conditionId = activity.conditionId ?? activity.marketId;
-          const outcome = activity.outcome; // YES/NO
+          const outcome = activity.outcome; // Outcome label (YES/NO or team names, etc.)
+          const outcomeIndex = activity.outcomeIndex; // 0 or 1 (API uses 0-indexed)
 
           // Reject if tokenId is empty or invalid
           if (!tokenId || tokenId.trim() === "") {
@@ -456,10 +457,13 @@ export class BiasAccumulator {
             activity.usdcSize ?? (Number(activity.size) * tradePrice || 0);
           if (sizeUsd <= 0) continue;
 
-          // Log candidate construction for diagnostics
+          // Log candidate construction for diagnostics - include outcomeIndex
           if (DEBUG) {
+            // Convert API's 0-indexed outcomeIndex to our 1-indexed format for logging
+            const displayOutcomeIdx =
+              typeof outcomeIndex === "number" ? outcomeIndex + 1 : "N/A";
             debug(
-              `[Whale Trade] Candidate: tokenId=${tokenId.slice(0, 12)}... | conditionId=${conditionId?.slice(0, 12) || "N/A"} | outcome=${outcome || "N/A"} | size=$${sizeUsd.toFixed(0)}`,
+              `[Whale Trade] Candidate: tokenId=${tokenId.slice(0, 12)}... | conditionId=${conditionId?.slice(0, 12) || "N/A"} | outcomeIdx=${displayOutcomeIdx} | outcome=${outcome || "N/A"} | size=$${sizeUsd.toFixed(0)}`,
             );
           }
 

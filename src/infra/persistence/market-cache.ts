@@ -9,6 +9,7 @@
  * - TTL-based expiration (default: 1 hour)
  * - LRU eviction for memory protection
  * - Health checks and metrics
+ * - Supports ANY 2-outcome market (not just YES/NO)
  *
  * NOTE: This module provides functions with the same names as lib/market.ts
  * (clearMarketCache, getMarketCacheStats) but for the new persistence layer.
@@ -27,10 +28,23 @@ import type { HealthStatus } from "./types";
 // Types
 // ============================================================================
 
-/** Market token pair data */
+/** Token info for a single outcome */
+export interface OutcomeToken {
+  tokenId: string;
+  outcomeIndex: 1 | 2; // 1-based index
+  outcomeLabel: string;
+}
+
+/** Market token pair data - supports ANY 2-outcome market */
 export interface MarketTokenPair {
+  /** @deprecated Use tokens[0].tokenId */
   yesTokenId: string;
+  /** @deprecated Use tokens[1].tokenId */
   noTokenId: string;
+  /** All tokens with their outcomeIndex and label */
+  tokens?: OutcomeToken[];
+  /** Outcome labels in order */
+  outcomeLabels?: string[];
   conditionId: string;
   marketId: string;
   question?: string;
@@ -58,6 +72,7 @@ export interface MarketCacheMetrics extends BaseStoreMetrics {
  * Cache for market token pairs with multi-key indexing
  *
  * Stores markets indexed by both token IDs and condition ID for fast lookups.
+ * Supports any 2-outcome market, not just YES/NO.
  */
 export class MarketCache extends BaseStore<string, MarketTokenPair> {
   // Secondary index: condition ID -> market
@@ -83,10 +98,15 @@ export class MarketCache extends BaseStore<string, MarketTokenPair> {
    * Cache a market with both token IDs as keys
    */
   cacheMarket(market: MarketTokenPair): void {
-    // Store by YES token ID
-    this.set(market.yesTokenId, market);
+    // Store by all token IDs from tokens array
+    if (market.tokens) {
+      for (const token of market.tokens) {
+        this.set(token.tokenId, market);
+      }
+    }
 
-    // Store by NO token ID (duplicate reference is fine, same TTL)
+    // Also store by legacy yesTokenId/noTokenId for backward compat
+    this.set(market.yesTokenId, market);
     this.set(market.noTokenId, market);
 
     // Store in condition index
@@ -139,11 +159,19 @@ export class MarketCache extends BaseStore<string, MarketTokenPair> {
   /**
    * Get the opposite token ID for a given token
    * Returns null if token not found in cache
+   * Works with any 2-outcome market
    */
   getOppositeTokenId(tokenId: string): string | null {
     const market = this.get(tokenId);
     if (!market) return null;
 
+    // Use tokens array if available
+    if (market.tokens) {
+      const opposite = market.tokens.find((t) => t.tokenId !== tokenId);
+      return opposite?.tokenId ?? null;
+    }
+
+    // Fallback to legacy yesTokenId/noTokenId
     if (market.yesTokenId === tokenId) {
       return market.noTokenId;
     } else if (market.noTokenId === tokenId) {
@@ -154,12 +182,43 @@ export class MarketCache extends BaseStore<string, MarketTokenPair> {
   }
 
   /**
-   * Determine if a token is YES or NO
+   * Get token info including outcomeIndex and outcomeLabel
+   * Works with any 2-outcome market
    */
-  getTokenOutcome(tokenId: string): "YES" | "NO" | null {
+  getTokenInfo(tokenId: string): OutcomeToken | null {
     const market = this.get(tokenId);
     if (!market) return null;
 
+    // Use tokens array if available
+    if (market.tokens) {
+      return market.tokens.find((t) => t.tokenId === tokenId) ?? null;
+    }
+
+    // Fallback to legacy - infer outcomeIndex from yesTokenId/noTokenId
+    if (market.yesTokenId === tokenId) {
+      return { tokenId, outcomeIndex: 1, outcomeLabel: "YES" };
+    } else if (market.noTokenId === tokenId) {
+      return { tokenId, outcomeIndex: 2, outcomeLabel: "NO" };
+    }
+
+    return null;
+  }
+
+  /**
+   * @deprecated Use getTokenInfo() for full outcomeIndex/label support
+   * Determine if a token is YES or NO (returns outcomeLabel for non-YES/NO markets)
+   */
+  getTokenOutcome(tokenId: string): string | null {
+    const market = this.get(tokenId);
+    if (!market) return null;
+
+    // Use tokens array if available
+    if (market.tokens) {
+      const tokenInfo = market.tokens.find((t) => t.tokenId === tokenId);
+      return tokenInfo?.outcomeLabel ?? null;
+    }
+
+    // Fallback to legacy
     if (market.yesTokenId === tokenId) return "YES";
     if (market.noTokenId === tokenId) return "NO";
     return null;

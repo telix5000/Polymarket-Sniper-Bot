@@ -53,20 +53,22 @@ function generateTradeKey(trade: {
   const txHash = trade.transactionHash || trade.id || "";
   const conditionId = trade.conditionId || "";
 
-  // Normalize outcome to outcomeIndex (case-insensitive)
+  // Normalize outcome to outcomeIndex
+  // IMPORTANT: Supports ANY outcome label, not just YES/NO
   let outcomeIndex: number;
   if (typeof trade.outcomeIndex === "number") {
     outcomeIndex = trade.outcomeIndex;
   } else if (trade.outcome) {
     const upperOutcome = trade.outcome.toUpperCase();
+    // Map YES/NO to indices for backward compat, but accept any outcome
     if (upperOutcome === "NO") {
       outcomeIndex = 1;
     } else if (upperOutcome === "YES") {
       outcomeIndex = 0;
     } else {
-      // Unexpected outcome value - use sentinel to avoid incorrect deduplication
-      console.warn(`[copy] Unexpected outcome value: ${trade.outcome}`);
-      outcomeIndex = -1;
+      // Non-YES/NO outcome (e.g., team names) - use hash for unique dedup
+      // This ensures different outcomes like "Lakers" vs "Celtics" don't collide
+      outcomeIndex = hashString(trade.outcome) % 1000000;
     }
   } else {
     // Both outcomeIndex and outcome missing - use sentinel to indicate incomplete data
@@ -81,6 +83,19 @@ function generateTradeKey(trade: {
 
   // Use higher precision (6 decimals) to avoid collisions with similar-sized trades
   return `${txHash}:${conditionId}:${outcomeIndex}:${side}:${size.toFixed(6)}`;
+}
+
+/**
+ * Simple string hash function for non-YES/NO outcomes
+ */
+function hashString(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash);
 }
 
 // Deduplication set with composite keys
@@ -173,31 +188,28 @@ export async function fetchRecentTrades(
           // Track max timestamp for cursor update
           maxTimestamp = Math.max(maxTimestamp, ts);
 
-          // Normalize outcome to "YES" or "NO" (case-insensitive) with explicit validation
-          let normalizedOutcome: "YES" | "NO" | null = null;
-          if (typeof t.outcomeIndex === "number") {
-            normalizedOutcome = t.outcomeIndex === 1 ? "NO" : "YES";
-          } else if (typeof t.outcome === "string") {
-            const upper = t.outcome.toUpperCase();
-            if (upper === "YES" || upper === "NO") {
-              normalizedOutcome = upper as "YES" | "NO";
-            }
-          }
-
-          // Skip trade if outcome cannot be determined reliably
-          if (!normalizedOutcome) {
+          // Accept ANY outcome - not just YES/NO
+          // The tokenId is the canonical identifier for the outcome we want to trade
+          let outcomeLabel: string;
+          if (typeof t.outcome === "string" && t.outcome.trim() !== "") {
+            outcomeLabel = t.outcome;
+          } else if (typeof t.outcomeIndex === "number") {
+            // Fallback to index-based label if no outcome string
+            outcomeLabel = t.outcomeIndex === 0 ? "Outcome1" : "Outcome2";
+          } else {
+            // Skip trade if we can't determine any outcome info
             console.warn(
-              `[copy] Skipping trade with unknown outcome for wallet ${addr.slice(0, 10)}...`,
+              `[copy] Skipping trade with no outcome info for wallet ${addr.slice(0, 10)}...`,
             );
             continue;
           }
 
           walletTrades.push({
-            // tokenId from API (may need resolution if missing)
+            // tokenId from API - this is the ACTUAL token the whale bought
             tokenId: t.asset || t.tokenId || "",
             conditionId: t.conditionId || "",
             marketId: t.marketId || "",
-            outcome: normalizedOutcome,
+            outcome: outcomeLabel, // Use actual outcome label (YES/NO or team name, etc.)
             side: t.side?.toUpperCase() === "SELL" ? "SELL" : "BUY",
             // Calculate USD value
             sizeUsd: Number(t.size) * Number(t.price) || 0,

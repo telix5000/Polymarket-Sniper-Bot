@@ -10,7 +10,7 @@
 import type { ClobClient } from "@polymarket/clob-client";
 import { getBalanceCache } from "../lib/balance";
 import { invalidatePositions } from "../lib/positions";
-import { getOppositeTokenId } from "../lib/market";
+import { getOppositeTokenId, getMarketTokenPair } from "../lib/market";
 import { reportError } from "../infra/github-reporter";
 import { getLatencyMonitor } from "../infra/latency-monitor";
 import { smartSell } from "./smart-sell";
@@ -108,8 +108,16 @@ export interface PositionManagerInterface {
     referencePriceCents: number;
     evSnapshot: EvMetrics;
     biasDirection: BiasDirection;
+    // Outcome info for display (Telegram notifications)
+    outcomeLabel?: string;
+    outcomeIndex?: 1 | 2;
+    marketQuestion?: string;
   }): ManagedPosition;
-  setOppositeToken(positionId: string, oppositeTokenId: string): void;
+  setOppositeToken(
+    positionId: string,
+    oppositeTokenId: string,
+    oppositeOutcomeLabel?: string,
+  ): void;
   updatePrice(
     positionId: string,
     priceCents: number,
@@ -286,23 +294,63 @@ export class ExecutionEngine {
   ): Promise<ExecutionResult> {
     const evMetrics = this.evTracker.getMetrics();
 
-    // Look up the opposite token ID for hedging BEFORE opening position
-    // This is crucial for proper hedging - we need to know what to buy if we need to hedge
+    // Fetch market info for outcome labels (for Telegram/display) and hedging
+    // This gives us the full market context including outcomeLabels and opposite token
     let oppositeTokenId: string | null = null;
+    let outcomeLabel: string | undefined;
+    let outcomeIndex: 1 | 2 | undefined;
+    let marketQuestion: string | undefined;
+    let oppositeOutcomeLabel: string | undefined;
+
     try {
-      oppositeTokenId = await getOppositeTokenId(tokenId);
-      if (oppositeTokenId) {
-        console.log(
-          `🔍 [HEDGE] Found opposite token for hedging: ${oppositeTokenId.slice(0, 16)}...`,
+      const marketInfo = await getMarketTokenPair(tokenId);
+      if (marketInfo) {
+        // Find this token's info
+        const tokenInfo = marketInfo.tokens?.find((t) => t.tokenId === tokenId);
+        const siblingInfo = marketInfo.tokens?.find(
+          (t) => t.tokenId !== tokenId,
         );
+
+        if (tokenInfo) {
+          outcomeLabel = tokenInfo.outcomeLabel;
+          outcomeIndex = tokenInfo.outcomeIndex;
+        }
+
+        if (siblingInfo) {
+          oppositeTokenId = siblingInfo.tokenId;
+          oppositeOutcomeLabel = siblingInfo.outcomeLabel;
+        }
+
+        marketQuestion = marketInfo.question;
+
+        if (oppositeTokenId) {
+          console.log(
+            `🔍 [HEDGE] Found opposite token for hedging: ${oppositeTokenId.slice(0, 16)}... ("${oppositeOutcomeLabel || "unknown"}")`,
+          );
+        }
+
+        // Log the outcome info for diagnostics
+        if (outcomeLabel) {
+          console.log(
+            `📊 [ENTRY] Taking "${outcomeLabel}" position (idx=${outcomeIndex}) in: ${marketQuestion?.slice(0, 50) || marketId || "unknown market"}...`,
+          );
+        }
       } else {
-        console.warn(
-          `⚠️ [HEDGE] Could not find opposite token for ${tokenId.slice(0, 16)}... - hedging will be disabled`,
-        );
+        // Fallback: try to get just the opposite token
+        oppositeTokenId = await getOppositeTokenId(tokenId);
+        if (oppositeTokenId) {
+          console.log(
+            `🔍 [HEDGE] Found opposite token for hedging: ${oppositeTokenId.slice(0, 16)}...`,
+          );
+        } else {
+          console.warn(
+            `⚠️ [HEDGE] Could not find opposite token for ${tokenId.slice(0, 16)}... - hedging will be disabled`,
+          );
+        }
       }
     } catch (err) {
       console.warn(
-        `⚠️ [HEDGE] Error looking up opposite token: ${err instanceof Error ? err.message : err}`,
+        `⚠️ [HEDGE] Error looking up market info: ${err instanceof Error ? err.message : err}`,
       );
     }
 
@@ -317,13 +365,21 @@ export class ExecutionEngine {
         referencePriceCents,
         evSnapshot: evMetrics,
         biasDirection,
+        // Outcome info for Telegram notifications
+        outcomeLabel,
+        outcomeIndex,
+        marketQuestion,
       });
       // Store opposite token for hedging
       if (oppositeTokenId) {
-        this.positionManager.setOppositeToken(position.id, oppositeTokenId);
+        this.positionManager.setOppositeToken(
+          position.id,
+          oppositeTokenId,
+          oppositeOutcomeLabel,
+        );
       }
       console.log(
-        `🎲 [SIM] ${side} $${sizeUsd.toFixed(2)} @ ${priceCents.toFixed(1)}¢`,
+        `🎲 [SIM] ${side} $${sizeUsd.toFixed(2)} @ ${priceCents.toFixed(1)}¢${outcomeLabel ? ` on "${outcomeLabel}"` : ""}`,
       );
       return {
         success: true,
@@ -450,12 +506,20 @@ export class ExecutionEngine {
           referencePriceCents,
           evSnapshot: evMetrics,
           biasDirection,
+          // Outcome info for Telegram notifications
+          outcomeLabel,
+          outcomeIndex,
+          marketQuestion,
         });
         if (oppositeTokenId) {
-          this.positionManager.setOppositeToken(position.id, oppositeTokenId);
+          this.positionManager.setOppositeToken(
+            position.id,
+            oppositeTokenId,
+            oppositeOutcomeLabel,
+          );
         }
         console.log(
-          `📥 FOK ${side} $${sizeUsd.toFixed(2)} @ ${(bestPrice * 100).toFixed(1)}¢ (slippage: ${dynamicSlippagePct.toFixed(1)}%, exec: ${execLatencyMs.toFixed(0)}ms)`,
+          `📥 FOK ${side} $${sizeUsd.toFixed(2)} @ ${(bestPrice * 100).toFixed(1)}¢${outcomeLabel ? ` on "${outcomeLabel}"` : ""} (slippage: ${dynamicSlippagePct.toFixed(1)}%, exec: ${execLatencyMs.toFixed(0)}ms)`,
         );
         return {
           success: true,
@@ -712,10 +776,13 @@ export class ExecutionEngine {
 
     const shares = position.entrySizeUsd / (position.entryPriceCents / 100);
     const pnlUsd = (position.unrealizedPnlCents / 100) * shares;
+    // Use position's actual outcome label if available, otherwise infer from side
+    // Note: LONG means we bought this token, so we sell the same token
+    const outcomeLabel = position.side === "LONG" ? "LONG" : "SHORT";
     const sellPosition: Position = {
       tokenId: position.tokenId,
       conditionId: position.tokenId,
-      outcome: position.side === "LONG" ? "YES" : "NO",
+      outcome: outcomeLabel, // Use generic label - tokenId is the canonical identifier
       size: shares,
       avgPrice: position.entryPriceCents / 100,
       curPrice: priceCents / 100,

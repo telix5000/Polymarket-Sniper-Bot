@@ -65,6 +65,10 @@ export class PositionManager {
     referencePriceCents: number;
     evSnapshot: EvMetrics | null;
     biasDirection: BiasDirection;
+    // Outcome info for display (Telegram notifications)
+    outcomeLabel?: string;
+    outcomeIndex?: 1 | 2;
+    marketQuestion?: string;
   }): ManagedPosition {
     const id = `${params.tokenId}-${Date.now()}`;
     const now = Date.now();
@@ -92,6 +96,11 @@ export class PositionManager {
       marketId: params.marketId,
       side: params.side,
       state: "OPEN",
+      // Outcome info for Telegram/display
+      outcomeLabel: params.outcomeLabel,
+      outcomeIndex: params.outcomeIndex,
+      marketQuestion: params.marketQuestion,
+      // Entry
       entryPriceCents: params.entryPriceCents,
       entrySizeUsd: params.sizeUsd,
       entryTime: now,
@@ -123,12 +132,19 @@ export class PositionManager {
    * Set the opposite token ID for a position (for hedging)
    * This should be called after opening a position with the result of getOppositeTokenId()
    */
-  setOppositeToken(positionId: string, oppositeTokenId: string): void {
+  setOppositeToken(
+    positionId: string,
+    oppositeTokenId: string,
+    oppositeOutcomeLabel?: string,
+  ): void {
     const position = this.positions.get(positionId);
     if (position) {
       position.oppositeTokenId = oppositeTokenId;
+      if (oppositeOutcomeLabel) {
+        position.oppositeOutcomeLabel = oppositeOutcomeLabel;
+      }
       console.log(
-        `🔗 [HEDGE] Linked opposite token ${oppositeTokenId.slice(0, 16)}... for position ${positionId.slice(0, 16)}...`,
+        `🔗 [HEDGE] Linked opposite token ${oppositeTokenId.slice(0, 16)}...${oppositeOutcomeLabel ? ` ("${oppositeOutcomeLabel}")` : ""} for position ${positionId.slice(0, 16)}...`,
       );
     }
   }
@@ -454,6 +470,9 @@ export class PositionManager {
       pnlUsd: position.unrealizedPnlUsd,
       evSnapshot: context.evSnapshot,
       biasDirection: context.biasDirection,
+      // Include outcome info for Telegram notifications
+      outcomeLabel: position.outcomeLabel,
+      marketQuestion: position.marketQuestion,
     };
 
     position.transitions.push(transition);

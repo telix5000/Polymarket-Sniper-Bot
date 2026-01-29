@@ -1,20 +1,21 @@
 /**
- * Market Utilities - Fetch market data including both YES/NO token IDs
+ * Market Utilities - Fetch market data including both outcome token IDs
  *
  * Polymarket binary markets have two outcome tokens:
- * - YES token: Pays $1 if event happens
- * - NO token: Pays $1 if event doesn't happen
+ * - Token at outcomeIndex 1: First outcome (could be YES, or a team name, etc.)
+ * - Token at outcomeIndex 2: Second outcome (could be NO, or opponent team, etc.)
  *
- * IMPORTANT: The Gamma API `outcomes` field determines which token is YES and which is NO.
+ * IMPORTANT: This module supports ANY 2-outcome market, not just YES/NO markets.
  * The `clobTokenIds` and `outcomes` arrays are parallel - outcomes[i] describes tokenIds[i].
  *
  * The Gamma API returns:
- * - `clobTokenIds`: JSON string array of token IDs (order determined by outcomes array)
- * - `outcomes`: JSON string array like '["Yes", "No"]' or '["No", "Yes"]'
+ * - `clobTokenIds`: JSON string array of token IDs
+ * - `outcomes`: JSON string array like '["Yes", "No"]', '["Lakers", "Celtics"]', etc.
  *
  * This module provides utilities to:
  * - Fetch market data by condition ID or token ID
- * - Get the opposite token ID for hedging
+ * - Get the opposite token ID for hedging (works with any 2-outcome market)
+ * - Get outcomeIndex (1 or 2) and outcomeLabel for any token
  * - Cache market data to reduce API calls
  */
 
@@ -25,9 +26,28 @@ import { POLYMARKET_API } from "./constants";
 // Types
 // ============================================================================
 
+/**
+ * Token info for a single outcome
+ */
+export interface OutcomeToken {
+  tokenId: string;
+  outcomeIndex: 1 | 2; // 1-based index (1 = first outcome, 2 = second outcome)
+  outcomeLabel: string; // The label from the outcomes array (e.g., "Yes", "Lakers", "Over")
+}
+
+/**
+ * Market data with both outcome tokens
+ * Supports ANY 2-outcome market, not just YES/NO markets.
+ */
 export interface MarketTokenPair {
+  /** @deprecated Use tokens[0].tokenId - Token at outcomeIndex 1 (for backward compat, often YES) */
   yesTokenId: string;
+  /** @deprecated Use tokens[1].tokenId - Token at outcomeIndex 2 (for backward compat, often NO) */
   noTokenId: string;
+  /** All tokens with their outcomeIndex and label */
+  tokens: OutcomeToken[];
+  /** Outcome labels in order (index 0 = outcomeIndex 1, index 1 = outcomeIndex 2) */
+  outcomeLabels: string[];
   conditionId: string;
   marketId: string;
   question?: string;
@@ -39,8 +59,8 @@ interface GammaMarketResponse {
   id: string;
   question: string;
   conditionId: string;
-  clobTokenIds: string; // JSON string: '["tokenId0", "tokenId1"]' - order determined by outcomes
-  outcomes?: string; // JSON string: '["Yes", "No"]' or '["No", "Yes"]' - determines YES/NO mapping
+  clobTokenIds: string; // JSON string: '["tokenId0", "tokenId1"]'
+  outcomes?: string; // JSON string: '["Yes", "No"]', '["Lakers", "Celtics"]', etc.
   outcomePrices: string; // JSON string: '["0.65", "0.35"]'
   endDate?: string;
   active?: boolean;
@@ -81,11 +101,15 @@ function isCacheValid(key: string): boolean {
 function cacheMarket(market: MarketTokenPair): void {
   const now = Date.now();
 
-  // Cache by YES token
+  // Cache by both token IDs
+  for (const token of market.tokens) {
+    tokenToMarketCache.set(token.tokenId, market);
+    cacheTimestamps.set(token.tokenId, now);
+  }
+
+  // Also cache by legacy yesTokenId/noTokenId for backward compat
   tokenToMarketCache.set(market.yesTokenId, market);
   cacheTimestamps.set(market.yesTokenId, now);
-
-  // Cache by NO token
   tokenToMarketCache.set(market.noTokenId, market);
   cacheTimestamps.set(market.noTokenId, now);
 
@@ -173,19 +197,19 @@ export async function fetchMarketByTokenId(
 /**
  * Parse Gamma API response into MarketTokenPair
  *
- * CRITICAL: The Gamma API `outcomes` field determines which token is YES and which is NO.
+ * This function supports ANY 2-outcome market, not just YES/NO markets.
  * The `clobTokenIds` and `outcomes` arrays are parallel - outcomes[i] describes tokenIds[i].
  *
  * For example:
  *   clobTokenIds: '["token-A", "token-B"]'
- *   outcomes: '["No", "Yes"]'
- * Means: token-A is NO, token-B is YES
+ *   outcomes: '["Lakers", "Celtics"]'
+ * Means: token-A = Lakers (outcomeIndex 1), token-B = Celtics (outcomeIndex 2)
  *
  * This function:
  * 1. Parses both arrays
- * 2. Finds which index contains "Yes" (case-insensitive)
- * 3. Maps token IDs accordingly
- * 4. Handles edge cases (missing outcomes, non-YES/NO markets)
+ * 2. Creates OutcomeToken entries with correct outcomeIndex and label
+ * 3. Maintains backward-compatible yesTokenId/noTokenId fields
+ * 4. Handles edge cases (missing outcomes, >2 outcomes)
  */
 function parseMarketResponse(
   market: GammaMarketResponse,
@@ -219,21 +243,18 @@ function parseMarketResponse(
       return null;
     }
 
-    // Parse outcomes to determine which token is YES and which is NO
-    // The outcomes array is parallel to clobTokenIds: outcomes[i] describes tokenIds[i]
-    let yesTokenId: string;
-    let noTokenId: string;
+    // Parse outcomes - ANY 2-outcome market is valid, not just YES/NO
+    let outcomeLabels: string[];
 
     if (market.outcomes) {
       const outcomes = parseOutcomes(market.outcomes, market.id);
 
       if (!outcomes) {
-        // Failed to parse outcomes - cannot determine YES/NO mapping
+        // Failed to parse outcomes - cannot determine token mapping
         return null;
       }
 
       // Validate that tokenIds and outcomes arrays have the same length
-      // Since they're parallel arrays, a length mismatch would cause incorrect mappings
       if (tokenIds.length !== outcomes.length) {
         console.warn(
           `[Market] Array length mismatch for market ${market.id}: tokenIds.length=${tokenIds.length}, outcomes.length=${outcomes.length}`,
@@ -241,42 +262,50 @@ function parseMarketResponse(
         return null;
       }
 
-      // For binary YES/NO markets, require exactly 2 outcomes
+      // Require exactly 2 outcomes for binary markets
       if (outcomes.length !== 2) {
         console.warn(
-          `[Market] Non-binary market ${market.id} has ${outcomes.length} outcomes - only binary YES/NO markets are supported for hedging`,
+          `[Market] Non-binary market ${market.id} has ${outcomes.length} outcomes - only 2-outcome markets are supported`,
         );
         return null;
       }
 
-      // Find YES and NO indices explicitly (case-insensitive)
-      const yesIndex = outcomes.findIndex((o) => o.toLowerCase() === "yes");
-      const noIndex = outcomes.findIndex((o) => o.toLowerCase() === "no");
-
-      if (yesIndex === -1 || noIndex === -1) {
-        // Not a YES/NO market - this might be "Trump"/"Biden" or similar
-        console.warn(
-          `[Market] Non-YES/NO market ${market.id}: outcomes=[${outcomes.join(", ")}]. Cannot map to YES/NO tokens.`,
-        );
-        return null;
-      }
-
-      // Map tokens based on explicitly found outcome positions
-      yesTokenId = tokenIds[yesIndex];
-      noTokenId = tokenIds[noIndex];
+      outcomeLabels = outcomes;
     } else {
-      // No outcomes field - fallback to legacy assumption (index 0 = YES, index 1 = NO)
-      // This maintains backward compatibility but logs a warning
-      // IMPORTANT: Only allow legacy fallback for binary markets (exactly 2 tokens)
+      // No outcomes field - fallback to generic labels
       if (tokenIds.length !== 2) {
         console.warn(
-          `[Market] Missing outcomes field for non-binary market ${market.id} with ${tokenIds.length} tokens - cannot determine YES/NO mapping`,
+          `[Market] Missing outcomes field for non-binary market ${market.id} with ${tokenIds.length} tokens`,
         );
         return null;
       }
       console.warn(
-        `[Market] Missing outcomes field for market ${market.id} - using legacy index assumption`,
+        `[Market] Missing outcomes field for market ${market.id} - using generic labels`,
       );
+      outcomeLabels = ["Outcome1", "Outcome2"];
+    }
+
+    // Build tokens array with outcomeIndex (1-based)
+    const tokens: OutcomeToken[] = [
+      { tokenId: token0, outcomeIndex: 1, outcomeLabel: outcomeLabels[0] },
+      { tokenId: token1, outcomeIndex: 2, outcomeLabel: outcomeLabels[1] },
+    ];
+
+    // For backward compatibility: try to map to yesTokenId/noTokenId if this is a YES/NO market
+    // Otherwise, use index 0 as "yes" and index 1 as "no" for legacy code
+    const yesIndex = outcomeLabels.findIndex((o) => o.toLowerCase() === "yes");
+    const noIndex = outcomeLabels.findIndex((o) => o.toLowerCase() === "no");
+
+    let yesTokenId: string;
+    let noTokenId: string;
+
+    if (yesIndex !== -1 && noIndex !== -1) {
+      // Traditional YES/NO market
+      yesTokenId = tokenIds[yesIndex];
+      noTokenId = tokenIds[noIndex];
+    } else {
+      // Non-YES/NO market (e.g., team names, player names)
+      // Use index 0 as "yes" equivalent, index 1 as "no" equivalent for backward compat
       yesTokenId = token0;
       noTokenId = token1;
     }
@@ -284,6 +313,8 @@ function parseMarketResponse(
     const pair: MarketTokenPair = {
       yesTokenId,
       noTokenId,
+      tokens,
+      outcomeLabels,
       conditionId: market.conditionId,
       marketId: market.id,
       question: market.question,
@@ -353,7 +384,7 @@ function parseOutcomes(
 /**
  * Get the opposite token ID for hedging
  *
- * If you hold the YES token and want to hedge, you need the NO token (and vice versa)
+ * Works with ANY 2-outcome market - finds the other token in the pair.
  *
  * @param tokenId - The token ID you currently hold
  * @returns The opposite token ID, or null if not found
@@ -364,18 +395,24 @@ export async function getOppositeTokenId(
   const market = await fetchMarketByTokenId(tokenId);
   if (!market) return null;
 
-  // Determine if the input token is YES or NO, return the opposite
-  if (market.yesTokenId === tokenId) {
-    return market.noTokenId;
-  } else if (market.noTokenId === tokenId) {
-    return market.yesTokenId;
+  // Find the token in the tokens array and return the other one
+  const tokenInfo = market.tokens.find((t) => t.tokenId === tokenId);
+  if (!tokenInfo) {
+    // Fallback to legacy yesTokenId/noTokenId for backward compat
+    if (market.yesTokenId === tokenId) {
+      return market.noTokenId;
+    } else if (market.noTokenId === tokenId) {
+      return market.yesTokenId;
+    }
+    console.warn(
+      `[Market] Token ${tokenId.slice(0, 16)}... not found in market ${market.marketId}`,
+    );
+    return null;
   }
 
-  // Shouldn't happen, but defensive
-  console.warn(
-    `[Market] Token ${tokenId.slice(0, 16)}... not found in market ${market.marketId}`,
-  );
-  return null;
+  // Return the other token (opposite outcomeIndex)
+  const oppositeToken = market.tokens.find((t) => t.tokenId !== tokenId);
+  return oppositeToken?.tokenId ?? null;
 }
 
 /**
@@ -389,17 +426,39 @@ export async function getMarketTokenPair(
 }
 
 /**
- * Determine if a token is the YES or NO outcome
+ * Get token info including outcomeIndex and outcomeLabel
  *
  * @param tokenId - The token ID to check
- * @returns "YES" | "NO" | null
+ * @returns OutcomeToken info or null if not found
  */
-export async function getTokenOutcome(
+export async function getTokenInfo(
   tokenId: string,
-): Promise<"YES" | "NO" | null> {
+): Promise<OutcomeToken | null> {
   const market = await fetchMarketByTokenId(tokenId);
   if (!market) return null;
 
+  const tokenInfo = market.tokens.find((t) => t.tokenId === tokenId);
+  return tokenInfo ?? null;
+}
+
+/**
+ * @deprecated Use getTokenInfo() instead for full outcomeIndex/label support
+ * Determine if a token is the YES or NO outcome
+ *
+ * @param tokenId - The token ID to check
+ * @returns "YES" | "NO" | null (returns outcomeLabel for non-YES/NO markets)
+ */
+export async function getTokenOutcome(tokenId: string): Promise<string | null> {
+  const market = await fetchMarketByTokenId(tokenId);
+  if (!market) return null;
+
+  // Find token info with outcomeLabel
+  const tokenInfo = market.tokens.find((t) => t.tokenId === tokenId);
+  if (tokenInfo) {
+    return tokenInfo.outcomeLabel;
+  }
+
+  // Fallback to legacy
   if (market.yesTokenId === tokenId) {
     return "YES";
   } else if (market.noTokenId === tokenId) {
