@@ -86,6 +86,9 @@ export interface StateTransition {
   // Outcome info for display (Telegram notifications)
   outcomeLabel?: string;
   marketQuestion?: string;
+  // Entry details for display (Telegram notifications)
+  entrySizeUsd?: number;
+  entryPriceCents?: number;
 }
 
 /**

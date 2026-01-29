@@ -466,10 +466,25 @@ export class ChurnEngine {
           t.toState === "OPEN" &&
           t.reason === "POSITION_OPENED"
         ) {
-          // New position opened - notify via Telegram
+          // New position opened - notify via Telegram with trade details
+          const priceInfo =
+            t.entryPriceCents !== undefined
+              ? `\nPrice: ${(t.entryPriceCents / 100).toFixed(2)}`
+              : "";
+          const sizeInfo =
+            t.entrySizeUsd !== undefined
+              ? `\nAmount: $${t.entrySizeUsd.toFixed(2)}`
+              : "";
+          // Calculate shares if both price and size are available
+          const sharesInfo =
+            t.entrySizeUsd !== undefined &&
+            t.entryPriceCents !== undefined &&
+            t.entryPriceCents > 0
+              ? `\nShares: ${(t.entrySizeUsd / (t.entryPriceCents / 100)).toFixed(1)}`
+              : "";
           sendTelegram(
             "📈 Position Opened",
-            `Bought: ${t.outcomeLabel || "Unknown"}${marketInfo}`,
+            `Bought: ${t.outcomeLabel || "Unknown"}${marketInfo}${priceInfo}${sizeInfo}${sharesInfo}`,
           ).catch(() => {});
         }
       }
